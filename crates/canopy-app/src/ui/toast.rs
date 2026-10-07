@@ -1,5 +1,8 @@
 //! Bottom-right notifications, with a bounded scroll stack when several need attention: the queue,
-//! its timers and recovery actions. Each card is a `kit::toast::ToastCard`.
+//! its timers and the decisions notifications ask for ([`Offer`]). Each card is a
+//! `kit::toast::ToastCard`. Every notification also
+//! goes to the notification center (the status bar's bell), which lists the recent ones whether
+//! or not their [`Topic`] shows as a card.
 //!
 //! A toast's timer runs only while the pointer is off the stack and the window has focus, so a
 //! message being read, or arriving while the user is elsewhere, waits. When a card leaves, the
@@ -10,14 +13,22 @@ use egui::CornerRadius;
 use egui::emath::TSTransform;
 use egui::{Align2, Id, Order, vec2};
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use egui::{RichText, Ui};
+use egui_phosphor::regular as icon;
+
 use super::kit::Tone;
-use super::kit::overlay;
-use super::kit::toast::ToastCard;
+use super::kit::button::IconButton;
+use super::kit::chip::Badge;
+use super::kit::overlay::{self, Popover, TooltipExt};
+use super::kit::toast::{ACTIONS_GAP, BODY_LEADING, COLUMN_GAP, Choice, TITLE_GAP, ToastCard};
+use super::kit::{Button, KitResponse, Size};
 use super::motion;
 use super::theme;
+use crate::settings::NotificationPrefs;
 
 /// Severity of a toast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,43 +38,125 @@ pub enum ToastKind {
     Error,
 }
 
-#[derive(Debug, Clone)]
-pub enum Recovery {
+/// What a notification is about, which decides whether it shows as a card
+/// ([`NotificationPrefs`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Topic {
+    /// Something failed, with git's, the host's or the system's own message.
+    Error,
+    /// Something waits on the user: ssh asking for a security key, an update to restart into.
+    Attention,
+    /// A new Canopy build, or the answer to checking for one.
+    Update,
+    /// Git work finished: a commit, push, pull, fetch or clone.
+    Finished,
+    /// A small confirmation: text copied, the theme switched, a setting saved.
+    Confirmation,
+}
+
+impl Topic {
+    pub const ALL: [Self; 5] = [
+        Self::Error,
+        Self::Attention,
+        Self::Update,
+        Self::Finished,
+        Self::Confirmation,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Error => "Errors",
+            Self::Attention => "Needs your attention",
+            Self::Update => "Updates",
+            Self::Finished => "Finished operations",
+            Self::Confirmation => "Confirmations",
+        }
+    }
+
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Error => {
+                "An operation, the host or opening something failed, with the reason it gave."
+            }
+            Self::Attention => {
+                "SSH waits for your security key, or an installed update waits for a restart."
+            }
+            Self::Update => "A new Canopy build is out, or the result of checking for one.",
+            Self::Finished => "A commit, push, pull, fetch, clone or other Git work finished.",
+            Self::Confirmation => {
+                "Text copied, the theme switched, a folder trusted or an identity saved."
+            }
+        }
+    }
+
+    /// Whether a notification about it the user has not seen counts on the bell: the routine
+    /// ones are listed but never ask for attention.
+    fn counts(self) -> bool {
+        matches!(self, Self::Error | Self::Attention | Self::Update)
+    }
+}
+
+/// A decision a notification asks for; the app carries out the one chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Offer {
+    /// A push was refused because the remote moved on: pull the repository at this path.
     Pull(PathBuf),
+    /// The host refused the credentials: open Settings at Accounts.
     Accounts,
+    /// A new build is out: open its update dialog.
+    ReviewUpdate,
+    /// A new build is installed at this path: restart into it.
+    Restart(PathBuf),
+}
+
+impl Offer {
+    /// The buttons that ask for it, named for what they do.
+    fn choice(&self) -> Choice<'static> {
+        let (confirm, glyph, decline) = match self {
+            Self::Pull(_) => ("Pull", icon::ARROW_DOWN, "Not now"),
+            Self::Accounts => ("Open Accounts", icon::USER_CIRCLE, "Not now"),
+            Self::ReviewUpdate => ("Review update", icon::DOWNLOAD_SIMPLE, "Later"),
+            Self::Restart(_) => ("Restart now", icon::ARROW_CLOCKWISE, "Later"),
+        };
+        Choice {
+            confirm,
+            glyph: Some(glyph),
+            decline,
+        }
+    }
 }
 
 fn error_help(
     title: &str,
     body: &str,
     repo: Option<&Path>,
-) -> Option<(&'static str, Option<Recovery>)> {
+) -> Option<(&'static str, Option<Offer>)> {
     let lower = body.to_lowercase();
     if title.to_lowercase().contains("push")
         && (lower.contains("fetch first") || lower.contains("non-fast-forward"))
     {
         Some((
             "The remote has commits you do not have yet. Pull and resolve any conflicts before pushing again.",
-            repo.map(|r| Recovery::Pull(r.to_path_buf())),
+            repo.map(|r| Offer::Pull(r.to_path_buf())),
         ))
     } else if lower.contains("authentication failed")
         || lower.contains("http basic: access denied")
         || lower.contains("bad credentials")
     {
         Some((
-            "The host did not accept your credentials. Check your account access and try again.",
-            Some(Recovery::Accounts),
+            "The host did not accept your credentials.",
+            Some(Offer::Accounts),
         ))
     } else if lower.contains("could not resolve host")
         || lower.contains("could not resolve hostname")
     {
         Some((
-            "The host could not be reached. Check your connection and the remote address, then try again.",
+            "The host could not be reached. Check your connection and the remote address.",
             None,
         ))
     } else if lower.contains("permission denied (publickey)") {
         Some((
-            "SSH did not accept your key. Check the key's access to this repository, then try again.",
+            "SSH did not accept your key. Check the key's access to this repository.",
             None,
         ))
     } else {
@@ -75,39 +168,63 @@ fn error_help(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CardText<'a> {
     body: Option<&'a str>,
-    /// The body in `text` rather than `text_dim` (a hint for an error).
-    strong: bool,
-    /// The output behind the card's Details disclosure.
+    /// Git's full output when the body says less than it (a hint, or its first line): the
+    /// center's tooltip shows it.
     details: Option<&'a str>,
 }
 
-fn card_text(t: &Toast) -> CardText<'_> {
-    if t.kind != ToastKind::Error {
+/// What a notification of `kind` with `body` (and, for an error, its `help`) says under its
+/// title, on its card and in the center alike.
+fn card_text<'a>(kind: ToastKind, body: &'a str, help: Option<&'static str>) -> CardText<'a> {
+    if kind != ToastKind::Error {
         return CardText {
-            body: Some(t.body.as_str()).filter(|b| !b.is_empty()),
-            strong: false,
+            body: Some(body).filter(|b| !b.is_empty()),
             details: None,
         };
     }
-    if t.help.is_some() {
+    if help.is_some() {
         return CardText {
-            body: t.help,
-            strong: true,
-            details: Some(t.body.as_str()),
+            body: help,
+            details: Some(body),
         };
     }
-    // No hint: git's own first line says why, and Details holds the rest.
-    let first = t.body.lines().map(str::trim).find(|l| !l.is_empty());
-    let more = first.is_some_and(|f| t.body.trim() != f);
+    // No hint: git's own first line says why, and the details hold the rest.
+    let first = body.lines().map(str::trim).find(|l| !l.is_empty());
+    let more = first.is_some_and(|f| body.trim() != f);
     CardText {
         body: first,
-        strong: false,
-        details: more.then_some(t.body.as_str()),
+        details: more.then_some(body),
     }
 }
 
-/// Info and success toasts go after this many seconds of unpaused time; errors stay.
-const TIMEOUT: f64 = 4.0;
+/// How long a card stays, in seconds of unpaused time (the center keeps every notification).
+/// Design systems settle on about 5 s for a short message and cap it at 10 to 15 s (Atlassian
+/// flags 5 to 15 s, Canva 5 s up to 10, SAP Fiori 4 to 10); WCAG 2.2.1 asks that the timer stop
+/// while the user attends to it, which `Toasts::show` does. So a card lasts as long as its words
+/// take to read, at about four words a second after two seconds to notice it, within a range
+/// per kind: an error is read more carefully, and a decision waits longest before it moves to
+/// the center (and the bell's count).
+const NOTICE_SECONDS: f64 = 2.0;
+const SECONDS_PER_WORD: f64 = 0.25;
+const INFO_SECONDS: (f64, f64) = (5.0, 10.0);
+const ERROR_SECONDS: (f64, f64) = (8.0, 15.0);
+const DECISION_SECONDS: f64 = 15.0;
+
+/// How long a card with `title` and `body` (what it says, not git's raw output) stays.
+fn lifetime(kind: ToastKind, decision: bool, title: &str, body: Option<&str>) -> f64 {
+    if decision {
+        return DECISION_SECONDS;
+    }
+    let words = title.split_whitespace().count() + body.map_or(0, |b| b.split_whitespace().count());
+    let reading =
+        NOTICE_SECONDS + SECONDS_PER_WORD * f64::from(u32::try_from(words).unwrap_or(u32::MAX));
+    let (least, most) = if kind == ToastKind::Error {
+        ERROR_SECONDS
+    } else {
+        INFO_SECONDS
+    };
+    reading.clamp(least, most)
+}
 
 #[derive(Debug, Clone)]
 struct Toast {
@@ -116,19 +233,53 @@ struct Toast {
     title: String,
     body: String,
     born: f64,
-    /// Seconds of unpaused time left before it goes (infinite for errors).
+    /// Seconds of unpaused time left before it goes.
     left: f64,
     help: Option<&'static str>,
-    recovery: Option<Recovery>,
+    offer: Option<Offer>,
 }
 
-/// The stack of live toasts.
+/// How many notifications the notification center keeps.
+const HISTORY: usize = 100;
+/// The notification center's width and the height its list scrolls beyond.
+const CENTER_WIDTH: f32 = 360.0;
+const CENTER_LIST_HEIGHT: f32 = 380.0;
+/// The lines of a notification's text the center shows; the rest is in its tooltip.
+const CENTER_BODY_LINES: usize = 4;
+
+/// A notification as the notification center lists it.
+#[derive(Debug, Clone)]
+struct Entry {
+    id: u64,
+    kind: ToastKind,
+    title: String,
+    body: String,
+    /// When it arrived, in Unix seconds.
+    at: i64,
+    /// What an error means, before git's own words.
+    help: Option<&'static str>,
+    offer: Option<Offer>,
+}
+
+/// The stack of live toasts, and the notification center's history.
 #[derive(Debug, Default)]
 pub struct Toasts {
     items: Vec<Toast>,
     next: u64,
+    /// Which topics show as cards (kept current by the app every frame).
+    prefs: NotificationPrefs,
+    /// The recent notifications, newest first.
+    history: VecDeque<Entry>,
+    /// Notifications that count on the bell and were seen neither as a card nor in the center.
+    unread: usize,
+    /// Whether the notification center was open last frame (no cards show meanwhile).
+    center_open: bool,
+    /// Offers taken in the center, handed out by [`Toasts::show`].
+    chosen: Vec<Offer>,
     /// When the timers last ran.
     ticked: Option<f64>,
+    /// A card's button had keyboard focus last frame (the timers wait, as for the pointer).
+    focus_held: bool,
     /// Where each card sits, as its top's distance from the stack's bottom: the slide it is
     /// making towards its place.
     places: Vec<(u64, Slide)>,
@@ -159,40 +310,106 @@ impl Slide {
 }
 
 impl Toasts {
-    /// Queues a toast.
+    /// Which topics show as cards from now on.
+    pub fn set_prefs(&mut self, prefs: NotificationPrefs) {
+        self.prefs = prefs;
+    }
+
+    /// Notifies: into the center, and as a card when its topic shows as one.
     pub fn push(
         &mut self,
         ctx: &egui::Context,
         kind: ToastKind,
+        topic: Topic,
         title: impl Into<String>,
         body: impl Into<String>,
     ) {
-        self.push_for(ctx, kind, title, body, None);
+        self.push_for(ctx, kind, topic, title, body, None);
     }
 
-    /// A repository notice keeps its recovery action attached to that repository.
+    /// A repository notice keeps the recovery it offers (a pull) attached to that repository.
     pub fn push_for(
         &mut self,
         ctx: &egui::Context,
         kind: ToastKind,
+        topic: Topic,
         title: impl Into<String>,
         body: impl Into<String>,
         repo: Option<&Path>,
     ) {
-        let left = if kind == ToastKind::Error {
-            f64::INFINITY
-        } else {
-            TIMEOUT
-        };
-        self.next += 1;
         let title = title.into();
         let body = body.into();
-        let (help, recovery) = if kind == ToastKind::Error {
+        let (help, offer) = if kind == ToastKind::Error {
             error_help(&title, &body, repo)
-                .map_or((None, None), |(help, recovery)| (Some(help), recovery))
+                .map_or((None, None), |(help, offer)| (Some(help), offer))
         } else {
             (None, None)
         };
+        self.notify(ctx, kind, topic, title, body, help, offer);
+    }
+
+    /// Notifies with a decision to make: the card shows buttons for it for a decision's time
+    /// (`DECISION_SECONDS`), and the center offers it until it is made or declined.
+    pub fn push_offer(
+        &mut self,
+        ctx: &egui::Context,
+        kind: ToastKind,
+        topic: Topic,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        offer: Offer,
+    ) {
+        self.notify(
+            ctx,
+            kind,
+            topic,
+            title.into(),
+            body.into(),
+            None,
+            Some(offer),
+        );
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the one place every kind of notification comes together"
+    )]
+    fn notify(
+        &mut self,
+        ctx: &egui::Context,
+        kind: ToastKind,
+        topic: Topic,
+        title: String,
+        body: String,
+        help: Option<&'static str>,
+        offer: Option<Offer>,
+    ) {
+        let left = lifetime(
+            kind,
+            offer.is_some(),
+            &title,
+            card_text(kind, &body, help).body,
+        );
+        self.next += 1;
+        self.history.push_front(Entry {
+            id: self.next,
+            kind,
+            title: title.clone(),
+            body: body.clone(),
+            at: chrono::Utc::now().timestamp(),
+            help,
+            offer: offer.clone(),
+        });
+        self.history.truncate(HISTORY);
+        let card = self.prefs.shows(topic) && !self.center_open;
+        if !card {
+            if topic.counts() && !self.center_open {
+                self.unread += 1;
+            }
+            tracing::debug!(title = %title, ?topic, "notification kept for the center");
+            ctx.request_repaint();
+            return;
+        }
         self.items.push(Toast {
             id: self.next,
             kind,
@@ -201,21 +418,36 @@ impl Toasts {
             born: ctx.input(|i| i.time),
             left,
             help,
-            recovery,
+            offer,
         });
         if self.items.len() > 5 {
-            // The oldest notice that is not an error goes first: an unread error stays.
-            let oldest = self.items.iter().position(|t| t.kind != ToastKind::Error);
+            // The oldest routine card goes first, then the oldest error: a pending decision
+            // stays longest.
+            let oldest = self
+                .items
+                .iter()
+                .position(|t| t.offer.is_none() && t.kind != ToastKind::Error)
+                .or_else(|| self.items.iter().position(|t| t.offer.is_none()));
             let gone = self.items.remove(oldest.unwrap_or(0));
-            if gone.kind == ToastKind::Error {
-                tracing::warn!(title = %gone.title, "a sixth error pushed out the oldest");
+            if gone.offer.is_some() {
+                // Not made: it waits in the center, counted on the bell as when it runs out.
+                tracing::warn!(title = %gone.title, "a sixth decision pushed out the oldest card");
+                self.unread += 1;
             }
         }
         ctx.request_repaint();
     }
 
-    /// Draws the toasts and expires old ones.
-    pub fn show(&mut self, ctx: &egui::Context) -> Vec<Recovery> {
+    /// Draws the toasts and expires old ones; returns the offers taken on a card or in the
+    /// notification center.
+    pub fn show(&mut self, ctx: &egui::Context) -> Vec<Offer> {
+        let chosen = std::mem::take(&mut self.chosen);
+        let mut actions = self.show_cards(ctx);
+        actions.extend(chosen);
+        actions
+    }
+
+    fn show_cards(&mut self, ctx: &egui::Context) -> Vec<Offer> {
         let now = ctx.input(|i| i.time);
         // The timers wait while the pointer is on the stack or the window is in the background.
         let hovered = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|at| {
@@ -223,7 +455,7 @@ impl Toasts {
                 .is_some_and(|r| r.contains(at))
         });
         let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
-        let paused = hovered || !focused;
+        let paused = hovered || self.focus_held || !focused;
         let elapsed = self.ticked.map_or(0.0, |t| (now - t).max(0.0));
         self.ticked = Some(now);
         if !paused {
@@ -231,7 +463,15 @@ impl Toasts {
                 t.left -= elapsed;
             }
         }
+        // A decision nobody made waits in the center, counted on the bell.
+        let undecided = self
+            .items
+            .iter()
+            .filter(|t| t.left <= 0.0 && t.offer.is_some())
+            .count();
+        self.unread += undecided;
         self.items.retain(|t| t.left > 0.0);
+        self.focus_held = false;
         if self.items.is_empty() {
             self.places.clear();
             return Vec::new();
@@ -240,6 +480,7 @@ impl Toasts {
         let m = theme::metrics();
         let screen = ctx.content_rect();
         let mut dismiss = None;
+        let mut taken = None;
         let mut cards = Vec::with_capacity(self.items.len());
         // Bottom-right, 16 from the window's right edge and above the status bar.
         let corner = screen.right_bottom() - vec2(theme::LG, m.status_bar_height + theme::LG);
@@ -281,20 +522,13 @@ impl Toasts {
                                 ToastCard::new(Id::new(("notification", t.id)), tone, &t.title)
                                     .born(t.born)
                                     .stagger(u8::try_from(stagger).unwrap_or(u8::MAX))
-                                    .clickable(t.kind != ToastKind::Error);
-                            let text = card_text(t);
+                                    .clickable(t.offer.is_none());
+                            let text = card_text(t.kind, &t.body, t.help);
                             if let Some(body) = text.body {
-                                card = card.body(body).body_strong(text.strong);
+                                card = card.body(body);
                             }
-                            if let Some(recovery) = &t.recovery {
-                                let label = match recovery {
-                                    Recovery::Pull(_) => "Pull",
-                                    Recovery::Accounts => "Open Accounts",
-                                };
-                                card = card.action(label, None);
-                            }
-                            if let Some(details) = text.details {
-                                card = card.details(details);
+                            if let Some(offer) = &t.offer {
+                                card = card.choice(offer.choice());
                             }
                             let layer = ui.layer_id();
                             let start = overlay::next_shape(ctx, layer);
@@ -307,14 +541,17 @@ impl Toasts {
                                 overlay::next_shape(ctx, layer),
                                 shown.response.rect,
                             ));
-                            if out.dismissed || out.clicked {
+                            // Declined, the decision stays in the center for later.
+                            self.focus_held |= out.focused;
+                            if out.declined || out.clicked {
                                 dismiss = Some(t.id);
                             }
-                            if out.action.is_some()
-                                && let Some(recovery) = &t.recovery
+                            if out.confirmed
+                                && let Some(offer) = &t.offer
                             {
-                                actions.push(recovery.clone());
+                                actions.push(offer.clone());
                                 dismiss = Some(t.id);
+                                taken = Some(t.id);
                             }
                         }
                     });
@@ -322,6 +559,9 @@ impl Toasts {
         self.slide(ctx, now, &cards);
         if let Some(id) = dismiss {
             self.items.retain(|t| t.id != id);
+        }
+        if let Some(id) = taken {
+            self.history.retain(|e| e.id != id);
         }
         // Wake when the next toast expires; nothing repaints in between, and nothing expires
         // while paused (leaving the stack or focusing the window repaints).
@@ -394,6 +634,288 @@ impl Toasts {
     }
 }
 
+impl Toasts {
+    /// The status bar's bell, with the count of unseen notifications that need the user, and the
+    /// notification center it opens. Returns whether the user asked for the notification
+    /// settings.
+    pub fn bell(&mut self, ui: &mut Ui) -> KitResponse<bool> {
+        let unread = self.unread;
+        let (glyph, name) = match (self.prefs.cards, unread) {
+            (false, 0) => (icon::BELL_SLASH, "Notifications (cards off)".to_owned()),
+            (false, n) => (
+                icon::BELL_SLASH,
+                format!("Notifications (cards off), {n} unread"),
+            ),
+            (true, 0) => (icon::BELL, "Notifications".to_owned()),
+            (true, n) => (icon::BELL, format!("Notifications, {n} unread")),
+        };
+        let response = IconButton::new(glyph, name)
+            .size(Size::Xs)
+            .active(self.center_open)
+            .id_salt("notification-center")
+            .show(ui);
+        if unread > 0 {
+            let errors = self
+                .history
+                .iter()
+                .take(unread)
+                .any(|e| e.kind == ToastKind::Error);
+            let badge = Badge::new(super::kit::chip::count_text(unread))
+                .tone(if errors { Tone::Danger } else { Tone::Accent })
+                .strong();
+            let size = badge.measure(ui);
+            let at = response.rect.right_top() + vec2(-size.x * 0.4, -size.y * 0.3);
+            badge.paint(ui, egui::Rect::from_min_size(at, size));
+        }
+        let mut settings = false;
+        let popover = Popover::new("notification-center", &response).width(CENTER_WIDTH);
+        let popover_id = popover.id();
+        let chosen = self.chosen.len();
+        let shown = popover.show(|ui| settings = self.center(ui));
+        // What these open (Settings, a pull) takes over; the center would linger behind it.
+        let leave = settings || self.chosen.len() > chosen;
+        if leave {
+            egui::Popup::close_id(ui.ctx(), popover_id);
+        }
+        self.center_open = shown.is_some() && !leave;
+        if self.center_open {
+            self.unread = 0;
+            // What is open in the center needs no card as well.
+            self.items.clear();
+        }
+        KitResponse {
+            response,
+            value: settings,
+        }
+    }
+
+    /// The notification center's content; returns whether the settings link was clicked.
+    fn center(&mut self, ui: &mut Ui) -> bool {
+        let p = theme::palette(ui.ctx());
+        let m = theme::metrics();
+        let mut settings = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Notifications")
+                    .size(m.body_size)
+                    .family(theme::semibold())
+                    .color(p.text),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if IconButton::new(icon::GEAR_SIX, "Notification settings")
+                    .size(Size::Xs)
+                    .show(ui)
+                    .clicked()
+                {
+                    settings = true;
+                }
+                if !self.history.is_empty()
+                    && Button::new("Clear all")
+                        .ghost()
+                        .size(Size::Xs)
+                        .show(ui)
+                        .clicked()
+                {
+                    self.history.clear();
+                }
+            });
+        });
+        ui.add_space(theme::SM);
+        if self.history.is_empty() {
+            ui.add_space(theme::LG);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(icon::BELL)
+                        .size(m.icon_lg)
+                        .color(p.text_faint),
+                );
+                ui.add_space(theme::XS);
+                ui.label(
+                    RichText::new("No notifications yet")
+                        .size(m.meta_size)
+                        .color(p.text_dim),
+                );
+            });
+            ui.add_space(theme::LG);
+            return settings;
+        }
+        let now = chrono::Utc::now().timestamp();
+        let mut gone = None;
+        let divider = theme::mix(theme::surfaces(ui.ctx()).overlay, p.text, 0.08);
+        egui::ScrollArea::vertical()
+            .id_salt("notification-center-list")
+            .max_height(CENTER_LIST_HEIGHT)
+            .min_scrolled_height(CENTER_LIST_HEIGHT)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (index, e) in self.history.iter().enumerate() {
+                    if index > 0 {
+                        // The same quiet hairline in every theme, contrast included: rows part
+                        // by space first, the line only steadies the eye.
+                        ui.add_space(theme::SM);
+                        let (line, _) = ui.allocate_exact_size(
+                            vec2(ui.available_width(), 1.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().hline(
+                            line.x_range(),
+                            line.center().y,
+                            egui::Stroke::new(1.0, divider),
+                        );
+                        ui.add_space(theme::SM);
+                    }
+                    let (glyph, color) = match e.kind {
+                        ToastKind::Error => (icon::WARNING_CIRCLE, p.danger),
+                        ToastKind::Success => (icon::CHECK_CIRCLE, p.success),
+                        ToastKind::Info => (icon::INFO, p.accent),
+                    };
+                    ui.push_id(e.id, |ui| {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = COLUMN_GAP;
+                            // The card's glyph, centred on the title's line once it is laid out.
+                            let (slot, _) = ui.allocate_exact_size(
+                                vec2(m.icon_toast, m.icon_toast),
+                                egui::Sense::hover(),
+                            );
+                            let painter = ui.painter().clone();
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = TITLE_GAP;
+                                // Rows as tall as their content, so the body follows the title
+                                // as on a card.
+                                ui.spacing_mut().interact_size.y = 0.0;
+                                ui.horizontal(|ui| {
+                                    let title = ui.label(
+                                        RichText::new(&e.title)
+                                            .size(m.body_size)
+                                            .family(theme::semibold())
+                                            .color(p.text),
+                                    );
+                                    painter.text(
+                                        egui::pos2(slot.center().x, title.rect.center().y),
+                                        Align2::CENTER_CENTER,
+                                        glyph,
+                                        egui::FontId::proportional(m.icon_toast),
+                                        color,
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(super::widgets::relative_time(
+                                                    e.at, now,
+                                                ))
+                                                .size(m.meta_size)
+                                                .color(p.text_faint),
+                                            )
+                                            .kit_tooltip(super::widgets::full_date(
+                                                e.at,
+                                                local_offset_minutes(e.at),
+                                            ))
+                                            .show();
+                                        },
+                                    );
+                                });
+                                let body = e.body.trim();
+                                // What the card says (a hint before git's own words), the full
+                                // output in the tooltip.
+                                let said = card_text(e.kind, &e.body, e.help);
+                                let text = said.body.map_or("", str::trim);
+                                if !text.is_empty() {
+                                    let lines: Vec<&str> = text.lines().collect();
+                                    let shown = lines
+                                        .iter()
+                                        .take(CENTER_BODY_LINES)
+                                        .copied()
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    let label = ui.add(
+                                        egui::Label::new(
+                                            RichText::new(shown)
+                                                .size(m.meta_size)
+                                                .line_height(Some(
+                                                    (m.meta_size * BODY_LEADING).round(),
+                                                ))
+                                                .color(p.text_dim),
+                                        )
+                                        .wrap(),
+                                    );
+                                    if lines.len() > CENTER_BODY_LINES || said.details.is_some() {
+                                        label.kit_tooltip(body).show();
+                                    }
+                                }
+                                // Only what can be done about it: the decision it asks for, and a
+                                // failure's output to take elsewhere. Clear all empties the rest.
+                                let copy = e.kind == ToastKind::Error;
+                                if e.offer.is_none() && !copy {
+                                    return;
+                                }
+                                ui.add_space(ACTIONS_GAP - TITLE_GAP);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = theme::XS;
+                                    if let Some(offer) = &e.offer {
+                                        let choice = offer.choice();
+                                        let mut confirm =
+                                            Button::new(choice.confirm).primary().size(Size::Xs);
+                                        if let Some(g) = choice.glyph {
+                                            confirm = confirm.icon(g);
+                                        }
+                                        if confirm.show(ui).clicked() {
+                                            self.chosen.push(offer.clone());
+                                            gone = Some(e.id);
+                                        }
+                                        if Button::new(choice.decline)
+                                            .ghost()
+                                            .size(Size::Xs)
+                                            .show(ui)
+                                            .clicked()
+                                        {
+                                            gone = Some(e.id);
+                                        }
+                                    } else {
+                                        // A ghost button's label, not its padding, lines up with
+                                        // the text above.
+                                        ui.add_space(-m.button_pad_x_sm);
+                                    }
+                                    if copy
+                                        && Button::new("Copy")
+                                            .ghost()
+                                            .size(Size::Xs)
+                                            .icon(icon::COPY)
+                                            .show(ui)
+                                            .clicked()
+                                    {
+                                        let text = if body.is_empty() {
+                                            e.title.clone()
+                                        } else {
+                                            format!("{}\n{body}", e.title)
+                                        };
+                                        ui.ctx().copy_text(text);
+                                    }
+                                });
+                            });
+                        });
+                    });
+                }
+            });
+        if let Some(id) = gone {
+            self.history.retain(|e| e.id != id);
+        }
+        settings
+    }
+}
+
+/// The local zone's offset from UTC at `seconds`, in minutes.
+fn local_offset_minutes(seconds: i64) -> i32 {
+    use chrono::Offset;
+    chrono::DateTime::from_timestamp(seconds, 0).map_or(0, |d| {
+        d.with_timezone(&chrono::Local)
+            .offset()
+            .fix()
+            .local_minus_utc()
+            / 60
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,11 +926,23 @@ mod tests {
     fn a_sixth_notification_leaves_the_errors_alone() {
         let ctx = egui::Context::default();
         let mut toasts = Toasts::default();
-        toasts.push(&ctx, ToastKind::Error, "Push failed", "fatal: refused");
+        toasts.push(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Push failed",
+            "fatal: refused",
+        );
         for i in 0..4 {
-            toasts.push(&ctx, ToastKind::Success, format!("Done {i}"), "");
+            toasts.push(
+                &ctx,
+                ToastKind::Success,
+                Topic::Update,
+                format!("Done {i}"),
+                "",
+            );
         }
-        toasts.push(&ctx, ToastKind::Info, "Fetched", "");
+        toasts.push(&ctx, ToastKind::Info, Topic::Update, "Fetched", "");
         let titles: Vec<&str> = toasts.items.iter().map(|t| t.title.as_str()).collect();
         assert_eq!(
             titles,
@@ -416,8 +950,65 @@ mod tests {
         );
     }
 
+    /// Six decisions at once: the oldest card goes, and like one that ran out it waits in the
+    /// center and counts on the bell.
+    #[test]
+    fn a_decision_pushed_out_counts_on_the_bell() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for i in 0..6 {
+            toasts.push_offer(
+                &ctx,
+                ToastKind::Info,
+                Topic::Update,
+                format!("Decide {i}"),
+                "",
+                Offer::ReviewUpdate,
+            );
+        }
+        assert_eq!(toasts.items.len(), 5);
+        assert_eq!(toasts.items[0].title, "Decide 1");
+        assert_eq!(toasts.unread, 1);
+    }
+
+    /// A decision still waiting outlasts errors too: with nothing routine left to push out, the
+    /// oldest error goes.
+    #[test]
+    fn a_sixth_notification_leaves_a_pending_decision_alone() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.push_offer(
+            &ctx,
+            ToastKind::Info,
+            Topic::Update,
+            "Canopy 9 is out",
+            "",
+            Offer::ReviewUpdate,
+        );
+        for i in 0..5 {
+            toasts.push(
+                &ctx,
+                ToastKind::Error,
+                Topic::Error,
+                format!("Fetch failed {i}"),
+                "no",
+            );
+        }
+        let titles: Vec<&str> = toasts.items.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Canopy 9 is out",
+                "Fetch failed 1",
+                "Fetch failed 2",
+                "Fetch failed 3",
+                "Fetch failed 4"
+            ]
+        );
+    }
+
     /// REVIEW-KIT-7: an error Canopy has no hint for still shows git's own first line on the
-    /// card, with the whole output behind Details when there is more.
+    /// card, with the whole output in the center's tooltip when there is more.
     #[test]
     fn an_error_without_a_hint_shows_gits_first_line() {
         let ctx = egui::Context::default();
@@ -426,17 +1017,32 @@ mod tests {
             "error: Your local changes to the following files would be overwritten by checkout:";
         let stderr =
             format!("{first}\n\tsrc/main.rs\nPlease commit your changes or stash them.\nAborting");
-        toasts.push(&ctx, ToastKind::Error, "Checkout failed", stderr.clone());
+        toasts.push(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Checkout failed",
+            stderr.clone(),
+        );
         let one = "fatal: couldn't find remote ref nope";
-        toasts.push(&ctx, ToastKind::Error, "Fetch failed", one);
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", one);
         let rejected = "! [rejected] main -> main (fetch first)";
-        toasts.push(&ctx, ToastKind::Error, "Push failed", rejected);
-        let text: Vec<CardText<'_>> = toasts.items.iter().map(card_text).collect();
+        toasts.push(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Push failed",
+            rejected,
+        );
+        let text: Vec<CardText<'_>> = toasts
+            .items
+            .iter()
+            .map(|t| card_text(t.kind, &t.body, t.help))
+            .collect();
         assert_eq!(
             text[0],
             CardText {
                 body: Some(first),
-                strong: false,
                 details: Some(stderr.as_str()),
             }
         );
@@ -444,13 +1050,11 @@ mod tests {
             text[1],
             CardText {
                 body: Some(one),
-                strong: false,
                 details: None,
             },
-            "one line needs no Details"
+            "one line has nothing more to show"
         );
         assert_eq!(text[2].body, toasts.items[2].help, "a hint still leads");
-        assert!(text[2].strong);
         assert_eq!(text[2].details, Some(rejected));
     }
 
@@ -464,6 +1068,7 @@ mod tests {
             toasts.push(
                 &ctx,
                 ToastKind::Error,
+                Topic::Error,
                 format!("Push failed {index}"),
                 "fetch first",
             );
@@ -565,7 +1170,13 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
-        toasts.push(&ctx, ToastKind::Success, "Committed", "Finished safely");
+        toasts.push(
+            &ctx,
+            ToastKind::Success,
+            Topic::Update,
+            "Committed",
+            "Finished safely",
+        );
         let mut pointer = egui::Pos2::ZERO;
         for frame in 0..6 {
             let mut events = vec![egui::Event::PointerMoved(pointer)];
@@ -612,7 +1223,7 @@ mod tests {
     }
 
     #[test]
-    fn expanded_notification_details_survive_a_new_arrival() {
+    fn notification_stack_fits_the_viewport() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
@@ -620,74 +1231,17 @@ mod tests {
         toasts.push(
             &ctx,
             ToastKind::Error,
-            "Original error",
-            "error: original\nOriginal output",
+            Topic::Error,
+            "Push failed",
+            "fetch first",
         );
-        let mut pointer = egui::Pos2::ZERO;
-        let mut detail_visible = false;
-        for frame in 0..9 {
-            if frame == 6 {
-                assert!(detail_visible, "details must open before testing arrival");
-                toasts.push(
-                    &ctx,
-                    ToastKind::Error,
-                    "New error",
-                    "error: new\nNew output",
-                );
-            }
-            let mut events = vec![egui::Event::PointerMoved(pointer)];
-            if matches!(frame, 3 | 4) {
-                events.push(egui::Event::PointerButton {
-                    pos: pointer,
-                    button: egui::PointerButton::Primary,
-                    pressed: frame == 3,
-                    modifiers: egui::Modifiers::default(),
-                });
-            }
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(1024.0, 640.0),
-                    )),
-                    time: Some(0.4 + f64::from(frame) * 0.01),
-                    events,
-                    ..Default::default()
-                },
-                |_| {
-                    toasts.show(&ctx);
-                },
-            );
-            output.textures_delta.clear();
-            detail_visible = output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "error: original\nOriginal output"));
-
-            if frame == 2 {
-                pointer = output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        egui::Shape::Text(text) if text.galley.text() == "Details" => {
-                            Some(text.visual_bounding_rect().center())
-                        }
-                        _ => None,
-                    })
-                    .expect("details disclosure");
-            }
-        }
-        assert!(
-            detail_visible,
-            "a new card must not reset another card's disclosure"
+        toasts.push(
+            &ctx,
+            ToastKind::Success,
+            Topic::Update,
+            "Committed",
+            "Update README",
         );
-    }
-
-    #[test]
-    fn notification_stack_fits_the_viewport() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
-        let mut toasts = Toasts::default();
-        toasts.push(&ctx, ToastKind::Error, "Push failed", "fetch first");
-        toasts.push(&ctx, ToastKind::Success, "Committed", "Update README");
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1024.0, 640.0));
         for frame in 0..20 {
             let mut output = ctx.run_ui(
@@ -761,7 +1315,13 @@ mod tests {
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         let _ = frame_at(&ctx, &mut toasts, 0.0, None, true);
-        toasts.push(&ctx, ToastKind::Success, "Pushed", "main to origin");
+        toasts.push(
+            &ctx,
+            ToastKind::Success,
+            Topic::Update,
+            "Pushed",
+            "main to origin",
+        );
         let _ = frame_at(&ctx, &mut toasts, 0.1, None, true);
         let card = ctx
             .memory(|m| m.area_rect(Id::new("notifications")))
@@ -782,12 +1342,300 @@ mod tests {
             let _ = frame_at(&ctx, &mut toasts, 10.1 + f64::from(n) * 0.1, None, false);
         }
         assert_eq!(toasts.items.len(), 1, "an unfocused window keeps it");
-        // Its four seconds run only now.
+        // Its five seconds (four words: the shortest a card stays) run only now.
         let _ = frame_at(&ctx, &mut toasts, 20.2, None, true);
-        let _ = frame_at(&ctx, &mut toasts, 23.9, None, true);
+        let _ = frame_at(&ctx, &mut toasts, 24.9, None, true);
         assert_eq!(toasts.items.len(), 1, "not before its time");
-        let _ = frame_at(&ctx, &mut toasts, 24.4, None, true);
-        assert!(toasts.items.is_empty(), "gone after four unpaused seconds");
+        let _ = frame_at(&ctx, &mut toasts, 25.4, None, true);
+        assert!(toasts.items.is_empty(), "gone after five unpaused seconds");
+    }
+
+    #[test]
+    fn a_card_stays_as_long_as_its_words_take_within_its_kinds_range() {
+        let many = ["word"; 60].join(" ");
+        let cases = [
+            ("short info", ToastKind::Info, false, "Copied", None, 5.0),
+            (
+                "short success",
+                ToastKind::Success,
+                false,
+                "Pushed",
+                None,
+                5.0,
+            ),
+            (
+                "twelve words",
+                ToastKind::Success,
+                false,
+                "Pulled main",
+                Some("ten more words to read here so it takes longer"),
+                5.0,
+            ),
+            (
+                "twenty words",
+                ToastKind::Info,
+                false,
+                "a b c d e",
+                Some("f g h i j k l m n o p q r s t"),
+                7.0,
+            ),
+            (
+                "long info",
+                ToastKind::Info,
+                false,
+                "Note",
+                Some(&many),
+                10.0,
+            ),
+            (
+                "short error",
+                ToastKind::Error,
+                false,
+                "Fetch failed",
+                None,
+                8.0,
+            ),
+            (
+                "long error",
+                ToastKind::Error,
+                false,
+                "Failed",
+                Some(&many),
+                15.0,
+            ),
+            ("decision", ToastKind::Info, true, "Update", None, 15.0),
+            (
+                "long decision",
+                ToastKind::Error,
+                true,
+                "x",
+                Some(&many),
+                15.0,
+            ),
+        ];
+        for (name, kind, decision, title, body, expected) in cases {
+            let got = lifetime(kind, decision, title, body);
+            assert!((got - expected).abs() < 1e-9, "{name}: {got} s");
+        }
+    }
+
+    /// A decision whose card ran out was not made: it waits in the center and the bell counts
+    /// it. A routine card that ran out was seen and counts for nothing.
+    #[test]
+    fn a_decision_nobody_made_counts_on_the_bell() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut toasts = Toasts::default();
+        let _ = frame_at(&ctx, &mut toasts, 0.0, None, true);
+        toasts.push_offer(
+            &ctx,
+            ToastKind::Info,
+            Topic::Update,
+            "Canopy 9 is out",
+            "",
+            Offer::ReviewUpdate,
+        );
+        toasts.push(&ctx, ToastKind::Info, Topic::Update, "Up to date", "");
+        for n in 1..=170 {
+            let _ = frame_at(&ctx, &mut toasts, f64::from(n) * 0.1, None, true);
+        }
+        assert!(toasts.items.is_empty(), "both cards ran out");
+        assert_eq!(toasts.unread, 1, "only the decision counts");
+        assert_eq!(
+            toasts.history.front().map(|e| e.offer.clone()),
+            Some(None),
+            "the newest entry is the routine one"
+        );
+        assert_eq!(toasts.history[1].offer, Some(Offer::ReviewUpdate));
+    }
+
+    /// Runs one frame at `time` that clicks the text `label` where the last frame drew it, and
+    /// returns the offers taken and where `label` is drawn now.
+    fn click_text(
+        ctx: &egui::Context,
+        toasts: &mut Toasts,
+        time: f64,
+        at: Option<egui::Pos2>,
+    ) -> (Vec<Offer>, egui::FullOutput) {
+        let mut events = Vec::new();
+        if let Some(at) = at {
+            events.push(egui::Event::PointerMoved(at));
+            for pressed in [true, false] {
+                events.push(egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+        }
+        let mut offers = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(1024.0, 640.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |_| offers = toasts.show(ctx),
+        );
+        output.textures_delta.clear();
+        (offers, output)
+    }
+
+    fn text_at(output: &egui::FullOutput, label: &str) -> Option<egui::Pos2> {
+        output.shapes.iter().find_map(|c| match &c.shape {
+            egui::Shape::Text(t) if t.galley.text() == label => {
+                Some(t.visual_bounding_rect().center())
+            }
+            _ => None,
+        })
+    }
+
+    /// Taking a card's offer hands it to the app and clears it from the center too; declining
+    /// it only closes the card, and the center still offers it.
+    #[test]
+    fn a_cards_choice_is_taken_or_left_for_the_center() {
+        for (button, taken) in [("Review update", true), ("Later", false)] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+            motion::set_reduced(true);
+            let mut toasts = Toasts::default();
+            toasts.push_offer(
+                &ctx,
+                ToastKind::Info,
+                Topic::Update,
+                "Canopy 9 is out",
+                "See what's new.",
+                Offer::ReviewUpdate,
+            );
+            let mut at = None;
+            for n in 0..3 {
+                let (_, out) = click_text(&ctx, &mut toasts, 0.1 * f64::from(n), None);
+                at = text_at(&out, button).or(at);
+            }
+            let (offers, _) = click_text(&ctx, &mut toasts, 0.4, at);
+            motion::set_reduced(false);
+            assert!(toasts.items.is_empty(), "{button}: the card closed");
+            if taken {
+                assert_eq!(offers, [Offer::ReviewUpdate], "{button}");
+                assert!(toasts.history.is_empty(), "{button}: done, not kept");
+            } else {
+                assert!(offers.is_empty(), "{button}");
+                assert_eq!(
+                    toasts.history.front().and_then(|e| e.offer.clone()),
+                    Some(Offer::ReviewUpdate),
+                    "{button}: still offered in the center"
+                );
+            }
+        }
+    }
+
+    /// The center's rows carry buttons only for what can be done: a decision's own two, a
+    /// failure's Copy, and none on a plain row. Taking the decision there hands it to the app.
+    #[test]
+    fn the_center_offers_a_decision_with_its_own_buttons() {
+        use egui::accesskit::Role;
+
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        motion::set_reduced(true);
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs {
+            cards: false,
+            ..Default::default()
+        });
+        toasts.push(&ctx, ToastKind::Success, Topic::Finished, "Pushed", "main");
+        let frame = |toasts: &mut Toasts, events: Vec<egui::Event>| {
+            let mut buttons = Vec::new();
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        events: events.clone(),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let _ = toasts.center(ui);
+                    },
+                );
+                out.textures_delta.clear();
+                buttons = out
+                    .platform_output
+                    .accesskit_update
+                    .map_or(Vec::new(), |u| {
+                        u.nodes
+                            .into_iter()
+                            .filter(|(_, n)| n.role() == Role::Button)
+                            .filter_map(|(_, n)| Some((n.label()?.to_owned(), n.bounds()?)))
+                            .collect::<Vec<_>>()
+                    });
+            }
+            buttons
+        };
+        let names = |b: &[(String, egui::accesskit::Rect)]| {
+            let mut n: Vec<String> = b.iter().map(|(l, _)| l.clone()).collect();
+            n.sort();
+            n
+        };
+        let header = ["Clear all", "Notification settings"];
+        assert_eq!(names(&frame(&mut toasts, Vec::new())), header);
+        toasts.push_offer(
+            &ctx,
+            ToastKind::Info,
+            Topic::Attention,
+            "Canopy 9 is installed",
+            "",
+            Offer::Restart(PathBuf::from("canopy")),
+        );
+        let buttons = frame(&mut toasts, Vec::new());
+        assert_eq!(
+            names(&buttons),
+            ["Clear all", "Later", "Notification settings", "Restart now"]
+        );
+        let (_, b) = buttons
+            .iter()
+            .find(|(l, _)| l == "Restart now")
+            .expect("Restart now");
+        let at = egui::pos2(
+            crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+            crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+        );
+        let mut click = vec![egui::Event::PointerMoved(at)];
+        for pressed in [true, false] {
+            click.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events: click,
+                ..Default::default()
+            },
+            |ui| {
+                let _ = toasts.center(ui);
+            },
+        );
+        out.textures_delta.clear();
+        motion::set_reduced(false);
+        assert_eq!(toasts.show(&ctx), [Offer::Restart(PathBuf::from("canopy"))]);
+        assert_eq!(
+            toasts
+                .history
+                .iter()
+                .map(|e| e.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Pushed"],
+            "taken, it leaves the center"
+        );
     }
 
     #[test]
@@ -797,8 +1645,8 @@ mod tests {
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         motion::set_reduced(false);
         let mut toasts = Toasts::default();
-        toasts.push(&ctx, ToastKind::Error, "Older", "first");
-        toasts.push(&ctx, ToastKind::Error, "Newer", "second");
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Older", "first");
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Newer", "second");
         let top_of = |out: &egui::FullOutput| {
             out.shapes.iter().find_map(|c| match &c.shape {
                 egui::Shape::Text(t) if t.galley.text() == "Newer" => Some(t.pos.y),
@@ -828,6 +1676,301 @@ mod tests {
         assert!(
             path.iter().any(|y| *y > before + 1.0 && *y < last - 1.0),
             "it slid rather than jumped: {before} -> {path:?}"
+        );
+    }
+
+    fn titles(toasts: &Toasts) -> (Vec<&str>, Vec<&str>) {
+        (
+            toasts.items.iter().map(|t| t.title.as_str()).collect(),
+            toasts.history.iter().map(|e| e.title.as_str()).collect(),
+        )
+    }
+
+    #[test]
+    fn by_default_only_notifications_that_need_the_user_show_as_cards() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Success, Topic::Finished, "Pushed", "");
+        toasts.push(&ctx, ToastKind::Info, Topic::Confirmation, "Copied", "abc");
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", "no");
+        toasts.push(&ctx, ToastKind::Info, Topic::Attention, "SSH", "touch it");
+        toasts.push(&ctx, ToastKind::Info, Topic::Update, "Canopy 9 is out", "");
+        let (cards, center) = titles(&toasts);
+        assert_eq!(cards, ["Fetch failed", "SSH", "Canopy 9 is out"]);
+        assert_eq!(
+            center,
+            ["Canopy 9 is out", "SSH", "Fetch failed", "Copied", "Pushed"],
+            "the center lists every notification, newest first"
+        );
+        assert_eq!(toasts.unread, 0, "every one that needs the user was a card");
+    }
+
+    #[test]
+    fn with_cards_off_nothing_pops_up_and_the_bell_counts_what_needs_the_user() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs {
+            cards: false,
+            finished: true,
+            ..Default::default()
+        });
+        toasts.push(&ctx, ToastKind::Success, Topic::Finished, "Pushed", "");
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", "no");
+        toasts.push(&ctx, ToastKind::Info, Topic::Attention, "SSH", "touch it");
+        let (cards, center) = titles(&toasts);
+        assert_eq!(cards, Vec::<&str>::new());
+        assert_eq!(center.len(), 3);
+        assert_eq!(toasts.unread, 2, "a finished push asks for no attention");
+    }
+
+    #[test]
+    fn a_topic_switched_off_still_reaches_the_center() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs {
+            errors: false,
+            ..Default::default()
+        });
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", "no");
+        let (cards, center) = titles(&toasts);
+        assert_eq!(cards, Vec::<&str>::new());
+        assert_eq!(center, ["Fetch failed"]);
+        assert_eq!(toasts.unread, 1);
+    }
+
+    #[test]
+    fn the_center_keeps_the_newest_hundred() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for i in 0..HISTORY + 5 {
+            toasts.push(
+                &ctx,
+                ToastKind::Info,
+                Topic::Confirmation,
+                format!("n{i}"),
+                "",
+            );
+        }
+        assert_eq!(toasts.history.len(), HISTORY);
+        assert_eq!(
+            toasts.history.front().map(|e| e.title.as_str()),
+            Some(format!("n{}", HISTORY + 4).as_str())
+        );
+    }
+
+    /// The bell opens the center, which marks everything read and lists the notifications; while
+    /// it is open, new ones go to the list rather than a card.
+    #[test]
+    fn opening_the_bell_lists_notifications_and_clears_the_count() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        motion::set_reduced(true);
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs {
+            cards: false,
+            ..Default::default()
+        });
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", "no");
+        let frame = |toasts: &mut Toasts, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                        let _ = toasts.bell(ui);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            out.platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        let nodes = frame(&mut toasts, Vec::new());
+        let bell = nodes
+            .iter()
+            .find(|n| n.label() == Some("Notifications (cards off), 1 unread"))
+            .expect("the bell names the unread count");
+        let b = bell.bounds().expect("bounds");
+        let at = egui::pos2(
+            crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+            crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+        );
+        let mut click = vec![egui::Event::PointerMoved(at)];
+        for pressed in [true, false] {
+            click.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        let _ = frame(&mut toasts, click);
+        let nodes = frame(&mut toasts, Vec::new());
+        motion::set_reduced(false);
+        assert!(toasts.center_open, "the click opened the center");
+        assert_eq!(toasts.unread, 0);
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label().or(n.value()) == Some("Fetch failed")),
+            "the center lists it"
+        );
+        toasts.set_prefs(NotificationPrefs::default());
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Push failed", "no");
+        assert!(toasts.items.is_empty(), "no card while the center is open");
+        assert_eq!(toasts.history.len(), 2);
+    }
+
+    /// The center says what the card says: a known git failure as its hint, git's own output in
+    /// the tooltip and the copy, not as the text.
+    #[test]
+    fn the_center_explains_a_failure_like_its_card() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        motion::set_reduced(true);
+        let mut toasts = Toasts::default();
+        let raw = "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs";
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Push failed", raw);
+        let e = &toasts.history[0];
+        let hint = card_text(e.kind, &e.body, e.help)
+            .body
+            .expect("a hint")
+            .to_owned();
+        assert_ne!(hint, raw.lines().next().unwrap_or_default());
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = toasts.center(ui);
+            });
+            out.textures_delta.clear();
+            labels = out
+                .platform_output
+                .accesskit_update
+                .map(|u| {
+                    u.nodes
+                        .into_iter()
+                        .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+        }
+        motion::set_reduced(false);
+        assert!(labels.contains(&hint), "{labels:?}");
+        assert!(
+            !labels.iter().any(|l| l.contains("[rejected]")),
+            "{labels:?}"
+        );
+    }
+
+    #[test]
+    fn only_a_failure_in_the_center_offers_copy() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        motion::set_reduced(true);
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Success, Topic::Finished, "Pushed", "main");
+        toasts.push(&ctx, ToastKind::Info, Topic::Confirmation, "Copied", "abc");
+        let copies = |toasts: &mut Toasts| {
+            let mut n = 0;
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let _ = toasts.center(ui);
+                });
+                out.textures_delta.clear();
+                n = out.platform_output.accesskit_update.map_or(0, |u| {
+                    u.nodes
+                        .iter()
+                        .filter(|(_, n)| n.label() == Some("Copy"))
+                        .count()
+                });
+            }
+            n
+        };
+        assert_eq!(copies(&mut toasts), 0);
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", "no");
+        assert_eq!(copies(&mut toasts), 1);
+        motion::set_reduced(false);
+    }
+
+    #[test]
+    fn the_center_closes_when_its_settings_link_opens_settings() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        motion::set_reduced(true);
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", "no");
+        let frame = |toasts: &mut Toasts, events: Vec<egui::Event>| {
+            let mut settings = false;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                        settings = toasts.bell(ui).value;
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            let nodes = out
+                .platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect::<Vec<_>>())
+                .unwrap_or_default();
+            (nodes, settings)
+        };
+        let click = |nodes: &[egui::accesskit::Node], label: &str| {
+            let b = nodes
+                .iter()
+                .find(|n| n.label() == Some(label))
+                .and_then(egui::accesskit::Node::bounds)
+                .unwrap_or_else(|| panic!("{label} is drawn"));
+            let at = egui::pos2(
+                crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+                crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+            );
+            let mut events = vec![egui::Event::PointerMoved(at)];
+            for pressed in [true, false] {
+                events.push(egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+            events
+        };
+        let (nodes, _) = frame(&mut toasts, Vec::new());
+        let (_, _) = frame(&mut toasts, click(&nodes, "Notifications"));
+        let (nodes, _) = frame(&mut toasts, Vec::new());
+        assert!(toasts.center_open, "the click opened the center");
+        let (_, settings) = frame(&mut toasts, click(&nodes, "Notification settings"));
+        let (nodes, _) = frame(&mut toasts, Vec::new());
+        motion::set_reduced(false);
+        assert!(settings, "the link asks for Settings");
+        assert!(!toasts.center_open, "the center closed for it");
+        assert!(
+            !nodes
+                .iter()
+                .any(|n| n.label() == Some("Notification settings")),
+            "and is no longer drawn"
         );
     }
 }

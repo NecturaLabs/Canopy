@@ -27,8 +27,8 @@ the shared colours with `theme::palette(ctx)`.
 
 - **Standard** (the default) is round-2 concept 1: flat fills, two-tone chrome (`panel` one step
   lighter than the `bg` ground in dark themes, darker in light), flush panes divided by 1 pt
-  `border` seams, raised `raised` secondary buttons with a 1 pt `raised_edge`, a solid `primary`,
-  and soft shadows only under floating layers. Content is painted on `pane`, which equals `bg`.
+  `border` seams, raised `raised` secondary buttons with a 1 pt `raised_edge`, tonal primary and
+  danger buttons, and soft shadows only under floating layers. Content is painted on `pane`, which equals `bg`.
 - **Deeper** is concept 4, "a floating instrument": the ground recedes and what you work on floats
   over it. The tab strip sits on the ground and the action bar is a lifted card (`deck`, with the
   deck's gradient, highlight and shadow and a `pane_edge` ring). Content panes are cards (`pane`,
@@ -100,7 +100,9 @@ The history graph's node shape (dots, rings, squares, diamonds) and its lines be
 (curves, metro, circuit) are the user's choice in Settings (`theme::NodeShape`, `theme::Curve`,
 `theme::set_graph`), the same in every theme.
 
-Link buttons are `accent2` and underlined on hover and focus; where the link colour alone does
+Links are for going somewhere (a web page, release notes, another screen); an action that does
+something (copy, dismiss, create) is a button, a Ghost one where it should stay quiet. Link
+buttons are Inter Medium in `accent2` and underlined on hover and focus; where the link colour alone does
 not set a link apart from body text, the theme's `Design::link_underline` underlines them at rest
 too: at high contrast, for low vision. Inline links in the legal texts still
 underline only on hover and focus.
@@ -211,8 +213,7 @@ Deeper overrides the geometry only: controls 30 (26 Dense), panes as cards with 
 recess and shadow layers; `kit::paint::surface` paints them. In Standard only buttons, the
 segmented thumb and the switch knob carry a 1 to 2 px contact shadow, and floating layers (menus,
 popovers, tooltips, toasts, dialogs, palette, cheatsheet) a two-layer soft shadow with a 1 pt
-`overlay_edge` ring. Deeper adds two-layer shadows to controls, coloured glows under primary and
-danger buttons, the `Pane` shadow under cards, the field recess and the deck. Shadows take each
+`overlay_edge` ring. Deeper adds two-layer shadows to controls, the `Pane` shadow under cards, the field recess and the deck. Shadows take each
 theme's own tinted `shadow` colour (cool slate in Daylight, the ground's hue in dark themes), and Deeper's light-theme cards add a tight contact layer under a wide soft one,
 so they lift off a light ground as clearly as off a dark one. High contrast has no
 highlights and rings floating layers in `control_border`. The top highlight line is white at the
@@ -253,7 +254,7 @@ kit's helpers in `ui/kit/anim.rs`.
 | `TOAST_SHIFT` | 200ms | Toasts sliding into the place of one that left |
 | `TAB_CLOSE` | 250ms | A closed repository tab collapsing |
 | `EXIT_POPUP` / `EXIT_DIALOG` / `EXIT_TOAST` | 100 / 120 / 160ms | Exits |
-| `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay; no delay right after one closed |
+| `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay (Settings' Tooltip delay: Quick 150ms, Normal, Slow 1s); no delay right after one closed |
 | `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Spinners appear late and stay a minimum time |
 
 Curves are cubic Béziers (`EASE_OUT` by default); springs (`SWITCH`, `PRESS`, the indicator
@@ -271,6 +272,14 @@ for state markers (HEAD, conflict, current branch). Icons inherit `text-dim` and
 hover and `accent` when active. Toolbar buttons pair an icon with a short label; icon-only buttons
 always have a tooltip naming the action and its shortcut.
 
+Settings → Appearance → Tooltips sets which tooltips show (`overlay::TooltipLevel`). Helpful, the
+default, shows what the screen does not: an icon-only control's name, why a control is
+unavailable, cut-off text, shortcuts, and details such as full dates, addresses and paths. A
+tooltip that only describes a labelled control (a kit button, toggle, field or chip with its name
+on screen and no shortcut) or says how to use something is `Tooltip::extra` and shows only at
+All. Off shows none but why a control is unavailable. A truncated label's tooltip shows only when
+the label is actually cut.
+
 A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
 in the density's metrics:
 
@@ -281,7 +290,7 @@ in the density's metrics:
 | `icon_md` | 15 | Buttons, palette rows, settings navigation, request status |
 | `icon_lg` | 16 / 15 | Beside a dialog's title |
 | `icon_tool` | 17 / 15 | Toolbar tools |
-| `icon_toast` | 18 | A notification's leading glyph |
+| `icon_toast` | 18 / 15 | A notification's leading glyph |
 | `icon_xl` | 24 / 22 | The welcome screen's action cards |
 | `icon_hero` | 32 / 28 | The centre of an empty or finished state |
 
@@ -315,15 +324,15 @@ in the density's metrics:
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
-- Commit details use a compact author, SHA and date above the changed files. Commit information
-  starts open, opens independently of pane expansion and retains its state, by one rule in every
-  density: its body shows whenever its first whole line fits under room reserved for up to two
-  changed files and the "N files changed" line; otherwise the block waits shut, with a tooltip
-  saying how to make room. The body sits flush with the author row, takes its natural height up
-  to that room and scrolls past it behind a faded edge, never cutting a line through its glyphs.
-  It repeats the commit summary only when the pane header cannot show it whole (or, in a compact
-  window, has no header). History prefers six visible rows and can retain the split with two rows in a short
-  window. Automatic inspector height adapts when the diff arrives; a manual resize takes precedence.
+- Commit details use a compact author, SHA and date above the changed files, and nothing twice:
+  the author's email (and the committer, when someone else made the commit) is the name's tooltip,
+  the full date with its zone the date's. The commit message's body sits flush under them, takes
+  its natural height up to the room left above two changed files and the "N files changed" line
+  (at least one line) and scrolls past it behind a faded edge, never cutting a line through its
+  glyphs. It repeats the commit summary only when the pane header cannot show it whole (or, in a
+  compact window, has no header). History prefers six visible rows and can retain the split with
+  two rows in a short window. Automatic inspector height adapts when the diff arrives; a manual
+  resize takes precedence.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
   available width, leaving the rest for the diff or request details. The Changes file list and the
   request list are resized with `kit::split::SplitHandle` (drag, the arrow keys while it has focus,
@@ -351,7 +360,10 @@ in the density's metrics:
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
 - When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
-  tooltip, rather than styling it as an active control.
+  tooltip, rather than styling it as an active control. The sidebar's Remotes section shows a small
+  card instead of rows: an `elevated` surface in an `edge` hairline with a cloud-off glyph, "Local
+  only", one line on what that means, and two full-width Sm buttons, a Primary Publish… over a
+  Secondary Add remote….
 - On the welcome screen, the status bar says "No repository open" so it remains informative even
   before the first tab is opened.
 - Welcome action cards explain Open, Clone and Init in two short lines without requiring hover;
@@ -440,12 +452,19 @@ in the density's metrics:
 setters (`size`, `icon`, `enabled`, `tooltip`, `disabled_reason`, `shortcut`, `id_salt`,
 `full_width`, `min_width`), and `show(ui)`; each also implements `egui::Widget`. Components read
 colours, metrics and options themselves and report their AccessKit role and label. Buttons come in
-Primary, Secondary, Ghost and Danger at Sm, Md and Lg, plus icon, tool, link and split buttons;
-disabled controls are the whole control at 42% and stay hoverable for their reason. Keyboard focus
+Primary, Secondary, Ghost and Danger at Sm, Md and Lg, plus icon, tool, link and split buttons.
+Primary and Danger are tonal, never solid (`Palette::tonal`): the raised control ground tinted 16%
+with the accent (or `danger`), 22% hovered and 28% pressed, a hairline of it mixed 45% into
+`raised_edge`, and a semibold label in that colour lifted to 4.5:1; they cast the control's shadow
+like a Secondary. Disabled controls are the whole control at 42% and stay hoverable for their reason. Keyboard focus
 draws a 2 pt ring 2 pt outside the control (`danger_base` on danger buttons), only after keyboard
 use. `tools/screenshot.sh <repo> out.png --overlay gallery [--style deeper] [--density dense]
 [--gallery-page N]` renders every component in every state; a page past the end shows the last,
 and a strip under the content numbers each page from 1 ("Page 4 of 19" for `--gallery-page 3`).
+
+Rows separate selection from being current: `ListRow::selected` is the selection wash and mark
+(the sidebar row last clicked, while History shows its commit), `ListRow::current` the checked-out
+branch's accent icon and semibold label, announced as current rather than selected.
 
 Keyboard and screen readers (`kit::a11y`): a list is one Tab stop (`kit::row::Roving`, used by
 History's commits, each sidebar section and card grids): Tab lands on the row last visited (else the
@@ -463,10 +482,12 @@ never takes focus; Tab does.
 ### Ref pill
 
 Rounded rectangle (10-point radius, height 19px, horizontal padding 7px) with a Small Medium label and a
-leading icon. A branch pill takes its lane's colour (a tag `warning`): a 24% fill (34% for the
-current branch) and a 60% ring, and a remote branch only the ring. The label is the pill's own
-colour, lifted toward `text` only as far as 4.5:1 needs against the pill's fill over every
-surface (`Palette::ink`); HEAD and stash pills stay neutral.
+leading icon. One tonal design for every ref in its commit's lane colour (`Palette::pill`): the
+`badge` surface tinted 16% with the lane colour (28% for the checked-out branch), a hairline of it
+at 45%, and a white label and glyph wherever white reads at 4.5:1 on the pill over every component
+surface; where it does not (the light themes), label and glyph are the lane colour lifted only as
+far as 4.5:1 needs (`Palette::ink`). The kind shows only in the glyph (branch, dot for the checked-out branch, cloud
+for a remote branch, tag, archive for a stash); the checked-out branch's label is semibold.
 When a local branch and its upstream point to the same commit they merge into one pill showing
 both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
 
@@ -535,17 +556,38 @@ gives picture-led cards (the settings theme cards) `SM` padding instead of `card
 
 ### Document tabs
 
-`kit::tabs::DocTabs` are the repository tabs in the title bar (spec 4.8): 30 / 24 points tall,
-100 to 220 wide, padding 10 left and 6 right, 7 between icon, name, counts and close. The active
+`kit::tabs::DocTabs` are the repository tabs in the title bar (spec 4.8): 30 / 24 points tall, at
+least 100 wide, padding 10 left and 6 right, 7 between icon, name, counts and close. The active
 tab is the `tab` fill with its 1 pt `tab_edge` ring (and `Elevation::Tab` in Deeper); the others
 are transparent until hovered (`hover`, label to `text`). A folder icon (a spinner while the
-repository works), the name ellipsised, ahead/behind `↑n ↓n` in mono `accent`, and a close button
-on hover and on the active tab; a middle click closes too, and the tooltip gives the path and the
-switching shortcut. Tabs that need more room than they have scroll sideways (the wheel scrolls
-them) and fade 16 points into the deck at an edge that hides more; the active tab scrolls into view
-when it changes. A closed tab collapses to nothing over `TAB_CLOSE` while its neighbours slide in.
-AccessKit: a `TabList` named "Repositories", a `Tab` per tab with its selected state, and the close
-button named "Close <name>".
+repository works), the name, ahead/behind `↑n ↓n` in mono `accent`, and a close button on hover
+and on the active tab; a middle click closes too.
+
+Width follows the name, in three steps as the tabs outgrow the strip:
+
+1. Room: every tab is as wide as its whole name, counts and close button need. Nothing is
+   ellipsised and no tooltip repeats a name that is fully visible.
+2. Squeeze: the longest names give up width first, all down to one shared width (shorter names and
+   the active tab untouched; the active tab keeps at most 60 % of the strip), no tab below 120
+   points. A shortened name ends in "…" and its tooltip carries it whole. A tooltip shows only when
+   it adds something: the whole name of a shortened tab, the path and switching shortcut, or the
+   running job.
+3. Scroll: when 120 points each is still too much, scrolling makes the room, so the names are whole
+   again (a very long one stops at 280). The strip then carries its controls, only while it
+   overflows, left to right: a scroll button (`CARET_LEFT`, "Scroll tabs left"), the tabs, a scroll
+   button ("Scroll tabs right") and "All repositories" (`CARET_DOWN`), a menu of every open tab with
+   its icon, the active one checked and a scrolling body when the list is long (the same menu
+   surface as every other). The scroll buttons are small icon buttons (`Size::Sm`), disabled at the
+   ends (dimmed, out of the focus order), and move the tabs 70 % of the strip with the standard
+   scroll glide (a jump with reduced motion). The wheel scrolls the strip too, vertical notches
+   included. The edge that hides tabs fades 16 points into the deck.
+
+The active tab scrolls into view, past the fade, whenever it changes (switching by click, keys or
+the list), tabs open or close, or the strip is resized; a tab that takes keyboard focus does too.
+Widths glide over `FAST_OUT` when the squeeze changes. A closed tab collapses to nothing over
+`TAB_CLOSE` while its neighbours slide in. AccessKit: a `TabList` named "Repositories", a `Tab` per
+tab with its selected state, the close button named "Close <name>", and the controls named as
+above.
 
 ### Illustrations
 
@@ -579,15 +621,46 @@ the last picture, and an author without a picture keeps initials (never a genera
 
 Overlay cards (glass with Translucent surfaces on) share a bounded bottom-right scroll stack, at
 most 408 points wide, so five errors remain reachable even in a compact zoomed window. Newest
-notices lead the stack. Titles truncate without displacing Close. Errors stay until dismissed,
-offer Close and Copy, and keep raw output in a scrollable monospace Details disclosure. Known
-failures lead with a plain explanation; any other error shows git's first line under its title,
-and Details only when git said more. Screen readers hear an error as an alert with its message. A
-rejected push offers Pull for its originating repository;
-account failures offer Accounts. Other toasts dismiss on a card click or after four seconds, which
-run only while the pointer is off the stack and the window has focus. The stack retains five
-notices, and a sixth pushes out the oldest one that is not an error; a card enters from the right and leaves to the right as it fades, and the cards above one
-that left slide into its place (`TOAST_SHIFT`, instant with reduced motion).
+notices lead the stack. Every card has one layout in every theme, padded `toast_pad` (tighter in
+Dense) and shaped like the other floating layers of the style: the kind's glyph (`icon_toast`,
+centred on the title's line), a semibold title that truncates, the body in `text_dim` at
+`meta_size` with 1.45 leading 4 points below it, and, only when the notification asks for a
+decision, a row of two buttons 10 points lower. A card has no close button: it goes on a click
+(when it asks for nothing), on its buttons or on its timer. Known failures lead with a plain
+explanation, any other error shows git's first line under its title, and git's full output is in
+the notification center (its tooltip and Copy). Screen readers hear an error as an alert with its
+message.
+
+A decision (`ui::toast::Offer`) is labelled for what it does, with a tonal Primary Sm button and a
+Ghost Sm one beside it: a rejected push offers Pull / Not now for its repository, refused
+credentials Open Accounts / Not now, a new build Review update / Later, an installed one Restart
+now / Later. Taking it closes the card and removes it from the center; declining only closes the
+card, and the center offers it until it is taken or cleared.
+
+A card lasts as long as its words take to read: two seconds to notice it plus a quarter second a
+word, within 5 to 10 seconds for information and success and 8 to 15 for an error; a decision
+stays 15 seconds, then waits in the center and counts on the bell. Design systems settle on these
+ranges (Atlassian flags 5 to 15 s, Canva 5 s up to 10, SAP Fiori 4 to 10), and as WCAG 2.2.1 asks,
+the timers run only while the pointer is off the stack, no card button has keyboard focus and the
+window has focus. The stack retains five notices; a sixth pushes out the oldest routine one, then
+the oldest error, and a pending decision last. A card enters from the right and leaves to the
+right as it fades, and the cards above one that left slide into its place (`TOAST_SHIFT`, instant
+with reduced motion).
+
+Each notification has a topic (`ui::toast::Topic`: Errors, Needs your attention, Updates,
+Finished operations, Confirmations); Settings → Appearance → Notifications chooses which show as
+cards, and by default only the first three do. Every notification, card or not, goes to the
+notification center: the bell at the right end of the status bar (`BELL`, `BELL_SLASH` while
+cards are off) opens a 360-point popover listing the last 100, newest first. Each row is laid out
+like its card (the same glyph, title, body and gaps), with its relative time at the right of the
+title (exact in the tooltip), up to four lines of text (all of it in the tooltip), and buttons
+only for what can be done: a decision's own two as Xs (tonal Primary and Ghost), and Copy (Ghost)
+on a failure, whose output is worth keeping; their labels line up with the text. Rows part by
+`SM` space and a hairline at 8% of the text colour over the surface, the same in every theme. A
+header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors,
+attention, updates) that showed no card, and decisions whose card ran out, raise a strong count
+badge on the bell, `danger` when one is an error, else `accent`; opening the center clears it,
+and while it is open new notifications go to its list instead of a card.
 
 ### Command palette
 
@@ -613,12 +686,12 @@ while their labels and shortcuts remain discoverable in tooltips and the palette
 Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, centred and no taller than
 fits between the tab strip and the status bar (`kit::overlay::modal_room`, which the settings
 screen may take too). Title, body (a `scroll_body` when it overflows), then right-aligned `Md`
-buttons as in the approved preview: secondary (outlined) then primary (the solid `button` fill,
+buttons as in the approved preview: secondary (outlined) then primary (the tonal accent button,
 the same widget everywhere, with a focus ring). Tab reaches the footer's buttons in reading order,
 left to right; a choice between two equal answers (crash reports) is two Secondary buttons with no
 Enter default and no initial focus. Destructive confirmations use a
-solid `danger` primary button (`kit::Button::danger`, its text white or black by contrast
-with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
+tonal `danger` button (`kit::Button::danger`, its label in `danger` lifted to 4.5:1) whose
+label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Cancel has the initial focus, so Enter does not confirm a destructive dialog unless the button
 has focus. A choice that is riskier than the main one (trusting a whole folder) is a quiet link in
 `warning` with a line saying what it covers, never a second full-width button. Informational
@@ -699,8 +772,8 @@ a blocking overlay opens.
 
 Update progress and completion dialogs keep their action buttons in a content-height horizontal row, immediately below the status text, rather than expanding to fill the viewport.
 
-Narrow Settings controls occupy a content-height row below their help. Notification dismiss
-controls also use bounded rows so successive frames cannot grow the notification beyond the viewport.
+Narrow Settings controls occupy a content-height row below their help. A notification's choice
+buttons also use a bounded row so successive frames cannot grow the card beyond the viewport.
 
 ### Screen readers
 

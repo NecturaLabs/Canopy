@@ -10,8 +10,9 @@ use crate::graph;
 use crate::model::{
     BranchInfo, ChangeKind, CommitDetails, CommitSummary, FileEntry, HeadInfo, RefKind, RefLabel,
     RemoteBranchInfo, RemoteInfo, RepoSnapshot, RepoState, Signature, StashInfo, StatusUnavailable,
-    TagInfo, UntrackedListing, WorkingStatus,
+    TagInfo, UntrackedListing, WorkingStatus, WorktreeInfo,
 };
+use crate::options::GitOptions;
 use crate::partial::{self, MissingObjects};
 use crate::{Error, Result, status};
 
@@ -23,6 +24,8 @@ pub const MAX_STAT_FILES: usize = 200;
 pub struct Repo {
     git: Repository,
     workdir: PathBuf,
+    /// How operations have git behave ([`Repo::set_options`]).
+    options: std::cell::Cell<GitOptions>,
 }
 
 impl std::fmt::Debug for Repo {
@@ -53,14 +56,42 @@ impl Repo {
             },
         })?;
         let workdir = git.workdir().ok_or(Error::Bare)?.to_path_buf();
-        Ok(Self { git, workdir })
+        Ok(Self {
+            git,
+            workdir,
+            options: std::cell::Cell::default(),
+        })
     }
 
-    /// Creates a new repository in `path` (creating the directory) and opens it.
-    pub fn init(path: &Path) -> Result<Self> {
+    /// Creates a new repository in `path` (creating the directory) and opens it. Its first
+    /// branch is `initial_branch`, unless `follow_config` and `init.defaultBranch` names one.
+    pub fn init(path: &Path, initial_branch: &str, follow_config: bool) -> Result<Self> {
         std::fs::create_dir_all(path)?;
-        crate::cli::run(path, &["init", "-q"])?;
+        let configured = follow_config
+            && crate::cli::run_unchecked(path, &["config", "--get", "init.defaultBranch"])
+                .is_ok_and(|o| o.code == Some(0));
+        if configured {
+            crate::cli::run(path, &["init", "-q"])?;
+        } else if crate::cli::version_number().is_some_and(|v| v >= (2, 28)) {
+            let branch = format!("--initial-branch={initial_branch}");
+            crate::cli::run(path, &["init", "-q", &branch])?;
+        } else {
+            // `--initial-branch` is git 2.28's; an older git names the unborn branch afterwards.
+            crate::cli::run(path, &["init", "-q"])?;
+            let head = format!("refs/heads/{initial_branch}");
+            crate::cli::run(path, &["symbolic-ref", "HEAD", &head])?;
+        }
         Self::open(path)
+    }
+
+    /// Sets how the operations that follow have git behave.
+    pub fn set_options(&self, options: GitOptions) {
+        self.options.set(options);
+    }
+
+    /// How operations have git behave.
+    pub fn options(&self) -> GitOptions {
+        self.options.get()
     }
 
     /// The working directory.
@@ -107,6 +138,26 @@ impl Repo {
         }
     }
 
+    /// Whether putting back the changes stashed around a pull or rebase (`--autostash`) ran into
+    /// conflicts: files are conflicted while no merge, rebase or other operation is in progress.
+    /// Git keeps those changes in the stash list as well until the stash is dropped.
+    pub fn autostash_conflicted(&self) -> Result<bool> {
+        Ok(self.state() == RepoState::Clean && self.index_conflicted()?)
+    }
+
+    /// Whether a merge or rebase (a pull's, say) stopped with conflicts to resolve.
+    pub fn stopped_on_conflicts(&self) -> Result<bool> {
+        Ok(matches!(self.state(), RepoState::Merge | RepoState::Rebase)
+            && self.index_conflicted()?)
+    }
+
+    fn index_conflicted(&self) -> Result<bool> {
+        // git, not libgit2, wrote the index: read it from disk again.
+        let mut index = self.git.index()?;
+        index.read(true)?;
+        Ok(index.has_conflicts())
+    }
+
     fn state(&self) -> RepoState {
         use git2::RepositoryState as S;
         match self.git.state() {
@@ -122,6 +173,12 @@ impl Repo {
 
     /// Local branches, the checked-out one first.
     pub fn branches(&self) -> Result<Vec<BranchInfo>> {
+        let mut elsewhere: HashMap<String, PathBuf> = self
+            .worktrees()
+            .into_iter()
+            .filter(|w| !w.current)
+            .filter_map(|w| Some((w.branch?, w.path)))
+            .collect();
         let mut out = Vec::new();
         for item in self.git.branches(Some(BranchType::Local))? {
             let (branch, _) = item?;
@@ -138,6 +195,7 @@ impl Repo {
                 _ => (0, 0),
             };
             out.push(BranchInfo {
+                worktree: elsewhere.remove(&name),
                 name,
                 target,
                 is_head: branch.is_head(),
@@ -148,6 +206,58 @@ impl Repo {
         }
         out.sort_by(|a, b| b.is_head.cmp(&a.is_head).then_with(|| a.name.cmp(&b.name)));
         Ok(out)
+    }
+
+    /// The repository's working folders: the main one first, then those `git worktree add`
+    /// made, by folder. A folder that cannot be read (moved, deleted, owned by someone else) is
+    /// left out; a bare repository has none.
+    pub fn worktrees(&self) -> Vec<WorktreeInfo> {
+        let read = |repo: &Repository, main: bool| {
+            let path = repo.workdir()?.to_path_buf();
+            let head = repo.find_reference("HEAD").ok()?;
+            let branch = head
+                .symbolic_target()
+                .ok()
+                .flatten()
+                .and_then(|t| t.strip_prefix("refs/heads/"))
+                .map(str::to_owned);
+            Some(WorktreeInfo {
+                path,
+                branch,
+                head: head.resolve().ok().and_then(|r| r.target()),
+                current: repo.path() == self.git.path(),
+                main,
+            })
+        };
+        let mut out = Vec::new();
+        let main = if self.git.is_worktree() {
+            Repository::open(self.git.commondir()).ok()
+        } else {
+            None
+        };
+        let main = if self.git.is_worktree() {
+            main.as_ref()
+        } else {
+            Some(&self.git)
+        };
+        if let Some(w) = main.and_then(|r| read(r, true)) {
+            out.push(w);
+        }
+        let mut linked = Vec::new();
+        if let Ok(names) = self.git.worktrees() {
+            for name in names.iter().flatten().flatten() {
+                if let Ok(worktree) = self.git.find_worktree(name)
+                    && worktree.validate().is_ok()
+                    && let Ok(repo) = Repository::open_from_worktree(&worktree)
+                    && let Some(w) = read(&repo, false)
+                {
+                    linked.push(w);
+                }
+            }
+        }
+        linked.sort_by(|a, b| a.path.cmp(&b.path));
+        out.extend(linked);
+        out
     }
 
     fn remote_branches(&self) -> Result<Vec<RemoteBranchInfo>> {
@@ -298,6 +408,7 @@ impl Repo {
         let remote_branches = self.remote_branches()?;
         let tags = self.tags()?;
         let stashes = self.stashes();
+        let worktrees = self.worktrees();
         let (commits, truncated) = self.commits(max_commits)?;
         let graph = graph::layout(commits.iter().map(|c| (c.oid, c.parents.as_slice())));
         // History never depends on status: a partial clone that lacks the tree of `HEAD` still
@@ -363,6 +474,7 @@ impl Repo {
             remotes: self.remotes()?,
             tags,
             stashes,
+            worktrees,
             status,
             commits,
             graph,

@@ -25,13 +25,22 @@ pub enum View {
     Requests,
 }
 
+/// A sidebar row picked by the user (or, on opening, the checked-out branch): it shows selected
+/// while History shows the commit it points at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidebarItem {
+    Branch(String),
+    RemoteBranch { remote: String, branch: String },
+    Tag(String),
+    Stash(Oid),
+    Worktree(PathBuf),
+}
+
 /// How the history list and selected commit share the content area.
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryLayout {
     pub expanded: bool,
     pub compact_details: bool,
-    /// Full commit information stays open across pane and viewport changes.
-    pub information_open: bool,
     /// The current viewport shows either the list or details at a time.
     pub compact: bool,
 }
@@ -41,7 +50,6 @@ impl Default for HistoryLayout {
         Self {
             expanded: false,
             compact_details: true,
-            information_open: true,
             compact: false,
         }
     }
@@ -248,6 +256,61 @@ pub struct Notice {
     pub body: String,
 }
 
+/// The leading verbs of operation labels (`Op::label`, `HostJob`'s): as the label says it, as a
+/// finished title says it and as a failed one does.
+const VERBS: &[(&str, &str, &str)] = &[
+    ("Force pushing", "Force pushed", "force push"),
+    ("Aborting", "Aborted", "abort"),
+    ("Adding", "Added", "add"),
+    ("Amending", "Amended", "amend"),
+    ("Applying", "Applied", "apply"),
+    ("Approving", "Approved", "approve"),
+    ("Changing", "Changed", "change"),
+    ("Checking", "Checked", "check"),
+    ("Cherry-picking", "Cherry-picked", "cherry-pick"),
+    ("Closing", "Closed", "close"),
+    ("Commenting", "Commented", "comment"),
+    ("Committing", "Committed", "commit"),
+    ("Continuing", "Continued", "continue"),
+    ("Creating", "Created", "create"),
+    ("Deleting", "Deleted", "delete"),
+    ("Discarding", "Discarded", "discard"),
+    ("Dropping", "Dropped", "drop"),
+    ("Fetching", "Fetched", "fetch"),
+    ("Merging", "Merged", "merge"),
+    ("Popping", "Popped", "pop"),
+    ("Pulling", "Pulled", "pull"),
+    ("Pushing", "Pushed", "push"),
+    ("Rebasing", "Rebased", "rebase"),
+    ("Removing", "Removed", "remove"),
+    ("Renaming", "Renamed", "rename"),
+    ("Reopening", "Reopened", "reopen"),
+    ("Resolving", "Resolved", "resolve"),
+    ("Reverting", "Reverted", "revert"),
+    ("Saving", "Saved", "save"),
+    ("Squashing", "Squashed", "squash"),
+    ("Staging", "Staged", "stage"),
+    ("Stashing", "Stashed", "stash"),
+    ("Tagging", "Tagged", "tag"),
+    ("Taking", "Took", "take"),
+    ("Unstaging", "Unstaged", "unstage"),
+];
+
+/// A finished operation's notification title from its progress label: "Creating branch x"
+/// becomes "Created branch x", or "Could not create branch x" when it failed.
+pub fn outcome_title(label: &str, ok: bool) -> String {
+    let found = VERBS.iter().find_map(|&(doing, done, verb)| {
+        let rest = label.strip_prefix(doing)?;
+        (rest.is_empty() || rest.starts_with(' ')).then_some((done, verb, rest))
+    });
+    match (found, ok) {
+        (Some((done, _, rest)), true) => format!("{done}{rest}"),
+        (Some((_, verb, rest)), false) => format!("Could not {verb}{rest}"),
+        (None, true) => format!("{label} — done"),
+        (None, false) => format!("{label} failed"),
+    }
+}
+
 /// How the last announced operation ended, for the action bar to show on its tool for a moment.
 #[derive(Debug, Clone)]
 pub struct Finished {
@@ -256,6 +319,9 @@ pub struct Finished {
     pub ok: bool,
     pub at: Instant,
 }
+
+/// How old the request list may be when its view opens before it is loaded again.
+const REQUESTS_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Pull or merge requests of the tab's forge.
 #[derive(Debug)]
@@ -279,6 +345,9 @@ pub struct Requests {
     pub token: Option<Option<TokenSource>>,
     /// When the list was last loaded.
     pub loaded_at: Option<Instant>,
+    /// The newest load was a quiet refresh (no spinner): if it fails, the list on screen stays.
+    /// Any load the user asked for clears it.
+    pub quiet_refresh: bool,
 }
 
 impl Default for Requests {
@@ -295,6 +364,7 @@ impl Default for Requests {
             merge_method: MergeMethod::Merge,
             token: None,
             loaded_at: None,
+            quiet_refresh: false,
         }
     }
 }
@@ -409,6 +479,8 @@ pub struct RepoTab {
     pub pending_diff: Option<DiffKey>,
     /// Diff context and whitespace for this repository.
     pub diff_prefs: DiffPrefs,
+    /// Every repository's diff context and whitespace (Settings), kept current by the app.
+    pub diff_default: DiffPrefs,
     /// Syntax highlighting of `diff`.
     pub highlights: Option<Arc<Highlights>>,
     /// Lines picked in the diff for line-level staging.
@@ -430,6 +502,8 @@ pub struct RepoTab {
     pub finished: Option<Finished>,
     /// How this repository pulls by Canopy's settings (kept current by the app every frame).
     pub pull: PullChoice,
+    /// The git options last sent to the worker (`None`: none yet).
+    pub git_options: Option<canopy_core::GitOptions>,
     /// What the repository's configuration asks a pull to do on the current branch; `None` until
     /// it is read, or when it cannot be.
     pub pull_config: Option<PullConfig>,
@@ -438,6 +512,8 @@ pub struct RepoTab {
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
+    /// A pull waits for the user's decision (diverged branches, or likely conflicts).
+    pub pull_decision: Option<crate::worker::PullDecision>,
     pub progress: Option<String>,
     pub commit_limit: usize,
     /// Centre the selected commit next frame.
@@ -445,6 +521,8 @@ pub struct RepoTab {
     /// Scroll just enough to show the selected commit next frame.
     pub reveal_selected: bool,
     pub collapsed: HashSet<String>,
+    /// The sidebar row last clicked ([`RepoTab::sidebar_shows`]).
+    pub sidebar_pick: Option<SidebarItem>,
     /// GitHub and GitLab remotes: (remote name, forge).
     pub forges: Vec<(String, Forge)>,
     /// The API thread for the main forge remote.
@@ -507,6 +585,7 @@ impl RepoTab {
             diff_error: None,
             pending_diff: None,
             diff_prefs,
+            diff_default: diff_prefs,
             highlights: None,
             line_sel: None,
             resolver: None,
@@ -522,15 +601,18 @@ impl RepoTab {
             running: None,
             finished: None,
             pull: PullChoice::default(),
+            git_options: None,
             pull_config: None,
             pull_config_asked: false,
             pull_config_branch: None,
             force_delete_offer: None,
+            pull_decision: None,
             progress: None,
             commit_limit,
             scroll_to_selected: false,
             reveal_selected: false,
             collapsed: HashSet::new(),
+            sidebar_pick: None,
             forges: Vec::new(),
             host: None,
             trusted_gitlab_hosts: Vec::new(),
@@ -673,8 +755,40 @@ impl RepoTab {
     /// Reloads the request list.
     pub fn load_requests(&mut self) {
         if let Some(h) = &self.host {
+            self.requests.quiet_refresh = false;
             self.requests.loading = true;
             h.send(HostJob::List(self.requests.filter));
+        }
+    }
+
+    /// Loads the request list again without a spinner, keeping the list, the selection and the
+    /// open request on screen until the new ones arrive. Does nothing without a hosting thread
+    /// (hosting off, no consent, no forge) or while the list was never loaded: a tab nobody
+    /// opened asks its forge for nothing.
+    pub fn refresh_requests_quietly(&mut self) {
+        let Some(h) = &self.host else { return };
+        if self.requests.list.is_none() {
+            return;
+        }
+        self.requests.quiet_refresh = true;
+        h.send(HostJob::List(self.requests.filter));
+        if let Some(n) = self.requests.selected
+            && self.requests.details.is_some()
+        {
+            h.send(HostJob::Details(n));
+        }
+    }
+
+    /// Refreshes the list quietly when it was loaded more than [`REQUESTS_STALE_AFTER`] ago:
+    /// the Requests view opens on a list as current as the last sync, not as old as the tab.
+    pub fn refresh_requests_if_stale(&mut self) {
+        if !self.requests.loading
+            && self
+                .requests
+                .loaded_at
+                .is_some_and(|at| at.elapsed() >= REQUESTS_STALE_AFTER)
+        {
+            self.refresh_requests_quietly();
         }
     }
 
@@ -719,6 +833,20 @@ impl RepoTab {
         self.focus_history_filter = false;
         self.filter.clear();
         ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new("history-filter")));
+    }
+
+    /// Whether the sidebar row `item`, pointing at `target`, shows selected: it is the row last
+    /// clicked and History still shows its commit (selecting another commit, or a branch moving,
+    /// lets go of it).
+    pub fn sidebar_shows(
+        &self,
+        item: impl FnOnce(&SidebarItem) -> bool,
+        target: Option<Oid>,
+    ) -> bool {
+        self.view == View::History
+            && target.is_some()
+            && self.selected_commit == target
+            && self.sidebar_pick.as_ref().is_some_and(item)
     }
 
     /// Selects a commit and loads its details.
@@ -1032,6 +1160,14 @@ impl RepoTab {
                             self.select_commit(h);
                             self.scroll_to_selected = true;
                         }
+                        // Opening shows the checked-out branch's commit: mark the branch too.
+                        if !had && self.sidebar_pick.is_none() {
+                            self.sidebar_pick = self
+                                .snap
+                                .as_ref()
+                                .and_then(|s| s.head.branch.clone())
+                                .map(SidebarItem::Branch);
+                        }
                     } else if let Some(sel) = self.selected_commit
                         && self
                             .snap
@@ -1248,6 +1384,10 @@ impl RepoTab {
                             if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
                             }
+                            // The remote moved, or Canopy moved it: its requests may have too.
+                            if kind.syncs_remote() {
+                                self.refresh_requests_quietly();
+                            }
                             if announce {
                                 self.finished = Some(Finished {
                                     label: label.clone(),
@@ -1256,7 +1396,7 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: true,
-                                    title: format!("{label} — done"),
+                                    title: outcome_title(&label, true),
                                     body: out.trim().to_owned(),
                                 });
                             }
@@ -1274,12 +1414,37 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: false,
-                                    title: format!("{label} failed"),
+                                    title: outcome_title(&label, false),
                                     body: e,
                                 });
                             }
                         },
                     }
+                }
+                Event::PullDecision(decision) => {
+                    self.running = None;
+                    self.progress = None;
+                    self.pull_decision = Some(*decision);
+                }
+                Event::Conflicted(label) => {
+                    self.running = None;
+                    self.progress = None;
+                    // The resolver lives in Changes: take the user to the conflicted files.
+                    self.view = View::Changes;
+                    notices.push(Notice {
+                        ok: false,
+                        title: format!("{label} stopped on conflicts"),
+                        body: "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.".into(),
+                    });
+                }
+                Event::AutostashConflict => {
+                    // The resolver lives in Changes: take the user to the conflicted files.
+                    self.view = View::Changes;
+                    notices.push(Notice {
+                        ok: false,
+                        title: "Your changes conflict with what came in".into(),
+                        body: "Canopy set your uncommitted changes aside for this, and putting them back conflicts with the new commits. Resolve the conflicted files in Changes. Your changes also stay in the stash list until you drop that stash.".into(),
+                    });
                 }
                 Event::Failed(e) => {
                     if self.snap.is_none() {
@@ -1309,7 +1474,15 @@ impl RepoTab {
                 }
                 HostEvent::Token(t) => self.requests.token = Some(t),
                 HostEvent::List(filter, result) => {
-                    if filter == self.requests.filter {
+                    let kept_through_failure = self.requests.quiet_refresh
+                        && result.is_err()
+                        && matches!(self.requests.list, Some(Ok(_)));
+                    if kept_through_failure && filter == self.requests.filter {
+                        // A quiet refresh failed (a network blip, a rate limit): the list on
+                        // screen is still the best there is. The next sync tries again.
+                        tracing::debug!("a quiet request refresh failed; keeping the list");
+                        self.requests.quiet_refresh = false;
+                    } else if filter == self.requests.filter {
                         self.requests.loading = false;
                         self.requests.loaded_at = Some(Instant::now());
                         let first = result
@@ -1336,7 +1509,11 @@ impl RepoTab {
                 HostEvent::Details(n, result) => {
                     if self.requests.selected == Some(n) {
                         self.requests.details_loading = false;
-                        self.requests.details = Some(result.map(Arc::new));
+                        // A quiet refresh of the open request that fails leaves it shown.
+                        let kept = result.is_err() && matches!(self.requests.details, Some(Ok(_)));
+                        if !kept {
+                            self.requests.details = Some(result.map(Arc::new));
+                        }
                     }
                 }
                 HostEvent::Created(result) => {
@@ -1373,7 +1550,7 @@ impl RepoTab {
                             }
                             notices.push(Notice {
                                 ok: true,
-                                title: format!("{label} — done"),
+                                title: outcome_title(&label, true),
                                 body: String::new(),
                             });
                             if action == HostAction::Merge {
@@ -1386,7 +1563,7 @@ impl RepoTab {
                         }
                         Err(e) => notices.push(Notice {
                             ok: false,
-                            title: format!("{label} failed"),
+                            title: outcome_title(&label, false),
                             body: e,
                         }),
                     }
@@ -1433,6 +1610,38 @@ impl RepoTab {
 mod tests {
     use super::*;
     use canopy_core::{Choice, ConflictFile};
+
+    /// A notification says what happened in the past tense, or what could not be done.
+    #[test]
+    fn a_finished_operation_is_titled_by_what_happened() {
+        let cases = [
+            ("Pulling", "Pulled", "Could not pull"),
+            (
+                "Creating branch topic",
+                "Created branch topic",
+                "Could not create branch topic",
+            ),
+            ("Force pushing", "Force pushed", "Could not force push"),
+            (
+                "Checking out main",
+                "Checked out main",
+                "Could not check out main",
+            ),
+            (
+                "Commenting on PR #12",
+                "Commented on PR #12",
+                "Could not comment on PR #12",
+            ),
+            ("Pushing", "Pushed", "Could not push"),
+            ("Hard reset", "Hard reset — done", "Hard reset failed"),
+        ];
+        for (label, done, failed) in cases {
+            assert_eq!(outcome_title(label, true), done, "{label}");
+            assert_eq!(outcome_title(label, false), failed, "{label}");
+        }
+        // A verb counts only as a whole word.
+        assert_eq!(outcome_title("Pushingly", true), "Pushingly — done");
+    }
 
     /// The unstaged change to `a.rs`, open in the diff pane.
     fn open_unstaged_file() -> FileSelection {
@@ -1595,6 +1804,35 @@ mod tests {
         tab.commit_summary = "Draft".into();
         tab.running = Some("Busy".into());
         assert!(!tab.can_commit());
+    }
+
+    /// Opening a repository marks the checked-out branch in the sidebar, as History shows its
+    /// commit; a later snapshot leaves the user's own pick alone.
+    #[test]
+    fn opening_picks_the_checked_out_branch() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let head = Oid::from_bytes(&[1; 20]).expect("oid");
+        let snap = || {
+            Arc::new(RepoSnapshot {
+                head: canopy_core::HeadInfo {
+                    branch: Some("main".into()),
+                    oid: Some(head),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+        };
+        events.send(Event::Snapshot(snap())).expect("snapshot");
+        tab.poll(&[]);
+        assert_eq!(tab.sidebar_pick, Some(SidebarItem::Branch("main".into())));
+        assert!(tab.sidebar_shows(|p| *p == SidebarItem::Branch("main".into()), Some(head)));
+
+        tab.sidebar_pick = Some(SidebarItem::Tag("v1".into()));
+        events.send(Event::Snapshot(snap())).expect("snapshot");
+        tab.poll(&[]);
+        assert_eq!(tab.sidebar_pick, Some(SidebarItem::Tag("v1".into())));
     }
 
     #[test]
@@ -2104,6 +2342,94 @@ mod tests {
         Ok(())
     }
 
+    /// A diverged pull asks how to combine the branches (the worker says so, whatever git's
+    /// wording); a pull that failed is an error, whatever its text.
+    #[test]
+    fn a_diverged_pull_asks_how_to_combine_the_branches() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let finished = |result| Event::OpFinished {
+            label: "Pulling".into(),
+            kind: OpKind::Pull,
+            announce: true,
+            result,
+        };
+        events.send(Event::PullDecision(Box::new(crate::worker::PullDecision {
+            preview: canopy_core::PullPreview::default(),
+            strategy: canopy_core::PullStrategy::FastForwardOnly,
+            diverged: true,
+            configured: false,
+        })))?;
+        let notices = tab.poll(&[]);
+        assert!(notices.is_empty(), "a choice to make, not a failure");
+        assert!(tab.pull_decision.take().is_some_and(|d| d.diverged));
+        events.send(finished(Err(
+            "fatal: Not possible to fast-forward, aborting.".into(),
+        )))?;
+        let notices = tab.poll(&[]);
+        assert!(notices.iter().any(|n| !n.ok), "git's words decide nothing");
+        assert!(tab.pull_decision.is_none());
+        events.send(finished(Err(
+            "fatal: unable to access 'https://example.com/r.git/'".into(),
+        )))?;
+        let notices = tab.poll(&[]);
+        assert!(notices.iter().any(|n| !n.ok));
+        assert!(tab.pull_decision.is_none());
+        Ok(())
+    }
+
+    /// A pull that waits for a decision stops showing as running; one that stopped on conflicts
+    /// takes the user to Changes instead of reporting a failure.
+    #[test]
+    fn a_pull_decision_or_its_conflicts_end_the_running_pull()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.running = Some("Pulling".into());
+        let decision = crate::worker::PullDecision {
+            preview: canopy_core::PullPreview::default(),
+            strategy: canopy_core::PullStrategy::Rebase,
+            diverged: false,
+            configured: false,
+        };
+        events.send(Event::PullDecision(Box::new(decision.clone())))?;
+        assert!(tab.poll(&[]).is_empty());
+        assert_eq!(tab.running, None);
+        assert_eq!(tab.pull_decision, Some(decision));
+        tab.running = Some("Pulling".into());
+        tab.view = View::History;
+        events.send(Event::Conflicted("Pulling".into()))?;
+        let notices = tab.poll(&[]);
+        assert_eq!((tab.running.as_deref(), tab.view), (None, View::Changes));
+        assert_eq!(notices.len(), 1);
+        Ok(())
+    }
+
+    /// Changes put aside for a pull that conflict when they come back are said plainly, and the
+    /// user lands in Changes, where the conflicted files and the resolver are.
+    #[test]
+    fn an_autostash_conflict_takes_the_user_to_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.view = View::History;
+        events.send(Event::AutostashConflict)?;
+        let notices = tab.poll(&[]);
+        assert_eq!(tab.view, View::Changes);
+        assert_eq!(notices.len(), 1);
+        assert!(!notices[0].ok, "it needs the user");
+        Ok(())
+    }
+
     #[test]
     fn reloading_the_conflict_file_forgets_measured_heights() {
         let mut r = Resolver::new("f".into());
@@ -2111,6 +2437,158 @@ mod tests {
         r.layout = crate::views::resolve::Layout::with_height(1, 0, 99.0);
         r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
         assert!(r.layout.is_empty());
+    }
+
+    /// A tab on a forge whose request list is on screen, with request 7 open: the channels to
+    /// feed it and read what it asks of the repository and hosting threads.
+    fn tab_showing_requests() -> (
+        RepoTab,
+        crossbeam_channel::Sender<Event>,
+        crossbeam_channel::Receiver<HostJob>,
+    ) {
+        use canopy_core::forge::ForgeKind;
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let forge = Forge {
+            kind: ForgeKind::GitHub,
+            host: "github.com".into(),
+            port: None,
+            path: "o/r".into(),
+        };
+        let (host, _host_events, host_jobs) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        tab.requests.list = Some(Ok(Arc::from(Vec::new())));
+        tab.requests.loaded_at = Some(Instant::now());
+        tab.requests.selected = Some(7);
+        tab.requests.details = Some(Err("a stand-in for the open request".into()));
+        (tab, events, host_jobs)
+    }
+
+    fn finish(
+        events: &crossbeam_channel::Sender<Event>,
+        kind: OpKind,
+        result: Result<String, String>,
+    ) {
+        let _ = events.send(Event::OpFinished {
+            label: "Syncing".into(),
+            kind,
+            announce: false,
+            result,
+        });
+    }
+
+    fn jobs_of(host_jobs: &crossbeam_channel::Receiver<HostJob>) -> Vec<HostJob> {
+        host_jobs.try_iter().collect()
+    }
+
+    #[test]
+    fn a_fetch_pull_or_push_refreshes_the_request_list_quietly() {
+        for kind in [OpKind::Fetch, OpKind::Pull, OpKind::Push] {
+            let (mut tab, events, host_jobs) = tab_showing_requests();
+            finish(&events, kind.clone(), Ok(String::new()));
+            tab.poll(&[]);
+            let jobs = jobs_of(&host_jobs);
+            assert!(
+                jobs.iter()
+                    .any(|j| matches!(j, HostJob::List(StateFilter::Open))),
+                "{kind:?} asked for the list again: {jobs:?}"
+            );
+            assert!(
+                jobs.iter().any(|j| matches!(j, HostJob::Details(7))),
+                "{kind:?} asked for the open request again: {jobs:?}"
+            );
+            assert!(!tab.requests.loading, "{kind:?} showed a spinner");
+            assert!(
+                !tab.requests.details_loading,
+                "{kind:?} blanked the details"
+            );
+            assert!(tab.requests.list.is_some(), "the list stays on screen");
+            assert!(tab.requests.details.is_some(), "the open request stays");
+            assert_eq!(tab.requests.selected, Some(7));
+        }
+    }
+
+    #[test]
+    fn a_failed_sync_or_other_operation_leaves_the_request_list_alone() {
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        finish(
+            &events,
+            OpKind::Fetch,
+            Err("fatal: unable to access".into()),
+        );
+        finish(&events, OpKind::Other, Ok(String::new()));
+        tab.poll(&[]);
+        assert!(jobs_of(&host_jobs).is_empty());
+    }
+
+    #[test]
+    fn a_sync_without_a_host_or_a_loaded_list_asks_the_forge_for_nothing() {
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        tab.requests.list = None;
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        assert!(
+            jobs_of(&host_jobs).is_empty(),
+            "a list never loaded stays unloaded until its tab is opened"
+        );
+
+        let (mut tab, events, _host_jobs) = tab_showing_requests();
+        tab.host = None;
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        assert!(tab.host.is_none() && !tab.requests.loading);
+    }
+
+    #[test]
+    fn a_quiet_refresh_that_fails_keeps_the_list_on_screen()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            return Err("no host".into());
+        };
+        let (host, host_events, _) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        drop(host_jobs);
+        host_events.send(HostEvent::List(
+            StateFilter::Open,
+            Err("could not reach github.com".into()),
+        ))?;
+        tab.poll(&[]);
+        assert!(
+            matches!(tab.requests.list, Some(Ok(_))),
+            "a network blip does not replace the list with an error page"
+        );
+        // A reload the user asked for shows its failure.
+        tab.load_requests();
+        host_events.send(HostEvent::List(
+            StateFilter::Open,
+            Err("could not reach github.com".into()),
+        ))?;
+        tab.poll(&[]);
+        assert!(matches!(tab.requests.list, Some(Err(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn opening_the_requests_view_refreshes_a_list_gone_stale() {
+        let (mut tab, _events, host_jobs) = tab_showing_requests();
+        tab.refresh_requests_if_stale();
+        assert!(jobs_of(&host_jobs).is_empty(), "a fresh list is left alone");
+        let long_ago = Instant::now()
+            .checked_sub(REQUESTS_STALE_AFTER * 2)
+            .unwrap_or_else(Instant::now);
+        tab.requests.loaded_at = Some(long_ago);
+        tab.refresh_requests_if_stale();
+        assert!(
+            jobs_of(&host_jobs)
+                .iter()
+                .any(|j| matches!(j, HostJob::List(_)))
+        );
+        assert!(!tab.requests.loading);
     }
 }
 
@@ -2184,6 +2662,7 @@ mod perf {
                     upstream: Some(format!("origin/b{i}")),
                     ahead: i % 3,
                     behind: i % 2,
+                    worktree: None,
                 })
                 .collect(),
             remote_branches: (0..5_000)

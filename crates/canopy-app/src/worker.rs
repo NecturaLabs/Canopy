@@ -2,9 +2,9 @@
 //! never calls git itself, so a slow disk, a large repository or the network cannot freeze it.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
@@ -109,10 +109,16 @@ pub enum Op {
     },
     /// Pull. The strategy is always passed to git explicitly; with `follow_config` it is only the
     /// fallback for a repository whose git configuration (`branch.<name>.rebase`, `pull.rebase`,
-    /// `pull.ff`) asks for none, and the configured one is used otherwise.
+    /// `pull.ff`) asks for none, and the configured one is used otherwise. Unless `checked`, the
+    /// upstream is fetched (pruning as `prune` says) and the pull waits for the user's decision
+    /// ([`Event::PullDecision`]) when the branches diverged under a fast-forward-only strategy or
+    /// it would likely conflict. A `checked` pull brings in the upstream as already fetched,
+    /// without asking the remote again.
     Pull {
         strategy: PullStrategy,
         follow_config: bool,
+        prune: bool,
+        checked: bool,
     },
     Push {
         force: bool,
@@ -160,6 +166,8 @@ impl Op {
             Self::Commit { .. } => OpKind::Commit,
             Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
             Self::Fetch { .. } => OpKind::Fetch,
+            Self::Pull { .. } => OpKind::Pull,
+            Self::Push { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             _ => OpKind::Other,
         }
@@ -285,6 +293,8 @@ pub enum Job {
     Conflict(String),
     /// What the configuration asks a pull to do on the current branch (`Repo::pull_config`).
     PullConfig,
+    /// How the operations that follow have git behave (Settings → Git).
+    Options(canopy_core::GitOptions),
     /// A mutation.
     Op(Op),
 }
@@ -349,6 +359,76 @@ pub enum Event {
         result: Result<String, String>,
     },
     Failed(String),
+    /// A pull or rebase finished, but putting the uncommitted changes back (autostash) left
+    /// conflicts to resolve.
+    AutostashConflict,
+    /// A pull waits for the user: the branches diverged, or it would likely conflict.
+    PullDecision(Box<PullDecision>),
+    /// The operation `label` (a pull or a rebase) stopped on conflicts for the user to resolve.
+    Conflicted(String),
+}
+
+/// What a pull asks before it runs ([`Op::Pull`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullDecision {
+    pub preview: canopy_core::PullPreview,
+    /// The strategy the pull would use.
+    pub strategy: PullStrategy,
+    /// The branches diverged and the strategy only fast-forwards: ask how to combine them.
+    pub diverged: bool,
+    /// The git configuration chose the strategy, not Canopy's setting.
+    pub configured: bool,
+}
+
+/// The strategy a pull uses: what the git configuration asks for when `follow_config` and it
+/// asks for one (then also `true`), else `strategy`.
+fn pull_strategy(repo: &Repo, strategy: PullStrategy, follow_config: bool) -> (PullStrategy, bool) {
+    if !follow_config {
+        return (strategy, false);
+    }
+    match repo.pull_config() {
+        Ok(config) => config.strategy.map_or((strategy, false), |s| (s, true)),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the pull configuration");
+            (strategy, false)
+        }
+    }
+}
+
+/// What a pull does after its preview ([`decide_pull`]).
+#[derive(Debug)]
+enum PullNext {
+    /// Ask the user first.
+    Ask(PullDecision),
+    /// The upstream is fetched: bring it in without fetching again.
+    Fetched,
+    /// No upstream to preview: `git pull` reports why.
+    Pull,
+}
+
+/// Fetches and previews a pull, and says what comes next.
+fn decide_pull(
+    repo: &Repo,
+    strategy: PullStrategy,
+    follow_config: bool,
+    prune: bool,
+    progress: impl FnMut(&str),
+) -> canopy_core::Result<PullNext> {
+    let Some(preview) = repo.pull_preview(prune, progress)? else {
+        return Ok(PullNext::Pull);
+    };
+    let (strategy, configured) = pull_strategy(repo, strategy, follow_config);
+    let diverged = preview.diverged() && strategy == PullStrategy::FastForwardOnly;
+    Ok(if diverged || preview.risky() {
+        PullNext::Ask(PullDecision {
+            preview,
+            strategy,
+            diverged,
+            configured,
+        })
+    } else {
+        PullNext::Fetched
+    })
 }
 
 /// What a finished operation means for the tab, independent of its label's wording.
@@ -360,9 +440,21 @@ pub enum OpKind {
     Squash(String),
     /// A fetch: restart the auto-fetch clock.
     Fetch,
+    /// A pull: the remote's branches moved, so the forge's requests may have too.
+    Pull,
+    /// A push: it can open, update or close a request.
+    Push,
     /// `git branch -d`: when Git refuses an unmerged branch, offer to force the delete.
     SafeDelete(String),
     Other,
+}
+
+impl OpKind {
+    /// Whether finishing this operation means the forge's pull or merge requests may have
+    /// changed (it talked to the remote).
+    pub fn syncs_remote(&self) -> bool {
+        matches!(self, Self::Fetch | Self::Pull | Self::Push)
+    }
 }
 
 /// The UI's handle on a repository thread.
@@ -372,7 +464,9 @@ pub struct Worker {
     /// Events from the thread.
     pub events: Receiver<Event>,
     /// Dropping this stops the file watcher's thread.
-    _stop_watcher: Sender<()>,
+    stop_watcher: Sender<()>,
+    /// Disconnects once the repository thread and the file watcher's have both ended.
+    ended: Receiver<()>,
 }
 
 impl Worker {
@@ -383,9 +477,14 @@ impl Worker {
         let thread_ctx = ctx.clone();
         let thread_path = path.clone();
         let failed = ev_tx.clone();
+        let (ended_tx, ended) = crossbeam_channel::bounded(0);
+        let run_ended = ended_tx.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("repo:{}", path.display()))
-            .spawn(move || run(thread_path, job_rx, ev_tx, thread_ctx));
+            .spawn(move || {
+                let _ended = run_ended;
+                run(thread_path, job_rx, ev_tx, thread_ctx);
+            });
         if let Err(e) = spawned {
             // Without a thread the tab would wait for its first snapshot forever: show why.
             tracing::error!("could not start the repository thread: {e}");
@@ -395,11 +494,12 @@ impl Worker {
             ctx.request_repaint();
         }
         let (stop_watcher, stop) = crossbeam_channel::bounded(0);
-        watch(path, jobs.clone(), stop);
+        watch(path, jobs.clone(), stop, ended_tx);
         Self {
             jobs,
             events,
-            _stop_watcher: stop_watcher,
+            stop_watcher,
+            ended,
         }
     }
 
@@ -409,10 +509,12 @@ impl Worker {
         let (jobs, job_rx) = unbounded();
         let (ev_tx, events) = unbounded();
         let (stop_watcher, _) = crossbeam_channel::bounded(0);
+        let (_, ended) = crossbeam_channel::bounded(0);
         let worker = Self {
             jobs,
             events,
-            _stop_watcher: stop_watcher,
+            stop_watcher,
+            ended,
         };
         (worker, ev_tx, job_rx)
     }
@@ -420,6 +522,44 @@ impl Worker {
     /// Queues a job.
     pub fn send(&self, job: Job) {
         let _ = self.jobs.send(job);
+    }
+}
+
+/// The threads of dropped workers that may still be running ([`wait_for_threads`]).
+static ENDING: Mutex<Vec<Receiver<()>>> = Mutex::new(Vec::new());
+
+impl Drop for Worker {
+    /// Stops both threads without waiting for them (closing a tab never stalls the UI); the
+    /// process waits for them before it exits ([`wait_for_threads`]). A test binary, which has no
+    /// such moment, waits here.
+    fn drop(&mut self) {
+        // Dropping the senders ends the threads: the watcher's loop, then the repository
+        // thread's once the watcher's copy of the jobs sender has gone too.
+        drop(std::mem::replace(
+            &mut self.stop_watcher,
+            crossbeam_channel::bounded(0).0,
+        ));
+        drop(std::mem::replace(&mut self.jobs, unbounded().0));
+        let ended = std::mem::replace(&mut self.ended, crossbeam_channel::bounded(0).1);
+        if cfg!(test) {
+            let _ = ended.recv_timeout(Duration::from_secs(1));
+        } else {
+            ENDING
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(ended);
+        }
+    }
+}
+
+/// Waits, up to `within` in all (a running operation may take longer), for the threads of
+/// dropped workers to end, so a process exiting right after does not tear libgit2 and OpenSSL
+/// down while one of them is still using them.
+pub fn wait_for_threads(within: Duration) {
+    let deadline = Instant::now() + within;
+    let ending = std::mem::take(&mut *ENDING.lock().unwrap_or_else(PoisonError::into_inner));
+    for ended in ending {
+        let _ = ended.recv_deadline(deadline);
     }
 }
 
@@ -436,6 +576,7 @@ impl Job {
             Self::SquashMessage(_) => "squash-message",
             Self::Conflict(_) => "conflict",
             Self::PullConfig => "pull-config",
+            Self::Options(_) => "options",
             Self::Op(_) => "operation",
         }
     }
@@ -460,6 +601,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     // The last diff sent. A refresh that finds the same content sends the same `Arc` again, so
     // the view keeps its layout and highlighting instead of rebuilding them on the UI thread.
     let mut last_diff: Option<(DiffKey, Arc<FileDiff>)> = None;
+    // The repository is opened again for every batch; the options outlive it.
+    let mut options = canopy_core::GitOptions::default();
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -483,6 +626,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 continue;
             }
         };
+        repo.set_options(options);
 
         // Whether a partial clone may download on its own here; asked only when one needs to.
         let allowed = || trusted_now(&repo);
@@ -490,7 +634,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         let mut mutated = false;
         for job in rest {
             let kind = job.kind();
-            let started = std::time::Instant::now();
+            let started = Instant::now();
             match job {
                 Job::Details(oid) => {
                     // The file list needs no file contents, so it is shown first, offline. A
@@ -622,6 +766,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         body.trim()
                     )));
                 }
+                Job::Options(o) => {
+                    options = o;
+                    repo.set_options(o);
+                }
                 Job::PullConfig => {
                     emit(Event::PullConfig(
                         repo.pull_config().map_err(|e| e.to_string()),
@@ -635,14 +783,56 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         .map_err(|e| e.to_string());
                     emit(Event::Conflict { path, kind, file });
                 }
-                Job::Op(op) => {
+                Job::Op(mut op) => {
                     let label = op.label();
                     let kind = op.kind();
                     let announce = op.announce();
+                    // A pull or a rebase: it can autostash, and stopping on conflicts is not a
+                    // failure.
+                    let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_));
+                    let pull = match op {
+                        Op::Pull {
+                            strategy,
+                            follow_config,
+                            ..
+                        } => Some((strategy, follow_config)),
+                        _ => None,
+                    };
                     tracing::info!(operation = %label, "operation started");
                     emit(Event::OpStarted(label.clone()));
                     let progress = |line: &str| emit(Event::Progress(line.to_owned()));
-                    let result = perform(&repo, op, progress).map_err(|e| e.to_string());
+                    let decided = match &op {
+                        Op::Pull {
+                            strategy,
+                            follow_config,
+                            prune,
+                            checked: false,
+                        } => Some(decide_pull(
+                            &repo,
+                            *strategy,
+                            *follow_config,
+                            *prune,
+                            progress,
+                        )),
+                        _ => None,
+                    };
+                    let fetch_failed = matches!(decided, Some(Err(_)));
+                    let result = match decided {
+                        Some(Ok(PullNext::Ask(decision))) => {
+                            tracing::info!(operation = %label, "waiting for the user's decision");
+                            emit(Event::PullDecision(Box::new(decision)));
+                            mutated = true;
+                            continue;
+                        }
+                        Some(Err(e)) => Err(e.to_string()),
+                        Some(Ok(next)) => {
+                            if let (PullNext::Fetched, Op::Pull { checked, .. }) = (next, &mut op) {
+                                *checked = true;
+                            }
+                            perform(&repo, op, progress).map_err(|e| e.to_string())
+                        }
+                        None => perform(&repo, op, progress).map_err(|e| e.to_string()),
+                    };
                     let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     match &result {
                         Ok(_) => tracing::info!(operation = %label, ms, "operation succeeded"),
@@ -650,12 +840,52 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed");
                         }
                     }
-                    emit(Event::OpFinished {
-                        label,
-                        kind,
-                        announce,
-                        result,
-                    });
+                    let stash_conflict = integrates
+                        && result.is_ok()
+                        && repo.autostash_conflicted().unwrap_or_else(|e| {
+                            tracing::warn!(error = %redacted(&e), "conflicts not checked");
+                            false
+                        });
+                    let stopped = integrates
+                        && result.is_err()
+                        && repo.stopped_on_conflicts().unwrap_or(false);
+                    // Only a fast-forward was allowed and the branches diverged after all: a
+                    // choice to make, not a failure (a pull checked beforehand asks first). A
+                    // failed fetch brought nothing to combine: its error is the answer.
+                    let refused = pull
+                        .filter(|_| result.is_err() && !fetch_failed)
+                        .map(|(strategy, follow)| pull_strategy(&repo, strategy, follow))
+                        .filter(|&(strategy, _)| strategy == PullStrategy::FastForwardOnly)
+                        .and_then(|(_, configured)| {
+                            repo.compare_upstream()
+                                .ok()
+                                .flatten()
+                                .filter(canopy_core::PullPreview::diverged)
+                                .map(|preview| (preview, configured))
+                        });
+                    if let Some((preview, configured)) = refused {
+                        tracing::info!(operation = %label, "the branches diverged: asking how to combine them");
+                        emit(Event::PullDecision(Box::new(PullDecision {
+                            preview,
+                            strategy: PullStrategy::FastForwardOnly,
+                            diverged: true,
+                            configured,
+                        })));
+                    } else if stopped {
+                        // Not a failure: the conflicts are the user's to resolve.
+                        emit(Event::Conflicted(label));
+                    } else {
+                        emit(Event::OpFinished {
+                            label,
+                            kind,
+                            announce,
+                            result,
+                        });
+                    }
+                    if stash_conflict {
+                        tracing::info!("putting the autostashed changes back left conflicts");
+                        emit(Event::AutostashConflict);
+                    }
                     mutated = true;
                 }
                 Job::Refresh(_) | Job::RefreshStatus => {}
@@ -671,7 +901,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             limit = n;
         }
         if want_full.is_some() || mutated {
-            let started = std::time::Instant::now();
+            let started = Instant::now();
             match snapshot_completing(&repo, limit, &emit, &allowed) {
                 Ok(s) => {
                     tracing::debug!(
@@ -933,12 +1163,18 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
         Op::Fetch { prune, .. } => repo.fetch(None, prune, progress),
         Op::Pull {
             strategy,
-            follow_config: true,
-        } => repo.pull_default(strategy, progress),
-        Op::Pull {
-            strategy,
-            follow_config: false,
-        } => repo.pull(strategy, progress),
+            follow_config,
+            checked,
+            ..
+        } => {
+            let (strategy, _) = pull_strategy(repo, strategy, follow_config);
+            if checked {
+                // The preview fetched; what the user saw is what comes in.
+                repo.pull_fetched(strategy, progress)
+            } else {
+                repo.pull(strategy, progress)
+            }
+        }
         Op::Push { force } => repo.push(force, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
@@ -975,12 +1211,13 @@ fn relevant_git_path(rel: &Path) -> bool {
 /// full refresh, other changes a status refresh, both debounced; ignored files are skipped.
 /// Symbolic links are not followed. A linked worktree's or submodule's git folder (and the
 /// common folder it shares) lives outside the working tree, so it gets watches of its own. The
-/// thread ends when `stop`'s sender (held by [`Worker`]) is dropped.
-fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>) {
+/// thread ends when `stop`'s sender (held by [`Worker`]) is dropped, and drops `ended` then.
+fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>, ended: Sender<()>) {
     let spawned = std::thread::Builder::new()
         .name("watcher".into())
         .spawn(move || {
             use notify::{Config, RecursiveMode, Watcher};
+            let _ended = ended;
             let repo = match git2::Repository::open(&path) {
                 Ok(r) => r,
                 Err(e) => {
@@ -1042,9 +1279,23 @@ fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>) {
                     }
                 };
                 classify(first);
-                // Debounce: wait for a quiet period.
-                while let Ok(e) = rx.recv_timeout(Duration::from_millis(350)) {
-                    classify(e);
+                // Debounce: wait for a quiet period, unless told to stop.
+                let mut stopped = false;
+                loop {
+                    crossbeam_channel::select! {
+                        recv(rx) -> e => match e {
+                            Ok(e) => classify(e),
+                            Err(_) => break,
+                        },
+                        recv(stop) -> _ => {
+                            stopped = true;
+                            break;
+                        },
+                        default(Duration::from_millis(350)) => break,
+                    }
+                }
+                if stopped {
+                    break;
                 }
                 if full {
                     if jobs.send(Job::Refresh(0)).is_err() {
@@ -1118,7 +1369,8 @@ mod tests {
 
         let (tx, rx) = crossbeam_channel::unbounded();
         let (_stop, stop) = crossbeam_channel::bounded::<()>(0);
-        watch(linked.clone(), tx, stop);
+        let (ended, _ended) = crossbeam_channel::bounded::<()>(0);
+        watch(linked.clone(), tx, stop, ended);
         // Registering the watches happens on the watcher's thread; give it a moment.
         std::thread::sleep(Duration::from_millis(500));
         // A commit in the linked worktree changes its HEAD's branch, whose ref lives in the
@@ -1276,6 +1528,54 @@ mod read_tests {
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     }
 
+    /// A pull asks first when only a fast-forward is allowed and the branches diverged, or when
+    /// it would conflict; a clean one runs without asking.
+    #[test]
+    fn a_pull_asks_before_it_diverges_or_conflicts() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let up = root.path().join("up");
+        std::fs::create_dir(&up).expect("up");
+        git(&up, &["init", "-q", "-b", "main"]);
+        std::fs::write(up.join("a.txt"), "base\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "base"]);
+        let copy = root.path().join("copy");
+        git(root.path(), &["clone", "-q", "up", "copy"]);
+        std::fs::write(up.join("up.txt"), "upstream\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "upstream"]);
+        std::fs::write(copy.join("local.txt"), "local\n").expect("write");
+        git(&copy, &["add", "."]);
+        git(&copy, &["commit", "-q", "-m", "local"]);
+        let repo = Repo::open(&copy).expect("open");
+        let decide =
+            |strategy| decide_pull(&repo, strategy, false, false, |_| {}).expect("checked");
+        let asks = |next: PullNext| match next {
+            PullNext::Ask(d) => d,
+            other => panic!("no question: {other:?}"),
+        };
+        let d = asks(decide(PullStrategy::FastForwardOnly));
+        assert!(d.diverged && !d.preview.risky(), "{d:?}");
+        assert!(
+            matches!(decide(PullStrategy::Rebase), PullNext::Fetched),
+            "clean: no question, and nothing left to fetch"
+        );
+        // Both sides change the same line now.
+        std::fs::write(up.join("a.txt"), "theirs\n").expect("write");
+        git(&up, &["commit", "-q", "-am", "theirs"]);
+        std::fs::write(copy.join("a.txt"), "ours\n").expect("write");
+        git(&copy, &["commit", "-q", "-am", "ours"]);
+        let d = asks(decide(PullStrategy::Rebase));
+        assert!(!d.diverged, "a rebase knows how to combine them");
+        assert_eq!(d.preview.conflicts, Some(vec!["a.txt".to_owned()]));
+        assert_eq!(d.strategy, PullStrategy::Rebase);
+        // Without an upstream there is nothing to preview: `git pull` says why.
+        git(&copy, &["branch", "--unset-upstream"]);
+        assert!(matches!(decide(PullStrategy::Rebase), PullNext::Pull));
+    }
+
     /// A source repository with three commits, and a partial clone of it made with `filter`.
     /// Returns the root, the source, the clone and the oldest and middle commits.
     fn partial_clone(filter: &str) -> (tempfile::TempDir, PathBuf, PathBuf, Oid, Oid) {
@@ -1355,6 +1655,234 @@ mod read_tests {
         made
     }
 
+    /// A clone whose `main` and fetched `origin/main` diverged by one commit each, in `root`.
+    fn diverged_clone(root: &Path) -> PathBuf {
+        std::fs::create_dir_all(root.join("home")).expect("home");
+        std::fs::write(root.join("home").join("gitconfig"), "").expect("config");
+        let up = root.join("up");
+        std::fs::create_dir(&up).expect("up");
+        git(&up, &["init", "-q", "-b", "main"]);
+        std::fs::write(up.join("a.txt"), "base\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "base"]);
+        let copy = root.join("copy");
+        git(root, &["clone", "-q", "up", "copy"]);
+        std::fs::write(up.join("up.txt"), "upstream\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "upstream"]);
+        std::fs::write(copy.join("local.txt"), "local\n").expect("write");
+        git(&copy, &["add", "."]);
+        git(&copy, &["commit", "-q", "-m", "local"]);
+        git(&copy, &["fetch", "-q"]);
+        copy
+    }
+
+    /// A worker on `repo` making Canopy's own git choices, whatever the developer's git
+    /// configuration sets.
+    fn worker_with_canopys_choices(repo: PathBuf) -> Worker {
+        let worker = Worker::spawn(repo, &egui::Context::default());
+        worker.send(Job::Options(canopy_core::GitOptions {
+            follow_config: false,
+            ..canopy_core::GitOptions::default()
+        }));
+        worker
+    }
+
+    /// Runs the calling test again in a child process whose git sees no global or system
+    /// configuration, so the developer's own settings (`pull.rebase`, for one) cannot decide the
+    /// result. True in the child, where the test body runs; false in the parent once the child
+    /// has passed.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test runs itself again in a child process"
+    )]
+    fn in_isolated_git_env(test: &str) -> bool {
+        if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
+            return true;
+        }
+        let home = tempfile::tempdir().expect("tempdir");
+        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([test, "--exact", "--test-threads=1"])
+            .env("CANOPY_TEST_ISOLATED_GIT", "1")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"))
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .output()
+            .expect("test binary runs");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("1 passed"),
+            "{test} in an isolated git environment:\n{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        false
+    }
+
+    /// A divergence says whether the git configuration asked for fast-forwards only, so the
+    /// prompt offers to remember an answer for every repository only when Canopy's setting did.
+    #[test]
+    fn a_divergence_says_who_asked_for_fast_forwards_only() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_divergence_says_who_asked_for_fast_forwards_only",
+        ) {
+            return;
+        }
+        for (configured, follow, expected) in [
+            (false, true, false),
+            (true, true, true),
+            (true, false, false),
+        ] {
+            let root = tempfile::tempdir().expect("tempdir");
+            let copy = diverged_clone(root.path());
+            if configured {
+                git(&copy, &["config", "pull.ff", "only"]);
+            }
+            let worker = worker_with_canopys_choices(copy);
+            worker.send(Job::Op(Op::Pull {
+                strategy: PullStrategy::FastForwardOnly,
+                follow_config: follow,
+                prune: false,
+                checked: false,
+            }));
+            let events = events_until(&worker, |e| {
+                matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+            });
+            let Some(Event::PullDecision(d)) = events.last() else {
+                panic!("{events:?}");
+            };
+            assert!(d.diverged);
+            assert_eq!(
+                d.configured, expected,
+                "configured {configured}, follow {follow}"
+            );
+        }
+    }
+
+    /// Dropping a worker ends its repository thread and its file watcher's: nothing of it is
+    /// left running when the process exits.
+    #[test]
+    fn dropping_a_worker_ends_its_threads() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let worker = worker_with_canopys_choices(diverged_clone(root.path()));
+        let ended = worker.ended.clone();
+        drop(worker);
+        assert_eq!(
+            ended.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        );
+    }
+
+    /// The app's exit waits for the threads of the workers dropped before it, within one bound.
+    #[test]
+    fn exiting_waits_for_the_threads_of_dropped_workers() {
+        let (ended_tx, ended) = crossbeam_channel::bounded::<()>(0);
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(ended_tx);
+        });
+        ENDING.lock().expect("lock").push(ended);
+        let started = Instant::now();
+        wait_for_threads(Duration::from_secs(5));
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(200) && waited < Duration::from_secs(5),
+            "waited {waited:?}"
+        );
+        thread.join().expect("thread");
+    }
+
+    /// When the pull's fetch fails, git's error is the answer, even where the branches as last
+    /// fetched diverged: there is nothing new to combine.
+    #[test]
+    fn a_pull_whose_fetch_fails_reports_git_error() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let gone = root.path().join("gone");
+        git(
+            &copy,
+            &["remote", "set-url", "origin", &gone.to_string_lossy()],
+        );
+        let worker = worker_with_canopys_choices(copy);
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::FastForwardOnly,
+            follow_config: false,
+            prune: false,
+            checked: false,
+        }));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+        });
+        let Some(Event::OpFinished {
+            result: Err(error), ..
+        }) = events.last()
+        else {
+            panic!("{events:?}");
+        };
+        assert!(error.contains("gone"), "git's own message: {error}");
+    }
+
+    /// A fast-forward-only pull that git refuses because the branches diverged after the check
+    /// (they moved in between, as a Pull anyway can meet) still asks how to combine them,
+    /// whatever language git speaks.
+    #[test]
+    fn a_refused_fast_forward_asks_how_to_combine_the_branches() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let worker = worker_with_canopys_choices(copy);
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::FastForwardOnly,
+            follow_config: false,
+            prune: false,
+            checked: true,
+        }));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+        });
+        let Some(Event::PullDecision(d)) = events.last() else {
+            panic!("{events:?}");
+        };
+        assert!(d.diverged, "{d:?}");
+        assert_eq!((d.preview.ahead, d.preview.behind), (1, 1));
+    }
+
+    /// A rebase that stops on conflicts is not a failure: like a pull, it says so and the tab
+    /// takes the user to the conflicted files.
+    #[test]
+    fn a_rebase_that_stops_on_conflicts_is_reported_as_stopped() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let repo = root.path().join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["switch", "-q", "-c", "other"]);
+        std::fs::write(repo.join("a.txt"), "theirs\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "theirs"]);
+        git(&repo, &["switch", "-q", "main"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "ours"]);
+        let worker = worker_with_canopys_choices(repo);
+        worker.send(Job::Op(Op::Rebase("other".into())));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
+        });
+        assert!(
+            matches!(events.last(), Some(Event::Conflicted(_))),
+            "{events:?}"
+        );
+    }
+
     /// PS-F1: the Pull menu's default comes from the repository thread, never the UI thread.
     #[test]
     fn the_worker_reads_what_the_configuration_asks_a_pull_to_do() {
@@ -1363,7 +1891,7 @@ mod read_tests {
         // change the answer.
         git(&copy, &["config", "pull.ff", "true"]);
         git(&copy, &["config", "branch.main.rebase", "true"]);
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
         worker.send(Job::PullConfig);
         let events = events_until(&worker, |e| matches!(e, Event::PullConfig(_)));
         let Some(Event::PullConfig(Ok(config))) = events.last() else {
@@ -1380,7 +1908,7 @@ mod read_tests {
     fn an_untrusted_partial_clone_downloads_nothing_and_says_why() {
         // Blobless: the file list is offline, the line counts would need a download.
         let (_root, _src, copy, _oldest, middle) = partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
         worker.send(Job::Details(middle));
         let events = events_until(&worker, |e| matches!(e, Event::DownloadsRefused { .. }));
         assert!(
@@ -1397,7 +1925,7 @@ mod read_tests {
 
         // Treeless: even the file list needs a download, so the read fails and explains.
         let (_root, _src, copy, oldest, _) = partial_clone("--filter=tree:0");
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
         worker.send(Job::Details(oldest));
         let events = events_until(&worker, |e| matches!(e, Event::DetailsFailed { .. }));
         let Some(Event::DetailsFailed {
@@ -1425,7 +1953,7 @@ mod read_tests {
     #[test]
     fn details_in_a_blobless_clone_show_the_file_list_first_and_the_counts_after_downloading() {
         let (_root, _src, copy, _oldest, middle) = trusted_partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
 
         // The blobs of this commit are not local: the list comes first, offline, and the line
         // counts follow once downloaded, with a progress line around the download.
@@ -1458,7 +1986,7 @@ mod read_tests {
     #[test]
     fn a_failed_download_of_details_is_reported_with_its_oid_and_can_be_retried() {
         let (root, src, copy, oldest, _) = trusted_partial_clone("--filter=tree:0");
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
         let moved = root.path().join("src-moved");
         std::fs::rename(&src, &moved).expect("hide the remote");
 
@@ -1489,7 +2017,7 @@ mod read_tests {
     fn a_refusal_names_the_version_of_the_trusted_list_that_made_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let repo = Repo::init(dir.path())?;
+        let repo = Repo::init(dir.path(), "main", false)?;
         let before = crate::trust::changes();
         assert!(!trusted_now(&repo), "nothing is trusted here");
         let after = crate::trust::changes();

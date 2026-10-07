@@ -30,6 +30,12 @@ pub enum AppearanceChoice {
 #[derive(Debug, Clone)]
 pub enum Action {
     Op(Op),
+    /// `op` in the repository at `repo`, whichever tab is active (a confirmation answered after
+    /// the user moved to another tab); nothing when that repository's tab is closed.
+    OpIn {
+        repo: PathBuf,
+        op: Op,
+    },
     Confirm {
         title: String,
         body: String,
@@ -53,9 +59,18 @@ pub enum Action {
     LoadMore,
     Fetch,
     Pull,
-    /// Read again what the active repository's configuration asks a pull to do (the toolbar's
-    /// Pull menu opened).
-    ReadPullConfig,
+    /// Pull the repository at `repo` with `mode`, chosen when a fast-forward was not possible;
+    /// `remember` keeps it as the pull strategy of that repository or of every repository.
+    PullAs {
+        repo: PathBuf,
+        mode: crate::settings::PullMode,
+        remember: Remember,
+    },
+    /// Pull the repository at `repo` with `strategy` although it will likely conflict.
+    PullAnyway {
+        repo: PathBuf,
+        strategy: canopy_core::ops::PullStrategy,
+    },
     Push,
     Commit,
     PrefillAmend,
@@ -68,6 +83,8 @@ pub enum Action {
     Settings,
     /// Settings, opened on one section.
     SettingsAt(Section),
+    /// Settings, opened on one section scrolled to the group with this heading.
+    SettingsGroup(Section, &'static str),
     /// Settings → This repository for the open repository at this path (made the active tab).
     RepositorySettings(PathBuf),
     /// A repository's own diff options (`None`: follow the defaults in Settings again).
@@ -126,6 +143,8 @@ pub enum Action {
     CheckoutRequest(RequestSummary),
     /// Repository diff options changed: re-render the open diff.
     DiffPrefsChanged,
+    /// Make the active repository's diff context and whitespace every repository's default.
+    DiffPrefsForEveryRepository,
     /// The user saw the first-run tips.
     DismissIntro,
     /// Open the folder with Canopy's logs and crash reports.
@@ -140,4 +159,14 @@ pub enum Action {
     SetCrashReports(bool),
     /// Close Canopy.
     Quit,
+}
+
+/// How far a choice made in a prompt reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Remember {
+    /// Ask again next time.
+    #[default]
+    No,
+    Repository,
+    Everywhere,
 }

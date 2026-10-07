@@ -48,8 +48,6 @@ pub(super) const TONE_ALPHA: u8 = 41;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
 pub const CONTROL_INSET: f32 = 2.0;
-/// Tallest raw-output viewport of a notification card.
-pub const TOAST_DETAILS_HEIGHT: f32 = 140.0;
 
 /// Two ends of a vertical fill, top first. Standard surfaces are flat (`top == bottom`) and paint
 /// as one rect; Deeper's are painted with `kit::paint::fill` (a ramp texture brush).
@@ -1645,6 +1643,42 @@ impl Palette {
         ]
     }
 
+    /// A tonal control in colour `c` (the accent for a primary button, `danger` for a destructive
+    /// one): the raised control ground tinted with `c`, more on hover and press, a hairline of
+    /// `c` and the label in `c` lifted to 4.5:1 on it. Returns fill, ring and label.
+    pub fn tonal(&self, c: Color32, hover: f32, press: f32) -> (Fill, Color32, Color32) {
+        let s = self.s();
+        let t =
+            TONAL_REST + (TONAL_HOVER - TONAL_REST) * hover + (TONAL_PRESSED - TONAL_HOVER) * press;
+        let fill = Fill {
+            top: mix(s.raised.top, c, t),
+            bottom: mix(s.raised.bottom, c, t),
+        };
+        let ring = mix(s.raised_edge, c, TONAL_RING);
+        let label = self.ink(self.ink(c, fill.top), fill.bottom);
+        (fill, ring, label)
+    }
+
+    /// A ref pill in colour `c` (its lane's): the badge surface tinted with `c` (more for the
+    /// checked-out branch, `strong`) and a hairline of `c`, the tonal look of [`Palette::tonal`]
+    /// at rest. The label is white where white reads at 4.5:1 on the pill over every component
+    /// surface, and otherwise `c` lifted that far ([`Palette::ink`]). Returns fill, ring and label.
+    pub fn pill(&self, c: Color32, strong: bool) -> (Color32, Color32, Color32) {
+        let s = self.s();
+        let fill = mix(s.badge, c, if strong { TONAL_PRESSED } else { TONAL_REST });
+        let ring = mix(s.badge, c, TONAL_RING);
+        let white_reads = self
+            .component_surfaces(s)
+            .iter()
+            .all(|b| contrast(Color32::WHITE, over(fill, *b)) >= 4.5);
+        let label = if white_reads {
+            Color32::WHITE
+        } else {
+            self.ink(c, fill)
+        };
+        (fill, ring, label)
+    }
+
     /// Text or an icon in colour `fg` drawn on the translucent `fill` in the active style: `fg`
     /// moved towards the text colour just enough to read at 4.5:1 on that fill over every
     /// component surface, so it keeps its hue wherever the component is drawn.
@@ -1667,16 +1701,6 @@ impl Palette {
             .map(|step| mix(fg, self.text, crate::ui::int_f32(step) / 20.0))
             .find(|c| readable(*c))
             .unwrap_or(self.text)
-    }
-
-    /// Fill of a ref pill in colour `c` (24%); the current branch is stronger (34%).
-    pub const fn pill_fill(c: Color32, current: bool) -> Color32 {
-        Self::tint(c, if current { 87 } else { 61 })
-    }
-
-    /// The ring of a ref pill (60%), the same for the current branch.
-    pub const fn pill_border(c: Color32) -> Color32 {
-        Self::tint(c, 153)
     }
 
     /// Fill of an initials avatar in colour `c` (24%).
@@ -1793,6 +1817,13 @@ pub fn over(fg: Color32, bg: Color32) -> Color32 {
         mix(fg.b(), bg.b()),
     )
 }
+
+/// How much of its colour a tonal control's ground takes at rest, hovered and pressed, and its
+/// ring ([`Palette::tonal`]).
+const TONAL_REST: f32 = 0.16;
+const TONAL_HOVER: f32 = 0.22;
+const TONAL_PRESSED: f32 = 0.28;
+const TONAL_RING: f32 = 0.45;
 
 /// `a` moved towards `b` by `t` (0 to 1).
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -2852,6 +2883,8 @@ pub const DENSE: Metrics = Metrics {
     keycap_radius: 4,
     status_dot: 6.0,
     segment_pad: 9.0,
+    icon_toast: 15.0,
+    toast_pad: margin(8, 6, 8, 9),
     toast_width: 360.0,
     dialog_width_form: 500.0,
     dialog_width_wide: 680.0,
@@ -3523,7 +3556,7 @@ mod tests {
             green.palette,
         ];
         let base = ThemeId::Midnight.palette();
-        let (fg, fill) = (base.lane(3), Palette::pill_fill(base.text_faint, true));
+        let (fg, fill) = (base.lane(3), Palette::tint(base.text_faint, 87));
         let fresh: Vec<Color32> = palettes
             .iter()
             .map(|p| p.ink_on(p.surfaces(style()), fg, fill))
@@ -4050,8 +4083,7 @@ mod tests {
                 ]);
                 for c in colours {
                     let mut fills = vec![
-                        Palette::pill_fill(c, false),
-                        Palette::pill_fill(c, true),
+                        s.badge,
                         Palette::avatar_fill(c),
                         Palette::badge_fill(c),
                         Palette::change_fill(c),

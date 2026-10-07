@@ -1,6 +1,7 @@
 //! Applying the actions a frame collected.
 
 use super::*;
+use crate::action::Remember;
 use crate::system_apps::Kind;
 
 impl CanopyApp {
@@ -12,19 +13,29 @@ impl CanopyApp {
                         t.op(op);
                     }
                 }
+                Action::OpIn { repo, op } => {
+                    if let Some(t) = self.tab_at(&repo) {
+                        t.op(op);
+                    }
+                }
                 Action::Confirm {
                     title,
                     body,
                     confirm,
                     danger,
                     op,
-                } => self.dialogs.open(Dialog::Confirm {
-                    title,
-                    body,
-                    confirm,
-                    danger,
-                    op,
-                }),
+                } => {
+                    if let Some(repo) = self.tab().map(|t| t.path.clone()) {
+                        self.dialogs.open(Dialog::Confirm {
+                            title,
+                            body,
+                            confirm,
+                            danger,
+                            repo,
+                            op,
+                        });
+                    }
+                }
                 Action::OpenDialog(mut d) => {
                     self.folder_picker.cancel();
                     if let Dialog::Open { recent, .. } = &mut d {
@@ -67,8 +78,12 @@ impl CanopyApp {
                                 t.select_commit(oid);
                                 t.reveal_selected = true;
                             }
-                            if v == View::Requests && t.requests.list.is_none() {
-                                t.load_requests();
+                            if v == View::Requests {
+                                if t.requests.list.is_none() {
+                                    t.load_requests();
+                                } else {
+                                    t.refresh_requests_if_stale();
+                                }
                             }
                         }
                     }
@@ -114,12 +129,51 @@ impl CanopyApp {
                         t.op(Op::Pull {
                             strategy: choice.mode.strategy(),
                             follow_config: choice.follow_config,
+                            prune: settings.prune_for(&t.path),
+                            checked: false,
                         });
                     }
                 }
-                Action::ReadPullConfig => {
-                    if let Some(t) = self.tabs.get(self.active) {
-                        t.worker.send(Job::PullConfig);
+                Action::PullAs {
+                    repo,
+                    mode,
+                    remember,
+                } => {
+                    if let Some(t) = self.tabs.iter_mut().find(|t| t.path == repo) {
+                        match remember {
+                            Remember::No => {}
+                            Remember::Repository => {
+                                let own = self.settings.repo_mut(&t.path);
+                                own.pull_mode = Some(mode);
+                                // Chosen for this repository: its git configuration no longer
+                                // decides.
+                                own.pull_follow_config = Some(false);
+                            }
+                            Remember::Everywhere => {
+                                // Offered only where Canopy's own setting, not the git
+                                // configuration, asked for fast-forwards only.
+                                self.settings.pull_mode = mode;
+                                let own = self.settings.repo_mut(&t.path);
+                                own.pull_mode = None;
+                                own.pull_follow_config = None;
+                            }
+                        }
+                        t.op(Op::Pull {
+                            strategy: mode.strategy(),
+                            follow_config: false,
+                            prune: self.settings.prune_for(&t.path),
+                            checked: true,
+                        });
+                    }
+                }
+                Action::PullAnyway { repo, strategy } => {
+                    if let Some(t) = self.tabs.iter().find(|t| t.path == repo) {
+                        t.op(Op::Pull {
+                            strategy,
+                            follow_config: false,
+                            prune: self.settings.prune_for(&t.path),
+                            checked: true,
+                        });
                     }
                 }
                 Action::Push => {
@@ -143,6 +197,7 @@ impl CanopyApp {
                     self.toasts.push(
                         ctx,
                         ToastKind::Info,
+                        Topic::Confirmation,
                         "Diagnostics copied",
                         "Check the text before you share it: it can name files and branches.",
                     );
@@ -155,12 +210,19 @@ impl CanopyApp {
                                 crate::platform::open_folder(&dir, &self.file_manager())
                             });
                         if let Err(e) = opened {
-                            self.toasts.push(ctx, ToastKind::Error, "Could not open", e);
+                            self.toasts.push(
+                                ctx,
+                                ToastKind::Error,
+                                Topic::Error,
+                                "Could not open the log folder",
+                                e,
+                            );
                         }
                     }
                     None => self.toasts.push(
                         ctx,
                         ToastKind::Error,
+                        Topic::Error,
                         "No log folder",
                         "This platform has no data folder for Canopy.",
                     ),
@@ -208,13 +270,21 @@ impl CanopyApp {
                 Action::NextTheme => {
                     let next = self.settings.theme.next();
                     self.set_theme(ctx, next);
-                    self.toasts
-                        .push(ctx, ToastKind::Info, format!("Theme: {}", next.name()), "");
+                    self.toasts.push(
+                        ctx,
+                        ToastKind::Info,
+                        Topic::Confirmation,
+                        format!("Theme: {}", next.name()),
+                        "",
+                    );
                 }
                 Action::Palette => self.palette.open(),
                 Action::Cheatsheet => self.cheatsheet.toggle(),
                 Action::Settings => self.open_settings(SettingsScreen::default()),
                 Action::SettingsAt(section) => self.open_settings(SettingsScreen::at(section)),
+                Action::SettingsGroup(section, group) => {
+                    self.open_settings(SettingsScreen::at_group(section, group));
+                }
                 Action::RepositorySettings(path) => {
                     if let Some(i) = self.tabs.iter().position(|t| t.path == path) {
                         self.active = i;
@@ -284,40 +354,66 @@ impl CanopyApp {
                     let shown = folder.display().to_string();
                     if crate::trust::add(&mut self.settings.trusted_folders, &folder) {
                         crate::trust::set(&self.settings.trusted_folders);
-                        self.toasts
-                            .push(ctx, ToastKind::Success, "Folder trusted", shown);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Success,
+                            Topic::Confirmation,
+                            "Folder trusted",
+                            shown,
+                        );
                     }
                 }
                 Action::Copy(text) => {
                     ctx.copy_text(text.clone());
-                    self.toasts.push(ctx, ToastKind::Info, "Copied", text);
+                    self.toasts
+                        .push(ctx, ToastKind::Info, Topic::Confirmation, "Copied", text);
                 }
                 Action::OpenUrl(url) => {
                     if let Err(e) = crate::platform::open_url(&url) {
-                        self.toasts
-                            .push(ctx, ToastKind::Error, "Could not open the page", e);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            Topic::Error,
+                            "Could not open the page",
+                            e,
+                        );
                     }
                 }
                 Action::OpenPath(dir) => {
                     if let Err(e) = crate::platform::open_folder(&dir, &self.file_manager()) {
-                        self.toasts
-                            .push(ctx, ToastKind::Error, "Could not open the folder", e);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            Topic::Error,
+                            "Could not open the folder",
+                            e,
+                        );
                     }
                 }
                 Action::OpenInEditor(file) => {
                     if let Err(e) =
                         crate::platform::open_in_editor(&file, &self.launcher(Kind::Editor))
                     {
-                        self.toasts
-                            .push(ctx, ToastKind::Error, "Could not open the file", e);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            Topic::Error,
+                            "Could not open the file",
+                            e,
+                        );
                     }
                 }
                 Action::OpenTerminal(p) => {
                     if let Err(e) =
                         crate::platform::open_terminal(&p, &self.launcher(Kind::Terminal))
                     {
-                        self.toasts
-                            .push(ctx, ToastKind::Error, "Could not open a terminal", e);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            Topic::Error,
+                            "Could not open a terminal",
+                            e,
+                        );
                     }
                 }
                 Action::Command(c) => {
@@ -362,6 +458,21 @@ impl CanopyApp {
                             self.settings.repo_diff.remove(&path);
                         } else {
                             self.settings.repo_diff.insert(path, prefs);
+                        }
+                    }
+                }
+                Action::DiffPrefsForEveryRepository => {
+                    if let Some(t) = self.tabs.get(self.active) {
+                        let prefs = t.diff_prefs;
+                        self.settings.repo_diff.remove(&t.path);
+                        self.settings.diff = prefs;
+                        for t in &mut self.tabs {
+                            if !self.settings.repo_diff.contains_key(&t.path)
+                                && t.diff_prefs != prefs
+                            {
+                                t.diff_prefs = prefs;
+                                t.reload_diff();
+                            }
                         }
                     }
                 }
@@ -427,8 +538,8 @@ impl CanopyApp {
         self.launcher(Kind::FileManager)
     }
 
-    /// Each tab's name, icon and pull choice as its repository's settings say (cheap: runs every
-    /// frame).
+    /// Each tab's name, icon, pull choice and git options as the settings say (cheap: runs every
+    /// frame; the worker hears of the options only when they change).
     pub(super) fn apply_repo_looks(&mut self) {
         for t in &mut self.tabs {
             let own = self.settings.repos.get(&t.path);
@@ -437,6 +548,11 @@ impl CanopyApp {
                 t.icon = icon;
             }
             t.pull = self.settings.pull_for(&t.path);
+            let options = self.settings.git_options();
+            if t.git_options != Some(options) {
+                t.git_options = Some(options);
+                t.worker.send(Job::Options(options));
+            }
             match own.and_then(|r| r.display_name.as_deref()) {
                 Some(name) if t.name != name => name.clone_into(&mut t.name),
                 Some(_) => {}
@@ -487,6 +603,124 @@ mod tests {
         app.tabs
             .push(test_tab(canopy_core::RepoSnapshot::default()));
         app
+    }
+
+    /// A divergence answered for this repository becomes its own pull strategy; answered for
+    /// every repository it becomes the default, which this repository then follows too.
+    #[test]
+    fn a_remembered_pull_choice_reaches_as_far_as_chosen() {
+        use crate::settings::PullMode;
+        let ctx = egui::Context::default();
+        let mut app = app_with_tab();
+        let path = app.tabs[0].path.clone();
+        let default = app.settings.pull_mode;
+        let pull = |mode, remember| Action::PullAs {
+            repo: path.clone(),
+            mode,
+            remember,
+        };
+        app.apply(&ctx, vec![pull(PullMode::Merge, Remember::No)]);
+        assert_eq!(app.settings.pull_mode_for(&path), default);
+        app.apply(&ctx, vec![pull(PullMode::Merge, Remember::Repository)]);
+        assert_eq!(app.settings.pull_mode_for(&path), PullMode::Merge);
+        assert_eq!(app.settings.pull_mode, default);
+        app.apply(&ctx, vec![pull(PullMode::Rebase, Remember::Everywhere)]);
+        assert_eq!(app.settings.pull_mode, PullMode::Rebase);
+        let here = app.settings.pull_for(&path);
+        let everywhere = app.settings.pull_default();
+        assert_eq!(
+            (here.mode, here.follow_config),
+            (everywhere.mode, everywhere.follow_config)
+        );
+    }
+
+    /// A pull decision, or the offer to force-delete a branch, that comes back after the user
+    /// moved to another tab is answered for the repository that asked, never the active one.
+    #[test]
+    fn a_late_question_is_answered_for_the_repository_that_asked() {
+        use crate::settings::PullMode;
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let mut receivers = Vec::new();
+        for name in ["asked", "active"] {
+            let (worker, _, jobs) = crate::worker::Worker::detached();
+            let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+            tab.worker = worker;
+            tab.path = PathBuf::from(name);
+            app.tabs.push(tab);
+            receivers.push(jobs);
+        }
+        app.active = 1;
+        app.tabs[0].pull_decision = Some(crate::worker::PullDecision {
+            preview: canopy_core::PullPreview::default(),
+            strategy: canopy_core::PullStrategy::FastForwardOnly,
+            diverged: true,
+            configured: false,
+        });
+        app.tabs[0].force_delete_offer = Some("topic".into());
+        app.poll(&ctx);
+        let asked = PathBuf::from("asked");
+        let mut answers = Vec::new();
+        while let Some(d) = app.dialogs.current().cloned() {
+            match d {
+                Dialog::Diverged { repo, .. } => {
+                    assert_eq!(repo, asked);
+                    answers.push(Action::PullAs {
+                        repo,
+                        mode: PullMode::Merge,
+                        remember: Remember::Repository,
+                    });
+                }
+                Dialog::Confirm { repo, op, .. } => {
+                    assert_eq!(repo, asked);
+                    answers.push(Action::OpIn { repo, op });
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            app.dialogs.close();
+        }
+        assert_eq!(answers.len(), 2, "both questions were asked");
+        app.apply(&ctx, answers);
+        let sent: Vec<_> = receivers[0].try_iter().collect();
+        assert!(
+            sent.iter().any(|j| matches!(j, Job::Op(Op::Pull { .. }))),
+            "{sent:?}"
+        );
+        assert!(
+            sent.iter()
+                .any(|j| matches!(j, Job::Op(Op::DeleteBranch { force: true, .. }))),
+            "{sent:?}"
+        );
+        assert_eq!(
+            receivers[1].try_iter().count(),
+            0,
+            "the active tab is untouched"
+        );
+        assert_eq!(app.settings.pull_mode_for(&asked), PullMode::Merge);
+        assert_ne!(
+            app.settings.pull_mode_for(std::path::Path::new("active")),
+            PullMode::Merge
+        );
+    }
+
+    /// A repository's diff options made every repository's default become the default, and the
+    /// repository no longer keeps its own.
+    #[test]
+    fn diff_options_become_every_repositorys() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_tab();
+        let path = app.tabs[0].path.clone();
+        let own = DiffPrefs {
+            context: 9,
+            ..DiffPrefs::default()
+        };
+        app.tabs[0].diff_prefs = own;
+        app.apply(&ctx, vec![Action::DiffPrefsChanged]);
+        assert_eq!(app.settings.repo_diff.get(&path), Some(&own));
+        app.apply(&ctx, vec![Action::DiffPrefsForEveryRepository]);
+        assert_eq!(app.settings.diff, own);
+        assert!(app.settings.repo_diff.is_empty());
+        assert_eq!(app.tabs[0].diff_prefs, own);
     }
 
     /// A repository's own diff options reach its tab; clearing them returns it to the default.

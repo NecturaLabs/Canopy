@@ -116,7 +116,29 @@ pub enum Dialog {
         body: String,
         confirm: String,
         danger: bool,
+        /// The repository `op` runs in: the one that asked, even after a switch to another tab.
+        repo: std::path::PathBuf,
         op: Op,
+    },
+    /// A fast-forward pull found that the branch and its upstream both moved on: how to bring
+    /// them together, and whether to pull this repository that way from now on.
+    Diverged {
+        /// The repository that pulled.
+        repo: std::path::PathBuf,
+        mode: crate::settings::PullMode,
+        remember: crate::action::Remember,
+        /// Whether "every repository" is offered: Canopy's setting, not the git configuration,
+        /// asked for fast-forwards only.
+        everywhere: bool,
+        /// What the check before the pull found (empty when git refused without one).
+        preview: canopy_core::PullPreview,
+    },
+    /// A pull would likely stop on conflicts: pull anyway (and resolve them) or not.
+    PullConflicts {
+        /// The repository that pulled.
+        repo: std::path::PathBuf,
+        strategy: canopy_core::PullStrategy,
+        preview: canopy_core::PullPreview,
     },
     About,
     Identity {
@@ -311,14 +333,11 @@ pub fn show(
                 .icon(icon::IDENTIFICATION_CARD)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Git stores an author name and email in every new commit. Enter the details you want to use. Canopy will not guess them, and commits already made keep their authors.")
+                .description("Git records this name and email as the author of every new commit. Commits already made keep their authors.")
                 .body(|ui| {
                     field(ui, "Name", name, "e.g. Ada Lovelace", true);
                     field(ui, "Email", email, "e.g. ada@example.com", false);
-                    note(ui, "Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.", p.text_dim);
-                    if !ok && !busy {
-                        note(ui, missing, p.text_faint);
-                    }
+                    note(ui, "Every repository without its own identity uses it. You can change it later in Settings → Git.", p.text_dim);
                 })
                 .footer(|f| {
                     confirm(f, "Save globally", ok, missing);
@@ -377,8 +396,10 @@ pub fn show(
                         *error = None;
                     }
                     if error.as_ref().is_some_and(|e| e.not_a_repository)
-                        && LinkButton::new("Create a new repository in this folder…")
-                            .text_size(m.meta_size)
+                        && Button::new("Create a new repository in this folder…")
+                            .ghost()
+                            .size(Size::Sm)
+                            .icon(icon::PLUS)
                             .show(ui)
                             .clicked()
                     {
@@ -513,7 +534,7 @@ pub fn show(
                 .icon(icon::PLANT)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Canopy runs git init in the folder, creating it if it does not exist yet, and opens the new repository in a tab.")
+                .description("Runs git init in the folder, creating it if needed, and opens the repository in a tab.")
                 .body(|ui| {
                     let start = crate::settings::expand_home(path)
                         .parent()
@@ -606,7 +627,7 @@ pub fn show(
                 .icon(icon::PENCIL_SIMPLE)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Renames the local branch. A branch it tracks on a remote keeps its name there.")
+                .description("The remote branch it tracks keeps its name.")
                 .body(|ui| {
                     let error = (!new.trim().is_empty() && !valid_ref_name(new.trim()))
                         .then_some("Not a valid branch name");
@@ -685,7 +706,7 @@ pub fn show(
                 .icon(icon::ARCHIVE)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Puts your uncommitted changes aside and leaves the working tree clean. They wait under Stashes in the sidebar until you apply them.")
+                .description("Puts your uncommitted changes aside until you apply them from Stashes in the sidebar.")
                 .body(|ui| {
                     field(
                         ui,
@@ -845,9 +866,7 @@ pub fn show(
                         .disabled_reason("No other branches on the remote yet")
                         .id_salt("request-target");
                     if options.is_empty() {
-                        target = target.helper(
-                            "Canopy knows no other branch on the remote to merge into. Fetch, then try again.",
-                        );
+                        target = target.helper("Fetch to refresh the list.");
                     }
                     target.show(ui);
                     if pick != request.target && !pick.is_empty() {
@@ -899,11 +918,109 @@ pub fn show(
             body,
             confirm,
             danger,
+            repo,
             op,
         } => {
             let result =
                 confirmation(salt, title, body, confirm, *danger, icon::QUESTION, |_| {}).show(ctx);
-            answer(result, || Outcome::Run(vec![Action::Op(op.clone())]))
+            answer(result, || {
+                Outcome::Run(vec![Action::OpIn {
+                    repo: repo.clone(),
+                    op: op.clone(),
+                }])
+            })
+        }
+        Dialog::Diverged {
+            repo,
+            mode,
+            remember,
+            everywhere,
+            preview,
+        } => {
+            use crate::action::Remember;
+            use crate::settings::PullMode;
+            let options = [
+                (
+                    PullMode::Rebase,
+                    "Rebase (recommended)",
+                    Some("Replays your commits on top of the remote's, with new IDs."),
+                ),
+                (
+                    PullMode::Merge,
+                    "Merge",
+                    Some("Joins both lines with a merge commit; every commit keeps its ID."),
+                ),
+            ];
+
+            let confirm = match mode {
+                PullMode::Rebase => "Pull with rebase",
+                _ => "Pull with merge",
+            };
+            let result = KitDialog::new(salt)
+                .title("Your branch and the remote have diverged")
+                .icon(icon::GIT_FORK)
+                .width(DialogWidth::Form)
+                .body(|ui| {
+                    RadioGroup::new(mode, &options)
+                        .label("Combine them with")
+                        .id_salt("diverged-mode")
+                        .show(ui);
+                    ui.add_space(theme::SM);
+                    let mut scopes = vec![
+                        (Remember::No, "Don't remember"),
+                        (Remember::Repository, "For this repository (recommended)"),
+                    ];
+                    if *everywhere {
+                        scopes.push((Remember::Everywhere, "For every repository"));
+                    }
+                    Select::new(remember, &scopes)
+                        .label("Remember my decision")
+                        .fit_to_options()
+                        .id_salt("diverged-remember")
+                        .show(ui);
+                    ui.add_space(theme::SM);
+                    predicted_conflicts(ui, preview);
+                })
+                .footer(|f| {
+                    f.cancel().confirm(confirm);
+                })
+                .show(ctx);
+            answer(result, || {
+                Outcome::Run(vec![Action::PullAs {
+                    repo: repo.clone(),
+                    mode: *mode,
+                    remember: *remember,
+                }])
+            })
+        }
+        Dialog::PullConflicts {
+            repo,
+            strategy,
+            preview,
+        } => {
+            let incoming = match preview.behind {
+                1 => "1 new commit".to_owned(),
+                n => format!("{n} new commits"),
+            };
+            let result = KitDialog::new(salt)
+                .title("This pull will likely conflict")
+                .icon(icon::WARNING)
+                .width(DialogWidth::Form)
+                .description(format!(
+                    "{} has {incoming} that touch what you are working on. If you pull anyway, Canopy takes you to Changes to resolve the conflicts.",
+                    preview.upstream
+                ))
+                .body(|ui| predicted_conflicts(ui, preview))
+                .footer(|f| {
+                    f.cancel().confirm("Pull anyway");
+                })
+                .show(ctx);
+            answer(result, || {
+                Outcome::Run(vec![Action::PullAnyway {
+                    repo: repo.clone(),
+                    strategy: *strategy,
+                }])
+            })
         }
         Dialog::ConfirmClearIdentity { repo, scope } => {
             let target = match scope {
@@ -974,7 +1091,7 @@ pub fn show(
                             theme::surfaces(ui.ctx()).border,
                         );
                         ui.add_space(theme::XS);
-                        note(ui, format!("Trusting {} covers every repository inside it, including ones you clone later. Only do that for a folder that is entirely yours.", name(parent)), p.text_faint);
+                        note(ui, format!("Trusting {} covers every repository inside it, including ones you clone later.", name(parent)), p.text_faint);
                         if Button::new(format!("Trust everything in {}", name(parent)))
                             .ghost()
                             .size(Size::Sm)
@@ -1043,7 +1160,7 @@ pub fn show(
                 .title("Canopy closed unexpectedly")
                 .icon(icon::FIRST_AID_KIT)
                 .width(DialogWidth::Form)
-                .description("Sorry about that. A crash report was saved on this computer; nothing was sent anywhere. Sharing it with the developers helps fix the problem.")
+                .description("A crash report was saved on this computer. Nothing was sent.")
                 .body(|ui| {
                     if !report.message.is_empty() {
                         InsetBox::new().show(ui, |ui| {
@@ -1142,6 +1259,46 @@ fn clone_target(builder: &UrlBuilder, parent: &str) -> Option<(String, std::path
     Some((url.trim().to_owned(), dest))
 }
 
+/// How many predicted files a pull's dialog lists before "and N more".
+const PREDICTED_SHOWN: usize = 8;
+
+/// The files a pull is predicted to conflict in, and the uncommitted ones it also changes.
+fn predicted_conflicts(ui: &mut Ui, preview: &canopy_core::PullPreview) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let conflicts = preview.conflicts.as_deref().unwrap_or_default();
+    for (files, says) in [
+        (conflicts, "Likely conflicts"),
+        (
+            preview.overlap.as_slice(),
+            "Uncommitted files the pull also changes",
+        ),
+    ] {
+        if files.is_empty() {
+            continue;
+        }
+        ui.add_space(theme::SM);
+        note(ui, says, p.text_dim);
+        InsetBox::new().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for file in files.iter().take(PREDICTED_SHOWN) {
+                ui.label(
+                    RichText::new(file)
+                        .font(FontId::monospace(m.mono_size))
+                        .color(p.text),
+                );
+            }
+            if files.len() > PREDICTED_SHOWN {
+                note(
+                    ui,
+                    format!("and {} more", files.len() - PREDICTED_SHOWN),
+                    p.text_faint,
+                );
+            }
+        });
+    }
+}
+
 /// A yes-or-no question: destructive ones get the danger disc and button and keep Enter from
 /// confirming.
 fn confirmation<'a>(
@@ -1159,11 +1316,6 @@ fn confirmation<'a>(
         .body(extra)
         .footer(|f| {
             f.cancel().confirm(confirm);
-            // Only a destructive question says how to leave it, as Enter does not answer it; on
-            // an ordinary one a hint would crowd a long confirming label at this width.
-            if danger {
-                f.hint("Esc cancels");
-            }
         });
     d = if danger {
         d.destructive().icon(icon::WARNING)
@@ -1234,7 +1386,6 @@ fn merge_body(
         .label("Branch")
         .placeholder("Choose a branch…")
         .enabled(!options.is_empty())
-        .disabled_reason("No other branches yet")
         .id_salt("merge-target");
     if options.is_empty() {
         branch = branch.helper("This repository has no other branch to merge or rebase onto.");
@@ -1337,9 +1488,9 @@ fn consent(
                 .blocking()
                 .initial_focus(InitialFocus::Body)
                 .description(if updated {
-                    "Please read and accept the new Terms of Service and Privacy Policy to keep using Canopy."
+                    "Accept the new Terms of Service and Privacy Policy to keep using Canopy."
                 } else {
-                    "Before you start, please read and accept the Terms of Service and the Privacy Policy."
+                    "Accept the Terms of Service and the Privacy Policy to start."
                 })
                 .body(|ui| {
                     for (glyph, text) in [

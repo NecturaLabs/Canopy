@@ -317,11 +317,11 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                     hint(Command::ClearChoice),
                 );
                 commit_detail::without_icons(ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate()))
-                    .kit_tooltip("Press ? for every shortcut").show();
+                    .kit_tooltip("Press ? for every shortcut").extra(true).show();
                 ui.label(RichText::new(if done == n {
-                    "All conflicts have a choice. Save the resolved file to stage it."
+                    "Every conflict has a choice."
                 } else {
-                    "Choose a version for each conflict. Save progress keeps markers for unresolved parts."
+                    "Choose a version for each conflict."
                 }).size(m.small_size).color(p.text_dim));
                 ui.add_space(theme::XS);
                 ui.horizontal_wrapped(|ui| {

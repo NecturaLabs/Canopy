@@ -156,6 +156,17 @@ pub fn trap_focus(ctx: &Context, layer: LayerId) {
     ctx.memory_mut(|m| m.set_modal_layer(layer));
 }
 
+/// Gives the widget with keyboard focus a node in this pass's accessibility tree when it has
+/// none; call it once the whole UI is drawn. egui announces the focused id even when nothing was
+/// drawn under it this pass (focus handed back to the command that opened a dialog now closing,
+/// for one), and AccessKit panics on a focus outside the tree. The empty node lasts one pass:
+/// egui drops focus from a widget that is no longer drawn.
+pub fn keep_focus_in_tree(ctx: &Context) {
+    if let Some(id) = ctx.memory(egui::Memory::focused) {
+        ctx.accesskit_node_builder(id, |_| ());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use egui::{Key, Order};
@@ -190,6 +201,33 @@ mod tests {
         assert_eq!(list.label(), Some("Branches"));
         let children: Vec<_> = list.children().iter().filter_map(|c| label(*c)).collect();
         assert_eq!(children, ["main"], "the button is the list's part");
+    }
+
+    /// Focus handed to something not drawn this pass still lands inside the tree that goes to
+    /// the screen reader, so AccessKit never sees a focus it cannot find.
+    #[test]
+    fn focus_on_something_not_drawn_stays_in_the_tree() {
+        let ctx = testkit::ctx();
+        ctx.enable_accesskit();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            Button::new("Cancel").show(ui);
+            ui.ctx()
+                .memory_mut(|m| m.request_focus(Id::new("a closed palette's entry")));
+            keep_focus_in_tree(ui.ctx());
+        });
+        out.textures_delta.clear();
+        let update = out.platform_output.accesskit_update.expect("accesskit");
+        assert!(
+            update.nodes.iter().any(|(id, _)| *id == update.focus),
+            "the focus has a node"
+        );
+        assert!(
+            update
+                .nodes
+                .iter()
+                .any(|(_, n)| n.children().contains(&update.focus)),
+            "and a parent"
+        );
     }
 
     #[test]

@@ -34,7 +34,7 @@ Update this table in the same change that adds or alters a feature.
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
 | Auto refresh (file watcher, window focus) | Done | Yes | Yes | Yes |
 | Submodules | Planned (backend merged) | Yes | Yes | Yes |
-| Worktrees | Planned | ? | Yes | ? |
+| Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and opens one in a tab; creating and removing them is planned | Unreleased | Yes | Yes | ? |
 | Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
 | Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Unreleased | Yes | ? | ? |
 | Very large repositories | Planned | ? | ? | ? |
@@ -119,6 +119,8 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Delete with `git branch -d`, forcing only after Git refuses and you confirm | Unreleased | ? | ? | ? |
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
+| Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Unreleased | Yes | Yes | Yes |
+| A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Unreleased | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |
 | Merge, rebase, cherry-pick in progress: continue and abort | Done | Yes | Yes | Yes |
@@ -135,6 +137,11 @@ change when current settings change; Canopy never rewrites existing commits to f
 |---|---|---|---|---|
 | Fetch (all remotes, prune) | Done | Yes | Yes | Yes |
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
+| Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Unreleased | ? | ? | ? |
+| Your git configuration decides what it sets (Follow my git config, on by default); elsewhere Canopy passes recommended defaults (autostash, push tags with their commits, `push.default=simple`, zdiff3 conflicts, `main` for new repositories, no tag pruning, `#` lines kept in commit messages), each a choice in Settings with its recommendation and where your configuration sets it | Unreleased | ? | ? | ? |
+| A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Unreleased | ? | ? | ? |
+| A rebase that stops on conflicts takes you to Changes, like a pull | Unreleased | ? | ? | ? |
+| A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Unreleased | ? | ? | ? |
 | Push, setting upstream when missing | Done | Yes | Yes | Yes |
 | Force push with lease | Done | Yes | ? | ? |
 | In-app credential and SSH passphrase prompts | Unreleased | Yes | Yes | Yes |
@@ -168,6 +175,12 @@ and review (approved, changes requested, and on GitHub review required) without 
 Canopy has a token for the host; without a token a row shows them once the request was opened in
 the session.
 
+The request list stays current without pressing Reload: a fetch (manual or the background one),
+pull or push that succeeds refreshes it, and the open request, quietly (no spinner or toast; the
+list, selection and open request stay on screen, and a failed refresh keeps them), and opening
+the Requests view reloads a list older than a minute. These use the same list and details calls
+as Reload, and only with hosting on and a list already loaded.
+
 ## Interface
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
@@ -190,6 +203,10 @@ the session.
 | Custom theme: Midnight or Daylight recoloured from an accent (swatches, hue, intensity) and a tint (swatches, hue, strength); text and lines keep their contrast; works with High contrast | Unreleased | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |
+| Notification cards that stay as long as their words take to read (5–10 s, errors 8–15 s, decisions 15 s then the center), paused while pointed at, focused or the window is away; decisions as two named buttons, no close button | Unreleased | ? | ? | ? |
+| Notification settings (Appearance → Notifications): cards on or off, and per type — errors, needs your attention, updates, finished operations, confirmations; by default only the first three show as cards | Unreleased | ? | ? | ? |
+| Tooltip settings (Appearance → Tooltips): Helpful (default; only what the screen does not show), All, or Off (only why a control is unavailable), and a Quick, Normal or Slow delay | Unreleased | ? | ? | ? |
+| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, review or restart into an update) | Unreleased | ? | Yes | ? |
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Unreleased | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |

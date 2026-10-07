@@ -13,13 +13,11 @@
 //! pane, the chrome, a card or a dialog alike. Deeper adds the `Field` material's inner shadow
 //! along the top (a recess). Text stops at the well's inner edge, clear of the trailing slot.
 //!
-//! **The edge** is two-toned at rest: quiet sides (`edge` a third of the way to
-//! `control_border`) over an accessible bottom edge, the quietest mix that still stands 3:1 (4.5:1
-//! in strict themes) from every surface and well, so a field is identifiable without a heavy
-//! outline (the bottom-stroke field of Fluent 2 and macOS). Hover takes the whole edge to
-//! `control_border`, focus to `focus` with the halo, an error to `danger_base`. Disabled fields
-//! use the theme's disabled tokens; read-only ones have no well and a quiet edge all round, so
-//! neither looks like a field waiting for input.
+//! **The edge** is one even hairline at rest, the quietest mix of `edge` and `control_border`
+//! that still stands 3:1 (4.5:1 in strict themes) from every surface and well, so a field is
+//! identifiable without a heavy outline. Hover takes it to `control_border`, focus to `focus` with
+//! the halo, an error to `danger_base`. Disabled fields use the theme's disabled tokens; read-only
+//! ones have no well and a quieter edge, so neither looks like a field waiting for input.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -664,7 +662,7 @@ impl<'t> Core<'t> {
                 c.lerp_to_gamma(p.control_border, hover_t)
                     .lerp_to_gamma(p.focus, focus_t)
             };
-            (to(look.side), to(look.base))
+            (to(look.base), to(look.base))
         };
         let halo = if error.is_some() && interactive {
             Some((p.danger_base, ERROR_HALO_ALPHA, 1.0_f32.max(focus_t)))
@@ -887,6 +885,7 @@ impl<'t> Core<'t> {
                 self.tooltip.as_deref(),
                 self.disabled_reason.as_deref(),
                 None,
+                true,
             ),
             submitted,
             stepped,

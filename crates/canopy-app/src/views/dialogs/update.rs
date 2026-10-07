@@ -82,11 +82,6 @@ pub(super) fn update(
                         .value_text(detail)
                         .id_salt("update-progress")
                         .show(ui);
-                    note(
-                        ui,
-                        "Canopy keeps working while it updates, and stays as it is if anything goes wrong.",
-                        p.text_faint,
-                    );
                 })
                 .footer(|f| {
                     f.cancel_label("Hide");

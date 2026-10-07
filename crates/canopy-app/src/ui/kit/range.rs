@@ -343,6 +343,7 @@ impl<'a, T: Numeric> Slider<'a, T> {
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
+            true,
         )
     }
 }

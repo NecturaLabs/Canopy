@@ -1,54 +1,55 @@
 //! The toast card (concept `.k-toast`, design spec 4.15): the overlay surface `toast_width` wide,
-//! a leading icon in the kind's colour, a semibold title, a dim body, optional actions and a
-//! details disclosure, a progress bar for running work, and the dismiss button. The queue, its
-//! timers and recovery actions stay in `ui/toast.rs`, which lays the cards out as a stack.
+//! a leading icon in the kind's colour, a semibold title, a dim body, a progress bar for running
+//! work, and for a notification that asks for a decision, a choice: a tonal button that does it
+//! and a ghost one that declines. There is no close button: a card goes when its time is up, when
+//! it is clicked, or when its choice is made. The queue, its timers and what each choice does stay
+//! in `ui/toast.rs`, which lays the cards out as a stack.
 //!
 //! Cards slide in from the right while they grow and fade in (the second of two arriving together
 //! a little later) and slide out to the right as they fade when they leave. Reduced motion shows
 //! and hides them at once.
 
-use egui::{
-    Align, CornerRadius, FontFamily, FontId, Id, Layout, Margin, Response, RichText, Sense, Stroke,
-    Ui, UiBuilder, Vec2, vec2,
-};
+use egui::{Align, FontId, Id, Layout, Response, RichText, Sense, Ui, UiBuilder, Vec2, vec2};
 use egui_phosphor::regular as icon;
 
 use super::overlay::{self, Entrance, ExitMotion, Layer};
 use super::progress::Progress;
-use super::{Button, ForceState, IconButton, Size, Tone};
+use super::{Button, ForceState, Size, Tone};
 use crate::ui::motion;
 use crate::ui::theme;
 
-/// Gap between the icon, the text column and the dismiss button.
-const COLUMN_GAP: f32 = 10.0;
-/// Room under the title, and above the actions.
-const TITLE_GAP: f32 = 3.0;
-const ACTIONS_GAP: f32 = 8.0;
+/// Gap between the icon and the text column, as in the notification center.
+pub(crate) const COLUMN_GAP: f32 = theme::SM;
+/// Room under the title, and above the choice.
+pub(crate) const TITLE_GAP: f32 = 4.0;
+pub(crate) const ACTIONS_GAP: f32 = 10.0;
 /// Body line height, as a multiple of its size.
-const BODY_LEADING: f32 = 1.45;
+pub(crate) const BODY_LEADING: f32 = 1.45;
 /// Toasts enter from this far right at this scale and leave this far right.
 const ENTER_SLIDE: f32 = 28.0;
 const ENTER_SCALE: f32 = 0.98;
 const EXIT_SLIDE: f32 = 24.0;
-
-/// When the dismiss button shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dismiss {
-    /// Errors: always.
-    Always,
-    /// Everything else: while the card is hovered or the button has focus.
-    OnHover,
-}
 
 /// What a card's user did this frame.
 #[derive(Debug, Default)]
 pub struct ToastOutput {
     /// The card itself was clicked (only when it is [`ToastCard::clickable`]).
     pub clicked: bool,
-    /// The dismiss button.
-    pub dismissed: bool,
-    /// The index of the action button pressed.
-    pub action: Option<usize>,
+    /// The choice's button that does it.
+    pub confirmed: bool,
+    /// The choice's button that declines.
+    pub declined: bool,
+    /// The card or one of its buttons has keyboard focus (its timer should wait).
+    pub focused: bool,
+}
+
+/// What a card asks the user to decide: `confirm` does it (with an optional leading glyph),
+/// `decline` puts it off.
+#[derive(Debug, Clone, Copy)]
+pub struct Choice<'a> {
+    pub confirm: &'a str,
+    pub glyph: Option<&'a str>,
+    pub decline: &'a str,
 }
 
 /// One toast card. `ToastCard::new(id, Tone::Success, "Pushed main").body("…").show(ui)`.
@@ -58,15 +59,12 @@ pub struct ToastCard<'a> {
     tone: Tone,
     title: &'a str,
     body: Option<&'a str>,
-    body_strong: bool,
-    actions: Vec<(&'a str, Option<&'a str>)>,
-    details: Option<&'a str>,
+    choice: Option<Choice<'a>>,
     #[expect(
         clippy::option_option,
         reason = "no bar, an indeterminate bar or a fraction, as `progress` takes them"
     )]
     progress: Option<Option<f32>>,
-    dismiss: Dismiss,
     clickable: bool,
     born: Option<f64>,
     stagger: u8,
@@ -74,7 +72,7 @@ pub struct ToastCard<'a> {
 }
 
 impl<'a> ToastCard<'a> {
-    /// A card for `id` (stable across frames: it keeps the disclosure and the entrance) in the
+    /// A card for `id` (stable across frames: it keeps the entrance) in the
     /// colour of `tone` (`Accent` informs, `Success`, `Warning`, `Danger` for errors).
     pub fn new(id: Id, tone: Tone, title: &'a str) -> Self {
         Self {
@@ -82,15 +80,8 @@ impl<'a> ToastCard<'a> {
             tone,
             title,
             body: None,
-            body_strong: false,
-            actions: Vec::new(),
-            details: None,
+            choice: None,
             progress: None,
-            dismiss: if tone == Tone::Danger {
-                Dismiss::Always
-            } else {
-                Dismiss::OnHover
-            },
             clickable: false,
             born: None,
             stagger: 0,
@@ -102,19 +93,9 @@ impl<'a> ToastCard<'a> {
         self.body = Some(text);
         self
     }
-    /// The body in `text` rather than dim (an error's advice).
-    pub fn body_strong(mut self, strong: bool) -> Self {
-        self.body_strong = strong;
-        self
-    }
-    /// A ghost action button under the body, with an optional leading glyph.
-    pub fn action(mut self, label: &'a str, glyph: Option<&'a str>) -> Self {
-        self.actions.push((label, glyph));
-        self
-    }
-    /// Output behind a "Details" disclosure, in a read-only block with a Copy button.
-    pub fn details(mut self, text: &'a str) -> Self {
-        self.details = Some(text);
+    /// The decision the card asks for, as two buttons under the body.
+    pub fn choice(mut self, choice: Choice<'a>) -> Self {
+        self.choice = Some(choice);
         self
     }
     /// A progress bar under the body: `Some(f)` determinate, `None` indeterminate.
@@ -122,7 +103,7 @@ impl<'a> ToastCard<'a> {
         self.progress = Some(fraction);
         self
     }
-    /// A click anywhere on the card reports `clicked` (non-error toasts dismiss that way).
+    /// A click anywhere on the card reports `clicked` (a card without a choice goes that way).
     pub fn clickable(mut self, clickable: bool) -> Self {
         self.clickable = clickable;
         self
@@ -137,16 +118,11 @@ impl<'a> ToastCard<'a> {
         self.stagger = index;
         self
     }
-    /// Shows the card with forced states (`OPEN` opens the details, `HOVER` shows the dismiss
-    /// button, `progress` fixes the entrance; the gallery and tests only).
+    /// Shows the card with forced states (`progress` fixes the entrance; the gallery and tests
+    /// only).
     pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> ToastOutput {
         self.force = Some(force);
         self.show(ui)
-    }
-
-    /// The details disclosure's state key.
-    fn open_id(id: Id) -> Id {
-        id.with("kit-toast-details")
     }
 
     pub fn show(self, ui: &mut Ui) -> ToastOutput {
@@ -162,11 +138,6 @@ impl<'a> ToastCard<'a> {
             Tone::Accent | Tone::Neutral => (icon::INFO, p.accent),
         };
         let force = self.force.unwrap_or_default();
-        let open_key = Self::open_id(id);
-        let mut open = force.open || ctx.data(|d| d.get_temp::<bool>(open_key).unwrap_or(false));
-        let hover_key = id.with("kit-toast-hovered");
-        let hovered_before =
-            force.hover || ctx.data(|d| d.get_temp::<bool>(hover_key).unwrap_or(false));
 
         // Entrance: from the right, growing and fading in, `TOAST_STAGGER` after the one before.
         let delay = motion::time(motion::TOAST_STAGGER) * f32::from(self.stagger);
@@ -208,8 +179,7 @@ impl<'a> ToastCard<'a> {
                         FontId::proportional(m.icon_toast),
                         color,
                     );
-                    let close_w = Size::Xs.height();
-                    let text_w = (ui.available_width() - close_w - COLUMN_GAP).max(0.0);
+                    let text_w = ui.available_width().max(0.0);
                     ui.allocate_ui_with_layout(
                         vec2(text_w, 0.0),
                         Layout::top_down(Align::Min),
@@ -230,11 +200,7 @@ impl<'a> ToastCard<'a> {
                                         RichText::new(b)
                                             .size(m.meta_size)
                                             .line_height(Some((m.meta_size * BODY_LEADING).round()))
-                                            .color(if self.body_strong {
-                                                p.text
-                                            } else {
-                                                p.text_dim
-                                            }),
+                                            .color(p.text_dim),
                                     )
                                     .wrap(),
                                 );
@@ -247,80 +213,37 @@ impl<'a> ToastCard<'a> {
                                 };
                                 bar.width(text_w).id_salt(id.with("progress")).show(ui);
                             }
-                            if self.details.is_some() || !self.actions.is_empty() {
+                            if let Some(choice) = self.choice {
                                 ui.add_space(ACTIONS_GAP - TITLE_GAP);
-                                // Ghost buttons pulled left so their labels line up with the text.
-                                let mut row = ui.available_rect_before_wrap();
-                                row.min.x -= m.button_pad_x_sm - 2.0;
-                                row.set_height(Size::Sm.height());
-                                ui.scope_builder(
-                                    UiBuilder::new()
-                                        .max_rect(row)
-                                        .layout(Layout::left_to_right(Align::Center)),
-                                    |ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        if self.details.is_some() {
-                                            let caret = if open {
-                                                icon::CARET_DOWN
-                                            } else {
-                                                icon::CARET_RIGHT
-                                            };
-                                            let b = Button::new("Details")
-                                                .ghost()
-                                                .size(Size::Sm)
-                                                .icon(caret)
-                                                .id_salt(id.with("details"));
-                                            if b.show(ui).clicked() {
-                                                open = !open;
-                                                ctx.data_mut(|d| d.insert_temp(open_key, open));
-                                            }
-                                        }
-                                        for (i, (label, glyph)) in self.actions.iter().enumerate() {
-                                            let mut b = Button::new(*label)
-                                                .ghost()
-                                                .size(Size::Sm)
-                                                .id_salt(id.with(("action", i)));
-                                            if let Some(g) = glyph {
-                                                b = b.icon(g);
-                                            }
-                                            if b.show(ui).clicked() {
-                                                out.action = Some(i);
-                                            }
-                                        }
-                                    },
-                                );
-                            }
-                            if open && let Some(d) = self.details {
-                                ui.add_space(ACTIONS_GAP - TITLE_GAP);
-                                details_block(ui, id, d);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = theme::XS;
+                                    let mut confirm = Button::new(choice.confirm)
+                                        .primary()
+                                        .size(Size::Sm)
+                                        .id_salt(id.with("confirm"));
+                                    if let Some(g) = choice.glyph {
+                                        confirm = confirm.icon(g);
+                                    }
+                                    let confirm = confirm.show(ui);
+                                    let decline = Button::new(choice.decline)
+                                        .ghost()
+                                        .size(Size::Sm)
+                                        .id_salt(id.with("decline"))
+                                        .show(ui);
+                                    out.confirmed = confirm.clicked();
+                                    out.declined = decline.clicked();
+                                    out.focused = confirm.has_focus() || decline.has_focus();
+                                });
                             }
                         },
                     );
-                    let show_close = self.dismiss == Dismiss::Always || hovered_before;
-                    // Hidden until hovered, but always there for the keyboard (and shown while
-                    // it has focus).
-                    let focus_key = id.with("kit-toast-dismiss-focus");
-                    let focused = ctx.data(|d| d.get_temp::<bool>(focus_key).unwrap_or(false));
-                    ui.scope(|ui| {
-                        if !(show_close || focused) {
-                            ui.multiply_opacity(0.0);
-                        }
-                        let r = IconButton::new(icon::X, "Dismiss notification")
-                            .size(Size::Xs)
-                            .id_salt(id.with("dismiss"))
-                            .show(ui);
-                        out.dismissed = r.clicked();
-                        let has_focus = r.has_focus();
-                        ctx.data_mut(|d| d.insert_temp(focus_key, has_focus));
-                    });
                 });
             })
         });
         let response: Response = card.response;
         let rect = response.rect;
         out.clicked = self.clickable && response.clicked();
-        let hovered = ui.rect_contains_pointer(rect);
-        ctx.data_mut(|d| d.insert_temp(hover_key, hovered));
+        out.focused |= response.has_focus();
         let origin = rect.right_center();
         overlay::transform_since(
             &ctx,
@@ -368,67 +291,19 @@ impl<'a> ToastCard<'a> {
     }
 }
 
-/// The read-only output block behind "Details": `field` fill, a 1 pt seam ring, mono text that
-/// scrolls past `TOAST_DETAILS_HEIGHT`, and a Copy button.
-fn details_block(ui: &mut Ui, id: Id, text: &str) {
-    let ctx = ui.ctx().clone();
-    let p = theme::palette(&ctx);
-    let s = theme::surfaces(&ctx);
-    let m = theme::metrics();
-    egui::Frame::new()
-        .fill(s.field)
-        .stroke(Stroke::new(1.0, s.border))
-        .corner_radius(CornerRadius::same(m.radius_sm))
-        .inner_margin(Margin::symmetric(10, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            egui::ScrollArea::vertical()
-                .id_salt(id.with("details-scroll"))
-                .max_height(theme::TOAST_DETAILS_HEIGHT)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(text)
-                                .font(FontId::new(m.small_size, FontFamily::Monospace))
-                                .color(p.text_dim),
-                        )
-                        .wrap(),
-                    );
-                });
-        });
-    let mut row = ui.available_rect_before_wrap();
-    row.min.x -= m.button_pad_x_sm - 2.0;
-    row.set_height(Size::Sm.height());
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(row)
-            .layout(Layout::left_to_right(Align::Center)),
-        |ui| {
-            if Button::new("Copy output")
-                .ghost()
-                .size(Size::Sm)
-                .icon(icon::COPY)
-                .id_salt(id.with("copy"))
-                .show(ui)
-                .clicked()
-            {
-                ctx.copy_text(text.to_owned());
-            }
-        },
-    );
-}
-
 // ------------------------------------------------------------------------------------- gallery
 
-/// The gallery's toasts: info, success, warning, an error with its details open and an action,
-/// a running operation, and one mid-entrance.
+/// The gallery's toasts: a choice, success, warning, an error with a choice, a running operation,
+/// and one mid-entrance.
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
     let p = theme::palette(ui.ctx());
     ui.label(
-        RichText::new("Toasts: info, success (dismiss on hover), warning, error with details, progress, entering")
-            .size(m.small_size)
-            .color(p.text_faint),
+        RichText::new(
+            "Toasts: a choice, success, warning, an error with a choice, progress, entering",
+        )
+        .size(m.small_size)
+        .color(p.text_faint),
     );
     let width = m.toast_width.min(ui.available_width());
     let id = ui.id().with("gallery-toasts");
@@ -438,19 +313,26 @@ pub(crate) fn gallery(ui: &mut Ui) {
         let still = ForceState::default();
         ToastCard::new(id.with(0), Tone::Accent, "Update available")
             .body("Build 214 is ready to install.")
-            .action("Update", Some(icon::DOWNLOAD_SIMPLE))
+            .choice(Choice {
+                confirm: "Review update",
+                glyph: Some(icon::DOWNLOAD_SIMPLE),
+                decline: "Later",
+            })
             .show_forced(ui, still);
         ToastCard::new(id.with(1), Tone::Success, "Pushed main to origin")
             .body("2 commits, 38b14e7 is now on origin/main.")
-            .show_forced(ui, ForceState::HOVER);
+            .show_forced(ui, still);
         ToastCard::new(id.with(2), Tone::Warning, "Fetch skipped a remote")
             .body("upstream could not be reached; origin was fetched.")
             .show_forced(ui, still);
         ToastCard::new(id.with(3), Tone::Danger, "Push failed")
             .body("The remote has commits you do not have yet. Pull, resolve any conflicts, then push again.")
-            .action("Pull", Some(icon::ARROW_DOWN))
-            .details(" ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'")
-            .show_forced(ui, ForceState::OPEN);
+            .choice(Choice {
+                confirm: "Pull",
+                glyph: Some(icon::ARROW_DOWN),
+                decline: "Not now",
+            })
+            .show_forced(ui, still);
         ToastCard::new(id.with(4), Tone::Accent, "Fetching origin")
             .body("Receiving objects")
             .progress(Some(0.62))
@@ -471,6 +353,19 @@ pub(crate) fn gallery(ui: &mut Ui) {
 mod tests {
     use super::*;
     use egui::Rect;
+
+    /// A card follows the density like everything around it: Dense's is tighter, with a smaller
+    /// glyph, than Comfortable's (Deeper keeps each density's).
+    #[test]
+    fn a_card_follows_the_density() {
+        use crate::ui::theme::{COMFORTABLE, DEEPER_COMFORTABLE, DEEPER_DENSE, DENSE};
+        let room = |m: &theme::Metrics| m.toast_pad.sum();
+        const { assert!(DENSE.icon_toast < COMFORTABLE.icon_toast) };
+        assert!(room(&DENSE).x < room(&COMFORTABLE).x);
+        assert!(room(&DENSE).y < room(&COMFORTABLE).y);
+        assert_eq!(DEEPER_DENSE.toast_pad, DENSE.toast_pad);
+        assert_eq!(DEEPER_COMFORTABLE.toast_pad, COMFORTABLE.toast_pad);
+    }
 
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
@@ -555,6 +450,44 @@ mod tests {
         );
     }
 
+    /// A card closes itself on its timer or a click; it has no close button, and buttons only
+    /// for a decision it asks for.
+    #[test]
+    fn only_a_choice_puts_buttons_on_a_card() {
+        use egui::accesskit::Role;
+
+        let ctx = context();
+        ctx.enable_accesskit();
+        let buttons = |choice: bool| {
+            let out = run(&ctx, Vec::new(), |ui| {
+                ui.set_width(380.0);
+                let mut card =
+                    ToastCard::new(Id::new("t"), Tone::Danger, "Push failed").body("Pull first.");
+                if choice {
+                    card = card.choice(Choice {
+                        confirm: "Pull",
+                        glyph: None,
+                        decline: "Not now",
+                    });
+                }
+                card.show(ui);
+            });
+            let mut labels: Vec<String> = out
+                .platform_output
+                .accesskit_update
+                .expect("accesskit")
+                .nodes
+                .iter()
+                .filter(|(_, n)| n.role() == Role::Button)
+                .filter_map(|(_, n)| n.label().map(str::to_owned))
+                .collect();
+            labels.sort();
+            labels
+        };
+        assert_eq!(buttons(false), Vec::<String>::new());
+        assert_eq!(buttons(true), ["Not now", "Pull"]);
+    }
+
     #[test]
     fn toasts_enter_at_once_with_reduced_motion() {
         let ctx = context();
@@ -576,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn the_dismiss_button_and_actions_report_what_was_pressed() {
+    fn a_choice_reports_which_button_was_pressed() {
         let ctx = context();
         let mut close = Rect::NOTHING;
         let mut action = Rect::NOTHING;
@@ -609,12 +542,14 @@ mod tests {
                 ui.set_width(380.0);
                 let o = ToastCard::new(Id::new("t"), Tone::Danger, "Push failed")
                     .body("Pull first.")
-                    .action("Pull", None)
+                    .choice(Choice {
+                        confirm: "Pull",
+                        glyph: None,
+                        decline: "Not now",
+                    })
                     .show(ui);
-                got.dismissed |= o.dismissed;
-                if o.action.is_some() {
-                    got.action = o.action;
-                }
+                got.declined |= o.declined;
+                got.confirmed |= o.confirmed;
             });
             for c in &out.shapes {
                 if let egui::Shape::Text(t) = &c.shape {
@@ -622,13 +557,13 @@ mod tests {
                     if t.galley.text() == "Pull" {
                         action = r;
                     }
-                    if t.galley.text() == icon::X {
+                    if t.galley.text() == "Not now" {
                         close = r;
                     }
                 }
             }
         }
-        assert!(got.dismissed, "dismiss");
-        assert_eq!(got.action, Some(0), "action");
+        assert!(got.declined, "declined");
+        assert!(got.confirmed, "confirmed");
     }
 }

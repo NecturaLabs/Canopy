@@ -10,6 +10,31 @@ commits since the previous build.
 
 ### Added
 
+- A pull looks before it changes anything: it fetches, and when your branch and the remote have
+  both moved on it asks whether to rebase (recommended) or merge, and can remember the answer
+  for the repository or for every repository; when a pull would likely conflict it names the files first and lets you cancel.
+  It then brings in what it fetched, so it asks the remote, and you for credentials, only once.
+  A pull or rebase that stops on conflicts, or whose uncommitted changes conflict when they come
+  back, takes you to Changes to resolve them.
+- Settings → Git: Follow my git config, and Prune tags too, Autostash, Push tags with their
+  commits, Push to, Conflict style, Message cleanup and First branch of a new repository, each
+  with Canopy's recommendation and, where your git configuration sets it, its value and file.
+- A notification center: the bell at the right end of the status bar lists the last 100
+  notifications, whether or not they showed as a card, with copy and clear all, and an
+  unread count for errors and other notices that need you. Settings → Appearance → Notifications
+  turns the bottom-right cards off or chooses them per type (errors, needs your attention,
+  updates, finished operations, confirmations); by default only the first three pop up.
+- Settings → Appearance → Tooltips: Helpful (the default) shows only what the screen does not
+  already say, such as an icon's name, why something is unavailable, cut-off text, shortcuts and
+  full dates; All adds descriptions and usage hints; Off keeps only why something is unavailable.
+  A Quick, Normal or Slow delay sets how soon they appear.
+- The sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History
+  shows its commit, apart from the checked-out branch (accent check, bold name); on opening, the
+  checked-out branch is the one marked.
+- A Worktrees section in the sidebar lists the repository's working folders, once it has more than
+  one: each folder with its branch, the open one marked; double-click (or Open worktree) opens one
+  in a tab. A branch checked out in another worktree opens that worktree instead of a checkout Git
+  would refuse.
 - Pull and merge request lists show each request's checks and review without opening it, when
   Canopy has a token for the server: passed, failed or running checks, and approved, changes
   requested or (GitHub) review required. Loading the list sends one more request to the same
@@ -65,7 +90,8 @@ commits since the previous build.
 - Credential and SSH passphrase prompts, and host-key questions, in Canopy's own dialog instead of
   failing, whenever git or ssh needs one.
 - Staging, unstaging and discarding single lines of a hunk, side-by-side diffs, syntax highlighting,
-  and context-line and whitespace options for diffs, global or per repository.
+  and context-line and whitespace options for diffs, global or per repository (Use for every
+  repository makes one repository's options the default).
 - A three-way conflict resolver (ours, theirs, both, the common ancestor or an edit by hand), and
   merge modes: default, no fast-forward, fast-forward only and squash.
 - Each repository tab shows its commits to push and pull.
@@ -104,6 +130,21 @@ commits since the previous build.
 
 ### Fixed
 
+- With a screen reader running, closing a dialog (such as the force push confirmation) no
+  longer crashes Canopy.
+- Notification cards follow the Dense density like the rest of the window, with tighter padding
+  and a smaller icon, instead of keeping Comfortable's.
+- A commit keeps message lines that start with `#` (an issue number, a Markdown heading) unless
+  your git configuration sets `commit.cleanup`.
+- Submenus in context menus (Reset current branch here in History, and others) no longer close
+  as soon as the pointer leaves their item on the way to them.
+- The pull and merge request list refreshes by itself after a fetch, pull or push, and when you
+  open it after a minute away, instead of only when you press Refresh.
+- Repository tabs show each name in full for as long as the title bar has room, instead of
+  cutting names at a fixed width. When the tabs outgrow the bar the longest names give up width
+  first (the active tab keeps its name), and when that is not enough the tabs scroll: scroll
+  buttons at both ends (dimmed at the ends), a list of every open repository, the mouse wheel,
+  and the active tab always kept in view. A tab's tooltip shows only when it adds something.
 - A saved theme or option this build no longer has, such as a removed theme, now reads as its
   default instead of resetting every setting. Settings the build no longer has are dropped at the
   first save after launch (Canopy saves every 30 seconds).
@@ -216,9 +257,34 @@ commits since the previous build.
 
 ### Changed
 
-- Branch and tag pills are brighter and easier to read: a 24% fill of the pill's own colour (34%
-  for the current branch), a 60% ring, and a label in that colour adjusted to read at 4.5:1.
-  Remote branches have a ring only; HEAD and stash stay neutral.
+- What your git configuration sets still decides; everywhere else Canopy's git choices follow
+  today's recommended practice and are passed to git explicitly: a pull only fast-forwards
+  unless you choose otherwise, uncommitted changes are set aside around a pull or rebase, a push
+  sends the annotated tags on its commits, conflicts show the original text too, local tags are
+  never pruned, and new repositories start on `main`. Pull options live in Settings only; the
+  menu beside the Pull button is gone.
+- Notification cards no longer have an expandable Details section, and the notification center
+  explains a failure the same way its card does, with git's full output in its tooltip and Copy.
+- Notifications look the same in every theme and have no close button: one that asks for a
+  decision says so with two buttons named for it (Pull or Not now, Review update or Later,
+  Restart now or Later, Open Accounts or Not now), and the notification center offers it until it
+  is taken. A new build and an installed update now ask this way. Cards stay as long as their
+  words take to read, 5 to 10 seconds (8 to 15 for an error, 15 for a decision, which then waits
+  in the notification center and counts on the bell), and pause while you point at them.
+- Primary and destructive buttons are tonal instead of solid: a ground tinted with the accent (or
+  red), a fine edge in the same colour and a bold label in it, so the main action stands out
+  without a heavy block of colour.
+- Commit details no longer have a "Commit information" block repeating the email, date and
+  parents: the message shows directly under the author, the email (and the committer, when someone
+  else made the commit) is in the author's tooltip and the full date in the date's.
+- Branch, tag and stash pills in History are redesigned as one consistent style: every pill is
+  softly tinted in its commit's graph colour with a hairline in that colour and a white label,
+  told apart by its icon; in light themes, where white would not read, the label takes the
+  graph colour. The checked-out branch is tinted a little more.
+- Prompts mark Canopy's recommended choice and leave out what goes without saying, such as "Esc
+  cancels"; notifications of finished work say what happened ("Pulled", "Could not push").
+- Select boxes look like the buttons beside them, with an up-down caret; text fields have one even
+  edge; links brighten and underline under the pointer, and links to the web end in an arrow.
 - Settings rows now keep their controls in one aligned column.
 - Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
   short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,

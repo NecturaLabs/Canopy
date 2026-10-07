@@ -12,9 +12,12 @@ use serde::{Deserialize, Serialize};
 
 use canopy_core::Whitespace;
 use canopy_core::ops::PullStrategy;
+use canopy_core::{Cleanup, ConflictStyle, GitOptions, PushDefault};
 
+use crate::ui::kit::overlay::{TooltipDelay, TooltipLevel};
 use crate::ui::motion::MotionPref;
 use crate::ui::theme::{Curve, CustomTheme, Density, NodeShape, Style, ThemeId};
+use crate::ui::toast::Topic;
 
 /// Storage key.
 pub const KEY: &str = "canopy-settings-v1";
@@ -23,9 +26,11 @@ pub const KEY: &str = "canopy-settings-v1";
 /// [`PullStrategy`]). Variants are only ever added, so saved settings keep loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PullMode {
-    #[default]
     Merge,
     Rebase,
+    /// The recommended default: a pull never makes a merge commit or rewrites commits by
+    /// itself; when the branches diverged, Canopy asks how to bring them together.
+    #[default]
     FastForwardOnly,
     MergeNoFastForward,
     RebaseMerges,
@@ -84,6 +89,87 @@ impl Default for PullChoice {
         }
     }
 }
+
+/// How conflicts are written into files: a serialisable mirror of
+/// [`canopy_core::ConflictStyle`]. Variants are only ever added, so saved settings keep loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ConflictMode {
+    #[default]
+    Zdiff3,
+    Diff3,
+    Merge,
+}
+
+impl ConflictMode {
+    pub const ALL: [Self; 3] = [Self::Zdiff3, Self::Diff3, Self::Merge];
+
+    pub fn style(self) -> ConflictStyle {
+        match self {
+            Self::Zdiff3 => ConflictStyle::Zdiff3,
+            Self::Diff3 => ConflictStyle::Diff3,
+            Self::Merge => ConflictStyle::Merge,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.style().label()
+    }
+}
+
+/// Where a push without a destination goes: a serialisable mirror of
+/// [`canopy_core::PushDefault`]. Variants are only ever added, so saved settings keep loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PushMode {
+    #[default]
+    Simple,
+    Upstream,
+    Current,
+}
+
+impl PushMode {
+    pub const ALL: [Self; 3] = [Self::Simple, Self::Upstream, Self::Current];
+
+    pub fn push_default(self) -> PushDefault {
+        match self {
+            Self::Simple => PushDefault::Simple,
+            Self::Upstream => PushDefault::Upstream,
+            Self::Current => PushDefault::Current,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.push_default().label()
+    }
+}
+
+/// What a commit removes from its message: a serialisable mirror of [`canopy_core::Cleanup`].
+/// Variants are only ever added, so saved settings keep loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CleanupMode {
+    #[default]
+    Whitespace,
+    Strip,
+    Verbatim,
+}
+
+impl CleanupMode {
+    pub const ALL: [Self; 3] = [Self::Whitespace, Self::Strip, Self::Verbatim];
+
+    pub fn cleanup(self) -> Cleanup {
+        match self {
+            Self::Whitespace => Cleanup::Whitespace,
+            Self::Strip => Cleanup::Strip,
+            Self::Verbatim => Cleanup::Verbatim,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.cleanup().label()
+    }
+}
+
+/// The first branch of a repository Canopy creates when the setting is left empty.
+pub const INITIAL_BRANCH: &str = "main";
 
 /// Protocol of clone URLs built from `owner/repo`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -208,6 +294,52 @@ where
     Ok(Option::<Known<T>>::deserialize(d)?.and_then(|k| k.0))
 }
 
+/// Which notifications show as cards in the bottom-right corner. Every notification still goes
+/// to the notification center, whatever these say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationPrefs {
+    /// Cards at all; off, the types below show none either.
+    pub cards: bool,
+    pub errors: bool,
+    pub attention: bool,
+    pub updates: bool,
+    pub finished: bool,
+    pub confirmations: bool,
+}
+
+impl Default for NotificationPrefs {
+    /// Only what needs the user: failures, questions waiting on them and new builds.
+    fn default() -> Self {
+        Self {
+            cards: true,
+            errors: true,
+            attention: true,
+            updates: true,
+            finished: false,
+            confirmations: false,
+        }
+    }
+}
+
+impl NotificationPrefs {
+    /// The switch for notifications of `topic`.
+    pub fn topic_mut(&mut self, topic: Topic) -> &mut bool {
+        match topic {
+            Topic::Error => &mut self.errors,
+            Topic::Attention => &mut self.attention,
+            Topic::Update => &mut self.updates,
+            Topic::Finished => &mut self.finished,
+            Topic::Confirmation => &mut self.confirmations,
+        }
+    }
+
+    /// Whether a notification of `topic` shows as a card.
+    pub fn shows(mut self, topic: Topic) -> bool {
+        self.cards && *self.topic_mut(topic)
+    }
+}
+
 /// User preferences and session state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -230,6 +362,13 @@ pub struct Settings {
     pub style: Style,
     /// Blurred translucent floating layers.
     pub translucent: bool,
+    /// Which notifications show as cards in the bottom-right corner.
+    pub notifications: NotificationPrefs,
+    /// Which tooltips show, and after how long a rest.
+    #[serde(deserialize_with = "known")]
+    pub tooltips: TooltipLevel,
+    #[serde(deserialize_with = "known")]
+    pub tooltip_delay: TooltipDelay,
     /// The chosen theme at high contrast: stronger text, lines and focus, outlines for shadows.
     pub high_contrast: bool,
     /// The custom theme's colours (Settings, Appearance, with the Custom theme chosen).
@@ -251,20 +390,37 @@ pub struct Settings {
     pub reduce_motion: Option<bool>,
 
     // Git.
-    /// Canopy's pull strategy; while `pull_follow_config` is on, only where the git
-    /// configuration sets none.
+    /// Follow my git config: where the user's git configuration sets one of the git choices
+    /// below (the pull strategy among them), it decides; each choice here applies where it sets
+    /// none. On by default.
+    pub follow_git_config: bool,
+    /// Canopy's pull strategy; while `follow_git_config` is on, only where the git configuration
+    /// sets none.
     #[serde(deserialize_with = "known")]
     pub pull_mode: PullMode,
-    /// Follow my git config: a pull strategy the git configuration sets wins over `pull_mode`.
-    /// On by default, and for settings saved before it existed (pulls then already followed
-    /// `pull.rebase`).
-    pub pull_follow_config: bool,
     /// `--prune` on fetch: drop remote-tracking branches deleted on the remote.
     pub prune_on_fetch: bool,
     /// Fetch in the background every N minutes (0 = off).
     pub auto_fetch_minutes: u32,
     /// `git commit --signoff`.
     pub signoff: bool,
+    /// Pull and rebase over uncommitted changes, stashing them around it (`--autostash`).
+    pub autostash: bool,
+    /// A push also sends the annotated tags on the commits it pushes (`--follow-tags`).
+    pub follow_tags: bool,
+    /// How conflicts are written into files (`merge.conflictStyle`).
+    #[serde(deserialize_with = "known")]
+    pub conflict_style: ConflictMode,
+    /// Where a push without a destination goes (`push.default`).
+    #[serde(deserialize_with = "known")]
+    pub push_default: PushMode,
+    /// What a commit removes from its message (`commit.cleanup`).
+    #[serde(deserialize_with = "known")]
+    pub cleanup: CleanupMode,
+    /// A pruning fetch also deletes local tags the remote does not have (`--prune-tags`).
+    pub prune_tags: bool,
+    /// The first branch of a repository Canopy creates (`git init --initial-branch`).
+    pub initial_branch: String,
     /// The one-time Git identity question has been shown.
     pub identity_asked: bool,
     /// Commits loaded per page in the history.
@@ -352,6 +508,9 @@ impl Default for Settings {
             download_avatars: true,
             style: Style::Standard,
             translucent: false,
+            notifications: NotificationPrefs::default(),
+            tooltips: TooltipLevel::Helpful,
+            tooltip_delay: TooltipDelay::Normal,
             high_contrast: false,
             custom_theme: CustomTheme::default(),
             density: Density::Comfortable,
@@ -359,11 +518,18 @@ impl Default for Settings {
             graph_curve: Curve::Smooth,
             motion: MotionPref::System,
             reduce_motion: None,
-            pull_mode: PullMode::Merge,
-            pull_follow_config: true,
+            follow_git_config: true,
+            pull_mode: PullMode::FastForwardOnly,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
             signoff: false,
+            autostash: true,
+            follow_tags: true,
+            conflict_style: ConflictMode::Zdiff3,
+            push_default: PushMode::Simple,
+            cleanup: CleanupMode::Whitespace,
+            prune_tags: false,
+            initial_branch: INITIAL_BRANCH.to_owned(),
             identity_asked: false,
             commit_page: 2000,
             diff: DiffPrefs::default(),
@@ -467,7 +633,7 @@ impl Settings {
     pub fn pull_default(&self) -> PullChoice {
         PullChoice {
             mode: self.pull_mode,
-            follow_config: self.pull_follow_config,
+            follow_config: self.follow_git_config,
         }
     }
 
@@ -477,8 +643,28 @@ impl Settings {
             mode: self.pull_mode_for(path),
             follow_config: self
                 .own(path, |r| r.pull_follow_config)
-                .unwrap_or(self.pull_follow_config),
+                .unwrap_or(self.follow_git_config),
         }
+    }
+
+    /// How Canopy has git fetch, pull, push, commit, rebase and write conflicts.
+    pub fn git_options(&self) -> GitOptions {
+        GitOptions {
+            follow_config: self.follow_git_config,
+            autostash: self.autostash,
+            follow_tags: self.follow_tags,
+            conflict_style: self.conflict_style.style(),
+            push_default: self.push_default.push_default(),
+            cleanup: self.cleanup.cleanup(),
+            prune_tags: self.prune_tags,
+        }
+    }
+
+    /// The first branch of a repository Canopy creates.
+    pub fn initial_branch(&self) -> &str {
+        Some(self.initial_branch.trim())
+            .filter(|b| !b.is_empty())
+            .unwrap_or(INITIAL_BRANCH)
     }
 
     /// Whether fetching in the repository at `path` prunes.
@@ -818,6 +1004,76 @@ mod tests {
         assert_eq!(s.pull_mode_for(&repo), PullMode::FastForwardOnly);
     }
 
+    /// Canopy's git choices start from today's recommended practice, not git's own defaults, and
+    /// the user's git configuration decides wherever it sets one of them.
+    #[test]
+    fn git_choices_default_to_recommended_practice() {
+        let s = Settings::default();
+        assert_eq!(s.pull_mode, PullMode::FastForwardOnly);
+        assert_eq!(
+            s.git_options(),
+            GitOptions {
+                follow_config: true,
+                autostash: true,
+                follow_tags: true,
+                conflict_style: ConflictStyle::Zdiff3,
+                push_default: PushDefault::Simple,
+                cleanup: Cleanup::Whitespace,
+                prune_tags: false,
+            }
+        );
+        assert_eq!(s.git_options(), GitOptions::default());
+        assert_eq!(s.initial_branch(), "main");
+    }
+
+    #[test]
+    fn the_git_options_follow_the_settings() {
+        let s = Settings {
+            follow_git_config: false,
+            autostash: false,
+            follow_tags: false,
+            conflict_style: ConflictMode::Merge,
+            push_default: PushMode::Current,
+            cleanup: CleanupMode::Strip,
+            prune_tags: true,
+            initial_branch: "  trunk ".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            s.git_options(),
+            GitOptions {
+                follow_config: false,
+                autostash: false,
+                follow_tags: false,
+                conflict_style: ConflictStyle::Merge,
+                push_default: PushDefault::Current,
+                cleanup: Cleanup::Strip,
+                prune_tags: true,
+            }
+        );
+        assert_eq!(s.initial_branch(), "trunk");
+        let blank = Settings {
+            initial_branch: " ".into(),
+            ..Settings::default()
+        };
+        assert_eq!(blank.initial_branch(), INITIAL_BRANCH, "empty falls back");
+        assert_eq!(
+            ConflictMode::ALL.map(ConflictMode::style),
+            ConflictStyle::ALL,
+            "one ConflictMode per ConflictStyle"
+        );
+        assert_eq!(
+            PushMode::ALL.map(PushMode::push_default),
+            PushDefault::ALL,
+            "one PushMode per PushDefault"
+        );
+        assert_eq!(
+            CleanupMode::ALL.map(CleanupMode::cleanup),
+            Cleanup::ALL,
+            "one CleanupMode per Cleanup"
+        );
+    }
+
     /// Override O3: following the git configuration is the default, for new and old settings
     /// files; a repository can follow it or not on its own, and Canopy's strategy applies only
     /// where the configuration sets none or is not followed.
@@ -853,7 +1109,11 @@ mod tests {
             followed.resolve(Some(PullStrategy::Rebase)),
             PullStrategy::Rebase
         );
-        assert_eq!(followed.resolve(None), PullStrategy::Merge, "the fallback");
+        assert_eq!(
+            followed.resolve(None),
+            PullStrategy::FastForwardOnly,
+            "the fallback"
+        );
         // Every strategy git can be asked for is offered, in the core's order.
         assert_eq!(
             PullMode::ALL.map(PullMode::strategy),

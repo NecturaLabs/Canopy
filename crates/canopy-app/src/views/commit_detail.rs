@@ -13,11 +13,10 @@ use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::{DetailsError, FileSelection, RepoTab};
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
-use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{ChangeBadge, DiffStat};
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{ListRow, RowKind, TreeRow, tree_children};
+use crate::ui::kit::row::{ListRow, RowKind};
 use crate::ui::kit::{Button, IconButton, Size, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
@@ -116,41 +115,25 @@ pub fn show(
                 + stats_h
                 + theme::XS * 2.0
                 + ui.spacing().item_spacing.y * 3.0;
-            // What is left for the body under the disclosure row, less the body's padding and
-            // the gaps around it.
-            let info_room = (ui.available_height()
+            // What is left for the message, less the gaps around it.
+            let room = (ui.available_height()
                 - files_min
-                - RowKind::List.height()
                 - theme::XS * 2.0
                 - ui.spacing().item_spacing.y * 2.0)
                 .max(0.0);
-            let mut open = tab.history_layout.information_open;
-            // The pane header already shows a summary that fits it; the block then starts with
-            // the rest of the message.
+            // The pane header already shows a summary that fits it; the column then shows the
+            // rest of the message.
             let summary = !headed;
-            let first_line = if summary {
-                theme::heading(m.headline_size)
-            } else {
-                FontId::proportional(m.meta_size)
-            };
-            let first_line = ui.fonts_mut(|f| f.row_height(&first_line));
-            information(ui, &mut open, info_room, first_line, |ui| {
-                // Metadata rows as tall as their text, like a list of facts.
-                ui.spacing_mut().interact_size.y = 0.0;
-                if message(ui, &d, summary) {
-                    ui.add_space(theme::XS);
-                }
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(&d.author.email)
-                            .size(m.small_size)
-                            .color(p.text_dim),
-                    )
-                    .wrap(),
-                );
-                metadata(ui, &d, actions);
-            });
-            tab.history_layout.information_open = open;
+            if summary || !body_of(&d).is_empty() {
+                let first_line = if summary {
+                    theme::heading(m.headline_size)
+                } else {
+                    FontId::proportional(m.meta_size)
+                };
+                let first_line = ui.fonts_mut(|f| f.row_height(&first_line));
+                ui.add_space(theme::XS);
+                message_block(ui, room.max(first_line), |ui| message(ui, &d, summary));
+            }
             ui.add_space(theme::XS);
             let measured = file_stats(ui, &d);
             if (measured - stats_h).abs() > 0.5 {
@@ -176,54 +159,29 @@ const BODY_LINES: usize = 2;
 
 /// The least height History gives the details pane when it sizes the pane itself: the pane header
 /// and the commit column as [`show`] lays it out for `d` (any commit while it loads): the author
-/// and SHA rows, the "Commit information" row and its body (the first lines of the message, the
-/// email, the date, the committer and the parents), the changed-files line and the file rows it
-/// keeps in view. So the commit's information shows at the pane's natural size in every density;
-/// a pane made shorter by hand shuts the block and says why.
+/// and SHA rows, the first lines of the message's body, the changed-files line and the file rows
+/// it keeps in view. A longer body scrolls in its block.
 pub fn natural_height(ui: &Ui, d: Option<&CommitDetails>) -> f32 {
     let m = theme::metrics();
     let gap = theme::XS;
     let row = ui.spacing().interact_size.y;
     let author = row.max(m.avatar_detail);
     let sha = row.max(Size::Xs.height());
-    let disclosure = RowKind::List.height() + theme::XS * 2.0 + gap * 2.0;
     let fact = text_row(ui, m.meta_size);
-    // The email and the date always; the committer and the parents when the commit has them;
-    // the body's first lines when the message has one.
-    let (facts, body_lines, files) = d.map_or((3, 0, 2), |d| {
-        let committer = d.committer.email != d.author.email || d.committer.name != d.author.name;
-        let body = d
-            .message
-            .trim()
-            .lines()
-            .skip(1)
-            .filter(|l| !l.trim().is_empty());
-        (
-            1 + usize::from(committer) + usize::from(!d.parents.is_empty()),
-            body.take(BODY_LINES).count(),
-            d.files.len().min(2),
-        )
+    let (body_lines, files) = d.map_or((0, 2), |d| {
+        let body = body_of(d).lines().filter(|l| !l.trim().is_empty());
+        (body.take(BODY_LINES).count(), d.files.len().min(2))
     });
     let body = if body_lines > 0 {
         crate::ui::count_f32(body_lines) * fact + theme::XS + gap
     } else {
         0.0
     };
-    let information =
-        text_row(ui, m.small_size) + crate::ui::count_f32(facts) * (fact + gap) + body;
     let files = file_row_height() * crate::ui::count_f32(files)
         + text_row(ui, m.meta_size)
         + theme::XS * 2.0
         + gap * 3.0;
-    m.pane_header_height
-        + m.detail_pad.y * 2.0
-        + author
-        + gap
-        + sha
-        + gap
-        + disclosure
-        + information
-        + files
+    m.pane_header_height + m.detail_pad.y * 2.0 + author + gap + sha + gap + body + files
 }
 
 /// The height of one line of text at `size` (an icon row of the same size included).
@@ -290,10 +248,14 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) -> bool {
                 .size()
                 .x
                 <= summary_rect.width();
-            summary_ui
-                .add(egui::Label::new(RichText::new(summary).font(font).color(p.text)).truncate())
-                .kit_tooltip(summary)
-                .show();
+            let shown = summary_ui.add(
+                egui::Label::new(RichText::new(summary).font(font).color(p.text))
+                    .truncate()
+                    .show_tooltip_when_elided(false),
+            );
+            if !whole {
+                shown.kit_tooltip(summary).show();
+            }
             if toggle.clicked() {
                 tab.history_layout.expanded = !tab.history_layout.expanded;
                 tab.history_layout.compact_details = true;
@@ -327,56 +289,30 @@ pub(super) fn paint_header_strip(ui: &Ui, rect: Rect) {
     );
 }
 
-/// The "Commit information" disclosure, one rule in every density: it keeps the user's choice
-/// (open by default) and shows its body whenever `room` (what the changed files' reserved rows
-/// leave) holds the body's `first_line`. The body sits flush with the author row, takes its
-/// natural height up to that room and scrolls past it behind a faded edge, so no line is cut
-/// through its glyphs. Without that room it stays shut and its tooltip says how to make room.
-fn information(
-    ui: &mut Ui,
-    open: &mut bool,
-    room: f32,
-    first_line: f32,
-    body: impl FnOnce(&mut Ui),
-) {
-    const LABEL: &str = "Commit information";
+/// The commit message under the author and SHA rows, flush with them: its natural height up to
+/// `room` (what the changed files' reserved rows leave, at least one line), scrolling past it
+/// behind a faded edge so no line is cut through its glyphs.
+fn message_block(ui: &mut Ui, room: f32, body: impl FnOnce(&mut Ui) -> bool) {
     let s = palette(ui.ctx()).s();
-    let id = ui.id().with("commit-information");
-    let fits = room >= first_line;
-    let mut shown = *open && fits;
-    let row = TreeRow::new("commit-information", 0)
-        .kind(RowKind::List)
-        .label(LABEL)
-        .toggle_on_click(true)
-        .enabled(fits)
-        .open(&mut shown)
-        .show(ui)
-        .response;
-    if fits {
-        *open = shown;
-    }
-    // A disclosure is a collapsing header, not an item of a tree.
-    row.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, fits, LABEL));
-    ui.ctx().accesskit_node_builder(row.id, |n| {
-        n.clear_selected();
-        n.set_expanded(shown);
-    });
-    if !fits {
-        row.kit_tooltip("No room for it under the changed files")
-            .detail("Make the details pane taller, or choose Expand")
-            .show();
-    }
-    tree_children(ui, id, shown, 0, |ui| {
-        ui.add_space(theme::XS);
-        let out = egui::ScrollArea::vertical()
-            .id_salt("commit-metadata")
-            .max_height(room)
-            .min_scrolled_height(0.0)
-            .auto_shrink([false, true])
-            .show(ui, body);
-        paint::scroll_fade(ui, &out, s.pane);
-        ui.add_space(theme::XS);
-    });
+    let out = egui::ScrollArea::vertical()
+        .id_salt("commit-message")
+        .max_height(room)
+        .min_scrolled_height(0.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            // As tall as its text, like the rest of the column.
+            ui.spacing_mut().interact_size.y = 0.0;
+            body(ui)
+        });
+    paint::scroll_fade(ui, &out, s.pane);
+}
+
+/// The commit message after its summary line, trimmed.
+fn body_of(d: &CommitDetails) -> &str {
+    d.message
+        .trim()
+        .split_once('\n')
+        .map_or("", |(_, rest)| rest.trim())
 }
 
 /// The commit message: its summary as a headline when `summary` (the pane header does not show
@@ -384,9 +320,8 @@ fn information(
 fn message(ui: &mut Ui, d: &CommitDetails, summary: bool) -> bool {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    let mut lines = d.message.trim().splitn(2, '\n');
-    let head = lines.next().unwrap_or("").trim();
-    let body = lines.next().unwrap_or("").trim();
+    let head = d.message.trim().lines().next().unwrap_or("").trim();
+    let body = body_of(d);
     if summary {
         ui.add(
             egui::Label::new(
@@ -455,16 +390,20 @@ fn author(
             .size(AvatarSize::Detail)
             .id_salt(("commit-author", &d.author.email))
             .show(ui);
-        ui.add(
-            egui::Label::new(
-                RichText::new(&d.author.name)
-                    .font(FontId::new(m.body_size, theme::semibold()))
-                    .color(p.text),
+        let tip = ui
+            .add(
+                egui::Label::new(
+                    RichText::new(&d.author.name)
+                        .font(FontId::new(m.body_size, theme::semibold()))
+                        .color(p.text),
+                )
+                .truncate(),
             )
-            .truncate(),
-        )
-        .kit_tooltip(format!("{} <{}>", d.author.name, d.author.email))
-        .show();
+            .kit_tooltip(format!("{} <{}>", d.author.name, d.author.email));
+        match committed_by(d) {
+            Some(by) => tip.detail(by).show(),
+            None => tip.show(),
+        };
         if let Some(note) = note {
             picture_note(ui, note, actions);
         }
@@ -523,52 +462,11 @@ fn picture_note(ui: &mut Ui, note: &PictureNote, actions: &mut Vec<Action>) {
     }
 }
 
-fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
-    meta_row(
-        ui,
-        icon::CALENDAR_BLANK,
-        &widgets::full_date(d.author.time, d.author.offset_minutes),
-    );
-    if d.committer.email != d.author.email || d.committer.name != d.author.name {
-        meta_row(
-            ui,
-            icon::USER_SWITCH,
-            &format!("Committed by {}", d.committer.name),
-        );
-    }
-    if !d.parents.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            without_icons(
-                ui.label(
-                    RichText::new(icon::GIT_COMMIT)
-                        .size(m.icon_sm)
-                        .color(p.text_faint),
-                ),
-            );
-            ui.label(
-                RichText::new(if d.parents.len() > 1 {
-                    "Parents"
-                } else {
-                    "Parent"
-                })
-                .size(m.meta_size)
-                .color(p.text_faint),
-            );
-            for parent in &d.parents {
-                if LinkButton::new(short_id(*parent))
-                    .text_size(m.meta_size)
-                    .show(ui)
-                    .kit_tooltip(format!("Show commit {parent}"))
-                    .show()
-                    .clicked()
-                {
-                    actions.push(Action::Reveal(*parent));
-                }
-            }
-        });
-    }
+/// "Committed by …" when someone other than the author made the commit (a cherry-pick, a rebase,
+/// an applied patch).
+fn committed_by(d: &CommitDetails) -> Option<String> {
+    (d.committer.email != d.author.email || d.committer.name != d.author.name)
+        .then(|| format!("Committed by {} <{}>", d.committer.name, d.committer.email))
 }
 
 /// The "N files changed" line and its line counts; returns the height it took.
@@ -666,15 +564,6 @@ fn failed(ui: &mut Ui, tab: &mut RepoTab, error: &DetailsError) {
                 ui.add_space(theme::MD);
             });
         });
-}
-
-fn meta_row(ui: &mut Ui, glyph: &str, text: &str) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
-    ui.horizontal(|ui| {
-        without_icons(ui.label(RichText::new(glyph).size(m.icon_sm).color(p.text_faint)));
-        ui.add(egui::Label::new(RichText::new(text).size(m.meta_size).color(p.text_dim)).wrap());
-    });
 }
 
 /// Keeps icon glyphs out of what a screen reader says for a label drawn as "<glyph>  text":
@@ -1149,55 +1038,47 @@ mod tests {
         assert!(actions.is_empty(), "nothing to open: {actions:?}");
     }
 
-    /// One frame-settled draw of the commit information block with `room` to spare: the body's
-    /// rectangle (None while shut), the column's left edge, the height used and the user's
-    /// choice afterwards.
-    fn information_at(ctx: &egui::Context, room: f32) -> (Option<egui::Rect>, f32, f32, bool) {
-        let mut body = None;
+    /// One frame-settled draw of the message block with `room`: the first line's rectangle, the
+    /// column's left edge and the height used.
+    fn message_at(ctx: &egui::Context, room: f32) -> (egui::Rect, f32, f32) {
+        let mut first = egui::Rect::NOTHING;
         let mut column = 0.0;
         let mut used = 0.0;
-        let mut open = true;
         for _ in 0..3 {
-            body = None;
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 column = ui.max_rect().left();
-                let line = ui.text_style_height(&egui::TextStyle::Body);
-                super::information(ui, &mut open, room, line, |ui| {
-                    body = Some(ui.label("fix(retry): tune defaults").rect);
+                super::message_block(ui, room, |ui| {
+                    first = ui.label("fix(retry): tune defaults").rect;
+                    for _ in 0..20 {
+                        ui.label("more of the body");
+                    }
+                    true
                 });
                 used = ui.min_rect().height();
             });
             out.textures_delta.clear();
         }
-        (body, column, used, open)
+        (first, column, used)
     }
 
-    /// qa-a F1/F15, qa-b F2: one rule in every density. With room for its first line the block
-    /// is open, shows that line whole and starts at the column's edge, not under the disclosure
-    /// label; without it the block stays shut, the changed files keep their rows, and the user's
-    /// choice is kept for a taller pane.
+    /// The message sits flush with the column, with no disclosure row above it, and takes no
+    /// more than its room, scrolling past it.
     #[test]
-    fn commit_information_follows_one_rule_flush_with_the_column() {
+    fn the_message_shows_flush_and_within_its_room() {
         for density in [Density::Comfortable, Density::Dense] {
             let ctx = ctx(density);
-            let (body, column, used, _) = information_at(&ctx, 80.0);
-            let body = body.unwrap_or_else(|| panic!("{density:?}: open with room for a line"));
+            let (first, column, used) = message_at(&ctx, 80.0);
             assert!(
-                (body.left() - column).abs() < 0.5,
-                "{density:?}: body at {} against the column at {column}",
-                body.left()
+                (first.left() - column).abs() < 0.5,
+                "{density:?}: message at {} against the column at {column}",
+                first.left()
             );
             assert!(
-                used >= super::RowKind::List.height() + body.height(),
-                "{density:?}: the row and a whole first line show, got {used}"
+                first.top() < 1.0,
+                "{density:?}: nothing above it, at {}",
+                first.top()
             );
-            let (body, _, used, open) = information_at(&ctx, 0.0);
-            assert!(body.is_none(), "{density:?}: no room, no body");
-            assert!(
-                used <= super::RowKind::List.height() + 0.5,
-                "{density:?}: only the row, got {used}"
-            );
-            assert!(open, "{density:?}: the choice survives a short pane");
+            assert!(used <= 80.5, "{density:?}: within its room, got {used}");
         }
     }
 

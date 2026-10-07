@@ -147,7 +147,9 @@ impl Menu<'_> {
         label: &str,
         add: impl FnOnce(&mut Menu<'_>) -> R,
     ) -> Option<R> {
-        let item_id = self.ui.id().with(("kit-submenu", label));
+        // The id the item's response gets from its salt (`MenuItem::show`), which egui's submenu
+        // state is keyed by.
+        let item_id = self.ui.id().with(Id::new(("kit-submenu", label)));
         let sub_id = SubMenu::id_from_widget_id(item_id);
         if self.kind == Kind::Inline {
             let item = self
@@ -1199,6 +1201,115 @@ mod tests {
         }
         assert!(fills.contains(&p.danger_highlight()), "{fills:?}");
         assert!(texts.iter().all(|c| *c == p.danger), "{texts:?}");
+    }
+
+    /// On the way from a submenu's item to one of its lower items the pointer crosses the parent's
+    /// next item, and may pause there: the submenu stays open, and its item can be chosen.
+    #[test]
+    fn a_submenu_stays_open_while_the_pointer_heads_for_it() {
+        struct Seen {
+            target: Rect,
+            reset: Rect,
+            delete: Rect,
+            hard: Rect,
+            sub_open: bool,
+            chosen: bool,
+        }
+        let ctx = context_();
+        motion::set_reduced(true);
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>, seen: &mut Seen| {
+            time += 1.0 / 60.0;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1024.0, 640.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let r = ui.allocate_response(vec2(200.0, 40.0), Sense::click());
+                    seen.target = r.rect;
+                    seen.sub_open = false;
+                    let _ = context(&r, |m| {
+                        let shown = m.submenu(
+                            icon::ARROW_COUNTER_CLOCKWISE,
+                            "Reset current branch here",
+                            |m| {
+                                m.item(icon::FEATHER, "Soft").show(m.ui);
+                                m.item(icon::SCALES, "Mixed").show(m.ui);
+                                let hard = m.item(icon::WARNING, "Hard").danger().show(m.ui);
+                                seen.hard = hard.rect;
+                                seen.chosen |= hard.clicked();
+                            },
+                        );
+                        seen.sub_open = shown.is_some();
+                        let reset = m.ui.min_rect();
+                        seen.reset =
+                            Rect::from_min_max(reset.min, pos2(reset.max.x, reset.min.y + 30.0));
+                        let d = m.item(icon::TRASH, "Delete branch…").show(m.ui);
+                        seen.delete = d.rect;
+                        m.item(icon::COPY, "Copy SHA").show(m.ui);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+        let mut seen = Seen {
+            target: Rect::NOTHING,
+            reset: Rect::NOTHING,
+            delete: Rect::NOTHING,
+            hard: Rect::NOTHING,
+            sub_open: false,
+            chosen: false,
+        };
+        frame(Vec::new(), &mut seen);
+        for events in click(seen.target.center(), egui::PointerButton::Secondary) {
+            frame(events, &mut seen);
+        }
+        frame(Vec::new(), &mut seen);
+        // Rest on the submenu's item until it opens.
+        let start = pos2(seen.reset.center().x + 40.0, seen.reset.center().y);
+        for _ in 0..20 {
+            frame(vec![egui::Event::PointerMoved(start)], &mut seen);
+        }
+        assert!(seen.sub_open, "resting on the item opens the submenu");
+        // Down and to the right, across the next item, with a pause there.
+        // On the straight line to Hard, where it crosses the next item.
+        let to_hard = seen.hard.center() - start;
+        let over_delete = start + to_hard * ((seen.delete.center().y - start.y) / to_hard.y);
+        for k in 1..=4_u8 {
+            let t = f32::from(k) / 4.0;
+            frame(
+                vec![egui::Event::PointerMoved(start.lerp(over_delete, t))],
+                &mut seen,
+            );
+        }
+        // A hand at rest still trembles: a pixel back and forth, not towards the submenu.
+        for k in 0..18_u8 {
+            let jitter = if k % 2 == 0 { -1.0 } else { 0.0 };
+            frame(
+                vec![egui::Event::PointerMoved(
+                    over_delete + vec2(jitter, jitter),
+                )],
+                &mut seen,
+            );
+        }
+        assert!(seen.sub_open, "a pause on the way leaves the submenu open");
+        for k in 1..=4_u8 {
+            let t = f32::from(k) / 4.0;
+            frame(
+                vec![egui::Event::PointerMoved(
+                    over_delete.lerp(seen.hard.center(), t),
+                )],
+                &mut seen,
+            );
+        }
+        for events in click(seen.hard.center(), egui::PointerButton::Primary) {
+            frame(events, &mut seen);
+        }
+        motion::set_reduced(false);
+        assert!(seen.chosen, "the submenu's item could be chosen");
     }
 
     #[test]

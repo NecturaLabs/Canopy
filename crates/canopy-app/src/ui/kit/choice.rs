@@ -472,7 +472,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 .iter()
                 .find(|(at, _)| *at == i)
                 .map(|(_, c)| *c);
-            tip_for(r, ok, tip, reason, shortcut);
+            tip_for(r, ok, tip, reason, shortcut, named);
         }
         let mut group = ui.interact(track, group_id, Sense::hover());
         if changed {
@@ -635,7 +635,7 @@ impl<'a, T: PartialEq + Clone> Swatches<'a, T> {
             let name = self.options[i].2;
             let on = now == Some(i);
             r.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, enabled, on, name));
-            tip_for(r, enabled, Some(name), None, None);
+            tip_for(r, enabled, Some(name), None, None, false);
         }
         let mut group = ui.interact(track, group_id, Sense::hover());
         if changed {
@@ -1139,6 +1139,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
         }
         out.response
             .kit_tooltip("Middle-click a tab to close it")
+            .extra(true)
             .show();
         if *open < 3 {
             let reopen = IconButton::new(icon::PLUS, "Reopen a tab")

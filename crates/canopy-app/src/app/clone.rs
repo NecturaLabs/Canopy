@@ -47,12 +47,16 @@ impl CanopyApp {
                 self.toasts.push(
                     ctx,
                     ToastKind::Success,
+                    Topic::Finished,
                     "Clone complete",
                     path.display().to_string(),
                 );
                 self.open_repo(ctx, path);
             }
-            Err(e) if !shown => self.toasts.push(ctx, ToastKind::Error, "Clone failed", e),
+            Err(e) if !shown => {
+                self.toasts
+                    .push(ctx, ToastKind::Error, Topic::Error, "Clone failed", e);
+            }
             Err(_) => {}
         }
     }
@@ -209,7 +213,7 @@ mod tests {
     fn an_existing_destination_is_refused_before_cloning() {
         let dir = tempfile::tempdir().expect("temporary clone fixture");
         let source = dir.path().join("source");
-        Repo::init(&source).expect("empty local repository");
+        Repo::init(&source, "main", false).expect("empty local repository");
         let dest = dir.path().join("existing");
         std::fs::create_dir(&dest).expect("existing destination");
         let result = clone_repository(&source.to_string_lossy(), &dest, |_| {});

@@ -12,8 +12,9 @@ use std::process::Command;
 use canopy_core::identity::{self, Scope, Source};
 use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
 use canopy_core::{
-    ChangeKind, Choice, ConfigScope, ConflictFile, ConflictKind, ConflictRegion, DiffSource,
-    LineKind, MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
+    ChangeKind, Choice, ConfigScope, ConflictFile, ConflictKind, ConflictRegion, ConflictStyle,
+    DiffSource, GitOptions, LineKind, MissingObjects, PullStrategy, PushDefault, RefKind, Repo,
+    RepoState, Side, Whitespace,
 };
 
 #[expect(
@@ -39,6 +40,16 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// `repo` making Canopy's own choices, whatever the git configuration of the developer running
+/// the tests sets; a test of the configuration deciding turns following back on.
+fn canopys_choices(repo: Repo) -> Repo {
+    repo.set_options(GitOptions {
+        follow_config: false,
+        ..GitOptions::default()
+    });
+    repo
+}
+
 /// A repository with identity configured locally, so `Repo::commit` works without global config.
 fn fixture() -> (tempfile::TempDir, Repo) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -58,7 +69,7 @@ fn fixture() -> (tempfile::TempDir, Repo) {
     .expect("write");
     git(p, &["add", "."]);
     git(p, &["commit", "-q", "-m", "feat: first"]);
-    let repo = Repo::open(p).expect("open");
+    let repo = canopys_choices(Repo::open(p).expect("open"));
     (dir, repo)
 }
 
@@ -641,7 +652,7 @@ fn upstream_and_clone() -> (tempfile::TempDir, Repo, tempfile::TempDir, Repo) {
     let dest = clone_dir.path().join("clone");
     canopy_core::ops::clone(&up_dir.path().to_string_lossy(), &dest, |_| {}).expect("clone");
     configure(&dest);
-    let copy = Repo::open(&dest).expect("open clone");
+    let copy = canopys_choices(Repo::open(&dest).expect("open clone"));
     (up_dir, up, clone_dir, copy)
 }
 
@@ -1366,7 +1377,7 @@ fn pull_copy(clone_dir: &Path, config: &[&str]) -> (tempfile::TempDir, Repo) {
         let (key, value) = setting.split_once('=').expect("key=value");
         git(&dest, &["config", key, value]);
     }
-    let copy = Repo::open(&dest).expect("open copy");
+    let copy = canopys_choices(Repo::open(&dest).expect("open copy"));
     (dir, copy)
 }
 
@@ -1530,6 +1541,19 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
                 assert_eq!(
                     got, want,
                     "{strategy:?} with {settings:?} diverged={diverged}"
+                );
+                // The same pull in two steps: the fetch, then the fetched upstream brought in.
+                let (_copy_dir, copy) = pull_copy(clone_dir.path(), settings);
+                copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+                let got = pulled(
+                    up_dir.path(),
+                    &copy,
+                    before,
+                    copy.pull_fetched(strategy, |_| {}).is_ok(),
+                );
+                assert_eq!(
+                    got, want,
+                    "fetched {strategy:?} with {settings:?} diverged={diverged}"
                 );
             }
         }
@@ -1702,30 +1726,30 @@ fn pull_config_reads_through_git_not_libgit2() {
 }
 
 #[test]
-fn pull_default_follows_the_configuration_else_the_fallback() {
-    if !in_isolated_git_env("pull_default_follows_the_configuration_else_the_fallback") {
+fn pull_strategy_follows_the_configuration_else_the_fallback() {
+    if !in_isolated_git_env("pull_strategy_follows_the_configuration_else_the_fallback") {
         return;
     }
     // pull.rebase=true asks for a rebase, whatever the fallback is ...
     let (_up, _clone, copy) = pull_scenario(&["pull.rebase=true"], true);
-    copy.pull_default(PullStrategy::Merge, |_| {})
+    copy.pull(copy.pull_strategy(PullStrategy::Merge), |_| {})
         .expect("pull");
     assert_eq!(head_parents(&copy), 1);
 
     // ... and with nothing configured the fallback is passed to git, so a diverged pull works
     // where a bare `git pull` refuses.
     let (_up, _clone, copy) = pull_scenario(&[], true);
-    copy.pull_default(PullStrategy::Merge, |_| {})
+    copy.pull(copy.pull_strategy(PullStrategy::Merge), |_| {})
         .expect("pull");
     assert_eq!(head_parents(&copy), 2);
     let (_up, _clone, copy) = pull_scenario(&[], true);
-    copy.pull_default(PullStrategy::Rebase, |_| {})
+    copy.pull(copy.pull_strategy(PullStrategy::Rebase), |_| {})
         .expect("pull");
     assert_eq!(head_parents(&copy), 1);
 }
 
 #[test]
-fn pull_default_reports_git_s_own_error_for_a_broken_configuration() {
+fn a_pull_reports_git_s_own_error_for_a_broken_configuration() {
     let (_up, _clone, copy) = pull_scenario(&[], true);
     let path = copy.workdir().join(".git/config");
     let mut config = fs::read_to_string(&path).expect("read");
@@ -1735,7 +1759,7 @@ fn pull_default_reports_git_s_own_error_for_a_broken_configuration() {
 
     copy.pull_config().expect_err("the resolver cannot read it");
     let err = copy
-        .pull_default(PullStrategy::Merge, |_| {})
+        .pull(copy.pull_strategy(PullStrategy::Merge), |_| {})
         .expect_err("git refuses too");
     assert!(err.to_string().contains("bad config"), "{err}");
     assert_eq!(copy.head().expect("head").oid, before);
@@ -2601,4 +2625,716 @@ fn stage_unstage_and_discard_treat_paths_literally() {
     repo.discard(&glob).unwrap();
     assert!(!p.join("[ab].txt").exists());
     assert!(p.join("b.txt").exists(), "discard must not delete b.txt");
+}
+
+#[test]
+fn branches_checked_out_in_another_worktree_name_its_folder() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "feature"]);
+    git(p, &["branch", "idle"]);
+    let linked = tempfile::tempdir().expect("tempdir");
+    let wt = linked.path().join("wt");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            wt.to_str().expect("utf-8"),
+            "feature",
+        ],
+    );
+    let canonical = |path: &Path| fs::canonicalize(path).expect("canonical");
+
+    let snap = repo.snapshot(100).expect("snapshot");
+    let by_name = |name: &str| {
+        snap.branches
+            .iter()
+            .find(|b| b.name == name)
+            .unwrap_or_else(|| panic!("{name}"))
+            .clone()
+    };
+    assert!(by_name("main").is_head);
+    assert_eq!(by_name("main").worktree, None, "checked out here");
+    assert_eq!(
+        by_name("feature").worktree.as_deref().map(canonical),
+        Some(canonical(&wt))
+    );
+    assert_eq!(by_name("idle").worktree, None);
+
+    // From the linked folder, main is the one checked out elsewhere.
+    let from_linked = Repo::open(&wt).expect("open the linked worktree");
+    let snap = from_linked.snapshot(100).expect("snapshot");
+    let main = snap
+        .branches
+        .iter()
+        .find(|b| b.name == "main")
+        .expect("main");
+    assert_eq!(main.worktree.as_deref().map(canonical), Some(canonical(p)));
+    let feature = snap
+        .branches
+        .iter()
+        .find(|b| b.name == "feature")
+        .expect("feature");
+    assert!(feature.is_head);
+    assert_eq!(feature.worktree, None);
+}
+
+#[test]
+fn worktrees_list_every_working_folder_main_first() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "feature"]);
+    let linked = tempfile::tempdir().expect("tempdir");
+    let wt = linked.path().join("wt");
+    let detached = linked.path().join("detached");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            wt.to_str().expect("utf-8"),
+            "feature",
+        ],
+    );
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            detached.to_str().expect("utf-8"),
+            "HEAD",
+        ],
+    );
+    let canonical = |path: &Path| fs::canonicalize(path).expect("canonical");
+    let head = repo.snapshot(1).expect("snapshot").head.oid;
+    // What `git worktree list` says, in Canopy's order: main first, then by folder.
+    let listed = |r: &Repo| {
+        r.snapshot(1)
+            .expect("snapshot")
+            .worktrees
+            .into_iter()
+            .map(|w| (canonical(&w.path), w.branch, w.head, w.current, w.main))
+            .collect::<Vec<_>>()
+    };
+    let main = (canonical(p), Some("main".to_owned()), head, true, true);
+    let feature = (
+        canonical(&wt),
+        Some("feature".to_owned()),
+        head,
+        false,
+        false,
+    );
+    let loose = (canonical(&detached), None, head, false, false);
+    assert_eq!(
+        listed(&repo),
+        vec![main.clone(), loose.clone(), feature.clone()]
+    );
+
+    // From a linked folder: the same list, with that folder the current one.
+    let from_linked = Repo::open(&wt).expect("open the linked worktree");
+    assert_eq!(
+        listed(&from_linked),
+        vec![
+            (main.0, main.1, main.2, false, true),
+            loose,
+            (feature.0, feature.1, feature.2, true, false),
+        ]
+    );
+
+    // A plain repository has only its own folder.
+    let (_plain_dir, plain) = fixture();
+    assert_eq!(plain.snapshot(1).expect("snapshot").worktrees.len(), 1);
+}
+
+/// F1: with `fetch.pruneTags` in the user's configuration, `fetch --tags --prune` deletes every
+/// local tag the remote lacks, including ones not pushed yet. Canopy's fetch never does.
+#[test]
+fn fetch_keeps_local_tags_whatever_fetch_prune_tags_says() {
+    let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir().to_path_buf();
+    git(&p, &["config", "fetch.pruneTags", "true"]);
+    git(&p, &["tag", "local-only"]);
+    copy.fetch(Some("origin"), true, |_| {})
+        .expect("fetch origin");
+    copy.fetch(None, true, |_| {}).expect("fetch all");
+    assert_eq!(git(&p, &["tag", "--list"]).trim(), "local-only");
+}
+
+/// F2: Canopy's message box has no comment template, so a line starting with `#` is part of the
+/// message (an issue number, a Markdown heading) and must survive the commit.
+#[test]
+fn commit_keeps_lines_that_start_with_a_hash() {
+    let (dir, repo) = fixture();
+    fs::write(dir.path().join("a.txt"), "hash\n").expect("write");
+    repo.stage_all().expect("stage");
+    repo.commit(
+        "\nfix: close the stale tab   \n\n#42 was the report.\n# Notes\n\n\n",
+        false,
+        false,
+    )
+    .expect("commit");
+    assert_eq!(
+        repo.head_message().expect("message"),
+        "fix: close the stale tab\n\n#42 was the report.\n# Notes\n",
+        "only surrounding blank lines and trailing spaces go"
+    );
+}
+
+/// Two branches that change the same line of `a.txt`: `main` (checked out) and `other`.
+fn conflicting_branches(p: &Path) {
+    git(p, &["switch", "-q", "-c", "other"]);
+    fs::write(p.join("a.txt"), "theirs\n").expect("write");
+    git(p, &["commit", "-q", "-am", "theirs"]);
+    git(p, &["switch", "-q", "main"]);
+    fs::write(p.join("a.txt"), "ours\n").expect("write");
+    git(p, &["commit", "-q", "-am", "ours"]);
+}
+
+/// Canopy's conflict style is the one written into files, whatever `merge.conflictStyle` says.
+#[test]
+fn conflicts_are_written_in_canopys_style() {
+    for (style, base_shown) in [
+        (ConflictStyle::Zdiff3, true),
+        (ConflictStyle::Diff3, true),
+        (ConflictStyle::Merge, false),
+    ] {
+        let (dir, repo) = fixture();
+        let p = dir.path();
+        let configured = if base_shown { "merge" } else { "zdiff3" };
+        git(p, &["config", "merge.conflictStyle", configured]);
+        conflicting_branches(p);
+        repo.set_options(GitOptions {
+            conflict_style: style,
+            follow_config: false,
+            ..GitOptions::default()
+        });
+        repo.merge("other", MergeMode::Default).unwrap_err();
+        let file = fs::read_to_string(p.join("a.txt")).expect("read");
+        assert_eq!(file.contains("|||||||"), base_shown, "{style:?}:\n{file}");
+    }
+}
+
+/// Following the git configuration (the default), a choice it sets is git's to make: Canopy
+/// passes nothing for it, and its own choice applies only to what the configuration leaves unset.
+#[test]
+fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
+    if !in_isolated_git_env("the_git_configuration_decides_what_it_sets_while_canopy_follows_it") {
+        return;
+    }
+    let follow = |repo: &Repo| {
+        repo.set_options(GitOptions {
+            follow_config: true,
+            ..GitOptions::default()
+        });
+    };
+
+    // Conflict style: Canopy's zdiff3 shows the base; the configuration's merge style does not.
+    for (configured, base_shown) in [(None, true), (Some("merge"), false)] {
+        let (dir, repo) = fixture();
+        follow(&repo);
+        if let Some(style) = configured {
+            git(dir.path(), &["config", "merge.conflictStyle", style]);
+        }
+        conflicting_branches(dir.path());
+        repo.merge("other", MergeMode::Default).unwrap_err();
+        let file = fs::read_to_string(dir.path().join("a.txt")).expect("read");
+        assert_eq!(
+            file.contains("|||||||"),
+            base_shown,
+            "{configured:?}:\n{file}"
+        );
+    }
+
+    // Message cleanup: Canopy keeps lines starting with #; commit.cleanup=strip drops them.
+    for (configured, kept) in [(None, true), (Some("strip"), false)] {
+        let (dir, repo) = fixture();
+        follow(&repo);
+        if let Some(mode) = configured {
+            git(dir.path(), &["config", "commit.cleanup", mode]);
+        }
+        fs::write(dir.path().join("a.txt"), "hash\n").expect("write");
+        repo.stage_all().expect("stage");
+        repo.commit("fix: tab\n\n# Notes\n", false, false)
+            .expect("commit");
+        let message = repo.head_message().expect("message");
+        assert_eq!(
+            message.contains("# Notes"),
+            kept,
+            "{configured:?}: {message:?}"
+        );
+    }
+
+    // Tags: Canopy never prunes local tags; fetch.pruneTags=true does, on a pruning fetch (the
+    // clone's fetch.prune=false would decide against that).
+    for (configured, kept) in [(None, true), (Some("true"), false)] {
+        let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        git(copy.workdir(), &["config", "fetch.prune", "true"]);
+        if let Some(value) = configured {
+            git(copy.workdir(), &["config", "fetch.pruneTags", value]);
+        }
+        git(copy.workdir(), &["tag", "local-only"]);
+        copy.fetch(Some("origin"), true, |_| {}).expect("fetch");
+        let tags = git(copy.workdir(), &["tag", "--list", "local-only"]);
+        assert_eq!(!tags.trim().is_empty(), kept, "{configured:?}");
+    }
+
+    // Autostash: Canopy's lets a rebase run over changes; rebase.autoStash=false refuses.
+    for (configured, runs) in [(None, true), (Some("false"), false)] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        if let Some(value) = configured {
+            git(copy.workdir(), &["config", "rebase.autoStash", value]);
+        }
+        diverge(up_dir.path(), &copy);
+        copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+        fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
+        assert_eq!(copy.rebase("origin/main").is_ok(), runs, "{configured:?}");
+    }
+
+    // Tags, per remote: remote.origin.pruneTags=true prunes them for origin.
+    {
+        let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        git(copy.workdir(), &["config", "fetch.prune", "true"]);
+        git(
+            copy.workdir(),
+            &["config", "remote.origin.pruneTags", "true"],
+        );
+        git(copy.workdir(), &["tag", "local-only"]);
+        copy.fetch(Some("origin"), true, |_| {}).expect("fetch");
+        let tags = git(copy.workdir(), &["tag", "--list", "local-only"]);
+        assert!(tags.trim().is_empty(), "remote.origin.pruneTags: {tags:?}");
+    }
+
+    // Pruning branches: Canopy's choice applies to every remote whose own setting is unset;
+    // remote.origin.prune=false keeps origin's, another remote's setting does not.
+    for (key, kept) in [
+        (None, false),
+        (Some("remote.origin.prune"), true),
+        (Some("remote.mirror.prune"), false),
+    ] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        git(copy.workdir(), &["config", "--unset", "fetch.prune"]);
+        git(up_dir.path(), &["branch", "gone"]);
+        copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+        git(up_dir.path(), &["branch", "-D", "gone"]);
+        git(
+            copy.workdir(),
+            &["remote", "add", "mirror", &up_dir.path().to_string_lossy()],
+        );
+        if let Some(key) = key {
+            git(copy.workdir(), &["config", key, "false"]);
+        }
+        copy.fetch(Some("origin"), true, |_| {}).expect("fetch");
+        let left = git(copy.workdir(), &["branch", "-r", "--list", "origin/gone"]);
+        assert_eq!(!left.trim().is_empty(), kept, "{key:?}");
+    }
+
+    // Autostash for merges: Canopy's lets a merge run over changes; merge.autoStash=false
+    // refuses.
+    for (configured, runs) in [(None, true), (Some("false"), false)] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        if let Some(value) = configured {
+            git(copy.workdir(), &["config", "merge.autoStash", value]);
+        }
+        fs::write(up_dir.path().join("a.txt"), "upstream\n").expect("write");
+        git(up_dir.path(), &["commit", "-q", "-am", "feat: upstream"]);
+        copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+        fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
+        let pulled = copy.pull_fetched(PullStrategy::FastForwardOnly, |_| {});
+        assert_eq!(pulled.is_ok(), runs, "{configured:?}: {pulled:?}");
+    }
+
+    // Pushing: push.followTags=false keeps the tag back; push.default=upstream pushes to an
+    // upstream of another name, which Canopy's simple refuses.
+    for (key, value, tag_sent, pushed) in [
+        (None, "", true, false),
+        (Some("push.followTags"), "false", false, false),
+        (Some("push.default"), "upstream", true, true),
+    ] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        let p = copy.workdir();
+        git(up_dir.path(), &["checkout", "-q", "--detach"]);
+        git(
+            p,
+            &["checkout", "-q", "-b", "topic", "--track", "origin/main"],
+        );
+        if let Some(key) = key {
+            git(p, &["config", key, value]);
+        }
+        fs::write(p.join("a.txt"), "tagged\n").expect("write");
+        git(p, &["commit", "-q", "-am", "feat: tagged"]);
+        git(p, &["tag", "-a", "v1.0.0", "-m", "First release"]);
+        let result = copy.push(false, |_| {});
+        assert_eq!(result.is_ok(), pushed, "{key:?}: {result:?}");
+        if pushed {
+            let tags = git(up_dir.path(), &["tag", "--list", "v1.0.0"]);
+            assert_eq!(!tags.trim().is_empty(), tag_sent, "{key:?}: {tags:?}");
+        }
+        if key.is_none() || key == Some("push.followTags") {
+            git(p, &["push", "-q", "origin", "topic"]);
+            git(p, &["branch", "-q", "--set-upstream-to", "origin/topic"]);
+            copy.push(false, |_| {}).expect("push to topic");
+            let tags = git(up_dir.path(), &["tag", "--list", "v1.0.0"]);
+            assert_eq!(!tags.trim().is_empty(), tag_sent, "{key:?}: {tags:?}");
+        }
+    }
+
+    // A force push sends the current branch alone, even under push.default=matching or a push
+    // refspec for every branch.
+    for (key, value) in [
+        ("push.default", "matching"),
+        ("remote.origin.push", "refs/heads/*:refs/heads/*"),
+    ] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        let p = copy.workdir();
+        git(up_dir.path(), &["checkout", "-q", "-b", "feature"]);
+        git(up_dir.path(), &["checkout", "-q", "--detach"]);
+        fs::write(up_dir.path().join("up.txt"), "upstream\n").expect("write");
+        git(up_dir.path(), &["add", "."]);
+        git(up_dir.path(), &["commit", "-q", "-m", "feat: upstream"]);
+        git(up_dir.path(), &["branch", "-q", "-f", "main"]);
+        let remote_main = git(up_dir.path(), &["rev-parse", "main"]);
+        copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+        git(p, &["config", key, value]);
+        git(
+            p,
+            &[
+                "checkout",
+                "-q",
+                "-b",
+                "feature",
+                "--track",
+                "origin/feature",
+            ],
+        );
+        fs::write(p.join("a.txt"), "rewritten\n").expect("write");
+        git(p, &["commit", "-q", "-am", "feat: rewritten"]);
+        copy.push(true, |_| {}).expect("force push");
+        assert_eq!(
+            git(up_dir.path(), &["rev-parse", "main"]),
+            remote_main,
+            "{key}: main on the remote was not rewound"
+        );
+        assert_eq!(
+            git(up_dir.path(), &["rev-parse", "feature"]),
+            git(p, &["rev-parse", "feature"])
+        );
+    }
+}
+
+/// A force push goes where a plain push of the branch would: to its upstream of another name
+/// under `upstream`, to the branch of the same name under `current`; `simple` refuses, as git
+/// does.
+#[test]
+fn a_force_push_goes_where_a_push_would() {
+    for (mode, dest) in [
+        (PushDefault::Upstream, Some("main")),
+        (PushDefault::Current, Some("topic")),
+        (PushDefault::Simple, None),
+    ] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        copy.set_options(GitOptions {
+            follow_config: false,
+            push_default: mode,
+            ..GitOptions::default()
+        });
+        let p = copy.workdir();
+        git(up_dir.path(), &["checkout", "-q", "--detach"]);
+        git(
+            p,
+            &["checkout", "-q", "-b", "topic", "--track", "origin/main"],
+        );
+        fs::write(p.join("a.txt"), "forced\n").expect("write");
+        git(p, &["commit", "-q", "-am", "feat: forced"]);
+        let pushed = copy.push(true, |_| {});
+        let ours = git(p, &["rev-parse", "HEAD"]);
+        match dest {
+            Some(dest) => {
+                pushed.expect("force push");
+                assert_eq!(git(up_dir.path(), &["rev-parse", dest]), ours, "{mode:?}");
+            }
+            None => {
+                pushed.unwrap_err();
+            }
+        }
+    }
+}
+
+/// With autostash on (the default) a rebase and a pull work over uncommitted changes, which come
+/// back afterwards; with it off git refuses, as without Canopy.
+#[test]
+fn autostash_lets_rebase_and_pull_run_over_local_changes() {
+    for autostash in [true, false] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        let p = copy.workdir().to_path_buf();
+        git(
+            &p,
+            &[
+                "config",
+                "rebase.autoStash",
+                if autostash { "false" } else { "true" },
+            ],
+        );
+        diverge(up_dir.path(), &copy);
+        copy.set_options(GitOptions {
+            autostash,
+            follow_config: false,
+            ..GitOptions::default()
+        });
+        fs::write(p.join("a.txt"), "dirty\n").expect("write");
+        let pulled = copy.pull(PullStrategy::Rebase, |_| {});
+        assert_eq!(
+            pulled.is_ok(),
+            autostash,
+            "pull, autostash {autostash}: {pulled:?}"
+        );
+        if autostash {
+            assert_eq!(
+                fs::read_to_string(p.join("a.txt")).expect("read"),
+                "dirty\n"
+            );
+            assert!(p.join("up.txt").exists(), "the upstream commit arrived");
+            git(&p, &["reset", "-q", "--hard", "HEAD~1"]);
+            fs::write(p.join("a.txt"), "dirty again\n").expect("write");
+            copy.rebase("origin/main").expect("rebase");
+            assert_eq!(
+                fs::read_to_string(p.join("a.txt")).expect("read"),
+                "dirty again\n"
+            );
+        } else {
+            copy.rebase("origin/main").unwrap_err();
+        }
+    }
+}
+
+/// A push sends the annotated tags on the commits it pushes when follow-tags is on (the default),
+/// and works whatever `push.default` says.
+#[test]
+fn push_follows_tags_and_ignores_push_default() {
+    for follow_tags in [true, false] {
+        let (dir, repo) = fixture();
+        let p = dir.path();
+        let remote = tempfile::tempdir().expect("tempdir");
+        git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+        repo.add_remote("origin", &remote.path().to_string_lossy())
+            .expect("remote");
+        repo.push(false, |_| {}).expect("first push");
+        git(p, &["config", "push.default", "nothing"]);
+        git(
+            p,
+            &[
+                "config",
+                "push.followTags",
+                if follow_tags { "false" } else { "true" },
+            ],
+        );
+        repo.set_options(GitOptions {
+            follow_tags,
+            follow_config: false,
+            ..GitOptions::default()
+        });
+        fs::write(p.join("a.txt"), "tagged\n").expect("write");
+        git(p, &["commit", "-q", "-am", "feat: tagged"]);
+        git(p, &["tag", "-a", "v1.0.0", "-m", "First release"]);
+        repo.push(false, |_| {})
+            .expect("push with push.default=nothing");
+        let tags = git(remote.path(), &["tag", "--list"]);
+        assert_eq!(
+            tags.trim() == "v1.0.0",
+            follow_tags,
+            "follow_tags {follow_tags}: {tags:?}"
+        );
+        assert_eq!(
+            git(remote.path(), &["rev-parse", "main"]),
+            git(p, &["rev-parse", "main"])
+        );
+    }
+}
+
+/// A new repository starts on the branch Canopy names, unless Canopy follows the git
+/// configuration and `init.defaultBranch` names one.
+#[test]
+fn init_starts_on_the_branch_canopy_names_or_the_configured_one() {
+    if !in_isolated_git_env("init_starts_on_the_branch_canopy_names_or_the_configured_one") {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let head = |follow: bool, name: &str| {
+        let repo = Repo::init(&dir.path().join(name), "trunk", follow).expect("init");
+        git(repo.workdir(), &["symbolic-ref", "HEAD"])
+            .trim()
+            .to_owned()
+    };
+    assert_eq!(head(true, "nothing-set"), "refs/heads/trunk");
+    let global = std::env::var("GIT_CONFIG_GLOBAL").expect("global path");
+    fs::write(global, "[init]\n\tdefaultBranch = develop\n").expect("write");
+    assert_eq!(head(true, "followed"), "refs/heads/develop");
+    assert_eq!(head(false, "not-followed"), "refs/heads/trunk");
+}
+
+/// When the changes set aside for a pull conflict with what came in, git still succeeds and
+/// leaves conflicted files with nothing in progress; a merge stopped on conflicts is not that.
+#[test]
+fn an_autostash_that_conflicts_is_recognised() {
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let up = up_dir.path();
+    fs::write(up.join("a.txt"), "upstream\n").expect("write");
+    git(up, &["commit", "-q", "-am", "feat: upstream"]);
+    fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
+    assert!(!copy.autostash_conflicted().expect("check"));
+    copy.pull(PullStrategy::Rebase, |_| {})
+        .expect("pull succeeds");
+    assert!(copy.autostash_conflicted().expect("check"));
+    assert!(git(copy.workdir(), &["stash", "list"]).contains("autostash"));
+
+    let (dir, repo) = fixture();
+    conflicting_branches(dir.path());
+    repo.merge("other", MergeMode::Default).unwrap_err();
+    assert!(
+        !repo.autostash_conflicted().expect("check"),
+        "a merge in progress"
+    );
+}
+
+/// With Canopy's own choices, neither step of a pull deletes a tag that was never pushed,
+/// whatever `fetch.prune`, `fetch.pruneTags` and `remote.<name>.pruneTags` say.
+#[test]
+fn a_pull_never_prunes_local_tags() {
+    for fetched in [false, true] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        for setting in ["fetch.prune", "fetch.pruneTags", "remote.origin.pruneTags"] {
+            git(copy.workdir(), &["config", setting, "true"]);
+        }
+        git(copy.workdir(), &["tag", "local-only"]);
+        fs::write(up_dir.path().join("up.txt"), "upstream\n").expect("write");
+        git(up_dir.path(), &["add", "."]);
+        git(up_dir.path(), &["commit", "-q", "-m", "feat: upstream"]);
+        if fetched {
+            copy.pull_preview(true, |_| {})
+                .expect("preview")
+                .expect("upstream");
+            copy.pull_fetched(PullStrategy::FastForwardOnly, |_| {})
+                .expect("pull");
+        } else {
+            copy.pull(PullStrategy::FastForwardOnly, |_| {})
+                .expect("pull");
+        }
+        assert_eq!(
+            git(copy.workdir(), &["rev-parse", "HEAD"]),
+            git(up_dir.path(), &["rev-parse", "HEAD"]),
+            "fetched={fetched}: pulled"
+        );
+        assert_eq!(
+            git(copy.workdir(), &["tag", "--list", "local-only"]).trim(),
+            "local-only",
+            "fetched={fetched}: the tag survives"
+        );
+    }
+}
+
+/// The second step brings in what the preview fetched and does not ask the remote again.
+#[test]
+fn a_fetched_pull_does_not_fetch_again() {
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    diverge(up_dir.path(), &copy);
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert!(p.diverged());
+    let seen = git(copy.workdir(), &["rev-parse", "origin/main"]);
+    fs::write(up_dir.path().join("later.txt"), "later\n").expect("write");
+    git(up_dir.path(), &["add", "."]);
+    git(up_dir.path(), &["commit", "-q", "-m", "feat: later"]);
+
+    copy.pull_fetched(PullStrategy::Merge, |_| {})
+        .expect("merge");
+    assert_eq!(head_parents(&copy), 2);
+    assert_eq!(
+        git(copy.workdir(), &["rev-parse", "HEAD^2"]),
+        seen,
+        "merged the commit the preview saw"
+    );
+    assert_eq!(
+        git(copy.workdir(), &["rev-parse", "origin/main"]),
+        seen,
+        "no second fetch"
+    );
+}
+
+/// The preview fetches first, then says what a pull would bring and where it would conflict,
+/// without changing the branch or any file.
+#[test]
+fn a_pull_preview_finds_conflicts_before_the_pull() {
+    // Up to date: nothing to bring.
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert_eq!((p.ahead, p.behind, p.risky()), (0, 0, false));
+    assert_eq!(p.upstream, "origin/main");
+
+    // Behind, with an uncommitted change to a file the incoming commit changes too.
+    let up = up_dir.path();
+    fs::write(up.join("a.txt"), "upstream\n").expect("write");
+    git(up, &["commit", "-q", "-am", "feat: upstream"]);
+    fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
+    fs::write(copy.workdir().join("b.txt"), "unrelated\n").expect("write");
+    let head = git(copy.workdir(), &["rev-parse", "HEAD"]);
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert_eq!((p.ahead, p.behind), (0, 1), "the fetch ran first");
+    assert_eq!(p.overlap, ["a.txt"]);
+    assert_eq!(
+        p.conflicts, None,
+        "a fast-forward cannot conflict by itself"
+    );
+    assert!(p.risky() && !p.diverged());
+    assert_eq!(
+        git(copy.workdir(), &["rev-parse", "HEAD"]),
+        head,
+        "nothing moved"
+    );
+    assert_eq!(
+        fs::read_to_string(copy.workdir().join("a.txt")).expect("read"),
+        "dirty\n"
+    );
+
+    // Diverged, both changing the same line: a conflict, named before the pull.
+    git(copy.workdir(), &["commit", "-q", "-am", "feat: local"]);
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert!(p.diverged());
+    assert!(p.overlap.is_empty(), "b.txt is untouched upstream");
+    assert_eq!(p.conflicts, Some(vec!["a.txt".to_owned()]));
+
+    // Diverged without touching the same lines: no conflict.
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    diverge(up_dir.path(), &copy);
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert!(p.diverged() && !p.risky(), "{p:?}");
+    assert_eq!(p.conflicts, Some(Vec::new()));
+
+    // No upstream: nothing to preview.
+    let (_dir, repo) = fixture();
+    assert_eq!(repo.pull_preview(false, |_| {}).expect("preview"), None);
 }

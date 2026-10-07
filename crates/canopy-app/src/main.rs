@@ -46,18 +46,20 @@ OPTIONS:
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, crash-consent, legal, credential, host-key,
-                              merge, identity, settings-git, clear-identity, update-installed,
-                              update-running, trust-folder, diff-options,
+                              merge, identity, settings-git, settings-git-commits,
+                              clear-identity, update-installed, update-running, trust-folder,
+                              diff-options,
                               settings-integrations, settings-accounts, settings-updates,
                               settings-keyboard, settings-backup, settings-repository,
-                              settings-search, about, toasts, gallery, menu-remotes,
-                              menu-branch, menu-commit, menu-file, open, open-error, clone,
+                              settings-search, about, toasts, notifications, branch-selected,
+                              gallery, menu-remotes, menu-branch, menu-commit, menu-file, open,
+                              open-error, clone,
                               clone-running, clone-error, init, new-branch, rename, new-tag,
                               stash, add-remote, add-remote-refused, publish, new-request,
                               confirm, confirm-danger, confirm-host, confirm-merge-risky,
-                              whats-new, crash, update-available, update-failed, terms,
-                              consent-reading, crash-reading, username, password, approve or
-                              notice
+                              diverged, pull-conflicts, whats-new, crash, update-available,
+                              update-failed, terms, consent-reading, crash-reading, username,
+                              password, approve or notice
         --size <WxH>          Initial window size [default: 1440x900]
         --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
         --style <STYLE>       Start with a style: standard or deeper

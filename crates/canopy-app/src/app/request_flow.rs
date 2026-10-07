@@ -33,8 +33,13 @@ impl CanopyApp {
         if !self.settings.hosting_api || !has_token {
             let url = forge.new_request_url(&source, target.as_deref());
             if let Err(e) = crate::platform::open_url(&url) {
-                self.toasts
-                    .push(ctx, ToastKind::Error, "Could not open the browser", e);
+                self.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Could not open the browser",
+                    e,
+                );
             }
             return;
         }

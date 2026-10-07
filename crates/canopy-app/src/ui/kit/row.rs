@@ -345,6 +345,7 @@ fn row_widget_info(
     response: &Response,
     enabled: bool,
     selected: bool,
+    current: bool,
     label: &str,
     role: egui::accesskit::Role,
 ) {
@@ -356,6 +357,9 @@ fn row_widget_info(
         n.set_role(role);
         n.clear_toggled();
         n.set_selected(selected);
+        if current {
+            n.set_aria_current(egui::accesskit::AriaCurrent::True);
+        }
     });
 }
 
@@ -396,6 +400,7 @@ pub struct ListRow<'a> {
     kind: RowKind,
     height: Option<f32>,
     selected: bool,
+    current: bool,
     cursor: bool,
     zebra: bool,
     enabled: bool,
@@ -436,6 +441,7 @@ impl<'a> ListRow<'a> {
             kind: RowKind::List,
             height: None,
             selected: false,
+            current: false,
             cursor: false,
             zebra: false,
             enabled: true,
@@ -510,6 +516,13 @@ impl<'a> ListRow<'a> {
     }
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+    /// The row is the current one of its kind (the checked-out branch), apart from the
+    /// selection: its icon in the accent and its label weighted as if selected, and announced
+    /// as current.
+    pub fn current(mut self, current: bool) -> Self {
+        self.current = current;
         self
     }
     /// The keyboard cursor is on this row (views with their own cursor model).
@@ -625,15 +638,20 @@ impl<'a> ListRow<'a> {
             let mut x = rc.content.left() + self.indent;
             let mut right = rc.content.right() - actions_w - widgets_w;
             if let Some(g) = &self.icon {
+                let color = if self.current && f.enabled {
+                    Tone::Accent.color(theme::palette(ui.ctx()))
+                } else {
+                    rc.icon
+                };
                 let glyph = f.painter.layout_no_wrap(
                     g.clone(),
-                    theme::icon_font(m.icon_md, rc.selected),
-                    rc.icon,
+                    theme::icon_font(m.icon_md, rc.selected || self.current),
+                    color,
                 );
                 f.painter.galley(
                     pos2(x, cy - glyph.size().y / 2.0),
                     Arc::clone(&glyph),
-                    rc.icon,
+                    color,
                 );
                 x += glyph.size().x + GAP;
             }
@@ -657,7 +675,7 @@ impl<'a> ListRow<'a> {
                 );
                 right -= GAP;
             }
-            let family = match (self.selected, self.kind.chrome()) {
+            let family = match (self.selected || self.current, self.kind.chrome()) {
                 (true, true) => theme::semibold(),
                 (true, false) => theme::medium(),
                 _ => FontFamily::Proportional,
@@ -744,6 +762,7 @@ impl<'a> ListRow<'a> {
             &f.response,
             f.enabled,
             self.selected,
+            self.current,
             self.accessible.as_deref().unwrap_or(&self.label),
             egui::accesskit::Role::ListItem,
         );
@@ -1072,6 +1091,7 @@ impl<'a> TreeRow<'a> {
             &response,
             f.enabled,
             self.selected,
+            false,
             spoken,
             egui::accesskit::Role::TreeItem,
         );

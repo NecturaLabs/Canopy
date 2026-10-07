@@ -342,6 +342,7 @@ impl<'a> Checkbox<'a> {
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
+            true,
         )
     }
 }
@@ -472,6 +473,7 @@ impl Radio {
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
+            true,
         )
     }
 }
@@ -845,6 +847,7 @@ impl<'a> Switch<'a> {
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
+            true,
         )
     }
 }

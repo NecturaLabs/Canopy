@@ -20,7 +20,7 @@ use crate::tab::{RepoTab, View};
 use crate::ui::cheatsheet::Cheatsheet;
 use crate::ui::palette::{CommandPalette, Entry};
 use crate::ui::theme::{self, ThemeId, palette};
-use crate::ui::toast::{ToastKind, Toasts};
+use crate::ui::toast::{Offer, ToastKind, Toasts, Topic};
 use crate::updater::{self, UpdateState, Updater};
 use crate::views::dialogs::{self, Dialog, DialogStack, Outcome, Start};
 use crate::views::settings_screen::{self, SettingsScreen};
@@ -55,6 +55,7 @@ pub const OVERLAYS: &[&str] = &[
     "merge",
     "identity",
     "settings-git",
+    "settings-git-commits",
     "clear-identity",
     "update-installed",
     "update-running",
@@ -69,6 +70,8 @@ pub const OVERLAYS: &[&str] = &[
     "settings-search",
     "about",
     "toasts",
+    "notifications",
+    "branch-selected",
     "gallery",
     "menu-remotes",
     "menu-branch",
@@ -92,6 +95,8 @@ pub const OVERLAYS: &[&str] = &[
     "confirm-danger",
     "confirm-host",
     "confirm-merge-risky",
+    "diverged",
+    "pull-conflicts",
     "whats-new",
     "crash",
     "update-available",
@@ -322,12 +327,12 @@ impl CanopyApp {
         let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
         } else {
-            launch.paths
+            launch.paths.clone()
         };
         for (i, path) in restore.into_iter().enumerate() {
             let request = open::OpenRequest {
                 path,
-                create: false,
+                create: None,
                 focus: i == 0,
             };
             app.request_open(&cc.egui_ctx, request);
@@ -345,6 +350,12 @@ impl CanopyApp {
             Some("settings-git") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
             }
+            Some("settings-git-commits") => {
+                app.settings_screen = Some(SettingsScreen::at_group(
+                    settings_screen::Section::Git,
+                    "Commits",
+                ));
+            }
             Some("settings-integrations") => {
                 app.settings_screen =
                     Some(SettingsScreen::at(settings_screen::Section::Integrations));
@@ -356,18 +367,68 @@ impl CanopyApp {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates));
             }
             Some("about") => app.dialogs.open(Dialog::About),
-            Some("toasts") => {
+            Some("notifications") => {
+                // A notification of each kind, for the center the overlay opens.
+                let ctx = &cc.egui_ctx;
                 app.toasts.push(
-                    &cc.egui_ctx,
+                    ctx,
+                    ToastKind::Success,
+                    Topic::Finished,
+                    "Pushed",
+                    "main to origin",
+                );
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Info,
+                    Topic::Confirmation,
+                    "Copied",
+                    "3f9a2c1",
+                );
+                app.toasts.push(
+                    ctx,
                     ToastKind::Error,
+                    Topic::Error,
                     "Push failed",
                     "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
+                );
+                app.toasts.push_offer(
+                    ctx,
+                    ToastKind::Info,
+                    Topic::Update,
+                    "Canopy 812 is available",
+                    "",
+                    Offer::ReviewUpdate,
+                );
+            }
+            Some("toasts") => {
+                // Every type, so the stack shows a finished operation beside the error.
+                app.toasts.set_prefs(settings::NotificationPrefs {
+                    finished: true,
+                    ..Default::default()
+                });
+                // A known failure in a repository, so its card offers the pull.
+                app.toasts.push_for(
+                    &cc.egui_ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Push failed",
+                    "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
+                    launch.paths.first().map(PathBuf::as_path),
                 );
                 app.toasts.push(
                     &cc.egui_ctx,
                     ToastKind::Success,
+                    Topic::Finished,
                     "Committed",
                     "docs: add API reference",
+                );
+                app.toasts.push_offer(
+                    &cc.egui_ctx,
+                    ToastKind::Info,
+                    Topic::Update,
+                    "Canopy 812 is available",
+                    "",
+                    Offer::ReviewUpdate,
                 );
             }
             Some("settings-keyboard") => {
@@ -468,7 +529,7 @@ impl CanopyApp {
             Some(_) | None => {}
         }
         if git_version_missing(&app.git_version) {
-            app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
+            app.toasts.push(&cc.egui_ctx, ToastKind::Error, Topic::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
         }
         let mut notices = Vec::new();
         // A crash report from last time, offered once.
@@ -522,6 +583,11 @@ impl CanopyApp {
 
     fn tab(&mut self) -> Option<&mut RepoTab> {
         self.tabs.get_mut(self.active)
+    }
+
+    /// The tab of the repository at `repo`, whether or not it is active.
+    fn tab_at(&mut self, repo: &std::path::Path) -> Option<&mut RepoTab> {
+        self.tabs.iter_mut().find(|t| t.path == repo)
     }
 
     fn set_theme(&mut self, ctx: &egui::Context, id: ThemeId) {
@@ -778,6 +844,9 @@ impl eframe::App for CanopyApp {
         let p = palette(&ctx);
         let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
         self.poll(&ctx);
+        if let Some(t) = self.tabs.get_mut(self.active) {
+            t.diff_default = self.settings.diff;
+        }
         self.apply_repo_looks();
         self.auto_fetch(&ctx);
         let mut actions = Vec::new();
@@ -890,6 +959,7 @@ impl eframe::App for CanopyApp {
                         &self.git_version,
                         &self.updater.state,
                         &self.updater.install,
+                        &mut self.toasts,
                         &mut actions,
                     );
                 }
@@ -1042,9 +1112,9 @@ impl eframe::App for CanopyApp {
             crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
         }
         self.cheatsheet.show(&ctx);
-        for recovery in self.toasts.show(&ctx) {
-            match recovery {
-                crate::ui::toast::Recovery::Pull(path) => {
+        for offer in self.toasts.show(&ctx) {
+            match offer {
+                Offer::Pull(path) => {
                     if let Some(index) = self
                         .tabs
                         .iter()
@@ -1054,9 +1124,15 @@ impl eframe::App for CanopyApp {
                         actions.push(Action::Pull);
                     }
                 }
-                crate::ui::toast::Recovery::Accounts => {
+                Offer::Accounts => {
                     self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }
+                Offer::ReviewUpdate => {
+                    if let UpdateState::Available(a) = &self.updater.state {
+                        self.dialogs.open(Dialog::Update(a.clone()));
+                    }
+                }
+                Offer::Restart(exe) => actions.push(Action::RestartInto(exe)),
             }
         }
         if let Some(page) = self.gallery {
@@ -1069,6 +1145,7 @@ impl eframe::App for CanopyApp {
         }
         self.apply(&ctx, actions);
         self.handle_screenshot(&ctx);
+        crate::ui::kit::a11y::keep_focus_in_tree(&ctx);
     }
 
     #[expect(
@@ -1077,6 +1154,9 @@ impl eframe::App for CanopyApp {
     )]
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         crate::ui::kit::glass::destroy(gl);
+        // Stop every repository's threads, then wait for them all at once.
+        self.tabs.clear();
+        crate::worker::wait_for_threads(Duration::from_secs(1));
         if let Some(soak) = &self.glass_soak {
             println!("{}", soak.report());
         }

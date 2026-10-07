@@ -699,7 +699,7 @@ fn layout_toggle(
         .option_enabled(
             1,
             !one_column,
-            Some("A new or deleted file has nothing to set beside it, so it is one column"),
+            Some("A new or deleted file has only one side, so it shows in one column."),
         )
         .show(ui)
         .changed();
@@ -1167,6 +1167,7 @@ fn options_open_id() -> egui::Id {
 fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
+    let default = tab.diff_default;
     let prefs = &mut tab.diff_prefs;
     let mut changed = false;
     let lines = if prefs.context == 1 { "line" } else { "lines" };
@@ -1231,6 +1232,17 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         .size(m.meta_size)
                         .color(p.text_faint),
                 );
+            }
+            if *prefs != default {
+                ui.add_space(theme::MD);
+                if Button::new("Use for every repository")
+                    .ghost()
+                    .id_salt("diff-for-every-repository")
+                    .show(ui)
+                    .clicked()
+                {
+                    actions.push(Action::DiffPrefsForEveryRepository);
+                }
             }
         });
     ui.data_mut(|d| d.insert_temp(state, open));

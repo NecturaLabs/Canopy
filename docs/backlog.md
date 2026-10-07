@@ -120,18 +120,11 @@ yet true, then correctness and the features people meet first, then polish. Take
       and security notices): a persistent, dismissable list with unread count, severity, source
       and timestamp, actions such as "Open setting", kept across restarts. Replace bottom-right
       toast notifications with this center; let users choose notification kinds in Settings.
-- [ ] Pull strategy: the app is the authority. The chosen strategy is always passed to git, so
-      the menu never says Merge while git rebases. The user's setting, read through `git config`
-      in git's order (`branch.<name>.rebase`, then `pull.rebase`, `pull.ff`), becomes the menu's
-      default selection, marked as coming from their git config; a pull that goes against it is
-      reported in the notification center with the setting, its value and where it is set. Today
-      `pull` checks only `pull.rebase`, so it overrides a `branch.<name>.rebase`.
-- [ ] Git settings: Canopy is the authority (AGENTS.md, Git settings). List every action whose
-      result git configuration can change (`pull.rebase`/`pull.ff`, `merge.ff`, `push.default`,
-      `fetch.prune`, `rebase.autoStash`, ...), pass Canopy's choice explicitly for each, and
-      report every difference from their configuration in the notification center. Whether
-      Canopy may override `commit.gpgsign` or `core.hooksPath` (signing, hooks) is the owner's
-      call: ask before changing either.
+- [ ] Git settings: where the user's git configuration sets one of Canopy's git choices it
+      decides (Follow my git config, on by default), else Canopy passes its recommended choice
+      (AGENTS.md, Git settings; ADR 0012). Left: report a configuration value that goes against
+      Canopy's recommendation in the notification center too (Settings shows it). Whether
+      Canopy may override `commit.gpgsign` or `core.hooksPath` is the owner's call: ask first.
 - [ ] Wire canopy-2's core into the app: publish any branch, mode and type changes, collapsed
       untracked folders, ask before Stage all adds a nested repository; drop the compatibility
       wrappers.

@@ -79,7 +79,7 @@ pub(super) fn show(ctx: &egui::Context, doc: &mut Document, footer: Footer<'_>) 
         Footer::Close => dialog
             .closable()
             .footer(|f| {
-                f.hint("Esc closes").confirm("Close");
+                f.confirm("Close");
             })
             .show(ctx),
         Footer::Consent {

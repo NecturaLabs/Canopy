@@ -553,6 +553,108 @@ fn paint_exits(ctx: &Context) {
 
 // --------------------------------------------------------------------------------- tooltip
 
+/// Which tooltips show (Settings → Appearance → Tooltips).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum TooltipLevel {
+    /// None, except why a control is unavailable.
+    Off,
+    /// What the screen does not show: an icon-only control's name, why a control is unavailable,
+    /// cut-off text, shortcuts and details such as full dates, addresses and paths.
+    #[default]
+    Helpful,
+    /// Also descriptions of labelled controls and how to use them.
+    All,
+}
+
+impl TooltipLevel {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Helpful, Self::All];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Helpful => "Helpful",
+            Self::All => "All",
+        }
+    }
+}
+
+/// How long the pointer rests on a control before its tooltip shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum TooltipDelay {
+    Quick,
+    #[default]
+    Normal,
+    Slow,
+}
+
+impl TooltipDelay {
+    pub const ALL: [Self; 3] = [Self::Quick, Self::Normal, Self::Slow];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Quick => "Quick",
+            Self::Normal => "Normal",
+            Self::Slow => "Slow",
+        }
+    }
+
+    /// The rest before a tooltip shows, in seconds.
+    pub fn seconds(self) -> f32 {
+        match self {
+            Self::Quick => 0.15,
+            Self::Normal => motion::TOOLTIP_DELAY,
+            Self::Slow => 1.0,
+        }
+    }
+}
+
+#[cfg(not(test))]
+static TOOLTIP_LEVEL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+
+// Tests run in parallel threads, each with its own setting.
+#[cfg(test)]
+thread_local! {
+    static TOOLTIP_LEVEL_LOCAL: std::sync::atomic::AtomicU8 =
+        const { std::sync::atomic::AtomicU8::new(1) };
+}
+
+fn tooltip_level_flag<R>(f: impl FnOnce(&std::sync::atomic::AtomicU8) -> R) -> R {
+    #[cfg(not(test))]
+    return f(&TOOLTIP_LEVEL);
+    #[cfg(test)]
+    return TOOLTIP_LEVEL_LOCAL.with(f);
+}
+
+/// Which tooltips show from now on (kept current by the app every frame).
+pub fn set_tooltip_level(level: TooltipLevel) {
+    let n = match level {
+        TooltipLevel::Off => 0,
+        TooltipLevel::Helpful => 1,
+        TooltipLevel::All => 2,
+    };
+    tooltip_level_flag(|l| l.store(n, std::sync::atomic::Ordering::Relaxed));
+}
+
+/// Which tooltips show.
+pub fn tooltip_level() -> TooltipLevel {
+    match tooltip_level_flag(|l| l.load(std::sync::atomic::Ordering::Relaxed)) {
+        0 => TooltipLevel::Off,
+        2 => TooltipLevel::All,
+        _ => TooltipLevel::Helpful,
+    }
+}
+
+/// Whether a tooltip shows at `level`: why a control is unavailable always does, an `extra` one
+/// only at All, and none other at Off.
+fn tooltip_shows(level: TooltipLevel, enabled: bool, extra: bool) -> bool {
+    match level {
+        _ if !enabled => true,
+        TooltipLevel::Off => false,
+        TooltipLevel::Helpful => !extra,
+        TooltipLevel::All => true,
+    }
+}
+
 /// Kit tooltips on any response: `response.kit_tooltip("Fetch all remotes").shortcut(Command::Fetch).show()`.
 pub trait TooltipExt {
     fn kit_tooltip(self, text: impl Into<String>) -> Tooltip;
@@ -566,6 +668,7 @@ impl TooltipExt for Response {
             detail: None,
             shortcut: None,
             at_pointer: false,
+            extra: false,
         }
     }
 }
@@ -583,6 +686,7 @@ pub struct Tooltip {
     detail: Option<String>,
     shortcut: Option<Command>,
     at_pointer: bool,
+    extra: bool,
 }
 
 /// How far above and below the pointer a pointer-placed tooltip may still sit against the control
@@ -633,6 +737,12 @@ impl Tooltip {
         self.at_pointer = true;
         self
     }
+    /// Says nothing the screen does not already show, or only how to use the control: shown only
+    /// with Tooltips set to All ([`TooltipLevel`]).
+    pub fn extra(mut self, extra: bool) -> Self {
+        self.extra = extra;
+        self
+    }
 
     pub fn show(self) -> Response {
         let Self {
@@ -641,7 +751,11 @@ impl Tooltip {
             detail,
             shortcut,
             at_pointer,
+            extra,
         } = self;
+        if !tooltip_shows(tooltip_level(), response.enabled(), extra) {
+            return response;
+        }
         let mut tip = if response.enabled() {
             egui::containers::Tooltip::for_enabled(&response)
         } else {
@@ -842,6 +956,10 @@ impl<'a> Popover<'a> {
             force: None,
         }
     }
+    /// The id to close it by ([`egui::Popup::close_id`]).
+    pub fn id(&self) -> Id {
+        self.id
+    }
     /// The content width (default: the content's own, at least the anchor's).
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
@@ -1015,7 +1133,7 @@ pub enum InitialFocus {
     Body,
 }
 
-/// The footer's buttons and hint, set inside [`Dialog::footer`].
+/// The footer's buttons, set inside [`Dialog::footer`].
 #[derive(Debug, Default)]
 pub struct Footer {
     cancel: Option<String>,
@@ -1024,7 +1142,6 @@ pub struct Footer {
     confirm_enabled: bool,
     confirm_loading: bool,
     confirm_reason: Option<String>,
-    hint: Option<String>,
     /// Two equal choices ([`Footer::choice`]): both Secondary, and Enter picks neither.
     neutral: bool,
 }
@@ -1061,11 +1178,6 @@ impl Footer {
     /// The confirmed operation is running.
     pub fn confirm_loading(&mut self, loading: bool) -> &mut Self {
         self.confirm_loading = loading;
-        self
-    }
-    /// A short left-aligned hint ("Esc cancels").
-    pub fn hint(&mut self, text: impl Into<String>) -> &mut Self {
-        self.hint = Some(text.into());
         self
     }
     /// Two equal answers to a question with no safe default (consent): both Secondary, the same
@@ -1219,7 +1331,7 @@ impl<'a> Dialog<'a> {
         self.scroll_salt = Some(Id::new(salt));
         self
     }
-    /// The footer row is `add`'s, left to right, in place of [`Self::footer`]'s buttons and hint
+    /// The footer row is `add`'s, left to right, in place of [`Self::footer`]'s buttons
     /// (the reader's Back beside the consent's answers). What it returns answers the dialog, as
     /// the buttons would: `Open` keeps it open, and focus returns to its trigger otherwise. No
     /// control takes focus when it opens unless `add` asks for it.
@@ -1534,15 +1646,6 @@ impl<'a> Dialog<'a> {
                             result = answer;
                         }
                     } else {
-                        if let Some(h) = &footer.hint {
-                            ui.painter().text(
-                                row.left_center(),
-                                Align2::LEFT_CENTER,
-                                h,
-                                FontId::proportional(m.meta_size),
-                                p.text_faint,
-                            );
-                        }
                         // The buttons sit at the right but are made left to right, Cancel first,
                         // so Tab meets them in reading order (the row is placed by its width last
                         // frame).
@@ -1760,8 +1863,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
                         .footer(|f| {
                             f.cancel()
                                 .confirm("Delete branch")
-                                .confirm_icon(icon::TRASH)
-                                .hint("Esc cancels");
+                                .confirm_icon(icon::TRASH);
                         })
                 } else {
                     Dialog::new(("g-dialog", i))
@@ -1833,9 +1935,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 })
                 .initial_focus(InitialFocus::Confirm)
                 .footer(|f| {
-                    f.cancel_label("Not now")
-                        .confirm("Create tag")
-                        .hint("Esc cancels");
+                    f.cancel_label("Not now").confirm("Create tag");
                 })
                 .show(ui.ctx());
             if result != DialogResult::Open {
@@ -3111,6 +3211,92 @@ mod tests {
             });
         }
         (row, found)
+    }
+
+    /// Whether `tip` is painted after the pointer rests on what `add` shows, at `level`.
+    fn tooltip_shown(
+        level: TooltipLevel,
+        tip: &str,
+        mut add: impl FnMut(&mut Ui) -> Response,
+    ) -> bool {
+        let ctx = context();
+        set_tooltip_level(level);
+        let mut at = Pos2::ZERO;
+        let mut found = false;
+        for i in 0..12 {
+            let events = if i == 1 {
+                vec![egui::Event::PointerMoved(at)]
+            } else {
+                Vec::new()
+            };
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 400.0))),
+                    time: Some(f64::from(i) * 0.2),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.add_space(200.0);
+                    at = add(ui).rect.center();
+                },
+            );
+            out.textures_delta.clear();
+            found = out
+                .shapes
+                .iter()
+                .any(|c| matches!(&c.shape, Shape::Text(t) if t.galley.text() == tip));
+        }
+        set_tooltip_level(TooltipLevel::Helpful);
+        found
+    }
+
+    /// Helpful (the default) leaves out a tooltip that only describes a labelled control, keeps
+    /// an icon's name and a shortcut, and All shows everything; Off keeps only why a control is
+    /// unavailable.
+    #[test]
+    fn the_tooltip_level_decides_which_tooltips_show() {
+        let described = |ui: &mut Ui| Button::new("Stash").tooltip("Stash changes").show(ui);
+        let shortcut = |ui: &mut Ui| {
+            Button::new("Fetch")
+                .tooltip("Fetch all remotes")
+                .shortcut(Command::Fetch)
+                .show(ui)
+        };
+        let icon = |ui: &mut Ui| IconButton::new(icon::GEAR_SIX, "Settings").show(ui);
+        let hint = |ui: &mut Ui| {
+            let r = ui.allocate_response(vec2(120.0, 24.0), Sense::click());
+            r.kit_tooltip("Double-click to check out")
+                .extra(true)
+                .show()
+        };
+        assert!(!tooltip_shown(
+            TooltipLevel::Helpful,
+            "Stash changes",
+            described
+        ));
+        assert!(tooltip_shown(TooltipLevel::All, "Stash changes", described));
+        assert!(tooltip_shown(
+            TooltipLevel::Helpful,
+            "Fetch all remotes",
+            shortcut
+        ));
+        assert!(tooltip_shown(TooltipLevel::Helpful, "Settings", icon));
+        assert!(!tooltip_shown(TooltipLevel::Off, "Settings", icon));
+        assert!(!tooltip_shown(
+            TooltipLevel::Helpful,
+            "Double-click to check out",
+            hint
+        ));
+        assert!(tooltip_shown(
+            TooltipLevel::All,
+            "Double-click to check out",
+            hint
+        ));
+        // Why a control is unavailable shows at every level.
+        for level in TooltipLevel::ALL {
+            assert!(tooltip_shows(level, false, true), "{level:?}");
+        }
     }
 
     /// views-1 F4: on a wide row the kit tooltip can sit by the pointer, above the row, instead

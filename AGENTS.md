@@ -37,14 +37,17 @@ These come from the owner and override anything else in the repository.
   `docs/legal/third-party-notices.txt`; CI checks it).
 - **Logging**: JSON-lines logs per run (`logging.rs`). Never log secrets or prompt answers; pass
   URLs through `canopy_core::cli::redact_url`, git arguments through `cli::loggable`.
-- **Git settings**: Canopy is the authority on what it does to a repository. Every action runs
-  with the option chosen in Canopy, passed to git explicitly, even where the user's git
-  configuration says otherwise; that configuration is the default Canopy's choices start from.
-  Whenever Canopy's choice differs from the user's git configuration, the UI says so: which
-  setting, its value and where it is set. True so far for pull and fetch only: the pull strategy
-  and `--prune`/`--no-prune` are always passed, and Settings says where they differ from the
-  configuration. Other settings (`push.default`, `rebase.autoStash`, ...) are not passed yet,
-  and no notification reports differences (`docs/backlog.md`, "Git settings").
+- **Git settings**: respect the user's git configuration; never force a choice on them. Where it
+  sets one of Canopy's git choices, it decides (Settings → Git → Follow my git config, on by
+  default); everywhere else Canopy passes its own choice to git explicitly, so no configuration
+  value or git default changes the outcome. Canopy's choices default to today's recommended
+  practice, not git's own defaults (ADR 0012; pull: fast-forward only, asking Rebase or Merge
+  when branches diverged). Pull configuration lives in Settings only. Settings shows every
+  choice with its recommendation and, where the user's configuration sets it, the setting, its
+  value and where it is set. Covered: pull strategy, prune, tag pruning, autostash,
+  follow-tags, `push.default`, conflict style, the first branch of `init`, commit cleanup; no
+  notification outside Settings reports them yet (`docs/backlog.md`, "Git settings"). A pull
+  checks first and asks before it would diverge or conflict.
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,
   `docs/art-prompts.md`), never shipped as SVG; the app icon is PNG only (`assets/icon-*.png`).
@@ -121,6 +124,9 @@ adding a dependency.
 - Before declaring work done: `tools/check.sh` passes and the `canopy-review` agent has reviewed
   the diff (brief it per the `independent-review` skill); fix or answer every Blocking finding.
   Only a typo or formatting-only change skips this.
+- Before every release, after all planned changes: the user simulation review (`tools/usersim.sh`,
+  `docs/playbook.md`), Canopy driven like a user in an isolated environment; every finding is
+  fixed before the release is cut.
 
 ## Conventions
 

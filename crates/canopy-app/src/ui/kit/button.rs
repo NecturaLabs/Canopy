@@ -47,7 +47,7 @@ impl ButtonKind {
 }
 
 /// `a` moved towards `b` by `t`, both ends.
-fn blend(a: Fill, b: Fill, t: f32) -> Fill {
+pub(super) fn blend(a: Fill, b: Fill, t: f32) -> Fill {
     if t <= 0.0 {
         return a;
     }
@@ -63,12 +63,15 @@ fn blend(a: Fill, b: Fill, t: f32) -> Fill {
 /// A control's kit tooltip: why it is disabled, else `tooltip` with the shortcut's keys as
 /// keycaps; nothing when there is no text. A disabled control also tells screen readers it is
 /// unavailable and why ([`super::a11y::unavailable`]), so call this after its `widget_info`.
+/// On a `labelled` control (its name is on screen) a tooltip without a shortcut only describes
+/// it, so it is [`super::overlay::Tooltip::extra`].
 pub(super) fn tip(
     response: Response,
     enabled: bool,
     tooltip: Option<&str>,
     reason: Option<&str>,
     shortcut: Option<Command>,
+    labelled: bool,
 ) -> Response {
     if !enabled {
         super::a11y::unavailable(&response, reason);
@@ -77,7 +80,7 @@ pub(super) fn tip(
     match (text, shortcut) {
         (None, _) => response,
         (Some(t), Some(c)) if enabled => response.kit_tooltip(t).shortcut(c).show(),
-        (Some(t), _) => response.kit_tooltip(t).show(),
+        (Some(t), _) => response.kit_tooltip(t).extra(labelled).show(),
     }
 }
 
@@ -299,7 +302,7 @@ fn paint_mark(
 }
 
 /// The outcome marks' colours on a button whose label is `label`: `success` and `danger`, or
-/// the label's own colour on a filled accent or danger button (and a disabled one).
+/// the label's own colour on a disabled button.
 fn outcome_colors(p: &Palette, label: Color32, on_fill: bool) -> (Color32, Color32) {
     if on_fill {
         (label, label)
@@ -475,7 +478,12 @@ impl Button {
         } else {
             m.button_pad_x
         };
-        let font = FontId::new(m.body_size, theme::medium());
+        // The tonal primary and danger buttons hold their own with a semibold label.
+        let font = if matches!(self.kind, ButtonKind::Primary | ButtonKind::Danger) {
+            FontId::new(m.body_size, theme::semibold())
+        } else {
+            FontId::new(m.body_size, theme::medium())
+        };
         let accessible = self.text.text().to_owned();
         let text = galley(ui, self.text, font.clone());
         let icon_font = FontId::proportional(m.icon_md);
@@ -552,28 +560,28 @@ impl Button {
                     p.focus,
                 ),
                 ButtonKind::Ghost if !enabled => (None, None, None, p.disabled_text, p.focus),
-                ButtonKind::Primary => (
-                    Some(blend(
-                        blend(s.primary, s.primary_hover, st.hover),
-                        s.primary_pressed,
-                        st.press,
-                    )),
-                    None,
-                    Some(Elevation::Primary),
-                    p.on_accent,
-                    p.focus,
-                ),
-                ButtonKind::Danger => (
-                    Some(blend(
-                        blend(s.danger_solid, s.danger_solid_hover, st.hover),
-                        s.danger_solid_pressed,
-                        st.press,
-                    )),
-                    None,
-                    Some(Elevation::Danger),
-                    p.on_danger,
-                    p.danger_base,
-                ),
+                // Tonal, not solid: the control ground tinted with the accent (or danger), its
+                // hairline and its label in that colour.
+                ButtonKind::Primary => {
+                    let (fill, ring, label) = p.tonal(p.accent, st.hover, st.press);
+                    (
+                        Some(fill),
+                        Some(ring),
+                        Some(Elevation::Control),
+                        label,
+                        p.focus,
+                    )
+                }
+                ButtonKind::Danger => {
+                    let (fill, ring, label) = p.tonal(p.danger, st.hover, st.press);
+                    (
+                        Some(fill),
+                        Some(ring),
+                        Some(Elevation::Control),
+                        label,
+                        p.danger_base,
+                    )
+                }
                 ButtonKind::Secondary => (
                     Some(blend(
                         blend(s.raised, s.raised_hover, st.hover),
@@ -632,8 +640,7 @@ impl Button {
                     Some(t) if enabled => t.color(p),
                     _ => label,
                 };
-                let on_fill =
-                    !enabled || matches!(self.kind, ButtonKind::Primary | ButtonKind::Danger);
+                let on_fill = !enabled;
                 paint_mark(
                     &painter,
                     &mut shapes,
@@ -686,6 +693,7 @@ impl Button {
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             self.shortcut,
+            !accessible.is_empty(),
         );
         response
     }
@@ -714,6 +722,17 @@ pub struct IconButton {
     shortcut: Option<Command>,
     id_salt: Option<Id>,
     force: Option<ForceState>,
+}
+
+/// The side of a square [`IconButton`] of `size`, for layouts that make room for one.
+pub(crate) fn icon_button_side(size: Size) -> f32 {
+    let m = theme::metrics();
+    match size {
+        Size::Xs => 20.0,
+        Size::Sm => m.control_sm + 2.0,
+        Size::Md => m.control,
+        Size::Lg => m.control_lg,
+    }
 }
 
 impl IconButton {
@@ -778,11 +797,11 @@ impl IconButton {
         let p = theme::palette(&ctx);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let (side, radius, glyph_size) = match self.size {
-            Size::Xs => (20.0, m.radius_sm, 13.0),
-            Size::Sm => (m.control_sm + 2.0, m.radius, m.icon_md),
-            Size::Md => (m.control, m.radius, m.icon_md),
-            Size::Lg => (m.control_lg, m.radius, m.icon_lg),
+        let side = icon_button_side(self.size);
+        let (radius, glyph_size) = match self.size {
+            Size::Xs => (m.radius_sm, 13.0),
+            Size::Sm | Size::Md => (m.radius, m.icon_md),
+            Size::Lg => (m.radius, m.icon_lg),
         };
         let sense = if !enabled {
             Sense::hover()
@@ -861,6 +880,7 @@ impl IconButton {
             Some(&label),
             self.disabled_reason.as_deref(),
             self.shortcut,
+            false,
         )
     }
 }
@@ -1121,6 +1141,7 @@ impl ToolButton {
             Some(self.tooltip.as_deref().unwrap_or(&name)),
             self.disabled_reason.as_deref(),
             self.shortcut,
+            true,
         )
     }
 }
@@ -1142,9 +1163,9 @@ pub fn tool_divider(ui: &mut Ui) {
 
 // --------------------------------------------------------------------------------- LinkButton
 
-/// Text that opens something: `accent2`, underlined on hover (at rest too where the theme's
-/// `Design::link_underline` asks). External links append "↗" (open
-/// web addresses through `platform.rs`).
+/// Text that opens something: `accent2`, brightening and underlined on hover (at rest too where
+/// the theme's `Design::link_underline` asks). External links end in an arrow icon (open web
+/// addresses through `platform.rs`).
 #[derive(Debug)]
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct LinkButton {
@@ -1183,36 +1204,70 @@ impl LinkButton {
         let p = theme::palette(&ctx);
         let m = theme::metrics();
         let enabled = ui.is_enabled();
-        let text = if self.external {
-            format!("{} ↗", self.text)
-        } else {
-            self.text.clone()
-        };
-        let font = FontId::proportional(self.size.unwrap_or(m.body_size));
-        let g = ui.painter().layout_no_wrap(text, font, p.accent2);
+        let size = self.size.unwrap_or(m.body_size);
+        let font = FontId::new(size, theme::medium());
+        let g = ui
+            .painter()
+            .layout_no_wrap(self.text.clone(), font, p.accent2);
+        // An external link's arrow is the icon font's, a little smaller than the text.
+        let arrow = self.external.then(|| {
+            ui.painter().layout_no_wrap(
+                icon::ARROW_UP_RIGHT.to_owned(),
+                FontId::proportional(size * 0.85),
+                p.accent2,
+            )
+        });
+        let gap = 3.0;
+        let width = g.size().x + arrow.as_ref().map_or(0.0, |a| gap + a.size().x);
         let sense = if enabled {
             Sense::click()
         } else {
             Sense::hover()
         };
-        let (rect, response) = ui.allocate_exact_size(g.size(), sense);
+        let (rect, response) = ui.allocate_exact_size(vec2(width, g.size().y), sense);
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
             let painter = &super::content_painter(ui);
             if st.focus > 0.0 {
                 paint::focus_ring(
                     painter,
-                    rect.expand2(vec2(2.0, 0.0)),
+                    rect.expand2(vec2(3.0, 1.0)),
                     CornerRadius::same(m.radius_sm),
                     p.focus.gamma_multiply(st.focus),
                     Color32::TRANSPARENT,
                 );
             }
-            let ink = if enabled { p.accent2 } else { p.disabled_text };
+            // Brighter under the pointer, a touch dimmer while pressed.
+            let ink = if enabled {
+                p.accent2
+                    .lerp_to_gamma(p.text, 0.3 * st.hover)
+                    .gamma_multiply(1.0 - 0.2 * st.press)
+            } else {
+                p.disabled_text
+            };
             let baseline = rect.top() + g.rows.first().map_or(rect.height(), |r| r.rect().bottom());
+            let text_w = g.size().x;
             painter.galley(rect.min, g, ink);
-            if st.hover > 0.5 || theme::design(&ctx).link_underline {
-                paint::seam_h(painter, rect.x_range(), baseline + 1.0, ink);
+            if let Some(a) = arrow {
+                let at = pos2(
+                    rect.left() + text_w + gap,
+                    rect.center().y - a.size().y / 2.0,
+                );
+                painter.galley(at, a, ink);
+            }
+            // The underline fades in with the hover (always shown where the theme asks).
+            let underline = if theme::design(&ctx).link_underline {
+                1.0
+            } else {
+                st.hover
+            };
+            if underline > 0.0 {
+                paint::seam_h(
+                    painter,
+                    egui::Rangef::new(rect.left(), rect.left() + text_w),
+                    baseline + 1.5,
+                    ink.gamma_multiply(underline),
+                );
             }
         }
         let response = if enabled {
@@ -1341,13 +1396,16 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                 p.text,
                 Elevation::Control,
             ),
-            _ => (
-                s.primary,
-                s.primary_hover,
-                s.primary_pressed,
-                p.on_accent,
-                Elevation::Primary,
-            ),
+            _ => {
+                let (rest, _, on) = p.tonal(p.accent, 0.0, 0.0);
+                (
+                    rest,
+                    p.tonal(p.accent, 1.0, 0.0).0,
+                    p.tonal(p.accent, 1.0, 1.0).0,
+                    on,
+                    Elevation::Control,
+                )
+            }
         };
         let (rest, hover, pressed, on) = if enabled {
             (rest, hover, pressed, on)
@@ -1359,7 +1417,11 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
         if ui.is_rect_visible(rect) {
             let painter = super::content_painter(ui);
             let radius = CornerRadius::same(m.radius);
-            let ring = (!enabled || self.kind != ButtonKind::Primary).then_some(s.raised_edge);
+            let ring = Some(if enabled && self.kind == ButtonKind::Primary {
+                p.tonal(p.accent, 0.0, 0.0).1
+            } else {
+                s.raised_edge
+            });
             if enabled {
                 paint::surface(&painter, rect, radius, p, style, level, rest, ring);
             } else {
@@ -1877,12 +1939,16 @@ mod tests {
                     }
                     (fills, rings, shadow)
                 };
+                let tonal = |c: Color32| {
+                    let (fill, ring, _) = p.tonal(c, 0.0, 0.0);
+                    (fill.top, ring)
+                };
                 if style == Style::Standard {
-                    assert!(
-                        paint(ButtonKind::Primary, true, false)
-                            .0
-                            .contains(&s.primary.top)
-                    );
+                    // The tonal look: the accent-tinted ground in its accent hairline.
+                    let (fills, rings, _) = paint(ButtonKind::Primary, true, false);
+                    let (fill, ring) = tonal(p.accent);
+                    assert!(fills.contains(&fill), "{id:?}: {fills:?}");
+                    assert!(rings.contains(&ring), "{id:?}: {rings:?}");
                 }
                 for kind in [
                     ButtonKind::Primary,
@@ -1896,7 +1962,7 @@ mod tests {
                         assert!(fills.contains(&s.disabled_fill), "{at}: {fills:?}");
                         assert!(rings.contains(&s.disabled_edge), "{at}: {rings:?}");
                         assert!(!shadow, "{at}: a disabled button casts a shadow");
-                        for accent in [s.primary.top, s.danger_solid.top] {
+                        for accent in [tonal(p.accent).0, tonal(p.danger).0] {
                             let muddy = accent.gamma_multiply(theme::DISABLED_ALPHA);
                             assert!(
                                 !fills.contains(&muddy) && !fills.contains(&accent),
@@ -2095,7 +2161,11 @@ mod tests {
                 .operation(Operation::Succeeded { at: after })
                 .show(ui);
         });
-        assert_eq!(has(&primary, icon::CHECK), Some((p.on_accent, 1.0)));
+        assert_eq!(
+            has(&primary, icon::CHECK),
+            Some((p.success, 1.0)),
+            "a tonal primary has no fill to keep its own colour on"
+        );
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
     }
 

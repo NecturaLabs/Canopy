@@ -174,7 +174,7 @@ pub(super) fn credential(
                     });
                     note(
                         ui,
-                        "Only trust the host if its fingerprint matches the one its owner publishes (GitHub and GitLab list theirs in their documentation).",
+                        "Trust the host only if its fingerprint matches the one its owner publishes.",
                         p.text_dim,
                     );
                 })

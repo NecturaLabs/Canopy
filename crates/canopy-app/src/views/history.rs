@@ -146,9 +146,24 @@ pub fn show(
                         d.message.lines().next().unwrap_or("").trim()
                     });
                     row.add_space(theme::SM);
-                    row.add(egui::Label::new(RichText::new(summary).color(p.text_dim)).truncate())
-                        .kit_tooltip(summary)
-                        .show();
+                    let cut =
+                        row.fonts_mut(|f| {
+                            f.layout_no_wrap(
+                                summary.to_owned(),
+                                egui::TextStyle::Body.resolve(row.style()),
+                                p.text_dim,
+                            )
+                        })
+                        .size()
+                        .x > row.available_width();
+                    let shown = row.add(
+                        egui::Label::new(RichText::new(summary).color(p.text_dim))
+                            .truncate()
+                            .show_tooltip_when_elided(false),
+                    );
+                    if cut {
+                        shown.kit_tooltip(summary).show();
+                    }
                 }
             });
     }
@@ -1284,10 +1299,11 @@ mod tests {
         }
     }
 
-    /// H17: at 1440x900 a commit with several files shows its commit information beside the two
-    /// file rows, in every density and style: the pane sizes itself for both.
+    /// H17: at 1440x900 a commit with several files shows its author, SHA and date beside the two
+    /// file rows, in every density and style: the pane sizes itself for both. Nothing is said
+    /// twice: no "Commit information" block repeating the email and date.
     #[test]
-    fn commit_information_shows_beside_two_files_at_the_natural_pane_height() {
+    fn commit_details_show_beside_two_files_at_the_natural_pane_height() {
         for style in [theme::Style::Standard, theme::Style::Deeper] {
             for density in [theme::Density::Comfortable, theme::Density::Dense] {
                 let ctx = egui::Context::default();
@@ -1306,16 +1322,21 @@ mod tests {
                 let mut other = details.files[0].clone();
                 other.path = "other.rs".into();
                 details.files.push(other);
-                let date = widgets::full_date(details.author.time, details.author.offset_minutes);
                 tab.details = Some(std::sync::Arc::new(details));
                 let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
                 diff.hunks[0].lines.truncate(7);
                 tab.diff = Some(std::sync::Arc::new(diff));
                 let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
-                for text in ["author@example.com", date.as_str(), "file.rs", "other.rs"] {
+                for text in ["Author", "0101010", "Jan 1, 1970", "file.rs", "other.rs"] {
                     assert!(
                         visible.iter().any(|t| t == text),
                         "{style:?} {density:?}: {text} must show whole: {visible:?}"
+                    );
+                }
+                for text in ["Commit information", "author@example.com"] {
+                    assert!(
+                        visible.iter().all(|t| t != text),
+                        "{style:?} {density:?}: {text} is not repeated: {visible:?}"
                     );
                 }
             }
@@ -2074,15 +2095,25 @@ mod tests {
     }
 
     /// The history's ref pills keep their labels readable on every surface a row can have, in
-    /// every theme and lane colour: a branch or tag label in its pill's own colour, lifted toward
-    /// the text colour only as far as 4.5:1 needs, and detached HEAD in the dim neutral one.
+    /// every theme, style and lane colour: white where white reads, otherwise its commit's lane
+    /// colour.
     #[test]
-    fn rendered_ref_pills_label_in_their_own_colour_in_every_theme() {
+    fn rendered_ref_pills_label_readably_in_their_lane_colour() {
         use canopy_core::{RefKind, RefLabel};
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        for id in theme::ThemeId::ALL {
-            theme::apply(&ctx, id, theme::Appearance::STILL);
+        for (id, style) in theme::ThemeId::ALL
+            .into_iter()
+            .flat_map(|id| theme::Style::ALL.map(|style| (id, style)))
+        {
+            theme::apply(
+                &ctx,
+                id,
+                theme::Appearance {
+                    style,
+                    ..theme::Appearance::STILL
+                },
+            );
             let p = palette(&ctx);
             for kind in [
                 RefKind::CurrentBranch,
@@ -2090,6 +2121,7 @@ mod tests {
                 RefKind::RemoteBranch,
                 RefKind::Tag,
                 RefKind::Head,
+                RefKind::Stash,
             ] {
                 for lane in (0u16..).take(p.lanes.len()) {
                     let label = RefLabel {
@@ -2118,7 +2150,7 @@ mod tests {
                         let ratio = theme::contrast(actual, theme::over(fill, surface));
                         assert!(
                             ratio >= 4.5,
-                            "{} {kind:?} lane {lane}: painted ink {actual:?} contrast {ratio:.2}:1",
+                            "{} {style:?} {kind:?} lane {lane}: painted ink {actual:?} contrast {ratio:.2}:1",
                             p.name
                         );
                     }
@@ -2127,17 +2159,19 @@ mod tests {
                         "{} {kind:?}: the label paints its own ink",
                         p.name
                     );
-                    if kind == RefKind::Head {
-                        assert_eq!(actual, p.text_dim, "{}: HEAD stays neutral", p.name);
+                    let white_reads = p.component_surfaces(p.s()).iter().all(|s| {
+                        theme::contrast(egui::Color32::WHITE, theme::over(fill, *s)) >= 4.5
+                    });
+                    let expected = if white_reads {
+                        egui::Color32::WHITE
                     } else {
-                        let own = pill.color(p);
-                        assert_eq!(
-                            actual,
-                            p.ink(own, fill),
-                            "{} {kind:?} lane {lane}: the label is the pill's own colour, lifted only for contrast",
-                            p.name
-                        );
-                    }
+                        p.ink(p.lane(lane), fill)
+                    };
+                    assert_eq!(
+                        actual, expected,
+                        "{} {kind:?} lane {lane}: white where it reads, else the lane's colour",
+                        p.name
+                    );
                 }
             }
         }

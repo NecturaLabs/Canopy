@@ -331,6 +331,22 @@ impl HostWorker {
         }
     }
 
+    /// A handle with no thread: tests feed its events and read its jobs.
+    #[cfg(test)]
+    pub fn detached(forge: Forge) -> (Self, Sender<HostEvent>, Receiver<HostJob>) {
+        let (jobs, job_rx) = unbounded::<HostJob>();
+        let (tx, events) = unbounded::<HostEvent>();
+        let worker = Self {
+            forge,
+            jobs,
+            events,
+            avatars_enabled: Arc::new(AtomicBool::new(false)),
+            on: Arc::new(AtomicBool::new(true)),
+            ctx: egui::Context::default(),
+        };
+        (worker, tx, job_rx)
+    }
+
     pub fn send(&self, job: HostJob) {
         let _ = self.jobs.send(job);
     }
