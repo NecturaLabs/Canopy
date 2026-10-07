@@ -2458,12 +2458,11 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> Response 
             ui.painter().text(
                 caption.right_center(),
                 Align2::RIGHT_CENTER,
-                if id == DEFAULTS.theme {
-                    if tp.dark { "Default · Dark" } else { "Default · Light" }
-                } else if tp.dark {
-                    "Dark"
-                } else {
-                    "Light"
+                match (id == DEFAULTS.theme, tp.dark) {
+                    (true, true) => "Default · Dark",
+                    (true, false) => "Default · Light",
+                    (false, true) => "Dark",
+                    (false, false) => "Light",
                 },
                 FontId::proportional(m.small_size),
                 p.text_faint,
@@ -6379,8 +6378,7 @@ mod tests {
             );
         }
     }
-    /// F9: choosing another theme moves nothing below the theme cards, and the way back to the
-    /// default theme is a button (it does something), not a link.
+    /// Selecting another predefined theme leaves the appearance controls at the same position.
     #[test]
     fn choosing_a_theme_does_not_shift_the_page() {
         let at = |theme: ThemeId| {
@@ -6413,14 +6411,13 @@ mod tests {
                 });
             })
         };
-        let back = nodes
-            .iter()
-            .find(|n| {
-                n.label
-                    .as_deref()
-                    .is_some_and(|l| l.starts_with("Back to the default theme"))
-            })
-            .expect("the way back to the default theme");
-        assert_eq!(back.role, egui::accesskit::Role::Button);
+        assert!(
+            nodes.iter().any(|n| n.label.as_deref() == Some("Midnight theme (default)")),
+            "Midnight is identified as the default even when Daylight is selected"
+        );
+        assert!(
+            !nodes.iter().any(|n| n.label.as_deref().is_some_and(|l| l.starts_with("Back to the default theme"))),
+            "the separate default-theme button was removed"
+        );
     }
 }
