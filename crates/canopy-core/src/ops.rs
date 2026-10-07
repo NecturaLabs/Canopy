@@ -731,19 +731,38 @@ impl Repo {
     /// (`git merge @{upstream}`) or a rebase onto the upstream (`git rebase`, which finds the
     /// fork point as `git pull --rebase` does). The pull's second step once
     /// [`Repo::pull_preview`] has fetched, so the remote is asked only once.
+    ///
+    /// With `checked`, the commit the preview showed, that commit is brought in whatever the
+    /// upstream is by now: a fetch made elsewhere in between cannot slip in commits nobody saw.
+    /// A rebase then still drops the commits the upstream rewrote, as `git rebase` does.
     pub fn pull_fetched(
         &self,
         strategy: PullStrategy,
+        checked: Option<Oid>,
         progress: impl FnMut(&str),
     ) -> Result<String> {
         let conflicts = self.conflict_override();
         let mut args: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        let tip = checked.map(|oid| oid.to_string());
+        let target = tip.as_deref().unwrap_or("@{upstream}");
+        let fork_point = match (strategy, &tip) {
+            (PullStrategy::Rebase | PullStrategy::RebaseMerges, Some(_)) => {
+                self.upstream_fork_point()
+            }
+            _ => None,
+        };
         match strategy {
             PullStrategy::Rebase | PullStrategy::RebaseMerges => {
                 args.push("rebase");
                 args.extend(self.autostash_flag(true));
                 if strategy == PullStrategy::RebaseMerges {
                     args.push("--rebase-merges");
+                }
+                if tip.is_some() {
+                    match &fork_point {
+                        Some(fork) => args.extend(["--onto", target, fork]),
+                        None => args.push(target),
+                    }
                 }
             }
             PullStrategy::Merge
@@ -756,10 +775,23 @@ impl Repo {
                     PullStrategy::FastForwardOnly => "--ff-only",
                     _ => "--ff",
                 });
-                args.push("@{upstream}");
+                args.push(target);
             }
         }
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// Where the branch left the upstream's earlier tips, found in the upstream's reflog as
+    /// `git rebase` does without arguments; `None` where there is none to find.
+    fn upstream_fork_point(&self) -> Option<String> {
+        let out = cli::run_unchecked(
+            self.workdir(),
+            &["merge-base", "--fork-point", "@{upstream}", "HEAD"],
+        )
+        .ok()?;
+        (out.code == Some(0))
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+            .filter(|fork| !fork.is_empty())
     }
 
     /// The strategy the user's git configuration asks a pull to use ([`Repo::pull_config`]),

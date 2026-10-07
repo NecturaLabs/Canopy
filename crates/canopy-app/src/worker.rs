@@ -1231,7 +1231,7 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             let (strategy, _) = pull_strategy(repo, strategy, follow_config);
             if checked.is_some() {
                 // The preview fetched; what the user saw is what comes in.
-                repo.pull_fetched(strategy, progress)
+                repo.pull_fetched(strategy, checked, progress)
             } else {
                 repo.pull(strategy, progress)
             }

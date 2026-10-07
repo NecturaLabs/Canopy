@@ -1648,7 +1648,7 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
                     up_dir.path(),
                     &copy,
                     before,
-                    copy.pull_fetched(strategy, |_| {}).is_ok(),
+                    copy.pull_fetched(strategy, None, |_| {}).is_ok(),
                 );
                 assert_eq!(
                     got, want,
@@ -3048,7 +3048,7 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
         git(up_dir.path(), &["commit", "-q", "-am", "feat: upstream"]);
         copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
         fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
-        let pulled = copy.pull_fetched(PullStrategy::FastForwardOnly, |_| {});
+        let pulled = copy.pull_fetched(PullStrategy::FastForwardOnly, None, |_| {});
         assert_eq!(pulled.is_ok(), runs, "{configured:?}: {pulled:?}");
     }
 
@@ -3369,7 +3369,7 @@ fn a_pull_never_prunes_local_tags() {
             copy.pull_preview(true, |_| {})
                 .expect("preview")
                 .expect("upstream");
-            copy.pull_fetched(PullStrategy::FastForwardOnly, |_| {})
+            copy.pull_fetched(PullStrategy::FastForwardOnly, None, |_| {})
                 .expect("pull");
         } else {
             copy.pull(PullStrategy::FastForwardOnly, |_| {})
@@ -3403,7 +3403,7 @@ fn a_fetched_pull_does_not_fetch_again() {
     git(up_dir.path(), &["add", "."]);
     git(up_dir.path(), &["commit", "-q", "-m", "feat: later"]);
 
-    copy.pull_fetched(PullStrategy::Merge, |_| {})
+    copy.pull_fetched(PullStrategy::Merge, None, |_| {})
         .expect("merge");
     assert_eq!(head_parents(&copy), 2);
     assert_eq!(
@@ -3415,6 +3415,94 @@ fn a_fetched_pull_does_not_fetch_again() {
         git(copy.workdir(), &["rev-parse", "origin/main"]),
         seen,
         "no second fetch"
+    );
+}
+
+/// What a checked pull brings in is the commit the preview showed, even where an outside `git
+/// fetch` moved the upstream between the check and the pull.
+#[test]
+fn a_fetched_pull_brings_in_the_commit_that_was_checked() {
+    for strategy in [PullStrategy::Merge, PullStrategy::Rebase] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        diverge(up_dir.path(), &copy);
+        let p = copy
+            .pull_preview(false, |_| {})
+            .expect("preview")
+            .expect("upstream");
+        let seen = p.tip.expect("the preview names its commit");
+        let before = git(copy.workdir(), &["rev-parse", "HEAD"]);
+        fs::write(up_dir.path().join("later.txt"), "later\n").expect("write");
+        git(up_dir.path(), &["add", "."]);
+        git(up_dir.path(), &["commit", "-q", "-m", "feat: later"]);
+        git(copy.workdir(), &["fetch", "-q"]);
+        assert_ne!(
+            git(copy.workdir(), &["rev-parse", "origin/main"]).trim(),
+            seen.to_string(),
+            "the upstream moved after the check"
+        );
+
+        copy.pull_fetched(strategy, Some(seen), |_| {})
+            .expect("pull");
+        let seen = seen.to_string();
+        match strategy {
+            PullStrategy::Merge => {
+                assert_eq!(git(copy.workdir(), &["rev-parse", "HEAD^1"]), before);
+                assert_eq!(git(copy.workdir(), &["rev-parse", "HEAD^2"]).trim(), seen);
+            }
+            _ => assert_eq!(git(copy.workdir(), &["rev-parse", "HEAD~1"]).trim(), seen),
+        }
+        assert!(
+            !copy.workdir().join("later.txt").exists(),
+            "{strategy:?}: the commit nobody was shown stays out"
+        );
+    }
+}
+
+/// A rebase pinned to the checked commit still drops what the upstream rewrote, as `git pull
+/// --rebase` does with its fork point: the local commit is replayed alone.
+#[test]
+fn a_pinned_rebase_drops_commits_the_upstream_rewrote_like_git_pull() {
+    let (up_dir, _up, clone_dir, copy) = upstream_and_clone();
+    let up = up_dir.path();
+    let write =
+        |dir: &Path, name: &str, text: &str| fs::write(dir.join(name), text).expect("write");
+    write(up, "a.txt", "upstream\n");
+    git(up, &["commit", "-q", "-am", "feat: upstream"]);
+    copy.pull(PullStrategy::FastForwardOnly, |_| {})
+        .expect("pull");
+    let twin = clone_dir.path().join("twin");
+    git(
+        clone_dir.path(),
+        &["clone", "-q", &up.to_string_lossy(), "twin"],
+    );
+    configure(&twin);
+    for dir in [copy.workdir(), twin.as_path()] {
+        write(dir, "local.txt", "local\n");
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "feat: local"]);
+    }
+    // The upstream rewrites the commit both have.
+    write(up, "a.txt", "rewritten\n");
+    git(up, &["commit", "-q", "--amend", "-am", "feat: rewritten"]);
+    git(copy.workdir(), &["fetch", "-q"]);
+    let seen =
+        canopy_core::Oid::from_str(git(copy.workdir(), &["rev-parse", "origin/main"]).trim())
+            .expect("oid");
+
+    copy.pull_fetched(PullStrategy::Rebase, Some(seen), |_| {})
+        .expect("pull");
+    git(&twin, &["pull", "-q", "--rebase"]);
+    let shape = |dir: &Path| {
+        (
+            git(dir, &["log", "--format=%s", "origin/main..HEAD"]),
+            git(dir, &["rev-list", "--count", "HEAD"]),
+            git(dir, &["rev-parse", "HEAD^{tree}"]),
+        )
+    };
+    assert_eq!(shape(copy.workdir()), shape(&twin));
+    assert_eq!(
+        git(copy.workdir(), &["log", "--format=%s", "origin/main..HEAD"]).trim(),
+        "feat: local"
     );
 }
 
