@@ -367,7 +367,10 @@ pub enum Event {
         kind: Option<canopy_core::ConflictKind>,
         file: Result<Arc<canopy_core::ConflictFile>, String>,
     },
-    OpStarted { label: String, kind: OpKind },
+    OpStarted {
+        label: String,
+        kind: OpKind,
+    },
     Progress(String),
     OpFinished {
         label: String,
