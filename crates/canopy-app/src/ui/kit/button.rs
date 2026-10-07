@@ -2017,7 +2017,7 @@ mod tests {
     fn a_disabled_icon_button_sits_on_the_disabled_fill_in_its_ring() {
         for id in theme::ThemeId::ALL {
             for style in Style::ALL {
-                let ctx = super::super::testkit::ctx_with(id, style, theme::Density::Comfortable);
+                let ctx = testkit::ctx_with(id, style, theme::Density::Comfortable);
                 let p = id.palette();
                 let s = p.surfaces(style);
                 let paint = |enabled: bool, in_disabled_ui: bool| {
