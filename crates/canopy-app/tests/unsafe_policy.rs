@@ -1,6 +1,6 @@
 //! Canopy's policy on `unsafe` (AGENTS.md; design spec 7.3): the backdrop blur's OpenGL calls in
 //! `crates/canopy-app/src/ui/kit/glass/gl.rs` are the only unsafe code. The workspace denies the
-//! `unsafe_code` lint and that file alone allows it; these tests fail when unsafe code, or an
+//! `unsafe_code` lint and that file alone explicitly expects it; these tests fail when unsafe code, or an
 //! attribute naming the lint, appears in any other Rust file under `crates/`, and when the
 //! workspace or a crate stops denying it. Comments and string literals are ignored, so messages
 //! such as "the archive has an unsafe path" are not code.
@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 /// The one file allowed to contain unsafe code, relative to the repository root.
 const ALLOWED: &str = "crates/canopy-app/src/ui/kit/glass/gl.rs";
 /// Its first attribute, as the design spec words it (rustfmt may wrap it).
-const ALLOW_LINE: &str = r#"#![allow(unsafe_code, reason = "OpenGL calls for the backdrop blur; owner-approved 2026-10-05")]"#;
+const EXPECT_LINE: &str = r#"#![expect(unsafe_code, reason = "OpenGL calls for the backdrop blur; owner-approved 2026-10-05")]"#;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -459,8 +459,8 @@ fn only_the_glass_renderer_is_unsafe() {
             let first = src.split_inclusive(")]").next().unwrap_or_default();
             assert_eq!(
                 squash(first),
-                squash(ALLOW_LINE),
-                "{ALLOWED} must begin with the owner-approved allow"
+                squash(EXPECT_LINE),
+                "{ALLOWED} must begin with the owner-approved expectation"
             );
             continue;
         }

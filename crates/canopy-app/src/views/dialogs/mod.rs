@@ -2460,6 +2460,8 @@ mod tests {
             "-a",
             "",
         ];
+        // `git check-ref-format --allow-onelevel` allows HEAD, but `HEAD` itself is
+        // reserved and cannot safely name a new branch or tag in Canopy.
         for name in names {
             let out = canopy_core::cli::run_unchecked(
                 dir.path(),
@@ -2468,7 +2470,7 @@ mod tests {
             .expect("git runs");
             assert_eq!(
                 valid_ref_name(name),
-                out.code == Some(0) && !name.starts_with('-'),
+                out.code == Some(0) && !name.starts_with('-') && name != "HEAD",
                 "{name:?}: git says {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             );
