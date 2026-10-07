@@ -189,6 +189,9 @@ struct StripState {
     /// Keep the active tab in view until the tabs stop moving: it changed, tabs opened or
     /// closed, or the strip was resized.
     reveal: bool,
+    /// A tab had keyboard focus last frame: when focus leaves the strip the active tab is
+    /// brought back into view.
+    focus_in: bool,
     /// The width the scrolling tabs had room in last frame.
     viewport: f32,
     /// A scroll button was pressed: points to move the tabs by next frame (negative: towards the
@@ -402,6 +405,7 @@ impl<'a> DocTabs<'a> {
 
         let mut event = None;
         let mut drawn = Vec::with_capacity(self.tabs.len());
+        let mut focus_in = false;
         let height = m.doc_tab_height;
         let slot = |ui: &mut Ui| {
             shared
@@ -441,6 +445,7 @@ impl<'a> DocTabs<'a> {
                             force,
                             widths.get(i).copied().unwrap_or(MIN_WIDTH),
                         );
+                        focus_in |= r.has_focus();
                         if (reveal && i == self.active) || r.gained_focus() {
                             // Beyond the fade, so the tab is not left under it.
                             ui.scroll_to_rect_animation(
@@ -470,6 +475,13 @@ impl<'a> DocTabs<'a> {
             list.response
         });
         state.reveal = reveal && !settled;
+        // Tab walked along the strip and scrolled it; when focus moves on (or Esc drops it) the
+        // tab in use returns to view.
+        if state.focus_in && !focus_in {
+            state.reveal = true;
+            ctx.request_repaint();
+        }
+        state.focus_in = focus_in;
 
         // Fade the edges that hide more tabs.
         paint::scroll_fade_x(ui, &scroll, strip_ground(&ctx));
@@ -1439,6 +1451,54 @@ mod tests {
                 "tab {active} is at {at:?}, outside the strip"
             );
         }
+    }
+
+    /// usersim F15: Tab walks focus along the strip and scrolls to each tab; once focus has left
+    /// the strip (Esc) the active tab comes back into view.
+    #[test]
+    fn the_active_tab_returns_to_view_when_focus_leaves_the_strip() {
+        let ctx = context();
+        let names = numbered(14);
+        let tabs = tabs_of(&names);
+        let mut none = Vec::new();
+        let mut show = |ui: &mut Ui| {
+            let _ = DocTabs::new(&tabs, 0).max_width(700.0).show(ui);
+        };
+        let inside = |out: &egui::FullOutput, i: usize| {
+            text_rect(out, &names[i]).is_some_and(|r| r.left() >= 0.0 && r.right() <= 700.0)
+        };
+        let out = settle(&ctx, 0.0, &mut none, &mut show);
+        assert!(inside(&out, 0), "the active tab starts in view");
+        // Tab walks onto the first tab, then along the strip to the thirteenth.
+        let tab = |time: f64| {
+            let key = |pressed| egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: Some(egui::Key::Tab),
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            };
+            (time, vec![key(true), key(false)])
+        };
+        for n in 0..13 {
+            let (time, events) = tab(10.0 + f64::from(n) * 0.5);
+            frame(&ctx, time, events, &mut show);
+        }
+        let out = settle(&ctx, 20.0, &mut none, &mut show);
+        assert!(inside(&out, 12), "the focused tab is scrolled to");
+        assert!(!inside(&out, 0), "the active tab is out of view meanwhile");
+        // Esc: egui drops focus, and the strip shows the active tab again.
+        let esc = |pressed| egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: Some(egui::Key::Escape),
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut events = vec![esc(true), esc(false)];
+        let out = settle(&ctx, 30.0, &mut events, &mut show);
+        assert_eq!(ctx.memory(|m| m.focused()), None, "Esc dropped the focus");
+        assert!(inside(&out, 0), "the active tab is back in view");
     }
 
     /// Runs the strip of `tabs` (the third active) in a window `height` tall at `time`.
