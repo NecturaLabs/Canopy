@@ -49,6 +49,9 @@ pub(super) fn show(ctx: &egui::Context, doc: &mut Document, footer: Footer<'_>) 
     let shown = *doc;
     let mut link = None;
     let mut answered = Answer::Open;
+    // A link's menu open when the frame starts takes this frame's Esc (and closes before the
+    // footer is drawn): Esc goes back only once nothing is above the reader.
+    let menu_open = egui::Popup::is_any_open(ctx);
     let options = [
         (Document::Terms, Document::Terms.title()),
         (Document::Privacy, Document::Privacy.title()),
@@ -89,7 +92,7 @@ pub(super) fn show(ctx: &egui::Context, doc: &mut Document, footer: Footer<'_>) 
         } => dialog
             .blocking()
             .custom_footer(|ui| {
-                answered = consent_footer(ui, first, second, neutral);
+                answered = consent_footer(ui, first, second, neutral, menu_open);
                 match answered {
                     Answer::First => DialogResult::Confirm,
                     Answer::Back | Answer::Second => DialogResult::Cancel,
@@ -109,7 +112,13 @@ pub(super) fn show(ctx: &egui::Context, doc: &mut Document, footer: Footer<'_>) 
 }
 
 /// The consent's footer: Back at the left (Esc too), the two answers at the right.
-fn consent_footer(ui: &mut Ui, first: &str, second: &str, neutral: bool) -> Answer {
+fn consent_footer(
+    ui: &mut Ui,
+    first: &str,
+    second: &str,
+    neutral: bool,
+    menu_open: bool,
+) -> Answer {
     let back = Button::new("Back")
         .ghost()
         .size(Size::Md)
@@ -117,7 +126,7 @@ fn consent_footer(ui: &mut Ui, first: &str, second: &str, neutral: bool) -> Answ
         .id_salt("legal-reader-back")
         .show(ui)
         .clicked()
-        || ui.input(|i| i.key_pressed(Key::Escape));
+        || (!menu_open && ui.input(|i| i.key_pressed(Key::Escape)));
     let mut answer = if back { Answer::Back } else { Answer::Open };
     // Made left to right (the second answer first) so Tab meets them in reading order; placed
     // at the right by their width last frame, as the kit's own footer.
@@ -285,5 +294,102 @@ mod tests {
             frame(Vec::new(), true),
             "opened again, it starts at the top"
         );
+    }
+
+    /// usersim2 N1: Esc closes the topmost layer only. With a link's context menu open over the
+    /// reader, the first Esc closes the menu and the reader stays; the next Esc closes the reader.
+    #[test]
+    fn esc_closes_a_links_context_menu_before_the_reader() {
+        use crate::ui::kit::testkit;
+        for footer in [
+            Footer::Close,
+            Footer::Consent {
+                first: "Accept",
+                second: "Decline",
+                neutral: false,
+            },
+        ] {
+            let ctx = testkit::ctx();
+            ctx.enable_accesskit();
+            let mut t = 0.0;
+            let mut frame = |events: Vec<egui::Event>| {
+                t += 0.1;
+                let mut doc = Document::Terms;
+                let mut answer = Answer::Open;
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(1200.0, 800.0),
+                        )),
+                        time: Some(t),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| answer = show(ui.ctx(), &mut doc, footer),
+                );
+                out.textures_delta.clear();
+                (out, answer)
+            };
+            for _ in 0..5 {
+                frame(Vec::new());
+            }
+            // Page down to the first link in view.
+            let mut link = None;
+            for _ in 0..20 {
+                let (out, _) = frame(testkit::key(Key::PageDown));
+                let (out2, _) = frame(Vec::new());
+                drop(out);
+                link = out2
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .and_then(|u| {
+                        u.nodes
+                            .iter()
+                            .filter(|(_, n)| n.role() == egui::accesskit::Role::Link)
+                            .filter_map(|(_, n)| n.bounds())
+                            .map(|b| {
+                                pos2(
+                                    crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+                                    crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+                                )
+                            })
+                            .find(|p| p.y > 150.0 && p.y < 650.0)
+                    });
+                if link.is_some() {
+                    break;
+                }
+            }
+            let link = link.expect("a link in view");
+            frame(testkit::secondary_click(link));
+            for _ in 0..3 {
+                frame(Vec::new());
+            }
+            assert!(
+                egui::Popup::is_any_open(&ctx),
+                "{footer:?}: the link's menu is open"
+            );
+            let (_, answer) = frame(testkit::key(Key::Escape));
+            assert_eq!(
+                answer,
+                Answer::Open,
+                "{footer:?}: the first Esc keeps the reader"
+            );
+            for _ in 0..3 {
+                let (_, answer) = frame(Vec::new());
+                assert_eq!(answer, Answer::Open, "{footer:?}");
+            }
+            assert!(
+                !egui::Popup::is_any_open(&ctx),
+                "{footer:?}: the first Esc closed the menu"
+            );
+            let (_, answer) = frame(testkit::key(Key::Escape));
+            let wanted = match footer {
+                Footer::Close => Answer::Close,
+                Footer::Consent { .. } => Answer::Back,
+            };
+            assert_eq!(answer, wanted, "{footer:?}: the next Esc leaves the reader");
+        }
     }
 }

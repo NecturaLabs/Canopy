@@ -8,6 +8,7 @@ impl CanopyApp {
         let modal =
             self.dialogs.current().is_some() || self.settings_screen.is_some() || self.palette.open;
         let overlay = modal || self.cheatsheet.open;
+        let menu_open = egui::Popup::is_any_open(ctx);
         // Settings on top of everything: its search takes the find shortcut.
         let settings_on_top = self.settings_screen.is_some()
             && self.dialogs.current().is_none()
@@ -27,7 +28,8 @@ impl CanopyApp {
                 return false;
             }
             if b.command == Command::Dismiss {
-                return overlay || search_open;
+                // An open menu is the topmost layer: it takes this Escape and closes itself.
+                return (overlay || search_open) && !menu_open;
             }
             if modal {
                 return settings_on_top
@@ -379,6 +381,41 @@ mod tests {
         );
         run(&mut app, Command::Dismiss);
         assert!(app.settings_screen.is_none());
+    }
+
+    /// usersim2 N1: with a menu open over a dialog (a link's context menu in the legal reader),
+    /// the first Escape closes the menu only; the next one dismisses the dialog.
+    #[test]
+    fn escape_closes_an_open_menu_before_the_dialog_behind_it() {
+        let mut app = test_app();
+        app.dialogs.open(Dialog::open());
+        let ctx = egui::Context::default();
+        let esc = || crate::ui::kit::testkit::key(egui::Key::Escape);
+        // As the app draws: the keyboard table first, then the interface with the menu.
+        let mut run = |app: &mut CanopyApp, events: Vec<egui::Event>, open: bool| {
+            let mut actions = Vec::new();
+            frame(&ctx, events, |ui| {
+                app.keyboard(ui.ctx(), &mut actions);
+                let button = ui.button("Row");
+                let _ = egui::Popup::menu(&button)
+                    .open_memory(open.then_some(egui::SetOpenCommand::Bool(true)))
+                    .show(|ui| ui.label("Copy link"));
+            });
+        };
+        run(&mut app, Vec::new(), true);
+        run(&mut app, Vec::new(), false);
+        assert!(egui::Popup::is_any_open(&ctx), "the menu is open");
+        run(&mut app, esc(), false);
+        assert!(
+            !egui::Popup::is_any_open(&ctx),
+            "the first Escape closes the menu"
+        );
+        assert!(app.dialogs.current().is_some(), "and leaves the dialog");
+        run(&mut app, esc(), false);
+        assert!(
+            app.dialogs.current().is_none(),
+            "the next Escape dismisses the dialog"
+        );
     }
 
     fn frame(ctx: &egui::Context, events: Vec<egui::Event>, f: impl FnMut(&mut egui::Ui)) {
