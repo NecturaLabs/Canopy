@@ -2702,6 +2702,71 @@ fn merge_mode_squash_stages_changes_without_committing_or_merge_head() {
     }
 }
 
+/// Staging several files at once leaves the index and the status exactly as `git add -A --` on
+/// the same paths does, whatever mix the selection holds: a modified file, a deleted one, a new
+/// one and a file already staged in part.
+#[test]
+fn staging_a_mixed_selection_matches_the_git_cli() {
+    let prepare = |p: &Path| {
+        fs::write(p.join("gone.txt"), "gone\n").unwrap();
+        fs::write(p.join("kept.txt"), "kept\n").unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "feat: more files"]);
+        // Part of a.txt is staged, the rest of its change is not.
+        fs::write(
+            p.join("a.txt"),
+            "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+        )
+        .unwrap();
+        git(p, &["add", "a.txt"]);
+        fs::write(
+            p.join("a.txt"),
+            "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nTEN\n",
+        )
+        .unwrap();
+        fs::remove_file(p.join("gone.txt")).unwrap();
+        fs::write(p.join("new.txt"), "new\n").unwrap();
+        fs::write(p.join("kept.txt"), "changed\n").unwrap();
+        fs::write(p.join("left.txt"), "not selected\n").unwrap();
+    };
+    let selection = ["a.txt", "gone.txt", "new.txt"];
+
+    let (ours_dir, ours) = fixture();
+    prepare(ours_dir.path());
+    ours.stage(&selection.map(str::to_owned)).unwrap();
+
+    let (cli_dir, _cli) = fixture();
+    prepare(cli_dir.path());
+    let mut add = vec!["add", "-A", "--"];
+    add.extend(selection);
+    git(cli_dir.path(), &add);
+
+    for args in [
+        &["ls-files", "-s"][..],
+        &["status", "--porcelain=v1"],
+        &["diff", "--name-status"],
+    ] {
+        assert_eq!(
+            git(ours_dir.path(), args),
+            git(cli_dir.path(), args),
+            "git {args:?}"
+        );
+    }
+    // The files left out stay as they were.
+    let unstaged = git(ours_dir.path(), &["diff", "--name-only"]);
+    assert_eq!(unstaged, "kept.txt\n");
+    assert_eq!(
+        git(
+            ours_dir.path(),
+            &["ls-files", "--others", "--exclude-standard"]
+        ),
+        "left.txt\n"
+    );
+    let status = ours.snapshot(10).unwrap().status;
+    assert!(status.staged.iter().any(|f| f.path == "gone.txt"));
+    assert!(status.unstaged.iter().any(|f| f.path == "left.txt"));
+}
+
 #[test]
 fn stage_unstage_and_discard_treat_paths_literally() {
     let (dir, repo) = fixture();
