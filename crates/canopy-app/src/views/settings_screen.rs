@@ -5698,8 +5698,9 @@ mod tests {
 
     #[test]
     fn settings_opened_at_a_group_shows_its_heading() {
-        // Notifications moved to their own page; Tooltips is still below the initial
-        // Appearance fold, and opening the group must bring that heading into view.
+        // Tooltips is below the initial Appearance fold. Once Notifications moved
+        // to its own page, less content follows Tooltips: the scroll area cannot
+        // always align it to the very top, but it must bring it into the viewport.
         let plain = heading_top(SettingsScreen::at(Section::Appearance), "Tooltips");
         assert!(plain > 800.0, "below the fold by default: {plain}");
         let revealed = heading_top(
@@ -5707,8 +5708,8 @@ mod tests {
             "Tooltips",
         );
         assert!(
-            (0.0..400.0).contains(&revealed),
-            "scrolled to the top of the page: {revealed}"
+            (0.0..700.0).contains(&revealed) && revealed < plain,
+            "group heading should be visible after scrolling: {revealed} (initially {plain})"
         );
     }
 
