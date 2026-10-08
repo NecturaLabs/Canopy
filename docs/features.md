@@ -1,10 +1,7 @@
 # Feature matrix
 
 Canopy's status per feature, next to three established clients. **Done** means shipped in a
-release (build 763 or earlier); **Unreleased** means merged into `main` and in the code, but in no release yet (the backlog's
-"Implemented, awaiting in-app verification" list says which of these the owner has not yet
-confirmed in the running app); **Planned** means it has an entry in [backlog.md](backlog.md),
-and "backend merged" means `canopy-core` has it but no screen uses it yet. Competitor columns reflect their
+release (build 763 or earlier); **Unreleased** means merged into `main` and in the code, but in no release yet (unverified work is tracked in [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues) with the `needs-verification` label); **Planned** means it is tracked in GitHub Issues, and "backend merged" means `canopy-core` has it but no screen uses it yet. Competitor columns reflect their
 current desktop releases to the best of our knowledge: Yes, No, Partial, or ? where we have not
 verified it. Correct any cell you can verify, citing the source in the pull request.
 

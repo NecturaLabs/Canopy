@@ -256,7 +256,7 @@ tools/screenshot.sh /tmp/demo out.png --view changes
 
 Never point Canopy at a repository you care about while testing destructive operations; use a
 fixture from `tools/mkfixture.sh`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the commit
-convention and pull request checklist, and [docs/backlog.md](docs/backlog.md) for planned work.
+convention and pull request checklist, and [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues) for planned work.
 
 ## Project layout
 
