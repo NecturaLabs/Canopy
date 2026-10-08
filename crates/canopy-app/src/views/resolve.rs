@@ -1253,6 +1253,12 @@ mod tests {
         assert_eq!(cut_at_boundary(text, 40), text.chars().count());
         // One long word is cut where it must be.
         assert_eq!(cut_at_boundary("aaaaaaaaaaaaaaaaaaaa", 10), 10);
+
+        // Changing the same block in place must update its indentation: pointers and
+        // lengths alone are not reliable cache keys after a conflict reload.
+        let mut changed = lines;
+        changed[0] = "no indent".to_owned();
+        assert_eq!(common_indent(&changed), 0);
     }
 
     /// A11Y-1: a conflict's code blocks are named and their text reaches a screen reader.
