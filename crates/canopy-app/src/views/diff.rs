@@ -603,17 +603,14 @@ fn header(
                             actions.push(Action::Op(Op::Stage(vec![path])));
                         }
                     }
-                    (DiffSource::Unstaged, false) => {
-                        if file_action("Stage file", icon::PLUS).show(ui).clicked() {
-                            actions.push(Action::Op(Op::Stage(vec![path])));
-                        }
-                    }
+                    // Staging an unstaged file is "Stage selected" in the list header, the row's
+                    // action and Space, and a commit's files have no action.
+                    (DiffSource::Unstaged, false) | (DiffSource::Commit(_), _) => {}
                     (DiffSource::Staged, false) => {
                         if file_action("Unstage file", icon::MINUS).show(ui).clicked() {
                             actions.push(Action::Op(Op::Unstage(vec![path])));
                         }
                     }
-                    (DiffSource::Commit(_), _) => {}
                 }
             };
             if single_row {

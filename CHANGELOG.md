@@ -10,6 +10,10 @@ commits since the previous build.
 
 ### Added
 
+- Changes has a Stage selected button right of Stage all, enabled when an unstaged file is
+  selected. The diff header no longer repeats it as Stage file; Space and the row action still
+  stage the file.
+
 - Ignore management in Changes and the command palette: file, extension, folder and custom rules
   with previews; repository-local and global excludes; ignored-path listings and matching-rule
   explanations. Stop tracking confirms the staged removal while keeping the local file. New

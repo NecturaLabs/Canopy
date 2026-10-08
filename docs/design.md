@@ -415,7 +415,11 @@ in the density's metrics:
   State and conflict count precede Continue; unresolved conflicts or active work disable it.
   Abort is separated and confirmed. The merge composer says Conclude merge and starts with
   Git's pending message when no draft exists.
-- Changes list headers: "Stage all" and "Unstage all" are small kit buttons (`Size::Sm`). Discard
+- Changes list headers: "Stage all" and "Unstage all" are small kit buttons (`Size::Sm`); the
+  Unstaged header adds "Stage selected" immediately to the right of "Stage all" (disabled unless an
+  unstaged file is selected). Narrow columns drop Stage selected's label first, then Stage all's.
+  The diff header has no Stage file button: staging a file is that button, the row's action and
+  Space. Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
