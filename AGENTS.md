@@ -80,6 +80,7 @@ adding a dependency.
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
 - `tools/check.sh`, on this platform: `fmt --check`, clippy, the unsafe policy
   (`crates/canopy-app/tests/unsafe_policy.rs`), workspace tests,
+  `tools/check-source-headers.py` (source-file headers and guard self-test),
   `tools/check-ui-colors.py` (theme boundary and guard self-test),
   `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
   paths in docs, module table and skill mirror), `tools/check-site.py` (the landing site's files,

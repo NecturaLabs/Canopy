@@ -5,7 +5,9 @@ and print usage with `-h` or when called without required arguments.
 
 | Script | Purpose |
 |---|---|
-| `check.sh` | The local CI: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, the unsafe-code policy test (`cargo test -p canopy-app --test unsafe_policy`: no `unsafe` outside `crates/canopy-app/src/ui/kit/glass/gl.rs`), `cargo test --workspace --locked` (with git's configuration isolated to a fixed identity), the `release.py` self-test, `notices.py --check`, `check-ui-colors.py` rejects runtime UI colour constructors outside `ui/theme.rs`; `--selftest` checks the guard.
+| `check.sh` | The local CI: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, the unsafe-code policy test (`cargo test -p canopy-app --test unsafe_policy`: no `unsafe` outside `crates/canopy-app/src/ui/kit/glass/gl.rs`), `cargo test --workspace --locked` (with git's configuration isolated to a fixed identity), the `release.py` self-test, `notices.py --check`, `check-source-headers.py` requires a header comment on every maintained crate Rust source and test file; `--selftest` tests the check.
+
+`check-ui-colors.py` rejects runtime UI colour constructors outside `ui/theme.rs`; `--selftest` checks the guard.
 
 `check-docs.py`, `check-site.py`, `vendor-eframe.sh --check`, `stall-check.py`, `packaging/test-install.sh` (Linux and macOS), and ShellCheck and `cargo deny check` when they are installed. Must pass before a change is done. |
 | `usersim.sh start [--kind KIND] [--size WxH]\|x XDOTOOL-ARGS...\|shot OUT.png\|restart\|stop` | The user simulation review (`docs/playbook.md`): Canopy on a private Xvfb display with its own home, XDG folders and Git configuration in a scratch folder, on a fixture with a local bare `origin`; drive it with xdotool, capture the screen, relaunch, then remove everything. |

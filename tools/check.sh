@@ -26,6 +26,10 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 step "unsafe policy (only crates/canopy-app/src/ui/kit/glass/gl.rs)"
 cargo test -p canopy-app --locked --test unsafe_policy
 
+step "Rust source header guard"
+python3 tools/check-source-headers.py --selftest
+python3 tools/check-source-headers.py
+
 step "UI colour architecture guard"
 python3 tools/check-ui-colors.py --selftest
 python3 tools/check-ui-colors.py

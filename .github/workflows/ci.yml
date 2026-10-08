@@ -200,6 +200,11 @@ jobs:
       - name: cargo fmt --all --check
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo fmt --all --check
+      - name: Rust source header guard
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        run: |
+          python3 tools/check-source-headers.py --selftest
+          python3 tools/check-source-headers.py
       - name: UI colour architecture guard
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
         run: |
