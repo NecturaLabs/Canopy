@@ -1785,9 +1785,8 @@ impl Roving {
             let enabled = ctx
                 .data(|d| d.get_temp::<RovingState>(self.id))
                 .map_or_else(Vec::new, |st| st.enabled);
-            move_by.and_then(|(by, forward)| {
-                next_enabled_row(index, self.len, by, forward, &enabled)
-            })
+            move_by
+                .and_then(|(by, forward)| next_enabled_row(index, self.len, by, forward, &enabled))
         } else {
             None
         };
@@ -2234,7 +2233,9 @@ mod tests {
         }
         assert_eq!(
             path,
-            ["Before", "Row 0", "Row 3", "Row 5", "Row 5", "Row 3", "Row 0"]
+            [
+                "Before", "Row 0", "Row 3", "Row 5", "Row 5", "Row 3", "Row 0"
+            ]
         );
         assert_eq!(moves, [(0, 3), (3, 5), (5, 3), (3, 0)]);
     }
