@@ -141,9 +141,13 @@ fn is_ssh_url(url: &str) -> bool {
 impl Repo {
     /// The programs this repository needs that `has` does not find: `git-lfs` when its
     /// attributes use `filter=lfs`, `ssh` for an SSH remote (unless `core.sshCommand`, `GIT_SSH`
-    /// or `GIT_SSH_COMMAND` names another), and the program that signs when `commit.gpgsign` or
+    /// or `GIT_SSH_COMMAND` names another, which `ssh_from_environment` says), and the program that signs when `commit.gpgsign` or
     /// `tag.gpgsign` is on. Reads configuration and two small files; run it off the UI thread.
-    fn missing_tools_with(&self, has: &dyn Fn(&str) -> bool) -> Vec<MissingTool> {
+    fn missing_tools_with(
+        &self,
+        has: &dyn Fn(&str) -> bool,
+        ssh_from_environment: bool,
+    ) -> Vec<MissingTool> {
         let mut missing = Vec::new();
         let mut need = |program: &str, needed_for: &'static str| {
             if !has(program) && !missing.iter().any(|m: &MissingTool| m.program == program) {
@@ -161,8 +165,7 @@ impl Repo {
         if !cfg!(windows)
             && self.has_ssh_remote()
             && self.config_string("core.sshCommand").is_none()
-            && std::env::var_os("GIT_SSH").is_none()
-            && std::env::var_os("GIT_SSH_COMMAND").is_none()
+            && !ssh_from_environment
         {
             need("ssh", "a remote of this repository uses SSH");
         }
@@ -198,13 +201,18 @@ impl Repo {
 
     /// [`Repo::missing_tools_with`] against the `PATH` Canopy runs with.
     pub fn missing_tools(&self) -> Vec<MissingTool> {
-        self.missing_tools_with(&|program| {
-            if program == "git-lfs" {
-                git_lfs_available(self.workdir())
-            } else {
-                on_path(program)
-            }
-        })
+        let ssh_from_environment =
+            std::env::var_os("GIT_SSH").is_some() || std::env::var_os("GIT_SSH_COMMAND").is_some();
+        self.missing_tools_with(
+            &|program| {
+                if program == "git-lfs" {
+                    git_lfs_available(self.workdir())
+                } else {
+                    on_path(program)
+                }
+            },
+            ssh_from_environment,
+        )
     }
 
     /// Whether `.gitattributes` in the working folder or `info/attributes` names `filter=lfs`.
@@ -301,7 +309,7 @@ mod tests {
         let repo = repo_in(dir.path());
         let nothing = |_: &str| false;
         assert!(
-            repo.missing_tools_with(&nothing).is_empty(),
+            repo.missing_tools_with(&nothing, false).is_empty(),
             "a plain repository needs nothing"
         );
 
@@ -318,7 +326,7 @@ mod tests {
         config.set_str("gpg.format", "ssh").expect("format");
         let wanted = |m: &[MissingTool]| m.iter().map(|t| t.program.clone()).collect::<Vec<_>>();
 
-        let all = repo.missing_tools_with(&nothing);
+        let all = repo.missing_tools_with(&nothing, false);
         let expected: &[&str] = if cfg!(windows) {
             &["git-lfs", "ssh-keygen"]
         } else {
@@ -329,23 +337,25 @@ mod tests {
             all.iter()
                 .all(|t| !t.install.is_empty() && !t.needed_for.is_empty())
         );
+        let overridden = wanted(&repo.missing_tools_with(&nothing, true));
+        assert!(!overridden.contains(&"ssh".to_owned()), "{overridden:?}");
         assert!(
-            repo.missing_tools_with(&|_: &str| true).is_empty(),
+            repo.missing_tools_with(&|_: &str| true, false).is_empty(),
             "everything is installed"
         );
 
         config
             .set_str("gpg.ssh.program", "my-signer")
             .expect("program");
-        let custom = repo.missing_tools_with(&|p: &str| p != "my-signer");
+        let custom = repo.missing_tools_with(&|p: &str| p != "my-signer", false);
         assert!(wanted(&custom).contains(&"my-signer".to_owned()));
         config.set_str("gpg.format", "openpgp").expect("format");
         config.set_str("gpg.program", "gpg2").expect("program");
-        assert!(wanted(&repo.missing_tools_with(&nothing)).contains(&"gpg2".to_owned()));
+        assert!(wanted(&repo.missing_tools_with(&nothing, false)).contains(&"gpg2".to_owned()));
         config
             .set_str("gpg.openpgp.program", "gpg-new")
             .expect("program");
-        let sign = wanted(&repo.missing_tools_with(&nothing));
+        let sign = wanted(&repo.missing_tools_with(&nothing, false));
         assert!(sign.contains(&"gpg-new".to_owned()) && !sign.contains(&"gpg2".to_owned()));
     }
 
