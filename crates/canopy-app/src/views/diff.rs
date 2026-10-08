@@ -357,12 +357,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         return;
     }
     if d.hunks.is_empty() {
-        empty(
-            ui,
-            icon::EQUALS,
-            "No line changes",
-            "Only the file mode or metadata changed.",
-        );
+        let body = d
+            .mode_change()
+            .map_or("Only the file mode or metadata changed.", |(old, new)| {
+                mode_note(old, new)
+            });
+        empty(ui, icon::EQUALS, "No line changes", body);
         return;
     }
 
@@ -1252,6 +1252,21 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     }
 }
 
+/// What a change of Git file mode means, in words (`0o100644` plain file, `0o100755` executable,
+/// `0o120000` symbolic link).
+fn mode_note(old: u32, new: u32) -> &'static str {
+    const FILE: u32 = 0o100_644;
+    const EXECUTABLE: u32 = 0o100_755;
+    const LINK: u32 = 0o120_000;
+    match (old, new) {
+        (FILE, EXECUTABLE) => "Now executable.",
+        (EXECUTABLE, FILE) => "No longer executable.",
+        (LINK, FILE | EXECUTABLE) => "Was a symbolic link, now a regular file.",
+        (FILE | EXECUTABLE, LINK) => "Was a regular file, now a symbolic link.",
+        _ => "Only the file mode changed.",
+    }
+}
+
 /// A submodule's diff: the commit it moved between and what lies in between.
 fn submodule_card(ui: &mut Ui, change: &canopy_core::SubmoduleChange) {
     let p = palette(ui.ctx());
@@ -1370,6 +1385,14 @@ fn empty(ui: &mut Ui, glyph: &str, title: &str, body: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_mode_change_is_said_in_words() {
+        assert_eq!(mode_note(0o100_644, 0o100_755), "Now executable.");
+        assert_eq!(mode_note(0o100_755, 0o100_644), "No longer executable.");
+        assert!(mode_note(0o120_000, 0o100_644).contains("symbolic link, now a regular file"));
+        assert!(mode_note(0o100_644, 0o120_000).contains("regular file, now a symbolic link"));
+    }
+
     use super::*;
 
     fn hunk(kinds: &str) -> Hunk {

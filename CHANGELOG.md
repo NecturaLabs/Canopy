@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Added
 
+- A diff that only changes a file's mode now says what happened: made executable, no longer
+  executable, or a file turned into a symbolic link and back.
+
 - Without git installed, Canopy opens a dialog with install steps for the system and a download
   link instead of only a toast.
 
