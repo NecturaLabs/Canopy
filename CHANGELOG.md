@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Added
 
+- Local-only repository status follows the toolbar's icon and caption layout; the sidebar
+  uses quiet labels and compact outlined Publish/Add remote actions.
+
 - A pull looks before it changes anything: it fetches, and when your branch and the remote have
   both moved on it asks whether to rebase (recommended) or merge, and can remember the answer
   for the repository or for every repository; when a pull would likely conflict it names the files first and lets you cancel.

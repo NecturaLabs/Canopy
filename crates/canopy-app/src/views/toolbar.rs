@@ -17,7 +17,6 @@ use crate::keymap::Command;
 use crate::tab::{Finished, RepoTab, View};
 use crate::ui::art;
 use crate::ui::kit::button::{Operation, tool_divider};
-use crate::ui::kit::chip::Badge;
 use crate::ui::kit::choice::ViewTabs;
 use crate::ui::kit::field::SearchField;
 use crate::ui::kit::overlay::TooltipExt;
@@ -475,9 +474,8 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     actions.push(Action::OpenUrl(f.web_url()));
                 }
                 if local_only && !narrow_window && !squeezed {
-                    Badge::new(format!("{}  Local only", icon::HARD_DRIVES))
-                        .tooltip("No remote: everything stays on this computer until you publish")
-                        .show(ui);
+                    tool_divider(ui);
+                    local_status(ui);
                 }
                 ui.add_space(right_pad);
                 let used = ui.cursor().min.x - start;
@@ -496,6 +494,56 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
         theme::Fill::flat(s.deck.top)
     };
     tool_fade(ui, &output, ground);
+}
+
+/// Repository status shares the tools' density and alignment, without a button or badge ground.
+fn local_status(ui: &mut Ui) {
+    let m = theme::metrics();
+    let p = palette(ui.ctx());
+    let stacked = m.tool_layout == theme::ToolLayout::Stacked;
+    let glyph = ui.painter().layout_no_wrap(
+        icon::CLOUD_SLASH.to_owned(),
+        theme::icon_font(m.icon_tool, false),
+        p.text_dim,
+    );
+    let caption = ui.painter().layout_no_wrap(
+        "Local only".to_owned(),
+        egui::FontId::new(m.tool_caption, theme::medium()),
+        p.text_dim,
+    );
+    let width = if stacked {
+        glyph.size().x.max(caption.size().x)
+    } else {
+        glyph.size().x + m.tool_gap + caption.size().x
+    } + 2.0 * m.tool_pad;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, m.tool_height), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, "Local only"));
+    let (glyph_pos, caption_pos) = if stacked {
+        let top = rect.center().y - (glyph.size().y + m.tool_gap + caption.size().y) / 2.0;
+        (
+            pos2(rect.center().x - glyph.size().x / 2.0, top),
+            pos2(
+                rect.center().x - caption.size().x / 2.0,
+                top + glyph.size().y + m.tool_gap,
+            ),
+        )
+    } else {
+        (
+            pos2(
+                rect.left() + m.tool_pad,
+                rect.center().y - glyph.size().y / 2.0,
+            ),
+            pos2(
+                rect.left() + m.tool_pad + glyph.size().x + m.tool_gap,
+                rect.center().y - caption.size().y / 2.0,
+            ),
+        )
+    };
+    ui.painter().galley(glyph_pos, glyph, p.text_dim);
+    ui.painter().galley(caption_pos, caption, p.text_dim);
+    response
+        .kit_tooltip("This repository has no remotes. Use Publish or Add remote to connect one.")
+        .show();
 }
 
 /// How far tools hidden past an edge of the bar fade into it: about one tool's width, so a tool

@@ -35,7 +35,7 @@ Update this table in the same change that adds or alters a feature.
 | Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
 | Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Done | Yes | ? | ? |
 | Very large repositories | Planned | ? | ? | ? |
-| Local-only repositories (no remote), with Publish to add one and push | Done | ? | ? | ? |
+| Local-only repositories (no remote), with quiet status labels and compact Publish/Add remote actions | Done | ? | ? | ? |
 
 Partial clones differ from a full clone in what the views can show without the network. Commit
 details list the changed files at once and fetch the line counts afterwards (a commit with more

@@ -385,7 +385,10 @@ in the density's metrics:
 - The view switcher always includes Requests, disabled with an explanation until a GitHub or
   GitLab remote is available.
 - Sidebar remote actions (Publish and Add remote) use outlined compact buttons; local-only
-  status is a non-interactive dim label above them.
+  status is a non-interactive dim label above them, without a card ground. The toolbar's
+  local-only status uses the tools' icon/caption alignment and density, separated by a quiet
+  divider, without a badge capsule or button behaviour. Its explanation is about repository
+  remotes, rather than a promise about all application network activity.
 - An unborn branch counts as a branch in the sidebar and shows its name with "no commits yet" in
   both the sidebar and status bar.
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;

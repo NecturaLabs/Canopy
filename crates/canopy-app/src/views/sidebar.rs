@@ -69,17 +69,12 @@ fn section_with_action(
     (open, shown)
 }
 
-/// The Remotes section of a repository with none: a small card that says so, with Publish as the
-/// main way on and Add remote for a repository that already exists elsewhere.
+/// A quiet empty Remotes section, with the same compact outlined actions as the tree's tools.
 fn no_remotes(ui: &mut Ui, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
-    let s = p.s();
     let m = theme::metrics();
     ui.add_space(theme::XS);
     egui::Frame::new()
-        .fill(s.elevated)
-        .stroke(egui::Stroke::new(crate::ui::kit::paint::SEAM, s.edge))
-        .corner_radius(egui::CornerRadius::same(m.radius))
         .inner_margin(egui::Margin::same(crate::ui::points_i8(theme::MD)))
         .outer_margin(egui::Margin::symmetric(crate::ui::points_i8(theme::SM), 0))
         .show(ui, |ui| {
@@ -96,27 +91,24 @@ fn no_remotes(ui: &mut Ui, actions: &mut Vec<Action>) {
                 ui.label(
                     RichText::new("Local only")
                         .size(m.body_size)
-                        .family(theme::medium())
-                        .color(p.text),
+                        .color(p.text_dim),
                 );
             });
             ui.add(
                 egui::Label::new(
-                    RichText::new(
-                        "Nothing leaves this computer until you publish it or connect a remote.",
-                    )
-                    .size(m.meta_size)
-                    .color(p.text_dim),
+                    RichText::new("No remote connected to this repository.")
+                        .size(m.meta_size)
+                        .color(p.text_dim),
                 )
                 .wrap(),
             );
             ui.add_space(theme::XS);
             if Button::new("Publish…")
-                .primary()
+                .secondary()
                 .size(Size::Sm)
                 .icon(icon::CLOUD_ARROW_UP)
                 .full_width()
-                .tooltip("Create a repository on GitHub or GitLab and push this one to it")
+                .tooltip("Connect an existing remote repository and push your commits")
                 .show(ui)
                 .clicked()
             {
