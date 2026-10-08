@@ -651,7 +651,10 @@ fn an_unregistered_legacy_svg_is_removed_only_for_a_registered_png() {
     let svg = tmp.path().join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
     folder(
         &root,
-        &[("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png", "new png")],
+        &[(
+            "share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png",
+            "new png",
+        )],
     );
     write(&png, "old png");
     write(&svg, "orphaned svg");
@@ -684,7 +687,10 @@ fn an_unregistered_symlinked_legacy_svg_is_left_alone() {
     let target = tmp.path().join("other.svg");
     folder(
         &root,
-        &[("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png", "new png")],
+        &[(
+            "share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png",
+            "new png",
+        )],
     );
     write(&png, "old png");
     write(&target, "external SVG");
