@@ -6,6 +6,9 @@ use super::*;
 pub(super) enum CloneMsg {
     Progress(String),
     Done(Result<PathBuf, String>),
+    /// The repository was cloned and kept, but git reported a problem afterwards (a submodule
+    /// that could not be downloaded): the folder to open and what git said.
+    Incomplete(PathBuf, String),
 }
 
 impl CanopyApp {
@@ -25,7 +28,11 @@ impl CanopyApp {
                 let result = clone_repository(&url, &dest, recurse, |l| {
                     send(CloneMsg::Progress(canopy_core::cli::redact_url(l)));
                 });
-                send(CloneMsg::Done(result));
+                send(match result {
+                    Ok((path, None)) => CloneMsg::Done(Ok(path)),
+                    Ok((path, Some(warning))) => CloneMsg::Incomplete(path, warning),
+                    Err(e) => CloneMsg::Done(Err(e)),
+                });
             });
         match spawned {
             Ok(_) => self.clone = Some((shown, rx, "Starting…".into())),
@@ -68,7 +75,7 @@ fn clone_repository(
     dest: &std::path::Path,
     recurse_submodules: bool,
     progress: impl FnMut(&str),
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, Option<String>), String> {
     if dest
         .try_exists()
         .map_err(|e| format!("Could not check {}: {e}", dest.display()))?
@@ -78,9 +85,20 @@ fn clone_repository(
             dest.display()
         ));
     }
-    canopy_core::ops::clone(url, dest, recurse_submodules, progress)
-        .map_err(|e| canopy_core::cli::redact_url(&e.to_string()))?;
-    Ok(dest.to_path_buf())
+    match canopy_core::ops::clone(url, dest, recurse_submodules, progress) {
+        Ok(()) => Ok((dest.to_path_buf(), None)),
+        Err(e) => {
+            let message = canopy_core::cli::redact_url(&e.to_string());
+            // Git removes a clone that failed, but keeps one whose submodules could not be
+            // downloaded. It is never deleted: the repository is usable and git's message says
+            // what is missing.
+            if recurse_submodules && dest.join(".git").exists() {
+                Ok((dest.to_path_buf(), Some(message)))
+            } else {
+                Err(message)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -209,6 +227,95 @@ mod tests {
             matches!(&done, CloneMsg::Done(Err(e)) if !e.contains("secret")),
             "{done:?}"
         );
+    }
+
+    /// A source repository with a submodule whose own repository is gone, and the folder to clone
+    /// it into.
+    fn source_with_a_lost_submodule(dir: &std::path::Path) -> PathBuf {
+        use canopy_core::cli::run;
+        let identity = ["-c", "user.name=Ada", "-c", "user.email=ada@example.com"];
+        let git = |cwd: &std::path::Path, args: &[&str]| {
+            let all: Vec<&str> = identity.iter().chain(args).copied().collect();
+            run(cwd, &all).expect("git");
+        };
+        let sub = dir.join("sub");
+        let source = dir.join("source");
+        for repo in [&sub, &source] {
+            Repo::init(repo, "main", false).expect("init");
+            std::fs::write(repo.join("f.txt"), "x\n").expect("write");
+            git(repo, &["add", "."]);
+            git(repo, &["commit", "-q", "-m", "first"]);
+        }
+        git(
+            &source,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                &sub.to_string_lossy(),
+                "lib",
+            ],
+        );
+        git(&source, &["commit", "-q", "-m", "add the submodule"]);
+        std::fs::remove_dir_all(&sub).expect("lose the submodule's repository");
+        source
+    }
+
+    /// A clone whose submodules cannot be downloaded leaves a usable repository; it is kept and
+    /// opened with git's message, never deleted.
+    #[test]
+    fn a_clone_with_an_unreachable_submodule_is_kept_with_a_warning() {
+        let dir = tempfile::tempdir().expect("temporary folder");
+        let source = source_with_a_lost_submodule(dir.path());
+        let dest = dir.path().join("copy");
+        let (path, warning) = clone_repository(&source.to_string_lossy(), &dest, true, |_| {})
+            .expect("the outer clone is kept");
+        assert_eq!(path, dest);
+        assert!(dest.join(".git").exists());
+        assert!(dest.join("f.txt").exists());
+        let warning = warning.expect("a warning");
+        assert!(warning.contains("lib"), "{warning}");
+
+        // Without submodules asked for, nothing is wrong.
+        let plain = dir.path().join("plain");
+        let (_, warning) =
+            clone_repository(&source.to_string_lossy(), &plain, false, |_| {}).expect("clone");
+        assert_eq!(warning, None);
+
+        // A clone that fails altogether is still an error, and leaves nothing behind.
+        let missing = dir.path().join("gone");
+        let target = dir.path().join("never");
+        clone_repository(&missing.to_string_lossy(), &target, true, |_| {})
+            .expect_err("nothing to clone");
+        assert!(!target.exists());
+    }
+
+    /// The poll opens a kept clone and says what git reported.
+    #[test]
+    fn the_poll_opens_a_kept_clone_and_warns() {
+        let ctx = egui::Context::default();
+        let mut app = quiet_app();
+        app.dialogs.open(waiting_form());
+        let (tx, rx) = unbounded();
+        app.clone = Some(("https://example.com/x.git".into(), rx, String::new()));
+        tx.send(CloneMsg::Incomplete(
+            PathBuf::from("/home/ada/src/tidepool"),
+            "fatal: clone of '../sub' into submodule path 'lib' failed".into(),
+        ))
+        .expect("send");
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| app.poll(ui.ctx()));
+        out.textures_delta.clear();
+        assert!(app.clone.is_none());
+        assert!(
+            app.dialogs.current().is_none(),
+            "{:?}",
+            app.dialogs.current()
+        );
+        let toasts = format!("{:?}", app.toasts);
+        assert!(toasts.contains("Clone complete"), "{toasts}");
+        assert!(toasts.contains("submodule path"), "{toasts}");
     }
 
     #[test]

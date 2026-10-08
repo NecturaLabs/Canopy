@@ -361,11 +361,16 @@ impl CanopyApp {
             }
         }
         let mut finished = None;
+        let mut warning = None;
         if let Some((_, rx, status)) = &mut self.clone {
             loop {
                 match rx.try_recv() {
                     Ok(CloneMsg::Progress(l)) => *status = l,
                     Ok(CloneMsg::Done(r)) => finished = Some(r),
+                    Ok(CloneMsg::Incomplete(path, message)) => {
+                        warning = Some(message);
+                        finished = Some(Ok(path));
+                    }
                     Err(crossbeam_channel::TryRecvError::Empty) => break,
                     // The thread ended without reporting (it panicked).
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -378,6 +383,15 @@ impl CanopyApp {
         if let Some(r) = finished {
             self.clone = None;
             self.clone_finished(ctx, r);
+            if let Some(message) = warning {
+                self.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Cloned, but git reported a problem",
+                    message,
+                );
+            }
         }
         self.poll_prompts(ctx);
         if self.updater.poll_install() {

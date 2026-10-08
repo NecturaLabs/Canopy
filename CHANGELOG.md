@@ -10,6 +10,8 @@ commits since the previous build.
 
 ### Fixed
 
+- A clone whose submodules cannot be downloaded is kept and opened with git's message, instead of
+  reporting a failure and blocking a second try because the folder exists.
 - A failed download in a partial clone is no longer tried again on every file-watcher refresh;
   Retry or Refresh tries again, and a download that hangs is stopped after ten minutes.
 - A repository's own configuration can no longer run a command through `core.fsmonitor` when
