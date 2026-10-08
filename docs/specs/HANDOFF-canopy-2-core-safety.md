@@ -2,11 +2,12 @@
 
 **Status: merged, kept as the reference for wiring the app.** The branch was merged into `main` as
 `d0782bf` (commits `51c58a7`, `329293c`, `76b160d`); the session, its local branch and its
-worktree are gone, and so is its remote branch. The app has taken up only part of
-it: branch delete asks `git branch -d` first (section 1, `7003ef0`), and `51c58a7` and
-`paths::safe_join` are live. The rest still sits behind compatibility wrappers, and each piece of
-UI work is a `docs/backlog.md` entry (`.gitignore`, file and directory links, research bugs, and
-the app's calls to `publish_branch`, `untracked_children` and `stage_all_except_repositories`).
+worktree are gone, and so is its remote branch. As of 8 October 2026 on PR #8, branch deletion
+asks `git branch -d` first, safe paths and mode/type-change diffs are live, Stage all reports
+skipped nested repositories, and ignore management is wired with acceptance checks remaining.
+GitHub Issues is the active tracker: #59 covers ignore management, #43–#44 file and directory
+links, and #58 branch workflows. Publishing and untracked-folder expansion still need their
+remaining app wiring; branch deletion still uses its compatibility wrapper.
 Delete this file when the last of those lands and the wrappers are gone. Sections below describe
 the branch as it was handed over; "Left out, and known issues" says what became of each item.
 

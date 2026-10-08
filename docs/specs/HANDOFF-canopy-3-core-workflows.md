@@ -1,12 +1,13 @@
 # Handoff: canopy-3/core-workflows
 
 **Status: merged, kept as the reference for wiring the app.** The branch was merged into `main` as
-`4556dfb`; the session, its local branch, its worktree and its remote branch are gone. The app does
-not call this code yet: the git-flow, merged-branch, LFS and submodule work are the backlog entries
-"Feature-branch workflows UI", "Git LFS UI" and "Submodules UI", and the review of this core is
-owed when they start. The "Not done" list below moved into the backlog (the SHA-256 step into the
-LFS entry, the `flow_finish` limits into the Feature-branch entry, the `pull.rebase` bug into
-"Pull strategy"). The installer test's failures on a desktop host are fixed: the unbuffered start
+`4556dfb`; the session, its local branch, its worktree and its remote branch are gone. As of
+8 October 2026 on PR #8, the app wires submodule management, pointer diffs and configurable
+updates; remaining acceptance is tracked in GitHub issue #60. Git-flow and merged-branch UI
+remain in #58 and LFS UI in #57; review the corresponding core when those features are wired.
+GitHub Issues is the active tracker. The historical "Not done" list below is reference, not
+the current task queue; the pull-configuration fixes now use the Git CLI. The installer test's
+failures on a desktop host are fixed: the unbuffered start
 in `7d79afc`, and `install.sh` runs `update-desktop-database` only when a `mimeinfo.cache`
 already exists. Delete this file when the UI work has landed.
 

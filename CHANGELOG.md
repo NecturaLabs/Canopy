@@ -8,6 +8,18 @@ commits since the previous build.
 
 ## [Unreleased]
 
+### Fixed
+
+- Historical submodule diffs refresh after fetching missing commits. Submodule cards omit
+  text diff controls, and a differing checkout no longer claims to contain new commits.
+- Long submodule sidebar lists render only visible rows, with status derived when it changes.
+- Typing an option's prefix in a mouse-opened select scrolls its match into view.
+
+### Changed
+
+- The Privacy Policy describes automatic submodule downloads and their Git settings controls;
+  accepting the updated policy is required on the next launch.
+
 ### Added
 
 - Stage all says which folders it left out because they hold a repository of their own, and
