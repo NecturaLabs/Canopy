@@ -24,6 +24,9 @@ use crate::ops::PullStrategy;
 use crate::paths::os_path;
 use crate::{Repo, Result, cli};
 
+/// A pull's list records three NUL-terminated fields per entry: scope, origin and entry.
+const PULL_FIELDS: usize = 3;
+
 /// Which configuration file layer a value comes from (`git config --show-scope`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigScope {
@@ -220,7 +223,7 @@ impl Reader<'_> {
             &[0, 1],
         )?;
         let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
-        let (entries, _) = fields.as_chunks::<3>();
+        let (entries, _) = fields.as_chunks::<PULL_FIELDS>();
         Ok(entries
             .iter()
             .map(|&[scope, origin, entry]| {
@@ -286,7 +289,7 @@ impl Reader<'_> {
             self.dir,
             &self.args(&["--type=bool", "--get", key]),
             b"",
-            &[0, 1, 128],
+            &[0, 1, cli::EXIT_FATAL],
         )?;
         Ok((code == 0).then(|| out.starts_with(b"true")))
     }

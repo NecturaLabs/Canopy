@@ -53,8 +53,8 @@ impl Avatar {
             .http_status_as_error(false)
             .max_redirects(0)
             .https_only(!self.loopback)
-            .timeout_connect(Some(Duration::from_secs(5)))
-            .timeout_global(Some(Duration::from_secs(10)))
+            .timeout_connect(Some(CONNECT_TIMEOUT))
+            .timeout_global(Some(TOTAL_TIMEOUT))
             .user_agent(user_agent())
             .tls_config(
                 TlsConfig::builder()
@@ -77,12 +77,12 @@ impl Avatar {
                 )
             })?;
         let status = response.status().as_u16();
-        if status == 429 {
+        if status == crate::http::status::TOO_MANY_REQUESTS {
             return Err(Error::RateLimited {
                 reset: crate::http::rate_limit_reset(response.headers()),
             });
         }
-        if !(200..300).contains(&status) {
+        if !crate::http::status::SUCCESS.contains(&status) {
             return Err(Error::Api {
                 status,
                 message: "Profile picture is unavailable".into(),
@@ -185,7 +185,9 @@ pub(crate) fn lookup(
 ) -> Result<Option<Avatar>> {
     let url = match forge.kind {
         ForgeKind::GitHub => {
-            if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if !matches!(commit.len(), SHA1_HEX_LEN | SHA256_HEX_LEN)
+                || !commit.bytes().all(|b| b.is_ascii_hexdigit())
+            {
                 return Err(Error::Parse("Invalid commit id for profile lookup".into()));
             }
             // The list endpoint, not `commits/<sha>`: that one carries the changed files and, for a
@@ -200,7 +202,10 @@ pub(crate) fn lookup(
                 .and_then(|a| a.avatar_url)
         }
         ForgeKind::GitLab => {
-            if email.is_empty() || email.len() > 320 || email.chars().any(char::is_control) {
+            if email.is_empty()
+                || email.len() > MAX_EMAIL_LEN
+                || email.chars().any(char::is_control)
+            {
                 return Ok(None);
             }
             let account: Account =
@@ -213,6 +218,15 @@ pub(crate) fn lookup(
 
 /// The status [`is_unknown_commit`] recognises, as GitHub's own `commits/<sha>` endpoint answers.
 const UNKNOWN_COMMIT: u16 = 422;
+/// Connecting to the picture's host gives up after this long, and the whole download after the
+/// longer one.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
+/// The lengths of a Git object id: SHA-1 and SHA-256.
+const SHA1_HEX_LEN: usize = 40;
+const SHA256_HEX_LEN: usize = 64;
+/// The longest email address looked up: a 64-character local part, the @, a 255-character domain.
+const MAX_EMAIL_LEN: usize = 320;
 
 /// Whether a lookup failed only because the host does not have that commit (it was never pushed
 /// there): the author may still be found through another of their commits.

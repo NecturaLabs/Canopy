@@ -12,6 +12,9 @@ use git2::{BranchType, Oid, RepositoryState};
 use crate::cli;
 use crate::{Error, Repo, Result};
 
+/// The `gitflow.*` entries Canopy writes: five branch names, three prefixes.
+const ENTRY_COUNT: usize = 8;
+
 /// A kind of git-flow branch. `bugfix` behaves like `feature`; `support` is not offered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FlowKind {
@@ -137,7 +140,7 @@ impl FlowConfig {
             .min_by_key(|(_, n)| n.len())
     }
 
-    fn entries(&self) -> [(&'static str, &str); 8] {
+    fn entries(&self) -> [(&'static str, &str); ENTRY_COUNT] {
         [
             ("gitflow.branch.master", &self.master),
             ("gitflow.branch.develop", &self.develop),

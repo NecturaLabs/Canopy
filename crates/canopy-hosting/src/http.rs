@@ -18,6 +18,21 @@ use ureq::{Agent, Body, RequestBuilder};
 use crate::error::{Error, Result};
 use crate::token::TOKEN_PREFIXES;
 
+/// The HTTP status codes the clients branch on, and the class of success.
+pub(crate) mod status {
+    pub const OK: u16 = 200;
+    pub const ACCEPTED: u16 = 202;
+    pub const UNAUTHORIZED: u16 = 401;
+    pub const FORBIDDEN: u16 = 403;
+    pub const NOT_FOUND: u16 = 404;
+    pub const CONFLICT: u16 = 409;
+    pub const TOO_MANY_REQUESTS: u16 = 429;
+    /// The 2xx codes: from 200 up to, not including, 300.
+    pub const SUCCESS: std::ops::Range<u16> = 200..300;
+}
+
+/// Largest profile lookup response read.
+const MAX_PROFILE_BODY: u64 = 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest server message kept from a non-JSON error body.
@@ -210,12 +225,12 @@ impl Http {
         let bytes = response
             .body_mut()
             .with_config()
-            .limit(1024 * 1024)
+            .limit(MAX_PROFILE_BODY)
             .read_to_vec()
             .map_err(|e| {
                 self.profile_error("Could not read the profile response", &e.to_string(), path)
             })?;
-        if !(200..300).contains(&status) {
+        if !status::SUCCESS.contains(&status) {
             return Err(map_status_with_token(
                 status,
                 response.headers(),
@@ -302,7 +317,7 @@ impl Http {
             .limit(MAX_BODY)
             .read_to_vec()
             .map_err(|e| Error::Network(shorten(&self.hide_token(&e.to_string()))))?;
-        if (200..300).contains(&status) {
+        if status::SUCCESS.contains(&status) {
             Ok((response.headers().clone(), bytes))
         } else {
             let err = map_status_with_token(
@@ -392,7 +407,7 @@ impl Http {
                 .collect();
             let message = shorten(&self.hide_token(&messages.join("; ")));
             Error::Api {
-                status: 200,
+                status: status::OK,
                 message: if message.is_empty() {
                     "The GraphQL response carried no data".to_owned()
                 } else {
@@ -521,8 +536,8 @@ fn map_status_with_token(
     };
     let message = shorten(&message);
     match status {
-        401 => Error::Unauthorized(message),
-        403 => {
+        status::UNAUTHORIZED => Error::Unauthorized(message),
+        status::FORBIDDEN => {
             let quota_exhausted = header_i64(headers, "x-ratelimit-remaining") == Some(0);
             // GitHub's secondary rate limits answer 403 with Retry-After.
             let secondary = kind == ForgeKind::GitHub
@@ -536,8 +551,8 @@ fn map_status_with_token(
                 Error::Unauthorized(message)
             }
         }
-        404 => Error::NotFound(message),
-        429 => Error::RateLimited {
+        status::NOT_FOUND => Error::NotFound(message),
+        status::TOO_MANY_REQUESTS => Error::RateLimited {
             reset: rate_limit_reset(headers),
         },
         _ => Error::Api { status, message },

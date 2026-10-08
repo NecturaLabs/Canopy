@@ -8,6 +8,10 @@ use canopy_core::forge::{ForgeKind, normalise_host};
 
 /// How long `git credential fill` may run before it is killed.
 const CREDENTIAL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How many variables each provider's CLI reads.
+const ENV_NAMES: usize = 2;
+/// How often a running `git credential fill` is polled.
+const CREDENTIAL_POLL: Duration = Duration::from_millis(25);
 
 /// Known GitHub and GitLab token prefixes shared by API error and crash-report scrubbing.
 pub const TOKEN_PREFIXES: [&str; 17] = [
@@ -31,7 +35,7 @@ pub const TOKEN_PREFIXES: [&str; 17] = [
 ];
 
 /// The variables each provider's own CLI reads, in priority order.
-fn env_names(kind: ForgeKind) -> [&'static str; 2] {
+fn env_names(kind: ForgeKind) -> [&'static str; ENV_NAMES] {
     match kind {
         ForgeKind::GitHub => ["GH_TOKEN", "GITHUB_TOKEN"],
         ForgeKind::GitLab => ["GITLAB_TOKEN", "GL_TOKEN"],
@@ -153,7 +157,7 @@ pub fn token_from_git_credentials(host: &str) -> Option<String> {
                 let _ = child.wait();
                 break None;
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) => std::thread::sleep(CREDENTIAL_POLL),
             Err(e) => {
                 tracing::debug!(error = %e, "waiting for git credential fill failed");
                 let _ = child.kill();

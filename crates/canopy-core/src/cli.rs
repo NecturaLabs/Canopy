@@ -79,6 +79,26 @@ pub fn command(workdir: Option<&Path>) -> Command {
 /// Canopy picks the repository by the working directory it gives a command, and libgit2 reads
 /// none of these. One inherited from the environment (a git alias or hook that starts Canopy sets
 /// `GIT_DIR`) would send a command to another repository than the one Canopy checked and shows.
+/// The git versions, as `(major, minor)`, that brought what Canopy asks of them.
+pub(crate) const ZDIFF3_SINCE: (u32, u32) = (2, 35);
+pub(crate) const MERGE_AUTOSTASH_SINCE: (u32, u32) = (2, 27);
+pub(crate) const INITIAL_BRANCH_SINCE: (u32, u32) = (2, 28);
+pub(crate) const MERGE_TREE_WRITE_TREE_SINCE: (u32, u32) = (2, 38);
+/// Git's exit status for a fatal error.
+pub(crate) const EXIT_FATAL: i32 = 128;
+/// `git config --unset-all` exits with this when the key was not set.
+pub(crate) const CONFIG_KEY_ABSENT: i32 = 5;
+/// The shortest `-m<message>` argument that still carries a message: the flag plus a letter.
+const MIN_ATTACHED_MESSAGE_ARG: usize = 3;
+/// The length of `://`, which ends a URL's scheme.
+const SCHEME_SEPARATOR_LEN: usize = 3;
+/// The most characters of a failed command's output kept in its error.
+const ERROR_TAIL_CHARS: usize = 2000;
+/// How often a running git is polled for its end.
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// The size of the buffer a git's stderr is read through.
+const STDERR_CHUNK: usize = 4096;
+
 const REPOSITORY_ENV: [&str; 12] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
@@ -203,7 +223,8 @@ pub fn loggable(args: &[&str]) -> Vec<String> {
             .filter(|(f, _)| matches!(*f, "--message" | "-m" | "--file"))
         {
             out.push(format!("{flag}=<redacted>"));
-        } else if a.starts_with("-m") && a.len() > 2 && !a.starts_with("--") {
+        } else if a.starts_with("-m") && a.len() >= MIN_ATTACHED_MESSAGE_ARG && !a.starts_with("--")
+        {
             out.push("-m<redacted>".to_owned());
         } else {
             out.push(redact_url(a));
@@ -221,7 +242,7 @@ pub fn redact_url(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(i) = rest.find("://") {
-        let (head, tail) = rest.split_at(i + 3);
+        let (head, tail) = rest.split_at(i + SCHEME_SEPARATOR_LEN);
         out.push_str(head);
         let ends_text = |c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '<' | '>' | '`');
         match userinfo(tail, ends_text) {
@@ -269,7 +290,7 @@ fn record(args: &[&str], started: Instant, status: Option<i32>, stderr: &[u8]) {
             .trim()
             .chars()
             .rev()
-            .take(2000)
+            .take(ERROR_TAIL_CHARS)
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
@@ -350,7 +371,7 @@ pub(crate) fn output_within_input(
                     limit.as_secs()
                 )));
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => std::thread::sleep(POLL_INTERVAL),
             Err(e) => {
                 reap(child);
                 return Err(e.into());
@@ -540,7 +561,7 @@ pub fn run_streaming(
     if let Some(mut err) = child.stderr.take() {
         let mut segment = Vec::new();
         let mut shown = Vec::new();
-        let mut chunk = [0u8; 4096];
+        let mut chunk = [0u8; STDERR_CHUNK];
         loop {
             let n = match err.read(&mut chunk) {
                 Ok(0) => break,
@@ -616,7 +637,7 @@ fn parse_version(text: &str) -> Option<(u32, u32)> {
 
 /// Whether git has `merge-tree --write-tree` (Git 2.38 or later).
 pub(crate) fn has_merge_tree_write_tree() -> bool {
-    version_number().is_some_and(|v| v >= (2, 38))
+    version_number().is_some_and(|v| v >= MERGE_TREE_WRITE_TREE_SINCE)
 }
 
 #[cfg(test)]

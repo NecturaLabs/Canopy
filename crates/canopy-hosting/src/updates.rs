@@ -97,8 +97,8 @@ pub fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
         .build();
     let mut config = ureq::Agent::config_builder()
         .http_status_as_error(false)
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(20)))
+        .timeout_connect(Some(FEED_CONNECT_TIMEOUT))
+        .timeout_global(Some(FEED_TIMEOUT))
         .user_agent(crate::http::user_agent())
         .tls_config(tls);
     if url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost") {
@@ -114,15 +114,17 @@ pub fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
     let bytes = response
         .body_mut()
         .with_config()
-        .limit(1024 * 1024)
+        .limit(MAX_MANIFEST)
         .read_to_vec()
         .map_err(|e| Error::Network(shorten(&e.to_string())))?;
     match status {
-        200..=299 => UpdateManifest::parse(&bytes),
-        404 => Err(Error::NotFound(format!("no update manifest at {url}"))),
+        s if crate::http::status::SUCCESS.contains(&s) => UpdateManifest::parse(&bytes),
+        crate::http::status::NOT_FOUND => {
+            Err(Error::NotFound(format!("no update manifest at {url}")))
+        }
         _ => Err(Error::Api {
             status,
-            message: plain_text(&String::from_utf8_lossy(&bytes), 200),
+            message: plain_text(&String::from_utf8_lossy(&bytes), MAX_ERROR_TEXT),
         }),
     }
 }
@@ -132,6 +134,25 @@ pub const RELEASE_DOWNLOADS: &str = "https://github.com/NecturaLabs/app-updates/
 
 /// Redirects followed, each of them to HTTPS.
 const MAX_REDIRECTS: usize = 5;
+/// Connecting to the update feed gives up after this long, and the whole fetch after the longer one.
+const FEED_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const FEED_TIMEOUT: Duration = Duration::from_secs(20);
+/// A release download connects within this long and may take up to half an hour.
+const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(30);
+/// Largest update manifest read.
+const MAX_MANIFEST: u64 = 1024 * 1024;
+/// Largest error body read from a failed download.
+const MAX_ERROR_BODY: u64 = 4096;
+/// The most characters of a server's error text kept.
+const MAX_ERROR_TEXT: usize = 200;
+/// How many bytes a download is read in at a time.
+const READ_CHUNK: usize = 64 * 1024;
+/// The length of `://`, which ends a URL's scheme.
+const SCHEME_SEPARATOR_LEN: usize = 3;
+/// The redirect statuses followed: moved permanently, found, see other, and the two that keep
+/// the method.
+const REDIRECTS: [u16; 5] = [301, 302, 303, 307, 308];
 
 /// What a download wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,7 +189,7 @@ fn resolve_location(from: &str, location: &str) -> Result<String> {
         return Ok(location.to_owned());
     }
     if location.starts_with('/') && !location.starts_with("//") {
-        let after_scheme = from.find("://").map_or(0, |i| i + 3);
+        let after_scheme = from.find("://").map_or(0, |i| i + SCHEME_SEPARATOR_LEN);
         let origin_end = from[after_scheme..]
             .find('/')
             .map_or(from.len(), |i| after_scheme + i);
@@ -197,8 +218,8 @@ fn get(
         // Redirects are checked here, hop by hop, instead of by ureq.
         .max_redirects(0)
         .max_redirects_will_error(false)
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_mins(30)))
+        .timeout_connect(Some(DOWNLOAD_CONNECT_TIMEOUT))
+        .timeout_global(Some(DOWNLOAD_TIMEOUT))
         .user_agent(crate::http::user_agent())
         .tls_config(tls);
     if is_loopback_url(url) {
@@ -219,7 +240,7 @@ fn get(
             .call()
             .map_err(|e| Error::Network(shorten(&e.to_string())))?;
         let status = response.status().as_u16();
-        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+        if REDIRECTS.contains(&status) {
             let location = response
                 .headers()
                 .get("location")
@@ -230,18 +251,20 @@ fn get(
             continue;
         }
         match status {
-            200..=299 => {}
-            404 => return Err(Error::NotFound(format!("nothing at {url}"))),
+            s if crate::http::status::SUCCESS.contains(&s) => {}
+            crate::http::status::NOT_FOUND => {
+                return Err(Error::NotFound(format!("nothing at {url}")));
+            }
             _ => {
                 let body = response
                     .body_mut()
                     .with_config()
-                    .limit(4096)
+                    .limit(MAX_ERROR_BODY)
                     .read_to_vec()
                     .unwrap_or_default();
                 return Err(Error::Api {
                     status,
-                    message: plain_text(&String::from_utf8_lossy(&body), 200),
+                    message: plain_text(&String::from_utf8_lossy(&body), MAX_ERROR_TEXT),
                 });
             }
         }
@@ -257,7 +280,7 @@ fn get(
         }
         let mut reader = response.body_mut().as_reader();
         let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; 64 * 1024];
+        let mut buf = vec![0u8; READ_CHUNK];
         let mut done = 0u64;
         loop {
             let n = reader

@@ -19,6 +19,8 @@ use crate::{Error, Result, status};
 /// A commit that changes more files than this is not worth downloading every blob for in a
 /// partial clone: [`Repo::commit_details`] returns its file list without line counts.
 pub const MAX_STAT_FILES: usize = 200;
+/// The most commits a history read reserves room for up front, however many it may return.
+const MAX_PREALLOCATED_COMMITS: usize = 4096;
 
 /// An open repository with a working directory.
 pub struct Repo {
@@ -92,7 +94,9 @@ impl Repo {
         std::fs::create_dir_all(path)?;
         if configured {
             crate::cli::run(path, &["init", "-q"])?;
-        } else if crate::cli::version_number().is_some_and(|v| v >= (2, 28)) {
+        } else if crate::cli::version_number()
+            .is_some_and(|v| v >= crate::cli::INITIAL_BRANCH_SINCE)
+        {
             let branch = format!("--initial-branch={initial_branch}");
             crate::cli::run(path, &["init", "-q", &branch])?;
         } else {
@@ -399,7 +403,7 @@ impl Repo {
         walk.push_glob("refs/heads")?;
         walk.push_glob("refs/remotes")?;
         walk.push_glob("refs/tags")?;
-        let mut out = Vec::with_capacity(max_commits.min(4096));
+        let mut out = Vec::with_capacity(max_commits.min(MAX_PREALLOCATED_COMMITS));
         let mut truncated = false;
         for oid in walk {
             let oid = oid?;

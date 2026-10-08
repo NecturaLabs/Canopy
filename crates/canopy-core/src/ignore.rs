@@ -11,6 +11,15 @@ use std::path::{Path, PathBuf};
 use crate::paths::{check_relative, os_path, refuse_link, safe_join, write_atomic};
 use crate::{Error, Repo, Result, cli};
 
+/// Room reserved for the backslashes an escaped pattern gains.
+const ESCAPE_ROOM: usize = 4;
+/// A backslash and the character it escapes.
+const ESCAPE_LEN: usize = 2;
+/// `git check-ignore -v -z` answers four NUL-terminated fields per path: source, line, pattern
+/// and path. The pattern is the third.
+const CHECK_IGNORE_FIELDS: usize = 4;
+const PATTERN_FIELD: usize = 2;
+
 /// Small built-in starter rules, added only when explicitly selected during repository creation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum IgnoreTemplate {
@@ -194,7 +203,7 @@ fn depth(base: &str) -> usize {
 /// Escapes `text` so a gitignore pattern matches it literally: `\`, `*`, `?`, `[` and `]`
 /// anywhere, a leading `#` or `!`, and trailing spaces.
 pub fn escape_pattern(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 4);
+    let mut out = String::with_capacity(text.len() + ESCAPE_ROOM);
     let trailing = text.len() - text.trim_end_matches(' ').len();
     let keep = text.len() - trailing;
     for (i, ch) in text.char_indices() {
@@ -318,7 +327,7 @@ fn with_wildcard(pattern: &str, ignore_case: bool) -> String {
         if !escaped && !matches!(chars[i], '/' | '[' | ']' | '^' | '!' | ' ') {
             last = Some(i);
         }
-        i += if escaped { 2 } else { 1 };
+        i += if escaped { ESCAPE_LEN } else { 1 };
     }
     match last {
         Some(at) => {
@@ -658,7 +667,7 @@ impl Repo {
         )?;
         let fields: Vec<&[u8]> = out.split(|b| *b == 0).collect();
         // Four NUL-terminated fields per path; the trailing NUL leaves one empty piece over.
-        let (records, _) = fields.as_chunks::<4>();
+        let (records, _) = fields.as_chunks::<CHECK_IGNORE_FIELDS>();
         if records.len() != paths.len() {
             return Err(Error::invalid(
                 "git check-ignore gave an answer Canopy cannot read.",
@@ -671,7 +680,7 @@ impl Repo {
                 (!r[0].is_empty()).then(|| IgnoreMatch {
                     source: text(r[0]),
                     line: text(r[1]).parse().unwrap_or(0),
-                    pattern: text(r[2]),
+                    pattern: text(r[PATTERN_FIELD]),
                 })
             })
             .collect())

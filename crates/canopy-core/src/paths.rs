@@ -10,6 +10,9 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::{Error, Result};
 
+/// How many temporary names are tried before giving up.
+const MAX_TEMP_ATTEMPTS: u32 = 100;
+
 fn unsafe_path(path: &str, reason: &'static str) -> Error {
     Error::UnsafePath {
         path: path.to_owned(),
@@ -167,7 +170,9 @@ pub(crate) fn write_atomic(dest: &Path, content: &[u8]) -> Result<()> {
             .open(&tmp)
         {
             Ok(f) => break (tmp, f),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 100 => {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < MAX_TEMP_ATTEMPTS =>
+            {
                 attempt += 1;
             }
             Err(e) => return Err(e.into()),

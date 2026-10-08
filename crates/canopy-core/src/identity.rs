@@ -52,7 +52,7 @@ impl Person {
     pub fn looks_like_placeholder(&self) -> bool {
         let name = self.name.value.trim();
         let domain = self.email.value.rsplit_once('@').map_or("", |(_, d)| d);
-        name.chars().count() < 2
+        name.chars().count() < MIN_NAME_CHARS
             || domain.is_empty()
             || !domain.contains('.')
             || domain.ends_with("(none)")
@@ -118,6 +118,10 @@ impl Scope {
 
 /// How long one git call may take. The identity helper thread is shared by every tab, so a
 /// repository whose configuration makes git block must not hold it for ever.
+/// A name shorter than this is taken for a placeholder.
+const MIN_NAME_CHARS: usize = 2;
+/// A listed config entry is its key, a newline and its value.
+const KEY_VALUE_PARTS: usize = 2;
 const GIT_LIMIT: Duration = Duration::from_secs(15);
 
 fn git(workdir: Option<&Path>, args: &[&str]) -> Result<cli::Output> {
@@ -238,7 +242,7 @@ fn put_back(err: Error, workdir: Option<&Path>, scope: Scope, previous: &[String
 fn unset(workdir: Option<&Path>, scope: Scope, key: &str) -> Result<()> {
     let args = ["config", scope.flag(), "--unset-all", "--", key];
     let out = git_write(workdir, &args)?;
-    if matches!(out.code, Some(0 | 5)) {
+    if matches!(out.code, Some(0 | cli::CONFIG_KEY_ABSENT)) {
         Ok(())
     } else {
         Err(out.error(&args))
@@ -363,7 +367,7 @@ fn read_person(workdir: Option<&Path>, configured: &Configured, kind: Kind) -> R
             name.source.get_or_insert(Source::Guessed);
             email.source.get_or_insert(Source::Guessed);
             true
-        } else if out.code == Some(128) {
+        } else if out.code == Some(cli::EXIT_FATAL) {
             false
         } else {
             return Err(out.error(&args));
@@ -410,7 +414,7 @@ fn read_config(workdir: Option<&Path>) -> Result<Configured> {
     let mut parts = out.stdout.split(|b| *b == 0);
     let mut entries = Vec::new();
     while let (Some(scope), Some(origin), Some(pair)) = (parts.next(), parts.next(), parts.next()) {
-        let mut pair = pair.splitn(2, |b| *b == b'\n');
+        let mut pair = pair.splitn(KEY_VALUE_PARTS, |b| *b == b'\n');
         let (Some(key), Some(value)) = (pair.next(), pair.next()) else {
             continue;
         };

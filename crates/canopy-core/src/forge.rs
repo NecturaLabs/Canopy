@@ -70,6 +70,11 @@ pub struct Forge {
 }
 
 /// Schemes a forge remote can use. `file://` and anything unknown are rejected.
+/// A project path has at least an owner and a name.
+const PATH_SEGMENTS_MIN: usize = 2;
+/// The ports `https` and `http` use when a URL names none.
+const HTTPS_PORT: u16 = 443;
+const HTTP_PORT: u16 = 80;
 const SCHEMES: [&str; 6] = ["https", "http", "ssh", "git", "git+ssh", "ssh+git"];
 
 /// Host aliases that mean the canonical public host.
@@ -112,8 +117,8 @@ fn normalise_path(kind: ForgeKind, raw: &str) -> Option<String> {
         return None;
     }
     let ok = match kind {
-        ForgeKind::GitHub => segments.len() == 2,
-        ForgeKind::GitLab => segments.len() >= 2,
+        ForgeKind::GitHub => segments.len() == PATH_SEGMENTS_MIN,
+        ForgeKind::GitLab => segments.len() >= PATH_SEGMENTS_MIN,
     };
     ok.then(|| segments.join("/"))
 }
@@ -192,8 +197,8 @@ fn split_url(url: &str) -> Option<Parts<'_>> {
             None => (host_port, ""),
         };
         let default_port = match scheme.as_str() {
-            "https" => Some(443),
-            "http" => Some(80),
+            "https" => Some(HTTPS_PORT),
+            "http" => Some(HTTP_PORT),
             _ => None,
         };
         let port = match default_port {

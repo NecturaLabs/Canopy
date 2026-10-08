@@ -447,9 +447,12 @@ impl RepoSnapshot {
     }
 }
 
+/// The hex digits of an abbreviated commit id.
+const SHORT_ID_LEN: usize = 7;
+
 /// Abbreviates a commit id to seven hex digits.
 pub fn short_id(oid: Oid) -> String {
     let mut s = oid.to_string();
-    s.truncate(7);
+    s.truncate(SHORT_ID_LEN);
     s
 }

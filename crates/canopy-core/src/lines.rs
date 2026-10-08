@@ -19,6 +19,8 @@ use crate::diff::{DiffSource, HunkKey, file_line, quoted};
 use crate::ops::HunkAction;
 use crate::{Error, Repo, Result};
 
+/// The length of the `@@` that opens and closes a hunk header's ranges.
+const MARKER_LEN: usize = 2;
 const NOTHING_SELECTED: &str = "Select at least one added or removed line.";
 const NOT_IN_HUNK: &str = "The selected lines are not part of that change. Refresh and try again.";
 const MISSING_NEWLINE: &str = "The last line of the file has no newline at its end. Select its \
@@ -212,11 +214,11 @@ fn read_hunk(diff: &Diff<'_>, index: usize) -> Result<Option<(FileHeader, RawHun
 
 /// The text after the closing `@@` of a hunk header, without its line end.
 fn section(header: &[u8]) -> Vec<u8> {
-    let rest = header.get(2..).unwrap_or_default();
-    let Some(close) = rest.windows(2).position(|w| w == b"@@") else {
+    let rest = header.get(MARKER_LEN..).unwrap_or_default();
+    let Some(close) = rest.windows(MARKER_LEN).position(|w| w == b"@@") else {
         return Vec::new();
     };
-    let mut s = rest[close + 2..].to_vec();
+    let mut s = rest[close + MARKER_LEN..].to_vec();
     while s.last().is_some_and(|b| *b == b'\n' || *b == b'\r') {
         s.pop();
     }

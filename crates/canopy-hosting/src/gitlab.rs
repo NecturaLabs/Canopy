@@ -476,7 +476,7 @@ fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<S
             // A merge_error left over from an earlier attempt is stale once the head moved.
             if !error.is_empty() && now.sha == before.sha {
                 return Err(Error::Api {
-                    status: 409,
+                    status: crate::http::status::CONFLICT,
                     message: shorten(&format!(
                         "GitLab could not rebase the merge request: {error}"
                     )),
@@ -486,7 +486,7 @@ fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<S
         }
         if Instant::now() >= deadline {
             return Err(Error::Api {
-                status: 202,
+                status: crate::http::status::ACCEPTED,
                 message: "GitLab is still rebasing the merge request; merge it again once the \
                           rebase has finished"
                     .to_owned(),

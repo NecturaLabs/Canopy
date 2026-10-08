@@ -47,6 +47,9 @@ const DOWNLOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
 /// How many fetch-and-retry rounds a read may take: trees (treeless clones), then blobs, then a
 /// last round for anything the read needed that the first estimate missed.
 const MAX_ROUNDS: usize = 4;
+/// The length of a SHA-1 and of a SHA-256 object id in hex.
+const SHA1_HEX_LEN: usize = 40;
+const SHA256_HEX_LEN: usize = 64;
 
 /// Whether `e` is libgit2 failing to find an object in the object database.
 pub(crate) fn is_missing_object(e: &git2::Error) -> bool {
@@ -311,7 +314,8 @@ fn oid_in_message(e: &git2::Error) -> Option<Oid> {
     let msg = e.message();
     let (_, after) = msg.rsplit_once('(')?;
     let (id, _) = after.split_once(')')?;
-    let full = matches!(id.len(), 40 | 64) && id.bytes().all(|b| b.is_ascii_hexdigit());
+    let full = matches!(id.len(), SHA1_HEX_LEN | SHA256_HEX_LEN)
+        && id.bytes().all(|b| b.is_ascii_hexdigit());
     if full { Oid::from_str(id).ok() } else { None }
 }
 

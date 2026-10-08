@@ -5,6 +5,14 @@ use git2::{Diff, DiffOptions, Patch};
 use crate::Result;
 use crate::model::ChangeKind;
 
+/// The ASCII characters git leaves unquoted in a path: space up to, not including, DEL.
+const PRINTABLE_ASCII: std::ops::Range<u8> = 0x20..0x7f;
+/// The control characters git names with a letter in a quoted path.
+const BEL: u8 = 0x07;
+const BS: u8 = 0x08;
+const VT: u8 = 0x0b;
+const FF: u8 = 0x0c;
+
 /// The numbers of a hunk header (`old_start, old_lines, new_start, new_lines`), which identify a
 /// hunk well enough to tell whether it is still the one the user saw.
 pub type HunkKey = (u32, u32, u32, u32);
@@ -368,7 +376,7 @@ pub(crate) fn file_line(out: &mut Vec<u8>, lead: &[u8], prefix: &[u8], path: &[u
 /// `prefix` + `path`, C-quoted the way git quotes paths when it contains a control character,
 /// a quote, a backslash or a non-ASCII byte (which also covers non-UTF-8 names).
 pub(crate) fn quoted(prefix: &[u8], path: &[u8]) -> Vec<u8> {
-    let special = |b: u8| !(0x20..0x7f).contains(&b) || b == b'"' || b == b'\\';
+    let special = |b: u8| !PRINTABLE_ASCII.contains(&b) || b == b'"' || b == b'\\';
     if !path.iter().copied().any(special) {
         return [prefix, path].concat();
     }
@@ -381,10 +389,10 @@ pub(crate) fn quoted(prefix: &[u8], path: &[u8]) -> Vec<u8> {
             b'\t' => out.extend_from_slice(b"\\t"),
             b'\n' => out.extend_from_slice(b"\\n"),
             b'\r' => out.extend_from_slice(b"\\r"),
-            0x07 => out.extend_from_slice(b"\\a"),
-            0x08 => out.extend_from_slice(b"\\b"),
-            0x0b => out.extend_from_slice(b"\\v"),
-            0x0c => out.extend_from_slice(b"\\f"),
+            BEL => out.extend_from_slice(b"\\a"),
+            BS => out.extend_from_slice(b"\\b"),
+            VT => out.extend_from_slice(b"\\v"),
+            FF => out.extend_from_slice(b"\\f"),
             b if special(b) => out.extend_from_slice(format!("\\{b:03o}").as_bytes()),
             b => out.push(b),
         }

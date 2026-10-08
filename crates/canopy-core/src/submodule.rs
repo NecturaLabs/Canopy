@@ -107,6 +107,10 @@ pub struct SubmoduleCommit {
 
 /// Most commits a submodule's diff lists on each side.
 pub const SUBMODULE_LOG_LIMIT: usize = 50;
+/// The scheme that runs a command (`ext::`), which a submodule URL may never use.
+const EXT_SCHEME: &str = "ext::";
+/// The merge stages of an index entry: base, ours and theirs.
+const STAGES: std::ops::RangeInclusive<i32> = 1..=3;
 
 /// The commits between the two sides of a submodule's diff, read from the submodule's own
 /// repository.
@@ -215,7 +219,7 @@ pub fn submodule_add_problem(url: &str, path: &str) -> Option<&'static str> {
         return Some("Enter the submodule's URL.");
     }
     if url
-        .get(..5)
+        .get(..EXT_SCHEME.len())
         .is_some_and(|p| p.eq_ignore_ascii_case("ext::"))
     {
         return Some("This kind of URL is not supported for submodules.");
@@ -258,7 +262,9 @@ impl Repo {
         for sm in git.submodules()? {
             let name = String::from_utf8_lossy(sm.name_bytes()).into_owned();
             let path = sm.path().to_string_lossy().replace('\\', "/");
-            let conflicted = (1..=3).any(|stage| index.get_path(sm.path(), stage).is_some());
+            let conflicted = STAGES
+                .clone()
+                .any(|stage| index.get_path(sm.path(), stage).is_some());
             let mut info = SubmoduleInfo {
                 url: sm
                     .opt_url_bytes()

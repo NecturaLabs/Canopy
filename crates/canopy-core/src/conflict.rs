@@ -18,6 +18,12 @@ use crate::{Error, Repo, Result};
 
 /// The marker length git uses unless the `conflict-marker-size` attribute says otherwise.
 pub const DEFAULT_MARKER_SIZE: usize = 7;
+/// The marker lines a conflict region adds around its sides: ours, separator, theirs, and the
+/// base's own.
+const MARKER_LINES: usize = 4;
+/// The file modes git records for an executable and for a regular file.
+const MODE_EXECUTABLE: u32 = 0o100_755;
+const MODE_REGULAR: u32 = 0o100_644;
 
 /// One conflicted region between `<<<<<<<` and `>>>>>>>`. Lines carry no line terminators.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,7 +344,10 @@ impl ConflictRegion {
     pub fn marked_lines(&self) -> Vec<String> {
         let size = self.marker_size.max(DEFAULT_MARKER_SIZE);
         let mut out = Vec::with_capacity(
-            self.ours.len() + self.theirs.len() + self.base.as_ref().map_or(0, Vec::len) + 4,
+            self.ours.len()
+                + self.theirs.len()
+                + self.base.as_ref().map_or(0, Vec::len)
+                + MARKER_LINES,
         );
         out.push(marker_line('<', size, &self.ours_label));
         out.extend(self.ours.iter().cloned());
@@ -373,7 +382,7 @@ impl ConflictFile {
             .iter()
             .filter(|l| l.ends_with('\r'))
             .count();
-        let use_crlf = crlf > 0 && crlf * 2 >= terminated;
+        let use_crlf = crlf > 0 && crlf * 2 >= terminated; // CRLF when half the lines or more end in it
         let lines: Vec<&str> = if use_crlf {
             raw.iter()
                 .enumerate()
@@ -595,8 +604,8 @@ impl Repo {
             // With core.fileMode off (Git for Windows' default) `git add` stages our side's mode
             // whichever side was chosen, so the chosen side's executable bit is passed.
             let chmod = match self.side_mode(path, side)? {
-                Some(0o100_755) => Some("--chmod=+x"),
-                Some(0o100_644) => Some("--chmod=-x"),
+                Some(MODE_EXECUTABLE) => Some("--chmod=+x"),
+                Some(MODE_REGULAR) => Some("--chmod=-x"),
                 _ => None,
             };
             self.git_cmd(&["--literal-pathspecs", "checkout", flag, "--", path])?;

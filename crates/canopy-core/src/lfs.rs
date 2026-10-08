@@ -10,9 +10,16 @@ use crate::{Repo, Result};
 
 /// Pointer files are smaller than this (git-lfs specification).
 const MAX_POINTER_SIZE: usize = 1024;
+/// The length of a SHA-256 in hex, which names an LFS object.
+const SHA256_HEX_LEN: usize = 64;
+/// LFS stores an object under two directories named by its first two pairs of hex digits.
+const FAN_OUT: usize = 2;
+/// A git index entry keeps its merge stage in bits 12 and 13 of its flags.
+const INDEX_STAGE_SHIFT: u32 = 12;
+const INDEX_STAGE_MASK: u16 = 0x3;
 
 fn is_sha256_hex(text: &str) -> bool {
-    text.len() == 64
+    text.len() == SHA256_HEX_LEN
         && text
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -117,7 +124,7 @@ impl Repo {
         if !is_sha256_hex(oid) {
             return None;
         }
-        let (a, b) = (oid.get(0..2)?, oid.get(2..4)?);
+        let (a, b) = (oid.get(..FAN_OUT)?, oid.get(FAN_OUT..FAN_OUT + FAN_OUT)?);
         Some(
             self.lfs_storage_dir()
                 .join("objects")
@@ -137,7 +144,7 @@ impl Repo {
         index.read(false)?;
         let mut out = Vec::new();
         for entry in index.iter() {
-            let stage = (entry.flags >> 12) & 0x3;
+            let stage = (entry.flags >> INDEX_STAGE_SHIFT) & INDEX_STAGE_MASK;
             let mode = entry.mode;
             if stage != 0
                 || mode == u32::from(FileMode::Commit)

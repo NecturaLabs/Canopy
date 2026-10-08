@@ -26,7 +26,7 @@ impl ConflictStyle {
     /// git older than 2.35, which refuses it, or one whose version is unknown.
     pub fn value(self, git: Option<(u32, u32)>) -> &'static str {
         match self {
-            Self::Zdiff3 if git.is_some_and(|v| v >= (2, 35)) => "zdiff3",
+            Self::Zdiff3 if git.is_some_and(|v| v >= cli::ZDIFF3_SINCE) => "zdiff3",
             Self::Zdiff3 | Self::Diff3 => "diff3",
             Self::Merge => "merge",
         }
@@ -224,7 +224,7 @@ impl Repo {
         } else {
             (
                 r"^merge\.autostash$",
-                cli::version_number().is_some_and(|v| v >= (2, 27)),
+                cli::version_number().is_some_and(|v| v >= cli::MERGE_AUTOSTASH_SINCE),
             )
         };
         (known && !self.config_decides(key))

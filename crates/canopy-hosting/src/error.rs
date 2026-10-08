@@ -48,7 +48,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// reviewed (GitHub and GitLab both answer 409 when the `sha` sent with a merge does not match).
 pub(crate) fn head_changed(noun: &str) -> Error {
     Error::Api {
-        status: 409,
+        status: crate::http::status::CONFLICT,
         message: format!(
             "The {noun} changed since you loaded it. Refresh and review before merging."
         ),
@@ -59,7 +59,7 @@ pub(crate) fn head_changed(noun: &str) -> Error {
 pub(crate) fn map_head_conflict<T>(result: Result<T>, sha_sent: bool, noun: &str) -> Result<T> {
     match result {
         Err(Error::Api {
-            status: 409,
+            status: crate::http::status::CONFLICT,
             message,
         }) if sha_sent => {
             tracing::info!(server = %message, "merge refused: the request head moved");

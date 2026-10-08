@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 
 use crate::{Repo, cli};
 
+/// The owner, group and other execute bits of a Unix file mode.
+#[cfg(unix)]
+const EXECUTE_BITS: u32 = 0o111;
+
 /// A program a repository needs and the system lacks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissingTool {
@@ -106,7 +110,7 @@ fn exists_in(program: &str, dirs: &[PathBuf]) -> bool {
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     path.metadata()
-        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .is_ok_and(|m| m.is_file() && m.permissions().mode() & EXECUTE_BITS != 0)
 }
 
 #[cfg(not(unix))]
