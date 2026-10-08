@@ -358,12 +358,7 @@ mod tests {
         assert_eq!(app.tabs.len(), 2);
         assert_eq!(app.tabs[0].path, a);
         assert_eq!(app.tabs[app.active].path, c);
-        assert_eq!(
-            ctx.data(|d| d.get_temp::<(String, String)>(draft_id(&a)))
-                .unwrap()
-                .0,
-            "Unsent"
-        );
+        assert_eq!(app.tabs[0].commit_summary, "Unsent");
     }
 
     #[test]
