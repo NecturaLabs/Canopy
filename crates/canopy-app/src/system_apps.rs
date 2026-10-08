@@ -529,13 +529,32 @@ mod linux {
         /// URLs, other field codes and Flatpak's `@@` markers left out.
         pub(super) fn command(&self, file_code: &str) -> String {
             let mut words = Vec::new();
+            let mut dropped_embedded_file_code = false;
             for arg in &self.exec {
                 match arg.as_str() {
                     "%f" | "%F" | "%u" | "%U" => words.push(file_code.to_owned()),
                     "@@" | "@@u" | "@@f" | "%i" | "%c" | "%k" | "%d" | "%D" | "%n" | "%N"
                     | "%v" | "%m" => {}
-                    _ => words.push(quote(&arg.replace("%%", "%"))),
+                    _ => {
+                        // Embedded field codes violate the desktop-entry specification and
+                        // cannot safely become an argument containing the user's file path.
+                        // Drop that argument, then pass the path as a separate word instead.
+                        let without_escapes = arg.replace("%%", "");
+                        if ["%f", "%F", "%u", "%U", "%d", "%D"]
+                            .iter()
+                            .any(|code| without_escapes.contains(code))
+                        {
+                            dropped_embedded_file_code = true;
+                        } else {
+                            // Keep %% intact until platform::with_path has decided whether
+                            // the word is a placeholder, then unescape it there.
+                            words.push(quote(arg));
+                        }
+                    }
                 }
+            }
+            if dropped_embedded_file_code && !words.iter().any(|w| w == file_code) {
+                words.push(file_code.to_owned());
             }
             words.join(" ")
         }
@@ -1014,6 +1033,26 @@ mod tests {
         assert_eq!(
             flatpak.command("%f"),
             "/usr/bin/flatpak run --file-forwarding org.gnome.TextEditor %f"
+        );
+        let malformed = parse_entry(
+            "broken.desktop",
+            "[Desktop Entry]\nType=Application\nName=Broken\nExec=editor --file=%f --title %%f\n",
+        )
+        .unwrap();
+        assert_eq!(
+            malformed.command("%f"),
+            "editor --title %%f %f",
+            "ignore unsafe embedded substitutions but retain escaped literals"
+        );
+        let escaped = parse_entry(
+            "escaped.desktop",
+            "[Desktop Entry]\nType=Application\nName=Escaped\nExec=editor %%f\n",
+        )
+        .unwrap();
+        assert_eq!(
+            escaped.command("%f"),
+            "editor %%f",
+            "an escaped percent is not a file placeholder"
         );
         assert_eq!(
             parse_entry("x.desktop", "[Desktop Entry]\nType=Link\nName=X\nExec=x\n"),
