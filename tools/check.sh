@@ -48,6 +48,9 @@ GIT_CONFIG_GLOBAL="$test_gitconfig" GIT_CONFIG_NOSYSTEM=1 cargo test --workspace
 step "tools/release.py selftest"
 python3 tools/release.py selftest
 
+step "pre-commit hook regressions"
+python3 tools/test-hooks.py
+
 step "tools/notices.py --check"
 python3 tools/notices.py --check
 

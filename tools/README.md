@@ -7,6 +7,7 @@ and print usage with `-h` or when called without required arguments.
 |---|---|
 | `check.sh` | The local CI: formatting, strict Clippy, unsafe-code policy, source-header and UI-colour guards, workspace tests with isolated Git configuration, release self-tests, licence notices, documentation and site checks, vendored-eframe verification, the hidden-window check and installer tests (Linux and macOS). Also runs ShellCheck and `cargo deny check` when installed. Must pass before a change is done. |
 | `install-hooks.sh [--uninstall]` | Sets `core.hooksPath` to `tools/hooks`, so `hooks/pre-commit` runs before every commit in every worktree: it refuses the commit while `cargo clippy --workspace --all-targets --locked -- -D warnings` fails, and is skipped when the commit stages no Rust source, `Cargo.toml`, `Cargo.lock`, `clippy.toml` or `rust-toolchain.toml`. `--uninstall` removes the setting. |
+| `test-hooks.py` | Verifies the pre-commit hook's staged-file detection and failure handling, including large changes and filenames containing newlines. Runs in `check.sh`. |
 | `check-source-headers.py [--selftest]` | Requires a header comment on every maintained crate Rust source and test file; `--selftest` tests the guard. |
 | `check-ui-colors.py [--selftest]` | Rejects runtime UI colour constructors outside `ui/theme.rs`; `--selftest` tests the guard. |
 | `usersim.sh start [--kind KIND] [--size WxH]\|x XDOTOOL-ARGS...\|shot OUT.png\|restart\|stop` | The user simulation review (`docs/playbook.md`): Canopy on a private Xvfb display with its own home, XDG folders and Git configuration in a scratch folder, on a fixture with a local bare `origin`; drive it with xdotool, capture the screen, relaunch, then remove everything. |
@@ -24,6 +25,7 @@ and print usage with `-h` or when called without required arguments.
 | `install-desktop.sh [--uninstall]` | Builds a release binary and installs it with its desktop entry, AppStream metainfo and icons under `~/.local` (Linux). |
 
 ## Fixture kinds
+
 
 - `showcase`: about 40 commits of a small Rust/web project. Merged (`feature/auth`,
   `feature/graph`), fast-forwarded (`fix/typo`) and open (`feature/dark-mode`) branches, a

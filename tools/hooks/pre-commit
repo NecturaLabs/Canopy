@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
 # Git pre-commit hook: refuses a commit while clippy, with warnings denied as in CI, finds
 # anything. Skipped when the commit stages no Rust source or build configuration.
-# Install with tools/install-hooks.sh. Bypass with `git commit --no-verify` only when told to.
+# Install with tools/install-hooks.sh.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-if ! git diff --cached --name-only --diff-filter=ACMRD |
-    grep -Eq '(\.rs|(^|/)Cargo\.(toml|lock)|(^|/)clippy\.toml|(^|/)rust-toolchain\.toml)$'; then
+staged=$(mktemp "${TMPDIR:-/tmp}/canopy-staged.XXXXXX")
+trap 'rm -f -- "$staged"' EXIT
+git diff --cached --name-only -z --diff-filter=ACMRD >"$staged"
+rust_changed=false
+while IFS= read -r -d '' path; do
+    case "$path" in
+        *.rs | Cargo.toml | */Cargo.toml | Cargo.lock | */Cargo.lock | \
+        clippy.toml | */clippy.toml | rust-toolchain.toml | */rust-toolchain.toml)
+            rust_changed=true
+            ;;
+    esac
+done <"$staged"
+if ! "$rust_changed"; then
     exit 0
 fi
 
