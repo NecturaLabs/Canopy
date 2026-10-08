@@ -483,7 +483,7 @@ fn huge_commits_skip_the_blob_download_and_leave_counts_unknown() {
 }
 
 /// The rule an application installs: no download for a repository whose path says so.
-fn deny_marked_repositories(common_dir: &Path, _workdir: Option<&Path>) -> bool {
+fn deny_marked_repositories(common_dir: &Path, _git_dir: &Path, _workdir: Option<&Path>) -> bool {
     !common_dir.to_string_lossy().contains("denied-by-gate")
 }
 

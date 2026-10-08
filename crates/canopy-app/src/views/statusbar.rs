@@ -160,7 +160,10 @@ pub fn show(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(END_PAD);
             if notifications.bell(ui).value {
-                actions.push(Action::SettingsGroup(Section::Notifications, "Notifications"));
+                actions.push(Action::SettingsGroup(
+                    Section::Notifications,
+                    "Notifications",
+                ));
             }
             if let InstallState::Running { build, .. } = install {
                 let name = crate::build_info::name(build);

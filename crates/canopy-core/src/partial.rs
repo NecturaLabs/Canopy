@@ -505,7 +505,11 @@ mod tests {
         let trusted = root.path().join("trusted");
         let common = trusted.join("main.git");
         let work = trusted.join("worktree");
-        let private = root.path().join("outside").join("worktrees").join("feature");
+        let private = root
+            .path()
+            .join("outside")
+            .join("worktrees")
+            .join("feature");
         for path in [&common, &work, &private] {
             std::fs::create_dir_all(path).expect("test folder");
         }
