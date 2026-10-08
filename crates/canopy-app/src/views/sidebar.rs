@@ -1,4 +1,4 @@
-//! The left sidebar: branches, remotes, tags and stashes.
+//! The left sidebar: branches, worktrees, remotes, tags, stashes and submodules.
 
 use egui::accesskit::Role;
 use egui::{FontId, RichText, Ui};
@@ -17,7 +17,7 @@ use crate::ui::widgets::forge_icon;
 use crate::views::commit_detail::virtual_rows;
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
-use canopy_core::MergeMode;
+use canopy_core::{MergeMode, SubmoduleState};
 
 /// Gap between a row's label and its badges, and between two badges.
 const BADGE_GAP: f32 = theme::XS;
@@ -590,6 +590,76 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             });
             });
         }
+
+        // Submodules: only in a repository that has some; "+" adds one, the palette too.
+        if !snap.submodules.is_empty() {
+            let (open, header) = section_with_action(ui, tab, "submodules", "Submodules", icon::PACKAGE, snap.submodules.len(), false, Some((icon::PLUS, "Add submodule…")));
+            if header.value {
+                actions.push(Action::OpenDialog(Dialog::AddSubmodule { url: String::new(), path: String::new(), branch: String::new() }));
+            }
+            menu::context(&header.response, |m| {
+                if m.item(icon::PLUS, "Add submodule…").show(m.ui).clicked() {
+                    actions.push(Action::OpenDialog(Dialog::AddSubmodule { url: String::new(), path: String::new(), branch: String::new() }));
+                }
+                if m.item(icon::ARROWS_CLOCKWISE, "Update all").show(m.ui).clicked() {
+                    actions.push(Action::Op(Op::SubmoduleUpdate { path: None, init: true }));
+                }
+                if m.item(icon::ARROWS_CLOCKWISE, "Sync all URLs").show(m.ui).clicked() {
+                    actions.push(Action::Op(Op::SubmoduleSync(None)));
+                }
+            });
+            if open {
+                let list = Roving::new(ui.ctx(), ("sidebar-submodules", &tab.path), snap.submodules.len(), Some(0));
+                ui.scope(|ui| {
+                a11y::group(ui, Role::List, "Submodules");
+                for (i, sm) in snap.submodules.iter().enumerate() {
+                    let state = sm.state();
+                    let commit = sm.workdir_id.or(sm.index_id).map(canopy_core::short_id);
+                    let detail = match state {
+                        SubmoduleState::Clean => commit.clone().unwrap_or_default(),
+                        _ => state.label().to_owned(),
+                    };
+                    let glyph = if state == SubmoduleState::Conflicted { icon::WARNING } else { icon::PACKAGE };
+                    let name = folder_name(std::path::Path::new(&sm.path));
+                    let mut hint = format!("{} · {}", sm.path, sm.url.as_deref().unwrap_or("no URL"));
+                    if let Some(c) = &commit {
+                        hint = format!("{hint} · {c}");
+                    }
+                    let spoken = format!("{}, submodule, {}", sm.path, state.label());
+                    let resp = row(ui, &Row { id: ui.id().with(("submodule", &sm.path)), glyph, label: &name, selected: false, current: false, ahead: 0, behind: 0, hint: Some(&hint), detail: Some(&detail), spoken: Some(&spoken) }, Some((list, i)));
+                    let initialized = sm.is_initialized();
+                    let folder = tab.path.join(&sm.path);
+                    if resp.double_clicked() && initialized {
+                        actions.push(Action::OpenRepo(folder.clone()));
+                    }
+                    let (path, url) = (sm.path.clone(), sm.url.clone());
+                    menu::context(&resp, |m| {
+                        if initialized && m.item(icon::FOLDER_OPEN, "Open in a tab").show(m.ui).clicked() {
+                            actions.push(Action::OpenRepo(folder.clone()));
+                        }
+                        let verb = if initialized { "Update to the recorded commit" } else { "Initialize and update" };
+                        if m.item(icon::ARROWS_CLOCKWISE, verb).show(m.ui).clicked() {
+                            actions.push(Action::Op(Op::SubmoduleUpdate { path: Some(path.clone()), init: !initialized }));
+                        }
+                        if m.item(icon::ARROWS_CLOCKWISE, "Sync URL").show(m.ui).clicked() {
+                            actions.push(Action::Op(Op::SubmoduleSync(Some(path.clone()))));
+                        }
+                        if m.item(icon::COPY, "Copy path").show(m.ui).clicked() {
+                            actions.push(Action::Copy(path.clone()));
+                        }
+                        if let Some(url) = &url
+                            && m.item(icon::COPY, "Copy URL").show(m.ui).clicked() {
+                                actions.push(Action::Copy(url.clone()));
+                            }
+                        m.separator();
+                        if m.item(icon::TRASH, "Remove…").danger().show(m.ui).clicked() {
+                            actions.push(remove_submodule(&path));
+                        }
+                    });
+                }
+                });
+            }
+        }
         ui.add_space(theme::LG);
     });
     if pick.is_some() {
@@ -603,6 +673,18 @@ fn folder_name(path: &std::path::Path) -> String {
         .unwrap_or(path.as_os_str())
         .to_string_lossy()
         .into_owned()
+}
+
+/// The confirmation for removing the submodule at `path`: it deletes the folder and the
+/// submodule's own repository.
+fn remove_submodule(path: &str) -> Action {
+    Action::Confirm {
+        title: format!("Remove submodule {path}?"),
+        body: "The folder and the submodule's own repository are deleted, including uncommitted changes and commits that were never pushed. The removal is staged, not committed.".into(),
+        confirm: "Remove submodule".into(),
+        danger: true,
+        op: Op::SubmoduleRemove(path.to_owned()),
+    }
 }
 
 /// The confirmation for dropping `stash`: it names the stash by its message and drops it by its
@@ -1123,6 +1205,71 @@ mod tests {
             ),
             "{actions:?}"
         );
+    }
+
+    /// Submodules have their own section: an initialized one opens in a tab on a double click, one
+    /// never initialized does not, and removal asks first.
+    #[test]
+    fn submodules_have_their_own_section() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = branch_tab();
+        let sub = |path: &str, checked_out: bool| canopy_core::SubmoduleInfo {
+            name: path.into(),
+            path: path.into(),
+            url: Some(format!("https://example.com/{path}.git")),
+            head_id: Some(oid(7)),
+            index_id: Some(oid(7)),
+            workdir_id: checked_out.then(|| oid(7)),
+            conflicted: false,
+            dirty: None,
+        };
+        if let Some(snap) = tab.snap.as_mut() {
+            std::sync::Arc::make_mut(snap).submodules =
+                vec![sub("deps/lib", true), sub("deps/idle", false)];
+        }
+        // The other sections out of the way, so the rows are inside the frame.
+        for key in ["branches", "worktrees", "remotes", "tags", "stashes"] {
+            tab.collapsed.insert(key.to_owned());
+        }
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert!(named(&nodes, "Submodules").is_some(), "its own section");
+        let idle = "deps/idle, submodule, Not initialized";
+        let lib = "deps/lib, submodule, Up to date";
+        let at = center(named(&nodes, lib).expect(lib));
+        let mut events = click(at);
+        events.extend(click(at));
+        let _ = sidebar_frame(&ctx, &mut tab, events, &mut actions);
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::OpenRepo(p) if p.ends_with("deps/lib"))),
+            "{actions:?}"
+        );
+
+        actions.clear();
+        let at = center(named(&nodes, idle).expect(idle));
+        let mut events = click(at);
+        events.extend(click(at));
+        let _ = sidebar_frame(&ctx, &mut tab, events, &mut actions);
+        crate::ui::motion::set_reduced(false);
+        assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    #[test]
+    fn removing_a_submodule_asks_and_names_the_danger() {
+        let Action::Confirm {
+            danger, body, op, ..
+        } = remove_submodule("deps/lib")
+        else {
+            panic!("a confirmation")
+        };
+        assert!(danger && body.contains("never pushed"), "{body}");
+        assert!(matches!(op, Op::SubmoduleRemove(p) if p == "deps/lib"));
     }
 
     /// A repository with one working folder has no Worktrees section.

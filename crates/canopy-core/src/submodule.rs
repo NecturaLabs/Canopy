@@ -27,7 +27,7 @@ impl SubmoduleState {
     pub fn label(self) -> &'static str {
         match self {
             Self::Conflicted => "Conflicted",
-            Self::NotInitialized => "Not initialised",
+            Self::NotInitialized => "Not initialized",
             Self::NewCommits => "New commits",
             Self::Dirty => "Modified content",
             Self::Clean => "Up to date",

@@ -85,6 +85,8 @@ pub const OVERLAYS: &[&str] = &[
     "init",
     "new-branch",
     "rename",
+    "add-submodule",
+    "remove-submodule",
     "new-tag",
     "stash",
     "add-remote",

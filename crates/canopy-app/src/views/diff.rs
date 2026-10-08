@@ -343,6 +343,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
         return;
     };
+    if let Some(change) = &d.submodule {
+        submodule_card(ui, change);
+        return;
+    }
     if d.binary {
         empty(
             ui,
@@ -1249,6 +1253,114 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     if changed {
         actions.push(Action::DiffPrefsChanged);
     }
+}
+
+/// A submodule's diff: the commit it moved between and what lies in between.
+fn submodule_card(ui: &mut Ui, change: &canopy_core::SubmoduleChange) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let id = |oid: Option<canopy_core::Oid>| {
+        oid.map_or_else(|| "none".to_owned(), canopy_core::short_id)
+    };
+    let title = match (change.old, change.new) {
+        (None, _) => "Submodule added",
+        (_, None) => "Submodule removed",
+        _ => "Submodule moved",
+    };
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .id_salt("submodule-diff")
+        .show(ui, |ui| {
+            ui.add_space(theme::MD);
+            ui.horizontal(|ui| {
+                ui.add_space(theme::MD);
+                ui.label(
+                    RichText::new(icon::PACKAGE)
+                        .size(m.icon_md)
+                        .color(p.text_dim),
+                );
+                ui.label(
+                    RichText::new(title)
+                        .size(m.body_size)
+                        .strong()
+                        .color(p.text),
+                );
+                ui.label(
+                    RichText::new(format!("{} → {}", id(change.old), id(change.new)))
+                        .font(FontId::monospace(m.mono_size))
+                        .color(p.text_dim),
+                );
+            });
+            let note = |ui: &mut Ui, text: &str| {
+                ui.horizontal(|ui| {
+                    ui.add_space(theme::MD);
+                    ui.label(RichText::new(text).size(m.meta_size).color(p.text_faint));
+                });
+            };
+            let list = |ui: &mut Ui, heading: String, commits: &[canopy_core::SubmoduleCommit]| {
+                ui.add_space(theme::MD);
+                ui.horizontal(|ui| {
+                    ui.add_space(theme::MD);
+                    ui.label(
+                        RichText::new(heading)
+                            .size(m.meta_size)
+                            .strong()
+                            .color(p.text_dim),
+                    );
+                });
+                for c in commits {
+                    ui.horizontal(|ui| {
+                        ui.add_space(theme::MD);
+                        ui.label(
+                            RichText::new(canopy_core::short_id(c.oid))
+                                .font(FontId::monospace(m.mono_size))
+                                .color(p.accent),
+                        );
+                        ui.add(
+                            egui::Label::new(RichText::new(&c.summary).color(p.text)).truncate(),
+                        );
+                    });
+                }
+            };
+            if !change.log.added.is_empty() {
+                let n = change.log.added.len();
+                let more = if change.log.truncated && n == canopy_core::SUBMODULE_LOG_LIMIT {
+                    "+"
+                } else {
+                    ""
+                };
+                list(
+                    ui,
+                    format!("{n}{more} new commit{}", if n == 1 { "" } else { "s" }),
+                    &change.log.added,
+                );
+            }
+            if !change.log.removed.is_empty() {
+                let n = change.log.removed.len();
+                let more = if change.log.truncated && n == canopy_core::SUBMODULE_LOG_LIMIT {
+                    "+"
+                } else {
+                    ""
+                };
+                list(
+                    ui,
+                    format!("{n}{more} commit{} left out", if n == 1 { "" } else { "s" }),
+                    &change.log.removed,
+                );
+            }
+            let missing = (change.old.is_some() && !change.old_present)
+                || (change.new.is_some() && !change.new_present);
+            if missing {
+                ui.add_space(theme::MD);
+                note(
+                    ui,
+                    "Some commits are not in the local submodule. Update it to see them.",
+                );
+            } else if change.log.added.is_empty() && change.log.removed.is_empty() {
+                ui.add_space(theme::MD);
+                note(ui, "No commits between the two.");
+            }
+        });
 }
 
 fn empty(ui: &mut Ui, glyph: &str, title: &str, body: &str) {

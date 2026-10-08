@@ -201,6 +201,8 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "init",
     "new-branch",
     "rename",
+    "add-submodule",
+    "remove-submodule",
     "new-tag",
     "stash",
     "add-remote",
@@ -302,6 +304,19 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         "rename" => Dialog::Rename {
             old: "feature/search".into(),
             new: "feature/search-v2".into(),
+        },
+        "add-submodule" => Dialog::AddSubmodule {
+            url: "https://github.com/necturalabs/tidepool-ui.git".into(),
+            path: String::new(),
+            branch: String::new(),
+        },
+        "remove-submodule" => Dialog::Confirm {
+            title: "Remove submodule vendor/tidepool-ui?".into(),
+            body: "The folder and the submodule's own repository are deleted, including uncommitted changes and commits that were never pushed. The removal is staged, not committed.".into(),
+            confirm: "Remove submodule".into(),
+            danger: true,
+            repo: PathBuf::new(),
+            op: Op::SubmoduleRemove("vendor/tidepool-ui".into()),
         },
         "new-tag" => Dialog::NewTag {
             name: "v1.4.0".into(),

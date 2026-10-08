@@ -22,6 +22,19 @@ pub enum Op {
         target: canopy_core::IgnoreTarget,
     },
     StopTracking(String),
+    /// `git submodule update` for one submodule or, with `None`, all of them; `init` also clones
+    /// those never initialised.
+    SubmoduleUpdate {
+        path: Option<String>,
+        init: bool,
+    },
+    SubmoduleSync(Option<String>),
+    SubmoduleAdd {
+        url: String,
+        path: String,
+        branch: Option<String>,
+    },
+    SubmoduleRemove(String),
     Stage(Vec<String>),
     StageAll,
     Unstage(Vec<String>),
@@ -196,6 +209,12 @@ impl Op {
             Self::Stage(_) | Self::StageAll => "Staging".into(),
             Self::AddIgnore { .. } => "Adding ignore rule".into(),
             Self::StopTracking(path) => format!("Untracking {path}"),
+            Self::SubmoduleUpdate { path: Some(p), .. } => format!("Updating submodule {p}"),
+            Self::SubmoduleUpdate { path: None, .. } => "Updating submodules".into(),
+            Self::SubmoduleSync(Some(p)) => format!("Syncing submodule {p}"),
+            Self::SubmoduleSync(None) => "Syncing submodules".into(),
+            Self::SubmoduleAdd { path, .. } => format!("Adding submodule {path}"),
+            Self::SubmoduleRemove(p) => format!("Removing submodule {p}"),
             Self::Unstage(_) | Self::UnstageAll => "Unstaging".into(),
             Self::Discard(_) => "Discarding changes".into(),
             Self::Hunk {
@@ -1242,6 +1261,22 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
                     .display()
             )
         }),
+        Op::SubmoduleUpdate { path, init } => {
+            repo.submodule_update(path.as_deref(), init, true, progress)
+        }
+        Op::SubmoduleSync(path) => repo.submodule_sync(path.as_deref(), true),
+        Op::SubmoduleAdd { url, path, branch } => repo
+            .submodule_add(&url, &path, branch.as_deref(), progress)
+            .map(|out| {
+                if out.trim().is_empty() {
+                    format!("Added {path}.")
+                } else {
+                    out
+                }
+            }),
+        Op::SubmoduleRemove(path) => repo
+            .submodule_remove(&path)
+            .map(|()| format!("Removed {path}; the removal is staged.")),
         Op::StopTracking(path) => repo
             .stop_tracking(&path)
             .map(|()| format!("Kept {path} locally and staged its removal from Git.")),

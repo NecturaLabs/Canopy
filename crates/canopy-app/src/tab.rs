@@ -303,7 +303,9 @@ const VERBS: &[(&str, &str, &str)] = &[
     ("Stashing", "Stashed", "stash"),
     ("Tagging", "Tagged", "tag"),
     ("Taking", "Took", "take"),
+    ("Syncing", "Synced", "sync"),
     ("Unstaging", "Unstaged", "unstage"),
+    ("Updating", "Updated", "update"),
     ("Untracking", "Stopped tracking", "stop tracking"),
 ];
 

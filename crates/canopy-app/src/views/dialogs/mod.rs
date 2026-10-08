@@ -87,6 +87,12 @@ pub enum Dialog {
         old: String,
         new: String,
     },
+    AddSubmodule {
+        url: String,
+        /// The folder; empty means the one the URL suggests.
+        path: String,
+        branch: String,
+    },
     NewTag {
         name: String,
         target: Oid,
@@ -215,6 +221,13 @@ pub enum Outcome {
     Close,
     Run(Vec<Action>),
     RunKeep(Vec<Action>),
+}
+
+/// The folder a clone of `url` would get by default: its last segment without `.git`.
+fn folder_from_url(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    let last = url.rsplit(['/', ':']).next().unwrap_or_default();
+    last.strip_suffix(".git").unwrap_or(last).to_owned()
 }
 
 impl Dialog {
@@ -658,6 +671,69 @@ pub fn show(
                     })])
                 } else {
                     Outcome::Keep
+                }
+            })
+        }
+        Dialog::AddSubmodule { url, path, branch } => {
+            let folder = if path.trim().is_empty() {
+                folder_from_url(url)
+            } else {
+                path.trim().to_owned()
+            };
+            let problem = canopy_core::submodule_add_problem(url, &folder);
+            let result = KitDialog::new(salt)
+                .title("Add submodule")
+                .icon(icon::PACKAGE)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    let url_error = (!url.trim().is_empty())
+                        .then(|| canopy_core::submodule_add_problem(url, "x"))
+                        .flatten();
+                    field_with_error(
+                        ui,
+                        "URL",
+                        url,
+                        "https://github.com/owner/repo.git",
+                        true,
+                        url_error,
+                    );
+                    let path_error = (!path.trim().is_empty() && url_error.is_none())
+                        .then_some(problem)
+                        .flatten();
+                    let hint = if folder.is_empty() {
+                        "libs/name"
+                    } else {
+                        folder.as_str()
+                    };
+                    field_with_error(ui, "Folder", path, hint, false, path_error);
+                    field_with_error(
+                        ui,
+                        "Branch (optional)",
+                        branch,
+                        "Follow the default branch",
+                        false,
+                        None,
+                    );
+                })
+                .footer(|f| {
+                    confirm(
+                        f,
+                        "Add submodule",
+                        problem.is_none(),
+                        problem.unwrap_or("Enter a URL"),
+                    );
+                })
+                .show(ctx);
+            answer(result, || {
+                if problem.is_some() {
+                    Outcome::Keep
+                } else {
+                    Outcome::Run(vec![Action::Op(Op::SubmoduleAdd {
+                        url: url.trim().to_owned(),
+                        path: folder.clone(),
+                        branch: Some(branch.trim().to_owned()).filter(|b| !b.is_empty()),
+                    })])
                 }
             })
         }
@@ -1725,6 +1801,20 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
 
 #[cfg(test)]
 mod tests {
+    use super::folder_from_url;
+
+    #[test]
+    fn a_submodule_folder_is_suggested_from_its_url() {
+        for (url, folder) in [
+            ("https://github.com/o/repo.git", "repo"),
+            ("git@github.com:o/repo.git/", "repo"),
+            ("/srv/git/lib", "lib"),
+            ("", ""),
+        ] {
+            assert_eq!(folder_from_url(url), folder, "{url}");
+        }
+    }
+
     use super::{
         Dialog, DialogStack, Oid, Start, likely_conflict_description, moved_pull_confirm,
         valid_ref_name,

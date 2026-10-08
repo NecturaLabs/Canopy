@@ -332,6 +332,14 @@ impl CanopyApp {
                     Action::AddRemoteDialog,
                 ),
                 (
+                    e(icon::PACKAGE, "Add submodule…", "Repository", None),
+                    Action::OpenDialog(Dialog::AddSubmodule {
+                        url: String::new(),
+                        path: String::new(),
+                        branch: String::new(),
+                    }),
+                ),
+                (
                     e(icon::EYE_SLASH, "Ignore rules…", "Changes", None),
                     Action::OpenDialog(Dialog::Ignore(Box::new(dialogs::IgnoreForm::new(
                         tab.path.clone(),
@@ -460,6 +468,15 @@ impl CanopyApp {
                         Action::Op(Op::ContinueOrAbort {
                             state: op,
                             abort: true,
+                        }),
+                    ));
+                }
+                if !s.submodules.is_empty() {
+                    v.push((
+                        e(icon::PACKAGE, "Update submodules", "Repository", None),
+                        Action::Op(Op::SubmoduleUpdate {
+                            path: None,
+                            init: true,
                         }),
                     ));
                 }

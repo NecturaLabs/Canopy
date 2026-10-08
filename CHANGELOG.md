@@ -10,6 +10,10 @@ commits since the previous build.
 
 ### Added
 
+- Submodules: a sidebar section shows each one's state; open one in a tab, initialize and
+  update, sync URLs, add (Add submodule… in the palette or the section's +) and remove after a
+  confirmation. A submodule's diff lists the commits between its two pointers.
+
 - Ignore management in Changes and the command palette: file, extension, folder and custom rules
   with previews; repository-local and global excludes; ignored-path listings and matching-rule
   explanations. Stop tracking confirms the staged removal while keeping the local file. New
