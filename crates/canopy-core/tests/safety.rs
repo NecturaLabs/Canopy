@@ -915,7 +915,7 @@ fn preview_of_a_negation_follows_git_for_case_and_unfinished_classes() {
     // With ignorecase, git matches `*.LOG` against keep.log, so the rule makes it visible.
     assert_eq!(preview("!*.LOG"), ["keep.log"]);
     // An unfinished class matches nothing in git, so the file stays ignored.
-    assert!(preview("!*.lo[g").is_empty());
+    assert_eq!(preview("!*.lo[g"), Vec::<String>::new());
 }
 
 #[test]
