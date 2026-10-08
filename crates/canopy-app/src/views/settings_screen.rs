@@ -569,6 +569,12 @@ pub fn show(
         });
     screen.picker.end_frame();
     result.close |= modal.should_close();
+    // egui's modal sets its initial focus after drawing the body. Requesting focus
+    // inside the search field can therefore be overwritten on the opening frame.
+    if !result.close && std::mem::take(&mut screen.search.focus) {
+        ctx.memory_mut(|m| m.request_focus(crate::ui::kit::field::edit_id(search_id())));
+        ctx.request_repaint();
+    }
     result
 }
 
@@ -1154,9 +1160,6 @@ fn header_bar(
 /// Settings, through the Dismiss command), and Down or Enter moves on to the first result.
 fn search_field(ui: &mut Ui, screen: &mut SettingsScreen) {
     let id = search_id();
-    if std::mem::take(&mut screen.search.focus) {
-        ui.memory_mut(|m| m.request_focus(crate::ui::kit::field::edit_id(id)));
-    }
     let width = (ui.available_width() - theme::SM).clamp(SEARCH_MIN_WIDTH, SEARCH_WIDTH);
     let before = screen.search.query.clone();
     let response = ui
