@@ -553,7 +553,7 @@ mod tests {
             event.exception.values.push(Exception {
                 ty: "panic".into(),
                 value: Some(format!(
-                    "called `Result::unwrap()` on an `Err` value: MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\"), Some(\"The name org.a11y.atspi.Registry was not provided by any .service files\"), Msg {{ type: Error }}) (at {file}:61:29)"
+                    "called `Result::unwrap()` on an `Err` value: MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\"), Some(\"The name org.a11y.atspi.Registry was not provided by any .service files\"), Msg {{ type: Error, serial: 3, sender: UniqueName(\"org.freedesktop.DBus\"), reply-serial: 8, body: Str, fds: [] }}) (at {file}:61:29)"
                 )),
                 ..Default::default()
             });
