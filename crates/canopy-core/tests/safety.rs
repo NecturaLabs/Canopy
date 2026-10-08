@@ -972,6 +972,23 @@ fn preview_follows_gits_precedence() {
 }
 
 #[test]
+fn preview_of_a_root_negation_lists_the_file_it_makes_visible() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    fs::write(p.join(".gitignore"), "*.log\n").unwrap();
+    let neg = IgnoreRule::Custom {
+        pattern: "!keep.log".into(),
+        near: ".gitignore".into(),
+    };
+    let paths = ["keep.log".to_owned(), "other.log".to_owned()];
+    let preview = repo
+        .preview_ignore_rule(&neg, IgnoreTarget::Root, &paths)
+        .unwrap();
+    assert_eq!(preview.unignored, ["keep.log"]);
+    assert_eq!(preview.ignored, Vec::<String>::new());
+}
+
+#[test]
 fn preview_escapes_the_nearest_folder() {
     let (dir, repo) = fixture();
     let p = dir.path();

@@ -295,6 +295,37 @@ fn root_relative(pattern: &str, base: &str) -> String {
     }
 }
 
+/// `pattern` with its last literal character wrapped in a bracket expression when it is a `!`
+/// pattern, which matches the same paths. libgit2 does not apply an in-memory negation that has
+/// no wildcard (`!keep.log`) over a matching rule of a `.gitignore`, so the preview would miss
+/// the paths such a rule makes visible.
+fn with_wildcard(pattern: &str) -> String {
+    if !pattern.starts_with('!') {
+        return pattern.to_owned();
+    }
+    let body = pattern.trim_end_matches('/');
+    let slashes = pattern.len() - body.len();
+    let chars: Vec<char> = body.chars().collect();
+    let mut last = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let escaped = chars[i] == '\\';
+        last = Some((i + usize::from(escaped), escaped));
+        i += if escaped { 2 } else { 1 };
+    }
+    match last {
+        Some((at, false))
+            if chars
+                .get(at)
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_')) =>
+        {
+            let head: String = chars[..at].iter().collect();
+            format!("{head}[{}]{}", chars[at], "/".repeat(slashes))
+        }
+        _ => pattern.to_owned(),
+    }
+}
+
 fn trim_newline(mut bytes: &[u8]) -> &[u8] {
     while let [rest @ .., b'\n' | b'\r'] = bytes {
         bytes = rest;
@@ -552,7 +583,7 @@ impl Repo {
             .iter()
             .map(|p| scratch.is_path_ignored(p))
             .collect::<std::result::Result<_, _>>()?;
-        scratch.add_ignore_rule(&root_relative(&pattern, &dest.base))?;
+        scratch.add_ignore_rule(&with_wildcard(&root_relative(&pattern, &dest.base)))?;
         let mut preview = IgnorePreview::default();
         for ((path, rule_now), was_without) in paths.iter().zip(deciding).zip(without) {
             let with = scratch.is_path_ignored(path)?;
@@ -714,6 +745,17 @@ mod tests {
         assert_eq!(root_relative("x/y", "sub"), "sub/x/y");
         assert_eq!(root_relative("!keep.log", "sub"), "!sub/**/keep.log");
         assert_eq!(root_relative("*.log", "app[1]"), "app\\[1\\]/**/*.log");
+    }
+
+    #[test]
+    fn negations_get_a_wildcard_for_the_preview() {
+        assert_eq!(with_wildcard("!keep.log"), "!keep.lo[g]");
+        assert_eq!(with_wildcard("!/sub/keep.log"), "!/sub/keep.lo[g]");
+        assert_eq!(with_wildcard("!build/"), "!buil[d]/");
+        assert_eq!(with_wildcard("!*.log"), "!*.lo[g]");
+        assert_eq!(with_wildcard("!a\\*"), "!a\\*");
+        assert_eq!(with_wildcard("keep.log"), "keep.log");
+        assert_eq!(with_wildcard("!"), "!");
     }
 
     #[test]

@@ -124,17 +124,25 @@ pub(super) fn show(
                         form.path = form.path.rsplit_once('/').map_or_else(String::new, |(parent, _)| parent.to_owned());
                     }
                     if form.kind == Kind::Pattern {
-                        TextField::new(&mut form.pattern).label("Pattern").placeholder("e.g. *.log or /build/").show(ui);
+                        let focus = form.pattern.is_empty();
+                        field(ui, "Pattern", &mut form.pattern, "e.g. *.log or /build/", focus);
                     }
                     if form.kind != Kind::Pattern || form.target == IgnoreTarget::Nearest {
-                        TextField::new(&mut form.path).label(if form.kind == Kind::Pattern { "Path for nearest .gitignore" } else { "Relative path" }).show(ui);
+                        let focus = form.path.is_empty() && (form.kind != Kind::Pattern || !form.pattern.is_empty());
+                        let (label, hint) = match form.kind {
+                            Kind::Pattern => ("Path for nearest .gitignore", "e.g. build/output.log"),
+                            Kind::Folder => ("Relative path", "e.g. build"),
+                            Kind::File | Kind::Extension => ("Relative path", "e.g. build/output.log"),
+                        };
+                        field(ui, label, &mut form.path, hint, focus);
                     }
                     let targets = [(IgnoreTarget::Root, ".gitignore at the root"), (IgnoreTarget::Nearest, "Nearest .gitignore"), (IgnoreTarget::RepositoryExclude, "This repository only"), (IgnoreTarget::Global, "All repositories")];
                     Select::new(&mut form.target, &targets).label("Save rule in").show(ui);
                 }
                 Page::Paths => {},
                 Page::Why => {
-                    TextField::new(&mut form.path).label("Relative path").placeholder("e.g. build/output.log").show(ui);
+                    let focus = form.path.is_empty();
+                    field(ui, "Relative path", &mut form.path, "e.g. build/output.log", focus);
                 }
             }
             let query = form.query();
@@ -188,12 +196,13 @@ pub(super) fn show(
                             None => note(ui, "No matching rule.", p.text_dim),
                             Some(matched) => {
                                 note(ui, format!("{} by {}:{}", if matched.negated() { "Included" } else { "Ignored" }, matched.source, matched.line), p.text_dim);
-                                note(ui, &matched.pattern, p.text);
+                                ui.add(egui::Label::new(RichText::new(&matched.pattern).monospace().size(theme::metrics().mono_size).color(p.text)).wrap());
                             }
                         }
                         if *tracked {
                             ui.add_space(theme::SM);
-                            note(ui, "This path is tracked. Stop tracking it to let ignore rules take effect.", p.text_dim);
+                            let ignoring = matched.as_ref().is_some_and(|m| !m.negated());
+                            note(ui, if ignoring { "Tracked, so the rule does not apply to it." } else { "This path is tracked." }, p.text_dim);
                             if Button::new("Stop tracking…").secondary().size(Size::Sm).enabled(tab.running.is_none()).show(ui).clicked() {
                                 actions.push(Action::OpenDialog(Dialog::Confirm {
                                     title: format!("Stop tracking {}?", form.path.trim()),
@@ -233,6 +242,44 @@ pub(super) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn focused_after_opening(form: &mut IgnoreForm) -> bool {
+        use crate::ui::kit::testkit::spoken;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let tab = RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let salt = salt(&Dialog::Ignore(Box::new(form.clone())));
+        for _ in 0..4 {
+            spoken(&ctx, |_| {
+                show(&ctx, salt, form, Some(&tab));
+            });
+        }
+        ctx.memory(|m| m.focused().is_some())
+    }
+
+    #[test]
+    fn a_new_ignore_dialog_takes_typing_in_its_first_empty_field() {
+        let repo = PathBuf::from("fixture");
+        assert!(
+            focused_after_opening(&mut IgnoreForm::new(repo.clone(), None)),
+            "the pattern field has the keyboard"
+        );
+        assert!(
+            focused_after_opening(&mut IgnoreForm::new(repo.clone(), None).why()),
+            "the path field of the Why page has the keyboard"
+        );
+        assert!(
+            !focused_after_opening(&mut IgnoreForm::new(repo, Some("a.log".into()))),
+            "a prefilled path leaves Enter free to add the rule"
+        );
+    }
 
     #[test]
     fn a_validated_ignore_rule_enables_add_and_an_edited_rule_disables_it() {
