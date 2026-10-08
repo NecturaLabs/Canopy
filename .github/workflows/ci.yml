@@ -200,6 +200,11 @@ jobs:
       - name: cargo fmt --all --check
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo fmt --all --check
+      - name: UI colour architecture guard
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        run: |
+          python3 tools/check-ui-colors.py --selftest
+          python3 tools/check-ui-colors.py
       # The docs map, paths named in docs, the module table and the skill mirror.
       - name: Documentation check
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}

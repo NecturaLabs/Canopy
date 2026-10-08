@@ -26,6 +26,10 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 step "unsafe policy (only crates/canopy-app/src/ui/kit/glass/gl.rs)"
 cargo test -p canopy-app --locked --test unsafe_policy
 
+step "UI colour architecture guard"
+python3 tools/check-ui-colors.py --selftest
+python3 tools/check-ui-colors.py
+
 step "cargo test --workspace"
 # The tests run git. Give them the identity CI uses and nothing else, so the user's own git
 # configuration (signing, hooks paths, aliases, default branch, autocrlf) cannot change results.
