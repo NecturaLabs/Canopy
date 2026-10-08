@@ -2834,6 +2834,47 @@ mod tests {
     }
 
     #[test]
+    fn late_request_events_cannot_replace_another_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, _events, _host_jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().ok_or("no host")?.forge.clone();
+        let (host, host_events, jobs) = HostWorker::detached(forge);
+        tab.host = Some(host);
+
+        // Request 7 is still in flight when the user selects request 9.
+        tab.select_request(9);
+        assert!(matches!(jobs.try_recv(), Ok(HostJob::Details(9))));
+        assert!(tab.requests.details.is_none());
+        host_events.send(HostEvent::Details(
+            7,
+            Box::new(Err("obsolete request body".into())),
+        ))?;
+        // An old filter's list result must not alter the current request selection.
+        host_events.send(HostEvent::List(
+            StateFilter::Closed,
+            Err("obsolete filter failure".into()),
+        ))?;
+        tab.poll(&[]);
+        assert_eq!(tab.requests.selected, Some(9));
+        assert!(tab.requests.details.is_none());
+        assert!(tab.requests.details_loading);
+        assert!(matches!(tab.requests.list, Some(Ok(_))));
+
+        host_events.send(HostEvent::Details(
+            9,
+            Box::new(Err("current request failure".into())),
+        ))?;
+        tab.poll(&[]);
+        assert!(!tab.requests.details_loading);
+        assert!(matches!(
+            &tab.requests.details,
+            Some(Err(message)) if message == "current request failure"
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn a_quiet_refresh_that_fails_keeps_the_list_on_screen()
     -> Result<(), Box<dyn std::error::Error>> {
         use crate::hosting::HostEvent;
