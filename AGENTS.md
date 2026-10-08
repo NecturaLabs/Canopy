@@ -77,6 +77,7 @@ adding a dependency.
 - Format: `cargo fmt --all`
 - Lint: `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - Test: `cargo test --workspace --locked` (one: `cargo test -p canopy-core <name>`)
+- Commit hook: `tools/install-hooks.sh` makes every commit pass clippy first (`tools/hooks/pre-commit`).
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
 - `tools/check.sh`, on this platform: `fmt --check`, clippy, the unsafe policy
   (`crates/canopy-app/tests/unsafe_policy.rs`), workspace tests,
