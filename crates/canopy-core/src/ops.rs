@@ -490,7 +490,7 @@ impl Repo {
 
     /// Switches to a local branch.
     pub fn checkout_branch(&self, name: &str) -> Result<()> {
-        self.git_cmd(&["switch", "-q", name]).map(drop)
+        self.git_cmd(&["switch", "-q", "--", name]).map(drop)
     }
 
     /// Checks out a remote branch: switches to the local branch of the same name if it exists,
@@ -545,7 +545,7 @@ impl Repo {
     /// Merges `target` into the current branch as `mode` says and returns git's standard output.
     /// [`MergeMode::Squash`] stages the changes and stops before committing; the caller commits.
     pub fn merge(&self, target: &str, mode: MergeMode) -> Result<String> {
-        self.conflicting_cmd(&["merge", "--no-edit", mode.flag(), target])
+        self.conflicting_cmd(&["merge", "--no-edit", mode.flag(), "--", target])
     }
 
     /// Rebases the current branch onto `onto`, stashing uncommitted changes around it when
@@ -553,7 +553,7 @@ impl Repo {
     pub fn rebase(&self, onto: &str) -> Result<String> {
         let mut args = vec!["rebase"];
         args.extend(self.autostash_flag(true));
-        args.push(onto);
+        args.extend(["--", onto]);
         self.conflicting_cmd(&args)
     }
 

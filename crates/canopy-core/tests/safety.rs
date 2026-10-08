@@ -70,6 +70,61 @@ fn commit_file(p: &Path, name: &str, content: &str) {
     git(p, &["commit", "-q", "-m", name]);
 }
 
+#[test]
+fn an_option_shaped_checkout_cannot_reset_another_branch() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let first = git(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    git(p, &["branch", "victim"]);
+    commit_file(p, "b.txt", "second\n");
+    git(p, &["update-ref", "refs/heads/-Cvictim", &first]);
+
+    repo.checkout_branch("-Cvictim")
+        .expect("switch to the stored branch");
+    assert_eq!(git(p, &["rev-parse", "refs/heads/victim"]).trim(), first);
+    assert_eq!(
+        git(p, &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/-Cvictim"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_option_shaped_rebase_target_cannot_execute_a_shell_command() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "base"]);
+    git(p, &["branch", "--set-upstream-to=base", "main"]);
+    commit_file(p, "b.txt", "second\n");
+    let target = "--exec=touch${IFS}canopy-probe";
+    git(p, &["update-ref", &format!("refs/heads/{target}"), "base"]);
+
+    repo.rebase(target).expect("rebase onto the stored branch");
+    assert!(
+        !p.join("canopy-probe").exists(),
+        "a ref name executed a command"
+    );
+    assert_eq!(fs::read_to_string(p.join("b.txt")).unwrap(), "second\n");
+}
+
+#[test]
+fn an_option_shaped_merge_target_is_treated_as_a_reference() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "base"]);
+    git(p, &["branch", "--set-upstream-to=base", "main"]);
+    git(p, &["switch", "-q", "-c", "feature"]);
+    commit_file(p, "b.txt", "feature\n");
+    let target = git(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    git(p, &["update-ref", "refs/heads/--no-commit", &target]);
+    git(p, &["switch", "-q", "main"]);
+
+    repo.merge("--no-commit", canopy_core::ops::MergeMode::Default)
+        .expect("merge the stored branch");
+    assert_eq!(git(p, &["rev-parse", "HEAD"]).trim(), target);
+    assert_eq!(fs::read_to_string(p.join("b.txt")).unwrap(), "feature\n");
+}
+
 fn ref_exists(p: &Path, name: &str) -> bool {
     run_git(p, &["rev-parse", "--verify", "-q", name])
         .status
