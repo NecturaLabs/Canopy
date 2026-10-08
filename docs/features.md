@@ -31,7 +31,7 @@ Update this table in the same change that adds or alters a feature.
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
 | Auto refresh (file watcher, window focus) | Done | Yes | Yes | Yes |
 | Submodules | Planned (backend merged) | Yes | Yes | Yes |
-| Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and opens one in a tab; creating and removing them is planned | Done | Yes | Yes | ? |
+| Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and switches to one in the current tab; creating and removing them is planned | Done | Yes | Yes | ? |
 | Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
 | Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Done | Yes | ? | ? |
 | Very large repositories | Planned | ? | ? | ? |

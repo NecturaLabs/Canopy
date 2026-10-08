@@ -32,9 +32,9 @@ commits since the previous build.
   shows its commit, apart from the checked-out branch (accent check, bold name); on opening, the
   checked-out branch is the one marked.
 - A Worktrees section in the sidebar lists the repository's working folders, once it has more than
-  one: each folder with its branch, the open one marked; double-click (or Open worktree) opens one
-  in a tab. A branch checked out in another worktree opens that worktree instead of a checkout Git
-  would refuse.
+  one: each folder with its branch, the open one marked; double-click (or Open worktree)
+  switches the current tab to that worktree. A branch checked out in another worktree switches
+  to it instead of attempting a checkout Git would refuse.
 - Pull and merge request lists show each request's checks and review without opening it, when
   Canopy has a token for the server: passed, failed or running checks, and approved, changes
   requested or (GitHub) review required. Loading the list sends one more request to the same
