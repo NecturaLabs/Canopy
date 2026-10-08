@@ -72,29 +72,21 @@ pub fn tabs(
         {
             actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::open()));
         }
-        let tools = ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        // The tools sit at the right edge but are laid out left to right, so Tab visits them in
+        // the order they read. Their width is the last frame's; the first frame, with none, is
+        // laid out unseen.
+        let bar = ui.max_rect();
+        let mut place = egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(
+                pos2(bar.right() - tools_w, bar.top()),
+                bar.right_bottom(),
+            ))
+            .layout(Layout::left_to_right(Align::Center));
+        if tools_w == 0.0 {
+            place = place.invisible();
+        }
+        let tools = ui.scope_builder(place, |ui| {
             ui.spacing_mut().item_spacing.x = theme::XS;
-            let start = ui.cursor().right();
-            ui.add_space(theme::SM);
-            if IconButton::new(icon::KEYBOARD, "Keyboard shortcuts")
-                .shortcut(Command::Cheatsheet)
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::Cheatsheet);
-            }
-            if IconButton::new(icon::GEAR_SIX, "Settings")
-                .shortcut(Command::Settings)
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::Settings);
-            }
-            let theme_button = IconButton::new(icon::PALETTE, "Theme").show(ui);
-            if let Some(Some(action)) = menu::menu(&theme_button, |m| theme_items(m, current_theme))
-            {
-                actions.push(action);
-            }
             // Search stays reachable when repository tabs take the available width.
             if compact {
                 if IconButton::new(icon::MAGNIFYING_GLASS, "Search commands")
@@ -107,7 +99,27 @@ pub fn tabs(
             } else if search_trigger(ui).clicked() {
                 actions.push(Action::Palette);
             }
-            start - ui.min_rect().left()
+            let theme_button = IconButton::new(icon::PALETTE, "Theme").show(ui);
+            if let Some(Some(action)) = menu::menu(&theme_button, |m| theme_items(m, current_theme))
+            {
+                actions.push(action);
+            }
+            if IconButton::new(icon::GEAR_SIX, "Settings")
+                .shortcut(Command::Settings)
+                .show(ui)
+                .clicked()
+            {
+                actions.push(Action::Settings);
+            }
+            if IconButton::new(icon::KEYBOARD, "Keyboard shortcuts")
+                .shortcut(Command::Cheatsheet)
+                .show(ui)
+                .clicked()
+            {
+                actions.push(Action::Cheatsheet);
+            }
+            ui.add_space(theme::SM);
+            ui.min_rect().width()
         });
         let width = tools.inner;
         if (width - tools_w).abs() > 0.5 {
@@ -1222,6 +1234,44 @@ mod tests {
         assert!(
             a.right() + 40.0 < b.left(),
             "the busy tab overlaps the next: {a:?} {b:?}"
+        );
+    }
+
+    /// The strip's tools take Tab from left to right, the way they read: search, theme, settings,
+    /// keyboard shortcuts.
+    #[test]
+    fn the_title_bar_tools_take_tab_from_left_to_right() {
+        let ctx = context();
+        let tabs = [repo_tab("alpha")];
+        let mut show = |ui: &mut Ui| super::tabs(ui, &tabs, 0, ThemeId::Midnight, &mut Vec::new());
+        for _ in 0..3 {
+            frame(&ctx, Vec::new(), &mut show);
+        }
+        let mut stops = Vec::new();
+        for _ in 0..12 {
+            frame(
+                &ctx,
+                crate::ui::kit::testkit::key(egui::Key::Tab),
+                &mut show,
+            );
+            frame(&ctx, Vec::new(), &mut show);
+            if let Some(r) = ctx
+                .memory(egui::Memory::focused)
+                .and_then(|id| ctx.read_response(id))
+            {
+                stops.push(r.rect.center().x);
+            }
+        }
+        // The tools sit at the right; the tabs and the + are to their left.
+        let tools: Vec<_> = stops
+            .iter()
+            .copied()
+            .filter(|x| *x > 500.0)
+            .take(4)
+            .collect();
+        assert!(
+            tools.len() == 4 && tools.windows(2).all(|w| w[0] < w[1]),
+            "Tab runs against the reading order: {stops:?}"
         );
     }
 
