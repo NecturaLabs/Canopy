@@ -165,9 +165,10 @@ pub enum Dialog {
         repo: Option<std::path::PathBuf>,
         scope: canopy_core::identity::Scope,
     },
-    /// Allow downloads in the partial clones of a folder: the repository's own, or its parent.
+    /// Allow downloads in the repository's working and Git folders, or its parent.
     TrustFolder {
         repo: std::path::PathBuf,
+        folders: Vec<std::path::PathBuf>,
         /// The promisor remote the downloads would come from.
         remote: String,
     },
@@ -1196,7 +1197,12 @@ pub fn show(
                 }])
             })
         }
-        Dialog::TrustFolder { repo, remote } => {
+        Dialog::TrustFolder {
+            repo,
+            folders,
+            remote,
+        } => {
+            let repo = repo.as_path();
             let name = |path: &std::path::Path| {
                 path.file_name().map_or_else(
                     || path.display().to_string(),
@@ -1205,6 +1211,17 @@ pub fn show(
             };
             swallow_enter(ctx);
             let parent = crate::trust::parent_offer(repo);
+            let actions_for = |root: &std::path::Path| {
+                std::iter::once(root)
+                    .chain(
+                        folders
+                            .iter()
+                            .map(std::path::PathBuf::as_path)
+                            .filter(|path| !path.starts_with(root)),
+                    )
+                    .map(|path| Action::TrustFolder(path.to_path_buf()))
+                    .collect()
+            };
             let result = KitDialog::new(salt)
                 .title("Trust this folder?")
                 .icon(icon::SHIELD_CHECK)
@@ -1217,6 +1234,14 @@ pub fn show(
                             .size(m.body_size)
                             .color(p.text_dim),
                     );
+                    if folders.iter().any(|folder| !folder.starts_with(repo)) {
+                        ui.add_space(theme::XS);
+                        note(ui, "This worktree also uses these Git folders:", p.text_dim);
+                        for folder in folders.iter().filter(|folder| !folder.starts_with(repo)) {
+                            ui.label(RichText::new(folder.display().to_string()).size(m.body_size).color(p.text));
+                        }
+                        note(ui, "They will be trusted too.", p.text_dim);
+                    }
                     if let Some(parent) = &parent {
                         paint::seam_h(
                             ui.painter(),
@@ -1235,18 +1260,20 @@ pub fn show(
                             .show(ui)
                             .clicked()
                         {
-                            extra = Some(Outcome::Run(vec![Action::TrustFolder(parent.clone())]));
+                            extra = Some(Outcome::Run(actions_for(parent)));
                         }
                     }
                 })
                 .footer(|f| {
                     f.cancel_label("Not now")
-                        .confirm(format!("Trust {}", name(repo)));
+                        .confirm(if folders.iter().any(|folder| !folder.starts_with(repo)) {
+                            "Trust these folders".to_owned()
+                        } else {
+                            format!("Trust {}", name(repo))
+                        });
                 })
                 .show(ctx);
-            answer(result, || {
-                Outcome::Run(vec![Action::TrustFolder(repo.clone())])
-            })
+            answer(result, || Outcome::Run(actions_for(repo)))
         }
         Dialog::ConfirmHost {
             title,
@@ -2100,6 +2127,83 @@ mod tests {
                 })
         });
         (painted, reveal)
+    }
+
+    #[test]
+    fn trusting_a_linked_worktree_includes_the_displayed_git_folders() {
+        use super::{Action, Outcome};
+        for (label, chosen) in [
+            ("Trust these folders", "/projects/linked"),
+            ("Trust everything in projects", "/projects"),
+        ] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            let mut dialog = Dialog::TrustFolder {
+                repo: "/projects/linked".into(),
+                folders: vec!["/projects/linked".into(), "/other/main/.git".into()],
+                remote: "origin".into(),
+            };
+            let mut picker = crate::ui::folder_picker::FolderPicker::default();
+            let updater = crate::updater::Updater::default();
+            let mut frame = |events| {
+                let mut answer = Outcome::Keep;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1200.0, 800.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        answer = super::show(
+                            ui.ctx(),
+                            &mut dialog,
+                            None,
+                            &mut picker,
+                            false,
+                            &updater,
+                            "",
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                let button = output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => {
+                        Some(text.visual_bounding_rect().center())
+                    }
+                    _ => None,
+                });
+                (button, answer)
+            };
+            let mut at = None;
+            for _ in 0..3 {
+                at = frame(Vec::new()).0;
+            }
+            let at = at.expect("the chosen trust button is drawn");
+            let click = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame(vec![egui::Event::PointerMoved(at), click(true)]);
+            let Outcome::Run(actions) = frame(vec![click(false)]).1 else {
+                panic!("trust click must return actions")
+            };
+            let folders: Vec<_> = actions
+                .into_iter()
+                .map(|action| match action {
+                    Action::TrustFolder(folder) => folder,
+                    _ => panic!("trusting must only change trusted folders"),
+                })
+                .collect();
+            assert_eq!(
+                folders,
+                [std::path::PathBuf::from(chosen), "/other/main/.git".into()]
+            );
+        }
     }
 
     /// review-views-7: a password shown in one prompt is hidden again in the next one.

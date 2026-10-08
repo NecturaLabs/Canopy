@@ -92,6 +92,20 @@ pub fn snapshot() -> (u64, Vec<PathBuf>) {
     TRUST.snapshot()
 }
 
+/// The folders required by the download gate. Resolve links on the repository thread before
+/// omitting a Git folder already covered by the working folder; a linked `.git` directory may
+/// point outside it. On a resolution error keep the original path for the gate to recheck.
+pub fn download_folders(workdir: &Path, common_dir: &Path, git_dir: &Path) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    for path in [workdir, common_dir, git_dir] {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if !folders.iter().any(|folder| path.starts_with(folder)) {
+            folders.push(path);
+        }
+    }
+    folders
+}
+
 /// The folder to offer next to `repo`'s own: its parent, unless that is a filesystem root, which
 /// can never be trusted.
 pub fn parent_offer(repo: &Path) -> Option<PathBuf> {
@@ -143,6 +157,54 @@ pub fn add(list: &mut Vec<PathBuf>, folder: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linked_worktree_offers_cover_every_folder_the_gate_checks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workdir = dir.path().join("linked");
+        let common = dir.path().join("main").join(".git");
+        let private = common.join("worktrees").join("linked");
+        std::fs::create_dir(&workdir)?;
+        std::fs::create_dir_all(&private)?;
+        let folders = download_folders(&workdir, &common, &private);
+        assert_eq!(folders, [workdir.canonicalize()?, common.canonicalize()?]);
+        assert!(canopy_core::partial::paths_in_trusted_folder(
+            &common,
+            &private,
+            Some(&workdir),
+            &folders
+        ));
+        assert!(!canopy_core::partial::paths_in_trusted_folder(
+            &common,
+            &private,
+            Some(&workdir),
+            &folders[..1]
+        ));
+        assert_eq!(
+            download_folders(&workdir, &workdir, &workdir),
+            [workdir.canonicalize()?]
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_git_directory_link_outside_the_worktree_is_offered()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workdir = dir.path().join("repo");
+        let external = dir.path().join("external");
+        std::fs::create_dir(&workdir)?;
+        std::fs::create_dir(&external)?;
+        let git_dir = workdir.join(".git");
+        std::os::unix::fs::symlink(&external, &git_dir)?;
+        assert_eq!(
+            download_folders(&workdir, &git_dir, &git_dir),
+            [workdir.canonicalize()?, external.canonicalize()?]
+        );
+        Ok(())
+    }
 
     #[cfg(unix)]
     #[test]

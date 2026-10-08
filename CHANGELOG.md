@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Fixed
 
+- Linked worktrees can trust their shared Git folders from the Downloads off dialog. The chip
+  clears when its refused commit details are hidden or a failed status refresh leaves no refusal
+  on screen.
 - A failed avatar-cache write removes its temporary file and preserves the previous cache.
 - A clone whose submodules cannot be downloaded is kept and opened with git's message, instead of
   reporting a failure and blocking a second try because the folder exists.

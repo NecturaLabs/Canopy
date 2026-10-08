@@ -711,6 +711,8 @@ pub struct RepoTab {
     pub diff_layout: Option<crate::views::diff::DiffLayout>,
     pub diff_error: Option<String>,
     pub pending_diff: Option<DiffKey>,
+    /// A requested diff has not answered yet, including refreshes that keep the old diff visible.
+    awaiting_diff: bool,
     /// Diff context and whitespace for this repository.
     pub diff_prefs: DiffPrefs,
     /// Every repository's diff context and whitespace (Settings), kept current by the app.
@@ -777,6 +779,8 @@ pub struct RepoTab {
     /// The promisor remote a read needed but Canopy did not download from, because the
     /// repository is outside every trusted folder; the status bar offers to trust it.
     pub downloads_refused: Option<String>,
+    /// Folders the worker found behind the download gate, including external Git directories.
+    pub trust_folders: Vec<PathBuf>,
     /// The newest version of the trusted list this tab has been told about: a refusal from an
     /// older one is out of date.
     trust_version: u64,
@@ -831,6 +835,7 @@ impl RepoTab {
             diff_layout: None,
             diff_error: None,
             pending_diff: None,
+            awaiting_diff: false,
             diff_prefs,
             diff_default: diff_prefs,
             highlights: None,
@@ -871,6 +876,7 @@ impl RepoTab {
             requests: Requests::default(),
             request_comments: Vec::new(),
             downloads_refused: None,
+            trust_folders: Vec::new(),
             trust_version: 0,
             avatars: crate::avatars::Avatars::default(),
             last_fetch: Instant::now(),
@@ -1212,6 +1218,7 @@ impl RepoTab {
         self.diff = None;
         self.diff_error = None;
         self.pending_diff = None;
+        self.awaiting_diff = false;
         self.clear_obsolete_refusal();
     }
 
@@ -1247,26 +1254,30 @@ impl RepoTab {
     /// another kind is not its to explain.
     fn clear_obsolete_refusal(&mut self) {
         let refusal = |message: &str| message.contains(crate::worker::NOT_TRUSTED);
-        // No snapshot yet: the status is still to come.
+        // No snapshot yet: the status is still to come unless loading already failed.
         let status = self.snap.as_ref().is_none_or(|s| {
             s.status_unavailable
                 .as_ref()
                 .is_some_and(|u| refusal(&u.message))
-        });
-        let details_refused = self
-            .details_error
-            .as_ref()
-            .is_some_and(|e| refusal(&e.message));
+        }) && self.load_error.as_deref().is_none_or(refusal);
+        let details_refused = self.view == View::History
+            && self
+                .details_error
+                .as_ref()
+                .is_some_and(|e| refusal(&e.message));
         // With no file open there is no diff to show the error on.
-        let diff_refused = self.file.is_some() && self.diff_error.as_deref().is_some_and(refusal);
+        let diff_refused = self.file.is_some()
+            && (self.awaiting_diff || self.diff_error.as_deref().is_some_and(refusal));
         // The worker asks for line counts only of a commit with up to `MAX_STAT_FILES` files.
-        let details_open = self.selected_commit.is_some_and(|oid| {
-            self.details_error.is_none()
-                && self.details.as_ref().is_none_or(|d| {
-                    d.oid != oid
-                        || (!d.stats_known && d.files.len() <= canopy_core::repo::MAX_STAT_FILES)
-                })
-        });
+        let details_open = self.view == View::History
+            && self.selected_commit.is_some_and(|oid| {
+                self.details_error.is_none()
+                    && self.details.as_ref().is_none_or(|d| {
+                        d.oid != oid
+                            || (!d.stats_known
+                                && d.files.len() <= canopy_core::repo::MAX_STAT_FILES)
+                    })
+            });
         if !(status || details_refused || diff_refused || details_open) {
             self.downloads_refused = None;
         }
@@ -1345,6 +1356,7 @@ impl RepoTab {
         self.file = Some(sel);
         self.diff_error = None;
         self.pending_diff = Some(key.clone());
+        self.awaiting_diff = true;
         self.worker.send(Job::Diff(key));
     }
 
@@ -1357,6 +1369,7 @@ impl RepoTab {
             let key = self.diff_key(&sel);
             self.diff_error = None;
             self.pending_diff = Some(key.clone());
+            self.awaiting_diff = true;
             self.worker.send(Job::Diff(key));
         }
     }
@@ -1624,6 +1637,7 @@ impl RepoTab {
                         self.downloads_refused = Some(remote);
                     }
                 }
+                Event::TrustFolders(folders) => self.trust_folders = folders,
                 Event::Details(d) => {
                     if Some(d.oid) == self.selected_commit {
                         let first = d.files.first().cloned();
@@ -1647,6 +1661,7 @@ impl RepoTab {
                 }
                 Event::Diff(key, result) => {
                     if self.pending_diff.as_ref() == Some(&key) {
+                        self.awaiting_diff = false;
                         match result {
                             Ok(d) => {
                                 // The worker resends the same `Arc` when nothing changed.
@@ -1889,6 +1904,7 @@ impl RepoTab {
                     if self.snap.is_none() {
                         self.load_error = Some(e.clone());
                     }
+                    self.clear_obsolete_refusal();
                     notices.push(Notice {
                         ok: false,
                         title: "Git error".into(),
@@ -1897,6 +1913,9 @@ impl RepoTab {
                 }
             }
         }
+        // A line-count refusal can arrive after Details with no terminal error event. Only
+        // reconcile once the batch is drained, so a paired refusal/error can explain its view.
+        self.clear_obsolete_refusal();
         self.poll_host(&mut notices);
         notices
     }
@@ -2930,6 +2949,202 @@ mod tests {
     }
 
     #[test]
+    fn leaving_history_clears_a_refusal_for_hidden_commit_details()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, _events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        let oid = Oid::from_bytes(&[1; 20])?;
+        tab.selected_commit = Some(oid);
+        for view in [View::Changes, View::Requests] {
+            for failed in [false, true] {
+                tab.view = View::History;
+                tab.downloads_refused = Some("origin".into());
+                tab.details_error = failed.then(|| DetailsError {
+                    oid,
+                    message: crate::worker::NOT_TRUSTED.into(),
+                    can_download: false,
+                });
+                tab.clear_obsolete_refusal();
+                assert!(tab.downloads_refused.is_some(), "History still needs it");
+                // The view switch keeps the commit selection for a later return to History.
+                tab.view = view;
+                tab.deselect_file();
+                assert!(
+                    tab.downloads_refused.is_none(),
+                    "hidden details in {view:?}"
+                );
+                assert_eq!(tab.selected_commit, Some(oid));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_refusal_split_from_its_diff_result_keeps_the_trust_action()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.view = View::Changes;
+        let selection = open_unstaged_file();
+        let key = tab.diff_key(&selection);
+        tab.select_file(selection);
+        for keep_old in [false, true] {
+            tab.diff = keep_old.then(|| Arc::new(FileDiff::default()));
+            tab.reload_diff();
+            events.send(Event::DownloadsRefused {
+                remote: "origin".into(),
+                trust: 0,
+            })?;
+            tab.poll(&[]);
+            assert!(
+                tab.downloads_refused.is_some(),
+                "refusal arrived before the result"
+            );
+            events.send(Event::Diff(
+                key.clone(),
+                Err(crate::worker::NOT_TRUSTED.into()),
+            ))?;
+            tab.poll(&[]);
+            assert!(tab.diff_error.is_some());
+            assert!(
+                tab.downloads_refused.is_some(),
+                "the visible error needs Trust"
+            );
+            // A later successful read removes the error and its chip.
+            events.send(Event::Diff(key.clone(), Ok(Arc::new(FileDiff::default()))))?;
+            tab.poll(&[]);
+            assert!(tab.downloads_refused.is_none());
+        }
+        tab.reload_diff();
+        events.send(Event::DownloadsRefused {
+            remote: "origin".into(),
+            trust: 0,
+        })?;
+        tab.poll(&[]);
+        tab.deselect_file();
+        assert!(
+            tab.downloads_refused.is_none(),
+            "closing the pending diff clears it"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_late_line_count_refusal_does_not_reappear_outside_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        let oid = Oid::from_bytes(&[1; 20])?;
+        tab.selected_commit = Some(oid);
+        let author = canopy_core::Signature {
+            name: "Ada".into(),
+            email: "ada@example.com".into(),
+            time: 0,
+            offset_minutes: 0,
+        };
+        let details = Arc::new(CommitDetails {
+            oid,
+            message: "Missing line counts".into(),
+            author: author.clone(),
+            committer: author,
+            parents: Vec::new(),
+            files: Vec::new(),
+            stats_known: false,
+        });
+        for view in [View::Changes, View::Requests] {
+            for split_poll in [false, true] {
+                tab.view = view;
+                events.send(Event::Details(Arc::clone(&details)))?;
+                if split_poll {
+                    tab.poll(&[]);
+                }
+                // Counts fail after the offline file list, with no DetailsFailed event.
+                events.send(Event::DownloadsRefused {
+                    remote: "origin".into(),
+                    trust: 0,
+                })?;
+                tab.poll(&[]);
+                assert!(
+                    tab.downloads_refused.is_none(),
+                    "hidden counts, {view:?}, split={split_poll}"
+                );
+            }
+        }
+        // In History the same event sequence still explains the missing counts.
+        tab.view = View::History;
+        events.send(Event::Details(details))?;
+        events.send(Event::DownloadsRefused {
+            remote: "origin".into(),
+            trust: 0,
+        })?;
+        tab.poll(&[]);
+        assert!(tab.downloads_refused.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_status_refresh_does_not_leave_an_unexplained_refusal()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.view = View::Changes;
+        events.send(Event::DownloadsRefused {
+            remote: "origin".into(),
+            trust: 0,
+        })?;
+        events.send(Event::Failed(crate::worker::NOT_TRUSTED.into()))?;
+        let notices = tab.poll(&[]);
+        assert!(
+            tab.downloads_refused.is_none(),
+            "no visible status or details refusal"
+        );
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].body, crate::worker::NOT_TRUSTED);
+        Ok(())
+    }
+
+    #[test]
+    fn an_initial_load_failure_keeps_the_chip_only_when_it_explains_the_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.view = View::Changes;
+        for (message, kept) in [
+            (crate::worker::NOT_TRUSTED, true),
+            ("object not found", false),
+        ] {
+            events.send(Event::DownloadsRefused {
+                remote: "origin".into(),
+                trust: 0,
+            })?;
+            events.send(Event::Failed(message.into()))?;
+            tab.poll(&[]);
+            assert_eq!(tab.load_error.as_deref(), Some(message));
+            assert_eq!(tab.downloads_refused.is_some(), kept);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn a_commit_too_big_for_line_counts_does_not_keep_the_chip()
     -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
@@ -2974,6 +3189,15 @@ mod tests {
         };
         // The worker asks for the counts of up to MAX_STAT_FILES files: this one still waits for them.
         events.send(Event::Details(details(canopy_core::repo::MAX_STAT_FILES)))?;
+        tab.poll(&[]);
+        // Details opens the first file too. Finish its independent diff request so only the
+        // missing line counts can keep the chip; this test isolates the count limit.
+        events.send(Event::Diff(
+            tab.pending_diff
+                .clone()
+                .expect("the first file's diff request"),
+            Ok(Arc::new(FileDiff::default())),
+        ))?;
         tab.poll(&[]);
         assert!(tab.downloads_refused.is_some(), "its counts are refused");
         // One file more and the worker never asks: the missing counts are not a refusal.

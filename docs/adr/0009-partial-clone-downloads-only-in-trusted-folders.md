@@ -25,7 +25,8 @@ trusts nothing; a filesystem root is never accepted (`partial::is_in_trusted_fol
 
 Elsewhere the offline read still runs and shows what is on disk, a read that needs a download fails
 with a message that says why, and the status bar shows "Downloads off · Trust…". Trust… offers the
-repository's folder or its parent, never a root. The check runs on the repository thread, so the UI
+repository's folder or its parent, never a root. It also lists any external Git folders the gate
+requires; confirming trusts those folders too. The check runs on the repository thread, so the UI
 thread does no file I/O for it.
 
 ## Alternatives and costs
@@ -73,8 +74,10 @@ partial clone opened for the first time shows only what is on disk until the use
   reading of the path, since that runs on the UI thread), and again by core after resolving
   links, so a link to the root can be saved but trusts nothing. The root of a mounted volume
   may be trusted: an external drive of projects is a normal thing to trust whole.
-- A linked worktree needs both its own folder and the folder of the repository that holds its
-  common git directory trusted; the dialog offers the opened folder and its parent only.
+- A linked worktree needs its own folder, common Git directory and private Git directory trusted.
+  The worker resolves them before offering the dialog's folders, omitting a directory already
+  covered by another choice. A main repository outside the worktree's parent is covered by its
+  exact Git directory; the dialog does not silently trust that repository's whole parent.
 
 ## References
 

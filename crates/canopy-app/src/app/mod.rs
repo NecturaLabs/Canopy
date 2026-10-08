@@ -523,6 +523,7 @@ impl CanopyApp {
             // A fixed illustrative path, so the screenshot never shows the fixture's temporary one.
             Some("trust-folder") => app.dialogs.open(Dialog::TrustFolder {
                 repo: PathBuf::from("/home/ada/src/tidepool"),
+                folders: vec![PathBuf::from("/home/ada/src/tidepool-main/.git")],
                 remote: "origin".into(),
             }),
             Some("clear-identity") => app.dialogs.open(Dialog::ConfirmClearIdentity {

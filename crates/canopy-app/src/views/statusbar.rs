@@ -146,7 +146,8 @@ pub fn show(
                 );
                 if resp.clicked() {
                     actions.push(Action::OpenDialog(Dialog::TrustFolder {
-                        repo: tab.path.clone(),
+                        repo: tab.trust_folders.first().unwrap_or(&tab.path).clone(),
+                        folders: tab.trust_folders.clone(),
                         remote: remote.clone(),
                     }));
                 }

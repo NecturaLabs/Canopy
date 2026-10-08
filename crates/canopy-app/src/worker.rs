@@ -411,6 +411,8 @@ pub enum Event {
         remote: String,
         trust: u64,
     },
+    /// The working and Git folders a download's trust gate covers, read off the UI thread.
+    TrustFolders(Vec<PathBuf>),
     /// Syntax highlighting for the diff (sent before with the same key). It comes from the
     /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
     Highlight(DiffKey, Arc<FileDiff>, Arc<crate::highlight::Highlights>),
@@ -735,6 +737,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     // Why the last download of the working tree status failed: later refreshes show it instead
     // of trying the network again, until the user retries.
     let mut status_failure: Option<canopy_core::StatusUnavailable> = None;
+    let mut trust_folders = Vec::new();
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -763,6 +766,15 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             }
         };
         repo.set_options(options);
+        let folders = crate::trust::download_folders(
+            repo.workdir(),
+            repo.git().commondir(),
+            repo.git().path(),
+        );
+        if folders != trust_folders {
+            trust_folders.clone_from(&folders);
+            emit(Event::TrustFolders(folders));
+        }
 
         // Whether a partial clone may download on its own here; asked only when one needs to.
         let allowed = || trusted_now(&repo);
@@ -1663,6 +1675,46 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn a_linked_worktree_reports_its_shared_git_folder_to_the_trust_dialog()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let main = dir.path().join("main");
+        std::fs::create_dir(&main)?;
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(&main, &["config", "user.name", "Ada"]);
+        git(&main, &["config", "user.email", "ada@example.com"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        let linked = dir.path().join("linked");
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "topic",
+                &linked.to_string_lossy(),
+            ],
+        );
+        let worker = super::Worker::spawn(linked.clone(), &egui::Context::default());
+        worker.send(Job::Refresh(100));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let folders = loop {
+            if let super::Event::TrustFolders(folders) = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+            {
+                break folders;
+            }
+        };
+        assert_eq!(
+            folders,
+            [linked.canonicalize()?, main.join(".git").canonicalize()?]
+        );
+        Ok(())
     }
 
     #[test]

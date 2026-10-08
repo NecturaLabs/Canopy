@@ -765,6 +765,11 @@ guarantee it cannot keep. A future optional command disclosure must use the same
 that the operation actually executes. Differences from the user's Git configuration are shown
 with the setting, value and source, as the Git settings work in the backlog requires.
 
+The partial-clone trust dialog lists external Git folders needed by a linked worktree. Its
+confirmation says "Trust these folders" and includes the displayed directories; the parent-folder
+choice retains those directories when they are outside the parent. The status bar's Downloads off
+chip explains visible refusals and disappears when their commit details are hidden.
+
 ### Git identity
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings

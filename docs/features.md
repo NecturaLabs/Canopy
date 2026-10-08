@@ -52,7 +52,9 @@ Downloads run on their own only for repositories inside a folder trusted in Sett
 Trusted folders), because git then follows the repository's own configuration, which can run
 programs and contact servers. Elsewhere Canopy shows what is on disk, says why a read needs a
 download, and the status bar offers "Downloads off · Trust…" with the repository's folder or its
-parent. Nothing is trusted by default (ADR 0009).
+parent. Linked worktrees also list the external Git folders they use; confirmation trusts those
+folders too. The chip disappears when its refused details are no longer visible. Nothing is
+trusted by default (ADR 0009).
 
 A download of the working tree status that failed (server unreachable) is remembered: the
 refreshes the file watcher makes show the same message without trying the network again, until
