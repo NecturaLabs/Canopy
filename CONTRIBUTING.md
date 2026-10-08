@@ -9,7 +9,7 @@ agent; [AGENTS.md](AGENTS.md) has the full conventions.
    the lints are fitted to, with rustfmt and clippy, and rustup installs it on first use. The
    minimum supported Rust version is 1.91. To move to a newer release, change the channel there
    and fix what the new clippy reports in the same commit.
-2. Install `git` 2.30 or newer and, on Linux, the runtime libraries listed in the
+2. Install `git` 2.32 or newer (required by the fixture scripts) and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
 3. Optional: `cargo install cargo-deny` to run the licence and advisory checks locally, and
    `xvfb` to take headless screenshots.
@@ -23,14 +23,13 @@ Use fixtures for anything destructive, never a repository you care about.
 
 ## Checks
 
-`tools/check.sh` runs CI's checks for this platform (`cargo fmt --all --check`,
-`cargo clippy --workspace --all-targets --locked -- -D warnings`,
-`cargo test --workspace --locked`, the release
-tooling self-test, the licence-notice check, the documentation check and the hidden-window
-stall check (Linux, with a C compiler and `libwayland-server`), plus `shellcheck` and
-`cargo deny check` when they are installed) and one CI does not: the installer test, on Linux and
-macOS. It must pass before
-you merge; a failure documented in a [GitHub Issue](https://github.com/NecturaLabs/Canopy/issues) is reported, not hidden. Keep `TMPDIR` on
+`tools/check.sh` runs formatting (`cargo fmt --all --check`), Clippy
+(`cargo clippy --workspace --all-targets --locked -- -D warnings`), the unsafe-code policy,
+workspace tests (`cargo test --workspace --locked`), release tooling self-tests, third-party
+licence notices, documentation and landing-site checks, the vendored eframe verification,
+and the hidden-window stall check on Linux when its required system libraries are present.
+It also tests the installer on Linux and macOS, and runs ShellCheck and `cargo deny check` when
+installed. CI adds platform-specific jobs. The local checks must pass before merging; a failure documented in a [GitHub Issue](https://github.com/NecturaLabs/Canopy/issues) is reported, not hidden. Keep `TMPDIR` on
 a filesystem that accepts non-UTF-8 file names (the default `/tmp` does; NTFS does not).
 
 ## Lints
