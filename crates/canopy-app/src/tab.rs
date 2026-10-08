@@ -729,6 +729,9 @@ pub struct RepoTab {
     pub filter_for: String,
     pub commit_summary: String,
     pub commit_body: String,
+    /// The merge message put into the commit boxes when a merge began, to drop it again if the
+    /// merge ends without a commit and nobody edited it.
+    merge_prefill: Option<(String, String)>,
     pub amend: bool,
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,
@@ -841,6 +844,7 @@ impl RepoTab {
             filter_for: String::new(),
             commit_summary: String::new(),
             commit_body: String::new(),
+            merge_prefill: None,
             amend: false,
             focus_summary: false,
             running: None,
@@ -1516,6 +1520,14 @@ impl RepoTab {
                     if s.state != canopy_core::RepoState::Clean {
                         self.amend = false;
                     }
+                    if s.state != canopy_core::RepoState::Merge
+                        && let Some((summary, body)) = self.merge_prefill.take()
+                        && self.commit_summary == summary
+                        && self.commit_body == body
+                    {
+                        self.commit_summary.clear();
+                        self.commit_body.clear();
+                    }
                     if entering_merge
                         && self.commit_summary.trim().is_empty()
                         && self.commit_body.trim().is_empty()
@@ -1691,6 +1703,8 @@ impl RepoTab {
                             .unwrap_or_default()
                             .trim()
                             .clone_into(&mut self.commit_body);
+                        self.merge_prefill =
+                            Some((self.commit_summary.clone(), self.commit_body.clone()));
                     }
                 }
                 Event::PullConfig(result) => match result {
@@ -2561,6 +2575,42 @@ mod tests {
             .expect("message");
         tab.poll(&[]);
         assert_eq!(tab.commit_summary, "Merge draft");
+    }
+
+    #[test]
+    fn leaving_a_merge_drops_its_prefilled_message_but_keeps_an_edited_one() {
+        let snapshot = |state| {
+            Event::Snapshot(Arc::new(RepoSnapshot {
+                state,
+                ..Default::default()
+            }))
+        };
+        for edited in [false, true] {
+            let (worker, events, _jobs) = Worker::detached();
+            let mut tab =
+                RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+            events
+                .send(snapshot(canopy_core::RepoState::Merge))
+                .expect("snapshot");
+            events
+                .send(Event::MergeMessage("Merge branch 'conf'\n\nbody".into()))
+                .expect("message");
+            tab.poll(&[]);
+            assert_eq!(tab.commit_summary, "Merge branch 'conf'");
+            if edited {
+                tab.commit_summary.push_str(" (mine)");
+            }
+            events
+                .send(snapshot(canopy_core::RepoState::Clean))
+                .expect("snapshot");
+            tab.poll(&[]);
+            if edited {
+                assert_eq!(tab.commit_summary, "Merge branch 'conf' (mine)");
+            } else {
+                assert!(tab.commit_summary.is_empty(), "{:?}", tab.commit_summary);
+                assert!(tab.commit_body.is_empty(), "{:?}", tab.commit_body);
+            }
+        }
     }
 
     #[test]

@@ -26,6 +26,8 @@ commits since the previous build.
 - Typing an option's prefix in a mouse-opened select scrolls its match into view.
 - A custom pattern saved at the root is no longer checked against a path left in the Ignore form by
   another kind of rule.
+- A merge message put into the commit boxes is dropped again when the merge is aborted, unless it was
+  edited.
 - Cancelling a sign-in prompt says "Sign-in was cancelled." instead of showing git's askpass error.
 
 ### Changed
