@@ -69,7 +69,13 @@ impl Avatar {
             .get(&self.url)
             .header("Accept", "image/png, image/jpeg")
             .call()
-            .map_err(|e| picture_error("Could not download the profile picture", &e.to_string(), &self.url))?;
+            .map_err(|e| {
+                picture_error(
+                    "Could not download the profile picture",
+                    &e.to_string(),
+                    &self.url,
+                )
+            })?;
         let status = response.status().as_u16();
         if status == 429 {
             return Err(Error::RateLimited {
