@@ -89,8 +89,34 @@ impl SubmoduleInfo {
     }
 }
 
+/// One commit in a submodule's log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmoduleCommit {
+    /// Commit id.
+    pub oid: Oid,
+    /// First line of the message.
+    pub summary: String,
+    /// Author name.
+    pub author: String,
+}
+
+/// Most commits a submodule's diff lists on each side.
+pub const SUBMODULE_LOG_LIMIT: usize = 50;
+
+/// The commits between the two sides of a submodule's diff, read from the submodule's own
+/// repository.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubmoduleLog {
+    /// Commits reachable from the new side but not the old one, newest first.
+    pub added: Vec<SubmoduleCommit>,
+    /// Commits reachable from the old side but not the new one: what moving back leaves out.
+    pub removed: Vec<SubmoduleCommit>,
+    /// A side has more commits than [`SUBMODULE_LOG_LIMIT`].
+    pub truncated: bool,
+}
+
 /// The commits on each side of a submodule's diff (mode 160000).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubmoduleChange {
     /// The commit before; `None` when the submodule was added.
     pub old: Option<Oid>,
@@ -100,6 +126,35 @@ pub struct SubmoduleChange {
     pub old_present: bool,
     /// `new` exists in the submodule's local repository.
     pub new_present: bool,
+    /// What lies between the two commits; empty unless both exist locally.
+    pub log: SubmoduleLog,
+}
+
+/// Commits reachable from `from` but not from `hidden`, newest first, at most
+/// [`SUBMODULE_LOG_LIMIT`]; also whether more exist.
+fn commits_between(repo: &Repository, from: Oid, hidden: Oid) -> (Vec<SubmoduleCommit>, bool) {
+    let walk = || -> std::result::Result<_, git2::Error> {
+        let mut walk = repo.revwalk()?;
+        walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
+        walk.push(from)?;
+        walk.hide(hidden)?;
+        let mut out = Vec::new();
+        for oid in walk {
+            let oid = oid?;
+            if out.len() == SUBMODULE_LOG_LIMIT {
+                return Ok((out, true));
+            }
+            let commit = repo.find_commit(oid)?;
+            out.push(SubmoduleCommit {
+                oid,
+                summary: String::from_utf8_lossy(commit.summary_bytes().unwrap_or_default())
+                    .into_owned(),
+                author: String::from_utf8_lossy(commit.author().name_bytes()).into_owned(),
+            });
+        }
+        Ok((out, false))
+    };
+    walk().unwrap_or_default()
 }
 
 /// The submodule part of a single-path `diff`, if that path is a submodule on either side.
@@ -122,12 +177,66 @@ pub(crate) fn change_in(repo: &Repo, diff: &git2::Diff<'_>) -> Option<SubmoduleC
         (Some(sub), Some(id)) => sub.find_commit(id).is_ok(),
         _ => false,
     };
+    let (old_present, new_present) = (present(old), present(new));
+    let log = match (&sub, old, new) {
+        (Some(sub), Some(old), Some(new)) if old_present && new_present => {
+            let (added, more_added) = commits_between(sub, new, old);
+            let (removed, more_removed) = commits_between(sub, old, new);
+            SubmoduleLog {
+                added,
+                removed,
+                truncated: more_added || more_removed,
+            }
+        }
+        _ => SubmoduleLog::default(),
+    };
     Some(SubmoduleChange {
         old,
         new,
-        old_present: present(old),
-        new_present: present(new),
+        old_present,
+        new_present,
+        log,
     })
+}
+
+/// Why `url` and `path` cannot make a new submodule, or `None`.
+///
+/// The path is relative to the working folder and stays inside it; the URL follows the rules of
+/// a remote's ([`crate::ops::remote_url_problem`]) and cannot name git's `ext::` helper, which
+/// runs commands.
+pub fn submodule_add_problem(url: &str, path: &str) -> Option<&'static str> {
+    let (url, path) = (url.trim(), path.trim());
+    if url.is_empty() {
+        return Some("Enter the submodule's URL.");
+    }
+    if url
+        .get(..5)
+        .is_some_and(|p| p.eq_ignore_ascii_case("ext::"))
+    {
+        return Some("This kind of URL is not supported for submodules.");
+    }
+    if let Some(problem) = crate::ops::remote_url_problem(url) {
+        return Some(problem);
+    }
+    if path.is_empty() {
+        return Some("Enter the folder for the submodule.");
+    }
+    if path.starts_with('-') {
+        return Some("A submodule's folder cannot start with \"-\".");
+    }
+    let plain = Path::new(path)
+        .components()
+        .all(|c| matches!(c, Component::Normal(_)));
+    if !plain || path.contains('\\') || path.contains(':') {
+        return Some("The folder must be a relative path inside the repository.");
+    }
+    if path
+        .split('/')
+        .any(|part| part.eq_ignore_ascii_case(".git"))
+    {
+        return Some("A submodule's folder cannot be inside .git.");
+    }
+    None
 }
 
 impl Repo {
@@ -239,9 +348,10 @@ impl Repo {
         branch: Option<&str>,
         progress: impl FnMut(&str),
     ) -> Result<String> {
-        if url.trim().is_empty() || path.trim().is_empty() {
-            return Err(Error::invalid("A submodule needs a URL and a path."));
+        if let Some(problem) = submodule_add_problem(url, path) {
+            return Err(Error::invalid(problem));
         }
+        let (url, path) = (url.trim(), path.trim());
         let mut args = vec!["submodule", "add", "--progress"];
         if let Some(b) = branch.filter(|b| !b.trim().is_empty()) {
             args.extend(["-b", b]);

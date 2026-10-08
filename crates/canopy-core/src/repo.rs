@@ -429,6 +429,11 @@ impl Repo {
         let tags = self.tags()?;
         let stashes = self.stashes();
         let worktrees = self.worktrees();
+        // A broken `.gitmodules` must not hide the rest of the repository.
+        let submodules = self.submodules(false).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not read the submodules");
+            Vec::new()
+        });
         let (commits, truncated) = self.commits(max_commits)?;
         let graph = graph::layout(commits.iter().map(|c| (c.oid, c.parents.as_slice())));
         // History never depends on status: a partial clone that lacks the tree of `HEAD` still
@@ -495,6 +500,7 @@ impl Repo {
             tags,
             stashes,
             worktrees,
+            submodules,
             status,
             commits,
             graph,

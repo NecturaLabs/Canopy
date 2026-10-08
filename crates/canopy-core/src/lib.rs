@@ -57,4 +57,7 @@ pub use partial::MissingObjects;
 pub use pull::{ConfigScope, ConfigSource, PullConfig, global_pull_config};
 pub use pull_preview::PullPreview;
 pub use repo::Repo;
-pub use submodule::{SubmoduleChange, SubmoduleInfo, SubmoduleState};
+pub use submodule::{
+    SUBMODULE_LOG_LIMIT, SubmoduleChange, SubmoduleCommit, SubmoduleInfo, SubmoduleLog,
+    SubmoduleState, submodule_add_problem,
+};

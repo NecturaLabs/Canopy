@@ -403,6 +403,9 @@ pub struct RepoSnapshot {
     /// The working folders, the main one first, then by folder; only this one when no
     /// `git worktree` was added.
     pub worktrees: Vec<WorktreeInfo>,
+    /// Submodules by path, from the cheap read ([`crate::Repo::submodules`] without the dirty
+    /// check); empty when the repository has none.
+    pub submodules: Vec<crate::SubmoduleInfo>,
     /// Working tree status.
     pub status: WorkingStatus,
     /// Commits in topological order, newest first.

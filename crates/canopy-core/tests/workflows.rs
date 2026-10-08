@@ -13,7 +13,7 @@ use std::process::Command;
 
 use canopy_core::{
     ChangeKind, DiffSource, FlowConfig, FlowFinish, FlowKind, MergedReason, MissingObjects, Repo,
-    SubmoduleState, Whitespace,
+    SubmoduleState, Whitespace, submodule_add_problem,
 };
 
 #[expect(
@@ -749,6 +749,61 @@ fn submodule_add_adopts_a_repository_already_in_place() {
 }
 
 #[test]
+fn a_snapshot_lists_the_submodules() {
+    let (_dir, repo, _sub) = submodule_fixture();
+    let snap = repo.snapshot(10).expect("snapshot");
+    let paths: Vec<_> = snap.submodules.iter().map(|s| s.path.as_str()).collect();
+    assert_eq!(paths, ["deps/lib"]);
+    assert!(snap.submodules[0].dirty.is_none());
+}
+
+#[test]
+fn a_submodule_needs_a_plain_relative_folder_and_a_url_without_credentials() {
+    let ok = "https://example.com/lib.git";
+    assert_eq!(submodule_add_problem(ok, "deps/lib"), None);
+    assert_eq!(
+        submodule_add_problem("git@example.com:o/lib.git", "lib"),
+        None
+    );
+    for url in [
+        "",
+        "  ",
+        "-oProxyCommand=x",
+        "ext::sh -c id",
+        "https://token@example.com/lib.git",
+    ] {
+        assert!(submodule_add_problem(url, "lib").is_some(), "{url}");
+    }
+    for path in [
+        "",
+        " ",
+        "-x",
+        "/abs",
+        "../up",
+        "a/../../up",
+        "./",
+        ".git/hooks",
+        "a/.GIT/x",
+        "C:\\x",
+        "a\\b",
+        "c:d",
+    ] {
+        assert!(submodule_add_problem(ok, path).is_some(), "{path:?}");
+    }
+}
+
+#[test]
+fn submodule_add_refuses_an_unsafe_folder_before_running_git() {
+    let (dir, repo, _sub) = submodule_fixture();
+    let url = dir.path().join("lib").to_string_lossy().into_owned();
+    let sup = dir.path().join("super");
+    repo.submodule_add(&url, "../escape", None, |_| {})
+        .unwrap_err();
+    assert!(!dir.path().join("escape").exists());
+    assert_eq!(git(&sup, &["status", "--porcelain"]), "");
+}
+
+#[test]
 fn submodule_remove_deinits_removes_and_cleans_the_module_directory() {
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
@@ -793,6 +848,40 @@ fn submodule_diff_gives_both_commits_and_whether_they_exist_locally() {
     assert_eq!(change.old.map(|o| o.to_string()), Some(old.trim().into()));
     assert_eq!(change.new.map(|o| o.to_string()), Some(new.trim().into()));
     assert!(change.old_present && change.new_present);
+    let added: Vec<_> = change
+        .log
+        .added
+        .iter()
+        .map(|c| c.summary.as_str())
+        .collect();
+    assert_eq!(added, ["feat: second"]);
+    assert_eq!(change.log.removed.len(), 0);
+    assert!(!change.log.truncated);
+    // Moving back lists the commits the new pointer leaves out.
+    git(&sup, &["add", "deps/lib"]);
+    git(&sub, &["checkout", "-q", "HEAD~1"]);
+    let back = repo
+        .file_diff(
+            &DiffSource::Unstaged,
+            "deps/lib",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
+        .expect("diff")
+        .submodule
+        .expect("submodule change");
+    assert_eq!(back.log.added.len(), 0);
+    let removed: Vec<_> = back
+        .log
+        .removed
+        .iter()
+        .map(|c| c.summary.as_str())
+        .collect();
+    assert_eq!(removed, ["feat: second"]);
+    git(&sup, &["reset", "-q", "deps/lib"]);
+    git(&sub, &["checkout", "-q", "main"]);
 
     // A recorded commit the submodule never fetched.
     let missing = "1111111111111111111111111111111111111111";
