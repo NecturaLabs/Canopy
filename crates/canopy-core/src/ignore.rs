@@ -304,17 +304,23 @@ fn with_wildcard(pattern: &str) -> String {
         return pattern.to_owned();
     }
     let body = pattern.trim_end_matches('/');
+    let slashes = pattern.len() - body.len();
+    let chars: Vec<char> = body.chars().collect();
     let mut last = None;
-    let mut chars = body.char_indices().peekable();
-    while let Some((i, ch)) = chars.next() {
-        if ch == '\\' {
-            chars.next();
-        }
-        last = Some((i, ch));
+    let mut i = 0;
+    while i < chars.len() {
+        let escaped = chars[i] == '\\';
+        last = Some((i + usize::from(escaped), escaped));
+        i += if escaped { 2 } else { 1 };
     }
     match last {
-        Some((i, ch)) if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') => {
-            format!("{}[{ch}]{}", &body[..i], &pattern[body.len()..])
+        Some((at, false))
+            if chars
+                .get(at)
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_')) =>
+        {
+            let head: String = chars[..at].iter().collect();
+            format!("{head}[{}]{}", chars[at], "/".repeat(slashes))
         }
         _ => pattern.to_owned(),
     }

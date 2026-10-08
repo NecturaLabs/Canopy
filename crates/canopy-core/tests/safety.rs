@@ -985,7 +985,7 @@ fn preview_of_a_root_negation_lists_the_file_it_makes_visible() {
         .preview_ignore_rule(&neg, IgnoreTarget::Root, &paths)
         .unwrap();
     assert_eq!(preview.unignored, ["keep.log"]);
-    assert!(preview.ignored.is_empty());
+    assert_eq!(preview.ignored, Vec::<String>::new());
 }
 
 #[test]
