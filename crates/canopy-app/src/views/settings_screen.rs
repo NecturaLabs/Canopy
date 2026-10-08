@@ -2291,7 +2291,6 @@ fn tooltips(ui: &mut Ui, s: &mut Settings) {
 /// The notification cards: whether they show at all, and for which kinds of notification. The
 /// notification center lists every notification either way.
 fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
-    group_gap(ui, theme::LG);
     heading(ui, "Notifications");
     row(
         ui,
