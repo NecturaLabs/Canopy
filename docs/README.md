@@ -26,6 +26,7 @@ in a document no longer exists.
 | How to check performance with 100 repositories open | [stress-test.md](stress-test.md) |
 | How the illustrations and the app icon are made | [art-prompts.md](art-prompts.md) |
 | What changed in a release | [../CHANGELOG.md](../CHANGELOG.md) |
+| Recover the paused PR #8 session and its unfinished patch | [specs/HANDOFF-pr-8.md](specs/HANDOFF-pr-8.md), [specs/HANDOFF-pr-8.patch](specs/HANDOFF-pr-8.patch) |
 
 ## How far to trust each kind
 
@@ -46,7 +47,8 @@ in a document no longer exists.
   [specs/git-identity.md](specs/git-identity.md) (findings and design of the shipped identity
   settings). Where one disagrees with the code, the code is right: fix or delete the sentence.
 - **Temporary, delete when the status line says so** (check `git log` before trusting any state in
-  them): [specs/parallel-sessions.md](specs/parallel-sessions.md) (briefs for parallel sessions, kept
+  them): [specs/HANDOFF-pr-8.md](specs/HANDOFF-pr-8.md) and its saved patch (paused PR execution
+  state; delete after recovery and verification), [specs/parallel-sessions.md](specs/parallel-sessions.md) (briefs for parallel sessions, kept
   as a template), [specs/HANDOFF-canopy-2-core-safety.md](specs/HANDOFF-canopy-2-core-safety.md) and
   [specs/HANDOFF-canopy-3-core-workflows.md](specs/HANDOFF-canopy-3-core-workflows.md) (what two
   merged branches added and the app still has to wire up). The `memory-hygiene` skill tends them. A
