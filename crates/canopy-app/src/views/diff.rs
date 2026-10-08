@@ -1368,7 +1368,11 @@ fn submodule_card(ui: &mut Ui, change: &canopy_core::SubmoduleChange) {
                     ui,
                     "Some commits are not in the local submodule. Update it to see them.",
                 );
-            } else if change.log.added.is_empty() && change.log.removed.is_empty() {
+            } else if change.old.is_some()
+                && change.new.is_some()
+                && change.log.added.is_empty()
+                && change.log.removed.is_empty()
+            {
                 ui.add_space(theme::MD);
                 note(ui, "No commits between the two.");
             }
@@ -1416,6 +1420,51 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    /// The words a submodule card paints for `change`.
+    fn card_texts(change: &canopy_core::SubmoduleChange) -> Vec<String> {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                submodule_card(ui, change);
+            });
+            output.textures_delta.clear();
+            texts = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    #[test]
+    fn a_new_submodule_has_no_commits_to_compare() {
+        let id = |n: u8| canopy_core::Oid::from_bytes(&[n; 20]).expect("oid");
+        let change = |old: Option<u8>| canopy_core::SubmoduleChange {
+            old: old.map(id),
+            new: Some(id(2)),
+            old_present: old.is_some(),
+            new_present: true,
+            log: canopy_core::SubmoduleLog::default(),
+        };
+        let moved = card_texts(&change(Some(1)));
+        assert!(
+            moved.iter().any(|t| t == "No commits between the two."),
+            "a moved pointer with no commits between says so: {moved:?}"
+        );
+        let added = card_texts(&change(None));
+        assert!(
+            !added.iter().any(|t| t.contains("No commits between")),
+            "an added submodule has nothing to compare: {added:?}"
+        );
     }
 
     #[test]

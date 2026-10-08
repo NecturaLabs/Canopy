@@ -68,6 +68,11 @@ impl SubmoduleInfo {
         self.is_initialized() && self.workdir_id != self.index_id
     }
 
+    /// The index no longer records the submodule though `HEAD` does: its removal is staged.
+    pub fn is_removal_staged(&self) -> bool {
+        self.head_id.is_some() && self.index_id.is_none() && !self.conflicted
+    }
+
     /// The index records a different commit than `HEAD`: a staged pointer change.
     pub fn is_staged(&self) -> bool {
         self.index_id != self.head_id
