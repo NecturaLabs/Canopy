@@ -722,6 +722,35 @@ mod tests {
             "{labels:?}"
         );
     }
+    /// A link spanning wrapped rows exposes a hit area for every row, not a single
+    /// rectangle covering the intervening whitespace or a misplaced preceding row.
+    #[test]
+    fn a_multiline_link_has_one_hit_area_per_row() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let prefix = "See ";
+        let label = "alpha beta gamma delta epsilon zeta eta theta";
+        let text = format!("{prefix}{label}");
+        let mut galley = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let job = LayoutJob::simple(text.clone(), FontId::proportional(16.0), Color32::WHITE, 115.0);
+            galley = Some(ui.fonts_mut(|f| f.layout_job(job)));
+        });
+        output.textures_delta.clear();
+        let galley = galley.expect("laid out");
+        let start = prefix.chars().count();
+        let range = start..start + label.chars().count();
+        let areas = link_areas(&galley, &range, egui::Vec2::ZERO);
+        assert!(areas.len() > 1, "expected wrapping: {areas:?}");
+        assert_eq!(areas.len(), galley.rows.len(), "the link covers every row");
+        for (area, row) in areas.iter().zip(&galley.rows) {
+            let bounds = row.rect();
+            assert_eq!(area.y_range(), bounds.y_range());
+            assert!(area.left() >= bounds.left());
+            assert!(area.right() <= bounds.right() + 0.5);
+        }
+    }
+
     /// A link that wraps gets an area on each line it runs over, and one that starts a line is
     /// not drawn at the end of the line before it.
     #[test]
