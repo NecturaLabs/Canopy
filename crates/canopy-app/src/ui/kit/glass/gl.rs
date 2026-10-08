@@ -1,4 +1,3 @@
-// The audited OpenGL backdrop renderer; this is the only approved unsafe module.
 #![expect(
     unsafe_code,
     reason = "OpenGL calls for the backdrop blur; owner-approved 2026-10-05"

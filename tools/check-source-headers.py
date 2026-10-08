@@ -24,10 +24,22 @@ def is_source(name: str) -> bool:
 
 
 def has_header(content: str) -> bool:
+    # Crate-level inner attributes can precede the module documentation.
+    in_attribute = False
     for line in content.lstrip("\ufeff").splitlines():
         stripped = line.strip()
-        if stripped:
-            return stripped.startswith("//") or stripped.startswith("/*")
+        if not stripped:
+            continue
+        if stripped.startswith("//") or stripped.startswith("/*"):
+            return True
+        if stripped.startswith("#!["):
+            in_attribute = not stripped.endswith("]")
+            continue
+        if in_attribute:
+            if stripped.endswith("]"):
+                in_attribute = False
+            continue
+        return False
     return False
 
 
@@ -55,6 +67,8 @@ def selftest() -> int:
     assert has_header("\n//! Module responsibility.\nfn main() {}")
     assert has_header("/* Module responsibility. */\nuse std::fs;")
     assert has_header("\ufeff// Module responsibility.\nmod foo;")
+    assert has_header('#![expect(\n  unsafe_code,\n  reason = "reviewed"\n)]\n//! Audited renderer.\n')
+    assert not has_header('#![expect(unsafe_code)]\nuse std::fs;\n// Too late.')
     assert not has_header("\nuse std::fs;\n// Too late.")
     assert not has_header("")
     print("Rust header guard self-test passed")
