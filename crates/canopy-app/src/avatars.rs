@@ -518,8 +518,12 @@ fn write_record(path: &Path, record: &Record) -> std::io::Result<()> {
     std::fs::create_dir_all(parent)?;
     let bytes = serde_json::to_vec(record).map_err(std::io::Error::other)?;
     let tmp = path.with_extension("new");
-    crate::hosting::write_private(&tmp, &bytes)?;
-    std::fs::rename(tmp, path)
+    let written =
+        crate::hosting::write_private(&tmp, &bytes).and_then(|()| std::fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// Why a refresh produced no picture.
@@ -837,6 +841,34 @@ mod tests {
         std::fs::write(&path, br#"{"checked_at":100,"pixels":[1]}"#).unwrap();
         assert!(read_record(&path).is_none());
         assert!(!fresh(101, 100));
+    }
+
+    #[test]
+    fn a_failed_cache_replacement_removes_only_its_staging_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("picture.json");
+        std::fs::create_dir(&path).unwrap();
+        let existing = path.join("keep.txt");
+        std::fs::write(&existing, b"existing data").unwrap();
+
+        let result = write_record(
+            &path,
+            &Record {
+                checked_at: 100,
+                pixels: None,
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "a file cannot replace an existing directory"
+        );
+        assert_eq!(std::fs::read(&existing).unwrap(), b"existing data");
+        assert!(path.is_dir(), "the existing destination stays intact");
+        assert!(
+            !path.with_extension("new").exists(),
+            "a failed cache replacement must not leave its staging file"
+        );
     }
     #[test]
     fn disabling_clears_pending_work_and_due_time_is_per_author() {

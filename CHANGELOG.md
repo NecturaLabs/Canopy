@@ -10,6 +10,7 @@ commits since the previous build.
 
 ### Fixed
 
+- A failed avatar-cache write removes its temporary file and preserves the previous cache.
 - A clone whose submodules cannot be downloaded is kept and opened with git's message, instead of
   reporting a failure and blocking a second try because the folder exists.
 - A failed download in a partial clone is no longer tried again on every file-watcher refresh;
