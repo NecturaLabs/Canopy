@@ -5015,6 +5015,51 @@ fn keyboard(ui: &mut Ui) {
 mod tests {
     use super::*;
 
+    /// Every preview theme needs an outlined selection marker; merely changing the
+    /// card border is not enough to distinguish it from an unselected miniature.
+    #[test]
+    fn selected_theme_tick_is_outlined_in_every_preview() {
+        fn has_outline(shape: &egui::Shape, color: Color32) -> bool {
+            match shape {
+                egui::Shape::Circle(circle) => {
+                    (circle.radius - (TICK / 2.0 + 2.0)).abs() < 0.1
+                        && circle.fill == color
+                }
+                egui::Shape::Vec(shapes) => {
+                    shapes.iter().any(|shape| has_outline(shape, color))
+                }
+                _ => false,
+            }
+        }
+
+        for theme_id in ThemeId::ALL {
+            for selected in [false, true] {
+                let ctx = crate::ui::kit::testkit::ctx_with(
+                    ThemeId::Midnight,
+                    Style::Standard,
+                    Density::Comfortable,
+                );
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(400.0, 300.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        theme_card(ui, theme_id, selected, 220.0);
+                    },
+                );
+                output.textures_delta.clear();
+                let outlined = output.shapes.iter().any(|clipped| {
+                    has_outline(&clipped.shape, theme_id.palette().text)
+                });
+                assert_eq!(outlined, selected, "{theme_id:?}: selected={selected}");
+            }
+        }
+    }
+
     /// review-views-9: the default clone folder is looked up once while Settings is open, not
     /// on every frame of Integrations or Privacy; a chosen folder is used as typed.
     #[test]
