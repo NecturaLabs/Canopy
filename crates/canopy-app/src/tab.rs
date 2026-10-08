@@ -2819,12 +2819,18 @@ mod tests {
         tab.load_requests();
         let jobs = jobs_of(&host_jobs);
         assert!(
-            matches!(jobs.as_slice(), [HostJob::List(StateFilter::Open), HostJob::Details(7)]),
+            matches!(
+                jobs.as_slice(),
+                [HostJob::List(StateFilter::Open), HostJob::Details(7)]
+            ),
             "both the list and selected request need fresh host data: {jobs:?}"
         );
         assert!(tab.requests.loading);
         assert!(tab.requests.details_loading);
-        assert!(tab.requests.details.is_some(), "keep the old details until refreshed");
+        assert!(
+            tab.requests.details.is_some(),
+            "keep the old details until refreshed"
+        );
     }
 
     #[test]
