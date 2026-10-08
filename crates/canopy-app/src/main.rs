@@ -402,10 +402,10 @@ mod tests {
     #[test]
     fn screenshot_requires_explicit_isolation_but_normal_launch_does_not() {
         let mut launch = Launch::default();
-        assert!(validate_screenshot_launch(&launch, false).is_ok());
+        validate_screenshot_launch(&launch, false).expect("normal launch needs no isolation");
         launch.screenshot = Some(PathBuf::from("capture.png"));
         assert!(validate_screenshot_launch(&launch, false).is_err());
-        assert!(validate_screenshot_launch(&launch, true).is_ok());
+        validate_screenshot_launch(&launch, true).expect("isolated screenshots are allowed");
     }
 
 
