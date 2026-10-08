@@ -28,6 +28,7 @@ use crate::settings::{
 };
 use crate::system_apps::Kind;
 use crate::ui::custom_theme::{self, CustomTheme};
+use crate::ui::kit::a11y;
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::choice::{Segmented, Swatches};
@@ -37,7 +38,7 @@ use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::paint;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
-use crate::ui::kit::row::{ListRow, RowKind};
+use crate::ui::kit::row::{ListRow, Roving, RowKind};
 use crate::ui::kit::select::{self, Select};
 use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, column_label};
 use crate::ui::kit::toggle::Switch;
@@ -1047,7 +1048,15 @@ fn navigation(
         .show(&mut ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             let searching = !screen.search.words().is_empty();
-            for section in Section::shown(repo.is_some()) {
+            // One Tab stop for the list, the arrows between its sections.
+            let sections = Section::shown(repo.is_some());
+            let list = Roving::new(
+                ui.ctx(),
+                "settings-sections",
+                sections.len(),
+                sections.iter().position(|s| *s == screen.section),
+            );
+            for (index, section) in sections.into_iter().enumerate() {
                 let (mut glyph, mut label) = section.label();
                 let name = if let (Section::Repository, Some(look)) = (section, repo) {
                     // Its own group, named and drawn as the repository's tab.
@@ -1066,6 +1075,7 @@ fn navigation(
                     .icon(glyph)
                     .label(label)
                     .accessible_name(name)
+                    .roving(list, index)
                     .selected(!searching && screen.section == section);
                 if searching {
                     row = row.enabled(found > 0);
@@ -2351,12 +2361,29 @@ fn theme_cards(ui: &mut Ui, s: &mut Settings) {
     let card_width = ((usable - gap * crate::ui::count_f32(columns - 1))
         / crate::ui::count_f32(columns))
     .clamp(THEME_CARD_MIN - 20.0, THEME_CARD_MAX);
+    // One Tab stop for the grid, the arrows between its cards.
+    let grid = Roving::new(
+        ui.ctx(),
+        "settings-theme-cards",
+        ThemeId::ALL.len(),
+        ThemeId::ALL.iter().position(|t| *t == s.theme),
+    )
+    .columns(columns);
     ui.scope(|ui| {
+        a11y::group(ui, egui::accesskit::Role::RadioGroup, "Theme");
         ui.spacing_mut().item_spacing = vec2(gap, gap);
-        for themes in ThemeId::ALL.chunks(columns) {
+        for (row, themes) in ThemeId::ALL.chunks(columns).enumerate() {
             ui.horizontal(|ui| {
-                for &t in themes {
-                    if theme_card(ui, t, s.theme == t, card_width).clicked() {
+                for (n, &t) in themes.iter().enumerate() {
+                    if theme_card(
+                        ui,
+                        t,
+                        s.theme == t,
+                        card_width,
+                        Some((grid, row * columns + n)),
+                    )
+                    .clicked()
+                    {
                         s.theme = t;
                     }
                 }
@@ -2437,11 +2464,19 @@ const TICK_INSET: f32 = 5.0;
 
 /// A theme card: a miniature of the window drawn from that theme's palette in the current
 /// style, its name and whether it is dark or light. Selected: the card's focus ring and a tick.
-fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> Response {
+fn theme_card(
+    ui: &mut Ui,
+    id: ThemeId,
+    selected: bool,
+    width: f32,
+    roving: Option<(Roving, usize)>,
+) -> Response {
     let tp = id.palette();
-    let card = Card::new()
-        .interactive(true)
-        .selected(selected)
+    let mut card = Card::new().interactive(true).selected(selected);
+    if let Some((list, index)) = roving {
+        card = card.roving(list, index);
+    }
+    let card = card
         .width(width)
         .label(if id == DEFAULTS.theme {
             format!("{} theme (default)", id.name())
@@ -5098,7 +5133,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        theme_card(ui, theme_id, selected, 220.0);
+                        theme_card(ui, theme_id, selected, 220.0, None);
                     },
                 );
                 output.textures_delta.clear();
@@ -5791,6 +5826,67 @@ mod tests {
             Some(crate::ui::kit::field::edit_id(search_id())),
             "Settings must take keyboard focus when opened"
         );
+    }
+
+    /// The section list and the theme cards are each one Tab stop, however many entries they
+    /// hold; the arrows move inside them.
+    #[test]
+    fn the_section_list_and_the_theme_cards_are_one_tab_stop_each() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut screen = SettingsScreen::default();
+        let mut settings = Settings::default();
+        let mut tokens = TokenStore::default();
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui.ctx(),
+                        &mut screen,
+                        &mut settings,
+                        &mut tokens,
+                        &SettingsData {
+                            tabs: &[],
+                            update: &UpdateState::Idle,
+                            identity: IdentityView {
+                                repo: None,
+                                identity: None,
+                                error: None,
+                            },
+                        },
+                        &mut Vec::new(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        };
+        let key = |key| crate::ui::kit::testkit::key(key);
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+        let mut stops = HashSet::new();
+        let focused_rect = |ctx: &egui::Context| {
+            ctx.memory(egui::Memory::focused)
+                .and_then(|id| ctx.read_response(id))
+                .map(|r| (r.id, r.rect))
+        };
+        for _ in 0..40 {
+            frame(key(egui::Key::Tab));
+            frame(Vec::new());
+            if let Some((id, rect)) = focused_rect(&ctx) {
+                stops.insert((id, rect.left() < 240.0, rect.height() > 80.0));
+            }
+        }
+        let in_list = stops.iter().filter(|(_, nav, _)| *nav).count();
+        let cards = stops.iter().filter(|(_, _, card)| *card).count();
+        assert_eq!(in_list, 1, "the section list is one stop: {stops:?}");
+        assert_eq!(cards, 1, "the theme cards are one stop: {stops:?}");
     }
 
     #[test]
