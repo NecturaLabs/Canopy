@@ -485,19 +485,24 @@ impl Repo {
             )));
         }
         let mut args = if checkout {
-            vec!["switch", "-q", "--no-track", "-c", name]
+            vec!["-q", "--no-track", "-c", name]
         } else {
-            vec!["branch", "--no-track", "--", name]
+            vec!["--no-track", "--", name]
         };
         if let Some(s) = start {
             args.push(s);
         }
-        self.git_cmd(&args).map(drop)
+        if checkout {
+            self.switch_cmd(&args).map(drop)
+        } else {
+            args.insert(0, "branch");
+            self.git_cmd(&args).map(drop)
+        }
     }
 
     /// Switches to a local branch.
     pub fn checkout_branch(&self, name: &str) -> Result<()> {
-        self.git_cmd(&["switch", "-q", "--", name]).map(drop)
+        self.switch_cmd(&["-q", "--", name]).map(drop)
     }
 
     /// Checks out a remote branch: switches to the local branch of the same name if it exists,
@@ -511,13 +516,13 @@ impl Repo {
             return self.checkout_branch(branch);
         }
         let full = format!("{remote}/{branch}");
-        self.git_cmd(&["switch", "-q", "-c", branch, "--track", "--", &full])
+        self.switch_cmd(&["-q", "-c", branch, "--track", "--", &full])
             .map(drop)
     }
 
     /// Detaches `HEAD` at a commit.
     pub fn checkout_detached(&self, oid: Oid) -> Result<()> {
-        self.git_cmd(&["switch", "-q", "--detach", &oid.to_string()])
+        self.switch_cmd(&["-q", "--detach", &oid.to_string()])
             .map(drop)
     }
 
@@ -729,7 +734,12 @@ impl Repo {
     pub fn pull(&self, strategy: PullStrategy, progress: impl FnMut(&str)) -> Result<String> {
         let rebase = matches!(strategy, PullStrategy::Rebase | PullStrategy::RebaseMerges);
         let conflicts = self.conflict_override();
-        let mut args: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        let submodules = self.submodule_override();
+        let mut args: Vec<&str> = conflicts
+            .iter()
+            .chain(&submodules)
+            .map(String::as_str)
+            .collect();
         args.extend(["pull", "--progress", "--no-prune"]);
         args.extend(self.autostash_flag(rebase));
         args.extend(strategy.git_args());
@@ -752,7 +762,12 @@ impl Repo {
         progress: impl FnMut(&str),
     ) -> Result<String> {
         let conflicts = self.conflict_override();
-        let mut args: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        let submodules = self.submodule_override();
+        let mut args: Vec<&str> = conflicts
+            .iter()
+            .chain(&submodules)
+            .map(String::as_str)
+            .collect();
         let tip = checked.map(|oid| oid.to_string());
         let target = tip.as_deref().unwrap_or("@{upstream}");
         let fork_point = match (strategy, &tip) {
@@ -1061,7 +1076,7 @@ impl Repo {
             .and_then(|b| b.get().target());
         match local {
             None => {
-                self.git_cmd(&["switch", "-q", "--no-track", "-c", branch, &private])?;
+                self.switch_cmd(&["-q", "--no-track", "-c", branch, &private])?;
             }
             Some(tip) => {
                 let git = self.git();

@@ -359,7 +359,7 @@ impl Repo {
                 return Err(Error::invalid(format!("Tag '{tag}' already exists.")));
             }
         }
-        self.git_cmd(&["switch", "-q", "--no-track", "-c", &branch, base])?;
+        self.switch_cmd(&["-q", "--no-track", "-c", &branch, base])?;
         Ok(branch)
     }
 
@@ -397,7 +397,7 @@ impl Repo {
 
         if !kind.is_release_like() {
             self.preflight(&config.develop, &branch)?;
-            self.git_cmd(&["switch", "-q", &config.develop])?;
+            self.switch_cmd(&["-q", &config.develop])?;
             if options.squash {
                 // `--ff` so a `merge.ff=only` setting cannot refuse a diverged squash.
                 self.git_cmd(&["merge", "--squash", "--ff", "-q", &branch])?;
@@ -452,7 +452,7 @@ impl Repo {
             )));
         }
 
-        self.git_cmd(&["switch", "-q", &config.master])?;
+        self.switch_cmd(&["-q", &config.master])?;
         self.git_cmd(&["merge", "--no-ff", "--no-edit", "-q", &branch])?;
         let back = if options.tag {
             let message = options
@@ -465,7 +465,7 @@ impl Repo {
         } else {
             config.master.clone()
         };
-        self.git_cmd(&["switch", "-q", &config.develop])?;
+        self.switch_cmd(&["-q", &config.develop])?;
         self.git_cmd(&["merge", "--no-ff", "--no-edit", "-q", &back])?;
         if options.delete_branch {
             self.git_cmd(&["branch", "-d", &branch])?;

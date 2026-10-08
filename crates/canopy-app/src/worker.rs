@@ -1253,6 +1253,7 @@ fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::
         op,
         Op::Pull { .. }
             | Op::Checkout(_)
+            | Op::CheckoutRequest { .. }
             | Op::CheckoutRemote { .. }
             | Op::CheckoutDetached(_)
             | Op::CreateBranch { checkout: true, .. }

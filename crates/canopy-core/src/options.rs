@@ -171,6 +171,39 @@ impl Repo {
                 .is_ok_and(|o| o.code == Some(0))
     }
 
+    /// Whether submodules follow a pull or a checkout: what the git configuration says in
+    /// `submodule.recurse` where it decides, Canopy's choice otherwise.
+    pub(crate) fn recurses_into_submodules(&self) -> bool {
+        if !self.config_decides(r"^submodule\.recurse$") {
+            return self.options().recurse_submodules;
+        }
+        cli::run_unchecked(
+            self.workdir(),
+            &["config", "--type=bool", "--get", "submodule.recurse"],
+        )
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+    }
+
+    /// The `-c submodule.recurse=false` that goes before a pull, switch or rebase: Canopy brings
+    /// the submodules along itself afterwards ([`Repo::follow_submodules`]), so whatever the
+    /// configuration says that Canopy does not follow cannot move them. Nothing where the
+    /// configuration decides.
+    pub(crate) fn submodule_override(&self) -> Vec<String> {
+        if self.config_decides(r"^submodule\.recurse$") {
+            return Vec::new();
+        }
+        vec!["-c".to_owned(), "submodule.recurse=false".to_owned()]
+    }
+
+    /// Runs `git switch args…` with [`Self::submodule_override`].
+    pub(crate) fn switch_cmd(&self, args: &[&str]) -> crate::Result<String> {
+        let o = self.submodule_override();
+        let mut all: Vec<&str> = o.iter().map(String::as_str).collect();
+        all.push("switch");
+        all.extend(args);
+        self.git_cmd(&all)
+    }
+
     /// The `-c merge.conflictStyle=…` override that goes before the sub-command of anything that
     /// can write conflicts.
     pub(crate) fn conflict_override(&self) -> Vec<String> {

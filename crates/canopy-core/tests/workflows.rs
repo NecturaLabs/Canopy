@@ -767,10 +767,49 @@ fn following_submodules_checks_out_the_recorded_commit_unless_told_not_to() {
     git(&sup, &["config", "submodule.recurse", "false"]);
     repo.follow_submodules(|_| {}).expect("decided by git");
     assert_ne!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+    // ...and git's own value applies even where Canopy's choice is off.
+    git(&sup, &["config", "submodule.recurse", "true"]);
+    repo.set_options(GitOptions {
+        recurse_submodules: false,
+        ..GitOptions::default()
+    });
+    repo.follow_submodules(|_| {}).expect("configured on");
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+    git(&sub, &["checkout", "-q", "main"]);
     git(&sup, &["config", "--unset", "submodule.recurse"]);
+    repo.set_options(GitOptions::default());
 
     repo.follow_submodules(|_| {}).expect("on");
     assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+}
+
+#[test]
+fn a_checkout_moves_submodules_only_as_canopy_or_a_followed_configuration_says() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    let first = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+    git(&sup, &["switch", "-q", "-c", "advanced"]);
+    git(&sub, &["checkout", "-q", "main"]);
+    git(&sup, &["add", "deps/lib"]);
+    git(&sup, &["commit", "-q", "-m", "chore: advance lib"]);
+    git(&sup, &["switch", "-q", "-"]);
+    git(&sub, &["checkout", "-q", first.trim()]);
+    git(&sup, &["config", "submodule.recurse", "true"]);
+
+    // Canopy does not follow the configuration and its own choice is off: nothing moves.
+    repo.set_options(GitOptions {
+        follow_config: false,
+        recurse_submodules: false,
+        ..GitOptions::default()
+    });
+    repo.checkout_branch("advanced").expect("checkout");
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), first);
+
+    // Following the configuration, git's value decides: it recurses.
+    repo.set_options(GitOptions::default());
+    repo.checkout_branch("main").expect("checkout back");
+    repo.checkout_branch("advanced").expect("checkout");
+    assert_ne!(git(&sub, &["rev-parse", "HEAD"]), first);
 }
 
 #[test]

@@ -613,7 +613,13 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 ui.scope(|ui| {
                 a11y::group(ui, Role::List, "Submodules");
                 for (i, sm) in snap.submodules.iter().enumerate() {
-                    let state = sm.state();
+                    // The superproject's status lists a submodule with uncommitted content, which
+                    // the cheap read in the snapshot does not look for.
+                    let modified = snap.status.unstaged.iter().any(|e| e.path == sm.path);
+                    let state = match sm.state() {
+                        SubmoduleState::Clean if modified => SubmoduleState::Dirty,
+                        other => other,
+                    };
                     let commit = sm.workdir_id.or(sm.index_id).map(canopy_core::short_id);
                     let detail = match state {
                         SubmoduleState::Clean => commit.clone().unwrap_or_default(),
