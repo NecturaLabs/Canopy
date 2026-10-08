@@ -107,9 +107,9 @@ else
   CANOPY_BIN=$(realpath "$CANOPY_BIN")
   command=(env)
   if [[ -z ${WAYLAND_DISPLAY:-} ]]; then command+=(-u WAYLAND_DISPLAY); fi
-  for name in CANOPY_HOSTING_API_BASE; do
-    if [[ -v $name ]]; then command+=("$name=${!name}"); fi
-  done
+  if [[ -v CANOPY_HOSTING_API_BASE ]]; then
+    command+=("CANOPY_HOSTING_API_BASE=$CANOPY_HOSTING_API_BASE")
+  fi
   command+=(CANOPY_SCREENSHOT_ISOLATED=1 HOME="$isolated/home" \
     XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" \
     XDG_CACHE_HOME="$isolated/cache" TMPDIR="$isolated/tmp" \
