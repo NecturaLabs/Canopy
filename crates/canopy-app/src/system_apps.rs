@@ -527,9 +527,8 @@ mod linux {
 
         /// The entry as a command: `file_code` (`%f` or `%d`) where the entry takes files or
         /// URLs, other field codes and Flatpak's `@@` markers left out.
-        pub(super) fn command(&self, file_code: &str) -> String {
+        pub(super) fn command(&self, file_code: &str) -> Option<String> {
             let mut words = Vec::new();
-            let mut dropped_embedded_file_code = false;
             for arg in &self.exec {
                 match arg.as_str() {
                     "%f" | "%F" | "%u" | "%U" => words.push(file_code.to_owned()),
@@ -538,25 +537,22 @@ mod linux {
                     _ => {
                         // Embedded field codes violate the desktop-entry specification and
                         // cannot safely become an argument containing the user's file path.
-                        // Drop that argument, then pass the path as a separate word instead.
+                        // Reject the entry: removing a word can change which argument a
+                        // program interprets as code (for example, the script after sh -c).
                         let without_escapes = arg.replace("%%", "");
                         if ["%f", "%F", "%u", "%U", "%d", "%D"]
                             .iter()
                             .any(|code| without_escapes.contains(*code))
                         {
-                            dropped_embedded_file_code = true;
-                        } else {
-                            // Keep %% intact until platform::with_path has decided whether
-                            // the word is a placeholder, then unescape it there.
-                            words.push(quote(arg));
+                            return None;
                         }
+                        // Keep %% intact until platform::with_path has decided whether
+                        // the word is a placeholder, then unescape it there.
+                        words.push(quote(arg));
                     }
                 }
             }
-            if dropped_embedded_file_code && !words.iter().any(|w| w.as_str() == file_code) {
-                words.push(file_code.to_owned());
-            }
-            words.join(" ")
+            Some(words.join(" "))
         }
     }
 
@@ -716,7 +712,7 @@ mod linux {
     /// An editor entry as a command, run through `xdg-terminal-exec` when it is a terminal
     /// program. `None` when it needs a terminal and there is no launcher for one.
     fn editor_command(entry: &Entry, launcher: bool) -> Option<(String, String)> {
-        let command = entry.command("%f");
+        let command = entry.command("%f")?;
         if entry.terminal {
             launcher.then(|| {
                 (
@@ -793,10 +789,12 @@ mod linux {
         let file_manager = (env.default_for)("inode/directory")
             .and_then(|id| entries.get(&id))
             .filter(|e| !e.terminal && e.installed(&env.path))
-            .map(|e| SystemChoice {
-                name: e.name.clone(),
-                command: Some(e.command("%d")),
-                origin: Origin::Desktop,
+            .and_then(|e| {
+                Some(SystemChoice {
+                    name: e.name.clone(),
+                    command: Some(e.command("%d")?),
+                    origin: Origin::Desktop,
+                })
             });
 
         let mut installed = Vec::new();
@@ -805,18 +803,24 @@ mod linux {
                 continue;
             }
             let has = |c: &str| entry.categories.iter().any(|x| x == c);
-            if has("TerminalEmulator") && !entry.terminal {
+            if has("TerminalEmulator")
+                && !entry.terminal
+                && let Some(command) = entry.command("%d")
+            {
                 installed.push(App {
                     kind: Kind::Terminal,
                     name: entry.name.clone(),
-                    command: entry.command("%d"),
+                    command,
                 });
             }
-            if has("FileManager") && !entry.terminal {
+            if has("FileManager")
+                && !entry.terminal
+                && let Some(command) = entry.command("%d")
+            {
                 installed.push(App {
                     kind: Kind::FileManager,
                     name: entry.name.clone(),
-                    command: entry.command("%d"),
+                    command,
                 });
             }
             // Plain text or source code: a chat app that takes CSV is no editor.
@@ -1009,6 +1013,38 @@ mod tests {
     const KITTY: &str = "[Desktop Entry]\nType=Application\nName=kitty\nExec=kitty\nCategories=System;TerminalEmulator;\n";
 
     #[test]
+    fn embedded_file_codes_never_turn_a_shell_script_into_a_path_placeholder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        program(&root.join("bin"), "editor");
+        for exec in [
+            r#"/bin/sh -c "editor --file=%f""#,
+            r#"/bin/sh -c "editor --file=%f" ignored %f"#,
+            "editor --file=%f",
+            "editor --directory=%U",
+            "editor --file=%%%f",
+        ] {
+            write(
+                &root.join("home-data/applications"),
+                "unsafe.desktop",
+                &format!(
+                    "[Desktop Entry]\nType=Application\nName=Editor\nExec={exec}\nCategories=TextEditor;FileManager;TerminalEmulator;\n"
+                ),
+            );
+            let found = detect(&env(
+                root,
+                &[
+                    ("text/plain", "unsafe.desktop"),
+                    ("inode/directory", "unsafe.desktop"),
+                ],
+            ));
+            assert!(found.editor.is_none(), "{exec}");
+            assert!(found.file_manager.is_none(), "{exec}");
+            assert!(found.installed.is_empty(), "{exec}");
+        }
+    }
+
+    #[test]
     fn exec_lines_are_split_as_the_desktop_entry_spec_says() {
         assert_eq!(
             parse_exec("code --unity-launch %F").unwrap(),
@@ -1024,15 +1060,18 @@ mod tests {
             entry.name, "Visual Studio Code",
             "the action group is not the entry"
         );
-        assert_eq!(entry.command("%f"), "/opt/code/bin/code --unity-launch %f");
+        assert_eq!(
+            entry.command("%f").as_deref(),
+            Some("/opt/code/bin/code --unity-launch %f")
+        );
         let flatpak = parse_entry(
             "org.gnome.TextEditor.desktop",
             "[Desktop Entry]\nType=Application\nName=Text Editor\nExec=/usr/bin/flatpak run --file-forwarding org.gnome.TextEditor @@ %F @@\n",
         )
         .unwrap();
         assert_eq!(
-            flatpak.command("%f"),
-            "/usr/bin/flatpak run --file-forwarding org.gnome.TextEditor %f"
+            flatpak.command("%f").as_deref(),
+            Some("/usr/bin/flatpak run --file-forwarding org.gnome.TextEditor %f")
         );
         let malformed = parse_entry(
             "broken.desktop",
@@ -1041,8 +1080,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             malformed.command("%f"),
-            "editor --title %%f %f",
-            "ignore unsafe embedded substitutions but retain escaped literals"
+            None,
+            "reject entries with unsafe embedded substitutions"
         );
         let escaped = parse_entry(
             "escaped.desktop",
@@ -1050,8 +1089,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            escaped.command("%f"),
-            "editor %%f",
+            escaped.command("%f").as_deref(),
+            Some("editor %%f"),
             "an escaped percent is not a file placeholder"
         );
         assert_eq!(
