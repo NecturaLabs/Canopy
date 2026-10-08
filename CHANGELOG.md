@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Added
 
+- Without git installed, Canopy opens a dialog with install steps for the system and a download
+  link instead of only a toast.
+
 - Submodules: a sidebar section shows each one's state; open one in a tab, initialize and
   update, sync URLs, add (Add submodule… in the palette or the section's +) and remove after a
   confirmation. A submodule's diff lists the commits between its two pointers. Pull, checkout and

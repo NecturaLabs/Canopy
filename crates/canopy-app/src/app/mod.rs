@@ -86,6 +86,7 @@ pub const OVERLAYS: &[&str] = &[
     "new-branch",
     "rename",
     "add-submodule",
+    "git-missing",
     "remove-submodule",
     "new-tag",
     "stash",
@@ -533,7 +534,7 @@ impl CanopyApp {
             Some(_) | None => {}
         }
         if git_version_missing(&app.git_version) {
-            app.toasts.push(&cc.egui_ctx, ToastKind::Error, Topic::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
+            app.dialogs.open(Dialog::GitMissing);
         }
         let mut notices = Vec::new();
         // A crash report from last time, offered once.

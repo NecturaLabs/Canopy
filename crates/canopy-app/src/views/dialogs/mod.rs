@@ -87,6 +87,8 @@ pub enum Dialog {
         old: String,
         new: String,
     },
+    /// `git` was not found: what to install, for this system.
+    GitMissing,
     AddSubmodule {
         url: String,
         /// The folder; empty means the one the URL suggests.
@@ -221,6 +223,28 @@ pub enum Outcome {
     Close,
     Run(Vec<Action>),
     RunKeep(Vec<Action>),
+}
+
+const GIT_DOWNLOADS: &str = "https://git-scm.com/downloads";
+
+/// How to install git on this system, one line each.
+fn git_install_steps() -> [&'static str; 2] {
+    if cfg!(target_os = "macos") {
+        [
+            "Run xcode-select --install in a terminal, or brew install git.",
+            "Apps opened from the Finder do not get your shell's PATH: if git is installed but not found, install it under /usr/bin (the command above does) or start Canopy from a terminal.",
+        ]
+    } else if cfg!(target_os = "windows") {
+        [
+            "Install Git for Windows: winget install --id Git.Git, or the installer from the page below.",
+            "Then restart Canopy so it sees the new PATH.",
+        ]
+    } else {
+        [
+            "Install it with your package manager: sudo pacman -S git, sudo apt install git or sudo dnf install git.",
+            "Then restart Canopy so it sees git on the PATH.",
+        ]
+    }
 }
 
 /// The folder a clone of `url` would get by default: its last segment without `.git`.
@@ -1261,6 +1285,33 @@ pub fn show(
                 })
                 .footer(|f| {
                     f.confirm("Continue");
+                })
+                .show(ctx);
+            answer(result, || Outcome::Close)
+        }
+        Dialog::GitMissing => {
+            let result = KitDialog::new(salt)
+                .title("Git is not installed")
+                .icon(icon::WARNING)
+                .width(DialogWidth::Form)
+                .description("Canopy runs the git program for every change and network operation.")
+                .body(|ui| {
+                    for line in git_install_steps() {
+                        note(ui, line, p.text_dim);
+                    }
+                    if LinkButton::new("Download git")
+                        .url(GIT_DOWNLOADS)
+                        .text_size(m.meta_size)
+                        .show(ui)
+                        .clicked()
+                    {
+                        extra = Some(Outcome::Run(vec![Action::OpenUrl(
+                            GIT_DOWNLOADS.to_owned(),
+                        )]));
+                    }
+                })
+                .footer(|f| {
+                    f.confirm("Close");
                 })
                 .show(ctx);
             answer(result, || Outcome::Close)

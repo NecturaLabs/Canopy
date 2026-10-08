@@ -202,6 +202,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "new-branch",
     "rename",
     "add-submodule",
+    "git-missing",
     "remove-submodule",
     "new-tag",
     "stash",
@@ -305,6 +306,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             old: "feature/search".into(),
             new: "feature/search-v2".into(),
         },
+        "git-missing" => Dialog::GitMissing,
         "add-submodule" => Dialog::AddSubmodule {
             url: "https://github.com/necturalabs/tidepool-ui.git".into(),
             path: String::new(),

@@ -55,7 +55,7 @@ OPTIONS:
                               gallery, menu-remotes, menu-branch, menu-commit, menu-file, open,
                               open-error, clone,
                               clone-running, clone-error, init, new-branch, rename, add-submodule,
-                              remove-submodule, new-tag,
+                              git-missing, remove-submodule, new-tag,
                               stash, add-remote, add-remote-refused, publish, new-request,
                               confirm, confirm-danger, confirm-host, confirm-merge-risky,
                               diverged, pull-conflicts, pull-moved, whats-new, crash, update-available,
