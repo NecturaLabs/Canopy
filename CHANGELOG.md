@@ -145,6 +145,9 @@ commits since the previous build.
 
 ### Fixed
 
+- On a desktop session without an accessibility bus, Canopy no longer sends a crash report for
+  the accessibility library's failed startup; the app runs on without screen-reader support.
+
 - Pressing a button, including the top bar's operation tools, eases in and stays visible for at
   least a moment, so a quick click that starts an operation no longer flashes.
 

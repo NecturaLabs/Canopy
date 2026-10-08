@@ -85,7 +85,9 @@ fn init() -> sentry::ClientInitGuard {
     o.attach_stacktrace = false;
     o.auto_session_tracking = true;
     o.session_mode = sentry::SessionMode::Application;
-    o.before_send = Some(Arc::new(move |event| Some(scrub(event, &home))));
+    o.before_send = Some(Arc::new(move |event| {
+        (!is_accessibility_bus_panic(&event)).then(|| scrub(event, &home))
+    }));
     o.before_breadcrumb = Some(Arc::new(|_| None));
     // The default integrations, except that panics carry the file and line where they happened:
     // release builds have no symbols, so the stack trace alone would only be addresses.
@@ -97,6 +99,17 @@ fn init() -> sentry::ClientInitGuard {
         Arc::new(integrations::backtrace::ProcessStacktraceIntegration),
     ];
     sentry::init(o)
+}
+
+/// A panic in the AT-SPI thread of `accesskit_unix`: with no accessibility bus on the session
+/// (a minimal desktop, a container) it unwraps the failed registry call on its own thread.
+/// Canopy keeps running without screen-reader support, so nobody has a crash to report.
+fn is_accessibility_bus_panic(event: &Event<'_>) -> bool {
+    event.exception.values.iter().any(|e| {
+        e.value
+            .as_deref()
+            .is_some_and(|v| v.contains("accesskit_unix"))
+    })
 }
 
 /// The event for a panic: its message followed by where it happened, `src/x.rs:12:5`.
@@ -493,6 +506,24 @@ mod tests {
             ),
             "push https://<redacted>@github.com/o/r from ~/r"
         );
+    }
+
+    #[test]
+    fn a_missing_accessibility_bus_is_not_a_crash_to_report() {
+        let panic_in = |file: &str| {
+            let mut event = Event::default();
+            event.exception.values.push(Exception {
+                value: Some(format!(
+                    "called `Result::unwrap()` on an `Err` value (at {file}:61:29)"
+                )),
+                ..Default::default()
+            });
+            event
+        };
+        let theirs = "/home/ada/.cargo/registry/src/x/accesskit_unix-0.21.1/src/context.rs";
+        assert!(is_accessibility_bus_panic(&panic_in(theirs)));
+        assert!(!is_accessibility_bus_panic(&panic_in("src/worker.rs")));
+        assert!(!is_accessibility_bus_panic(&Event::default()));
     }
 
     #[test]
