@@ -22,7 +22,7 @@ use crate::ui::kit::choice::ViewTabs;
 use crate::ui::kit::field::SearchField;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::tabs::{DocTab, DocTabs, DocTabsEvent};
-use crate::ui::kit::{IconButton, Size, ToolButton, menu, paint};
+use crate::ui::kit::{IconButton, Size, ToolButton, focus_visible, menu, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, ThemeId, palette};
 use crate::ui::widgets::forge_icon;
@@ -225,6 +225,17 @@ fn search_trigger(ui: &mut Ui) -> egui::Response {
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     r.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Search commands"));
+    // The read-only field and its click target are separate widgets. Whichever
+    // receives Tab focus needs the same visible ring as the other title-bar tools.
+    if (r.has_focus() || field.has_focus()) && focus_visible(ui.ctx()) {
+        paint::focus_ring(
+            ui.painter(),
+            field.rect,
+            egui::CornerRadius::same(m.radius_sm),
+            palette(ui.ctx()).focus,
+            egui::Color32::TRANSPARENT,
+        );
+    }
     r.kit_tooltip("Search commands")
         .extra(true)
         .shortcut(Command::Palette)
