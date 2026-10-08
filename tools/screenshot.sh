@@ -25,7 +25,7 @@
 # <repo> open, saves one frame to <out.png> once the repository has loaded, and prints the output
 # path. Builds the release binary first (a no-op when it is up to date); set CANOPY_BIN to use a
 # different binary and skip the build. Uses Xvfb when available, else a native Hyprland window
-# on CANOPY_WORKSPACE (default 3). Output and native-run temporary files stay beside <out.png>.
+# on CANOPY_WORKSPACE (default 3). DISPLAY_BASE=N keeps Xvfb to displays :N to :N+9. Output and native-run temporary files stay beside <out.png>.
 # On Xvfb the app gets private home, data, config and cache folders, a fixed Git identity and no
 # TERMINAL, EDITOR or VISUAL, so the image never depends on your own Canopy state, Git
 # configuration or programs; a screenshot also ignores the pointer (no hover, no tooltip).
@@ -89,6 +89,17 @@ mkdir -p "$isolated/home" "$isolated/tmp"
 printf '[user]\n\tname = Showcase Author\n\temail = author@example.com\n' > "$isolated/gitconfig"
 
 if command -v xvfb-run >/dev/null; then
+  # DISPLAY_BASE=N takes the first free X display from :N to :N+9 (parallel runs keep to their
+  # own range); without it xvfb-run picks one itself.
+  server=(-a)
+  if [[ -n ${DISPLAY_BASE:-} ]]; then
+    [[ $DISPLAY_BASE =~ ^[0-9]+$ ]] || { echo "invalid DISPLAY_BASE: $DISPLAY_BASE" >&2; exit 2; }
+    for ((n = DISPLAY_BASE; n < DISPLAY_BASE + 10; n++)); do
+      [[ -e /tmp/.X11-unix/X$n || -e /tmp/.X$n-lock ]] || break
+    done
+    ((n < DISPLAY_BASE + 10)) || { echo "no free X display from :$DISPLAY_BASE to :$((DISPLAY_BASE + 9))" >&2; exit 1; }
+    server=(-n "$n")
+  fi
   # Private home, data, config and cache folders, a fixed Git identity and no TERMINAL, EDITOR or
   # VISUAL: the image must not depend on (or write to) your own Canopy state, such as its saved
   # window size, your Git configuration or your programs (Settings > Integrations names them),
@@ -97,7 +108,7 @@ if command -v xvfb-run >/dev/null; then
   env -u WAYLAND_DISPLAY -u TERMINAL -u EDITOR -u VISUAL LIBGL_ALWAYS_SOFTWARE=1 CANOPY_SCREENSHOT_ISOLATED=1 HOME="$isolated/home" \
     XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache" \
     GIT_CONFIG_GLOBAL="$isolated/gitconfig" GIT_CONFIG_NOSYSTEM=1 \
-    timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \
+    timeout 60 xvfb-run "${server[@]}" -s "-screen 0 ${size}x24" \
     "$CANOPY_BIN" --screenshot "$out_abs" --size "$size" "${extra[@]}" "${repo_args[@]}"
 else
   workspace=${CANOPY_WORKSPACE:-3}

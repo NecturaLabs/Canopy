@@ -77,7 +77,13 @@ start)
   fi
   git -C "$SIM/repo" fetch -q origin
   (cd "$ROOT" && cargo build -q --release -p canopy-app)
-  for n in $(seq 70 99); do [[ -e /tmp/.X11-unix/X$n || -e /tmp/.X$n-lock ]] || break; done
+  # DISPLAY_BASE=N keeps this to displays :N to :N+9 (parallel runs each take a range); the
+  # default is :70 to :99.
+  base=${DISPLAY_BASE:-70} last=$((${DISPLAY_BASE:-70} + 9))
+  [[ -n ${DISPLAY_BASE:-} ]] || last=99
+  [[ $base =~ ^[0-9]+$ ]] || die "invalid DISPLAY_BASE: $base"
+  for ((n = base; n <= last; n++)); do [[ -e /tmp/.X11-unix/X$n || -e /tmp/.X$n-lock ]] || break; done
+  ((n <= last)) || die "no free X display from :$base to :$last"
   DISPLAY_NO=:$n
   Xvfb "$DISPLAY_NO" -screen 0 "${size}x24" -nolisten tcp >"$SIM/xvfb.log" 2>&1 &
   printf 'DISPLAY_NO=%s\nXVFB_PID=%s\n' "$DISPLAY_NO" "$!" >"$STATE"
