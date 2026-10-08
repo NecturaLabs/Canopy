@@ -10,6 +10,11 @@ commits since the previous build.
 
 ### Added
 
+- Ignore management in Changes and the command palette: file, extension, folder and custom rules
+  with previews; repository-local and global excludes; ignored-path listings and matching-rule
+  explanations. Stop tracking confirms the staged removal while keeping the local file. New
+  repositories can start with optional Rust, Node or Python `.gitignore` rules.
+
 - Local-only repository status follows the toolbar's icon and caption layout; the sidebar
   uses quiet labels and compact outlined Publish/Add remote actions.
 

@@ -26,6 +26,7 @@ Update this table in the same change that adds or alters a feature.
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
 |---|---|---|---|---|
 | Open, init | Done | Yes | Yes | Yes |
+| Ignore management: file/extension/folder/pattern rules, preview, local/global exclude, ignored paths, why ignored, stop tracking; optional starter templates on init | In progress (#59) | Yes | Yes | Yes |
 | Clone with live progress | Done | Yes | Yes | Yes |
 | Several repositories in tabs; closing or changing a worktree preserves unsent commit messages, conflict edits and request comments for this session | Done | Yes | Yes | Yes |
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |

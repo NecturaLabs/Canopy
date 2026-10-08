@@ -64,6 +64,65 @@ fn fixture() -> (tempfile::TempDir, Repo) {
     (dir, repo)
 }
 
+#[test]
+fn ignore_templates_preserve_existing_rules_and_are_idempotent() {
+    use canopy_core::IgnoreTemplate;
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    fs::write(p.join(".gitignore"), "# keep my rules\nprivate/").unwrap();
+    assert!(repo.add_ignore_template(IgnoreTemplate::Rust).unwrap());
+    let first = fs::read(p.join(".gitignore")).unwrap();
+    assert!(first.starts_with(b"# keep my rules\nprivate/\n"));
+    assert!(!repo.add_ignore_template(IgnoreTemplate::Rust).unwrap());
+    assert_eq!(fs::read(p.join(".gitignore")).unwrap(), first);
+    fs::create_dir(p.join("target")).unwrap();
+    fs::write(p.join("target").join("output"), "build output").unwrap();
+    git(p, &["check-ignore", "-q", "--", "target/output"]);
+    assert_eq!(fs::read_to_string(p.join("a.txt")).unwrap(), "one\n");
+}
+
+#[test]
+fn ignored_paths_match_git_and_collapse_ignored_directories() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    fs::write(p.join(".gitignore"), "build/\n*.log\n!keep.log\n").unwrap();
+    fs::create_dir(p.join("build")).unwrap();
+    fs::write(p.join("build").join("artifact"), "artifact").unwrap();
+    fs::write(p.join("hidden.log"), "ignored").unwrap();
+    fs::write(p.join("keep.log"), "visible").unwrap();
+    let listing = repo.ignored_paths(100).unwrap();
+    let expected = git(
+        p,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+        ],
+    );
+    assert_eq!(
+        listing.paths,
+        expected.lines().map(str::to_owned).collect::<Vec<_>>()
+    );
+    assert!(!listing.truncated);
+    let limited = repo.ignored_paths(1).unwrap();
+    assert_eq!(limited.paths, ["build/"]);
+    assert!(limited.truncated);
+}
+
+#[cfg(unix)]
+#[test]
+fn ignore_templates_refuse_a_symlink_destination() {
+    let (dir, repo) = fixture();
+    let victim = tempfile::NamedTempFile::new().unwrap();
+    fs::write(victim.path(), "preserve").unwrap();
+    std::os::unix::fs::symlink(victim.path(), dir.path().join(".gitignore")).unwrap();
+    repo.add_ignore_template(canopy_core::IgnoreTemplate::Python)
+        .unwrap_err();
+    assert_eq!(fs::read_to_string(victim.path()).unwrap(), "preserve");
+}
+
 fn commit_file(p: &Path, name: &str, content: &str) {
     fs::write(p.join(name), content).expect("write");
     git(p, &["add", "--", name]);

@@ -304,6 +304,7 @@ const VERBS: &[(&str, &str, &str)] = &[
     ("Tagging", "Tagged", "tag"),
     ("Taking", "Took", "take"),
     ("Unstaging", "Unstaged", "unstage"),
+    ("Untracking", "Stopped tracking", "stop tracking"),
 ];
 
 /// A finished operation's notification title from its progress label: "Creating branch x"
@@ -633,6 +634,9 @@ pub fn folder_name(path: &std::path::Path) -> String {
 /// a frame clones the pointer, never the data, so its cost does not grow with the repository.
 #[derive(Debug)]
 pub struct RepoTab {
+    pub ignore_query: Option<crate::worker::IgnoreQuery>,
+    pub ignore_result: Option<Result<Arc<crate::worker::IgnoreData>, String>>,
+    ignore_serial: u64,
     pub path: PathBuf,
     pub identity: Option<canopy_core::identity::Identity>,
     pub identity_error: Option<String>,
@@ -756,6 +760,9 @@ impl RepoTab {
         let name = folder_name(&path);
         Self {
             path,
+            ignore_query: None,
+            ignore_result: None,
+            ignore_serial: 0,
             identity: None,
             identity_error: None,
             name,
@@ -836,6 +843,16 @@ impl RepoTab {
     /// Queues a mutation.
     pub fn op(&self, op: Op) {
         self.worker.send(Job::Op(op));
+    }
+
+    pub fn read_ignore(&mut self, query: crate::worker::IgnoreQuery) {
+        self.ignore_serial = self.ignore_serial.wrapping_add(1);
+        self.ignore_query = Some(query.clone());
+        self.ignore_result = None;
+        self.worker.send(Job::Ignore {
+            serial: self.ignore_serial,
+            query,
+        });
     }
 
     /// Requests a full refresh.
@@ -1380,7 +1397,15 @@ impl RepoTab {
         let mut notices = Vec::new();
         while let Ok(ev) = self.worker.events.try_recv() {
             match ev {
+                Event::Ignore { serial, result } => {
+                    if serial == self.ignore_serial {
+                        self.ignore_result = Some(result);
+                    }
+                }
                 Event::Snapshot(s) => {
+                    self.ignore_serial = self.ignore_serial.wrapping_add(1);
+                    self.ignore_query = None;
+                    self.ignore_result = None;
                     let entering_merge = s.state == canopy_core::RepoState::Merge
                         && self
                             .snap
@@ -1445,6 +1470,9 @@ impl RepoTab {
                     self.clear_obsolete_refusal();
                 }
                 Event::Status(st) => {
+                    self.ignore_serial = self.ignore_serial.wrapping_add(1);
+                    self.ignore_query = None;
+                    self.ignore_result = None;
                     if let Some(s) = &mut self.snap {
                         // Copies the snapshot only if a frame still shares it (it does not
                         // between frames).
@@ -1909,6 +1937,52 @@ impl RepoTab {
 mod tests {
     use super::*;
     use canopy_core::{Choice, ConflictFile};
+
+    #[test]
+    fn ignore_replies_cannot_replace_a_newer_path_or_survive_a_status_change() {
+        use crate::worker::{IgnoreData, IgnoreQuery};
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.read_ignore(IgnoreQuery::Why("old.log".into()));
+        let Job::Ignore { serial: old, .. } = jobs.recv().expect("old read") else {
+            panic!("ignore read")
+        };
+        tab.read_ignore(IgnoreQuery::Why("new.log".into()));
+        let Job::Ignore { serial: new, .. } = jobs.recv().expect("new read") else {
+            panic!("ignore read")
+        };
+        events
+            .send(Event::Ignore {
+                serial: old,
+                result: Err("old failure".into()),
+            })
+            .expect("old response");
+        tab.poll(&[]);
+        assert!(tab.ignore_result.is_none());
+        events
+            .send(Event::Ignore {
+                serial: new,
+                result: Ok(Arc::new(IgnoreData::Why {
+                    matched: None,
+                    tracked: false,
+                })),
+            })
+            .expect("new response");
+        tab.poll(&[]);
+        assert!(matches!(tab.ignore_result, Some(Ok(_))));
+        events
+            .send(Event::Status(canopy_core::WorkingStatus::default()))
+            .expect("status");
+        events
+            .send(Event::Ignore {
+                serial: new,
+                result: Err("late failure".into()),
+            })
+            .expect("late response");
+        tab.poll(&[]);
+        assert!(tab.ignore_result.is_none() && tab.ignore_query.is_none());
+    }
 
     /// A notification says what happened in the past tense, or what could not be done.
     #[test]

@@ -17,6 +17,11 @@ use canopy_core::{
 /// A request to change the repository. Each one is followed by a refresh.
 #[derive(Debug, Clone)]
 pub enum Op {
+    AddIgnore {
+        rule: canopy_core::IgnoreRule,
+        target: canopy_core::IgnoreTarget,
+    },
+    StopTracking(String),
     Stage(Vec<String>),
     StageAll,
     Unstage(Vec<String>),
@@ -189,6 +194,8 @@ impl Op {
     pub fn label(&self) -> String {
         match self {
             Self::Stage(_) | Self::StageAll => "Staging".into(),
+            Self::AddIgnore { .. } => "Adding ignore rule".into(),
+            Self::StopTracking(path) => format!("Untracking {path}"),
             Self::Unstage(_) | Self::UnstageAll => "Unstaging".into(),
             Self::Discard(_) => "Discarding changes".into(),
             Self::Hunk {
@@ -286,6 +293,8 @@ impl Op {
 /// Work for the repository thread.
 #[derive(Debug, Clone)]
 pub enum Job {
+    /// Ignore management reads; the serial ties the reply to the newest form request.
+    Ignore { serial: u64, query: IgnoreQuery },
     /// Full snapshot with up to this many commits (0 keeps the current limit).
     Refresh(usize),
     /// Status only (working tree changed).
@@ -314,6 +323,31 @@ pub enum Job {
     Op(Op),
 }
 
+/// A read requested by the ignore management form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IgnoreQuery {
+    Preview {
+        rule: canopy_core::IgnoreRule,
+        target: canopy_core::IgnoreTarget,
+    },
+    Paths,
+    Why(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum IgnoreData {
+    Preview {
+        file: PathBuf,
+        preview: canopy_core::IgnorePreview,
+        truncated: bool,
+    },
+    Paths(canopy_core::IgnoredPaths),
+    Why {
+        matched: Option<canopy_core::IgnoreMatch>,
+        tracked: bool,
+    },
+}
+
 /// Identifies a file diff request; the response carries it back so stale replies can be dropped.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DiffKey {
@@ -331,6 +365,10 @@ pub struct DiffKey {
 /// hold them across a frame without copying.
 #[derive(Debug)]
 pub enum Event {
+    Ignore {
+        serial: u64,
+        result: Result<Arc<IgnoreData>, String>,
+    },
     Snapshot(Arc<RepoSnapshot>),
     Status(WorkingStatus),
     Details(Arc<CommitDetails>),
@@ -630,6 +668,7 @@ impl Job {
     fn kind(&self) -> &'static str {
         match self {
             Self::Refresh(_) => "refresh",
+            Self::Ignore { .. } => "ignore",
             Self::RefreshStatus => "status",
             Self::Details(_) => "details",
             Self::Diff(_) => "diff",
@@ -699,6 +738,14 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             let kind = job.kind();
             let started = Instant::now();
             match job {
+                Job::Ignore { serial, query } => {
+                    emit(Event::Ignore {
+                        serial,
+                        result: read_ignore(&repo, &query)
+                            .map(Arc::new)
+                            .map_err(|e| e.to_string()),
+                    });
+                }
                 Job::Details(oid) => {
                     // The file list needs no file contents, so it is shown first, offline. A
                     // treeless clone downloads trees for it (network, with a progress line).
@@ -1013,9 +1060,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
 fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
     let mut keep = vec![true; jobs.len()];
     let mut details_seen = false;
+    let mut ignore_seen = false;
     let mut diff_sources = Vec::new();
     for (i, job) in jobs.iter().enumerate().rev() {
         match job {
+            Job::Ignore { .. } => keep[i] = !std::mem::replace(&mut ignore_seen, true),
             Job::Details(_) => keep[i] = !std::mem::replace(&mut details_seen, true),
             Job::Diff(key) => {
                 let source = std::mem::discriminant(&key.source);
@@ -1182,6 +1231,20 @@ fn snapshot_completing(
 fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Result<String> {
     let done = |r: canopy_core::Result<()>| r.map(|()| String::new());
     match op {
+        Op::AddIgnore { rule, target } => repo.add_ignore_rule(&rule, target).map(|out| {
+            format!(
+                "{} {} in {}.",
+                if out.added { "Added" } else { "Already saved" },
+                out.pattern,
+                out.file
+                    .strip_prefix(repo.workdir())
+                    .unwrap_or(&out.file)
+                    .display()
+            )
+        }),
+        Op::StopTracking(path) => repo
+            .stop_tracking(&path)
+            .map(|()| format!("Kept {path} locally and staged its removal from Git.")),
         Op::Stage(p) => done(repo.stage(&p)),
         Op::StageAll => done(repo.stage_all()),
         Op::Unstage(p) => done(repo.unstage(&p)),
@@ -1279,6 +1342,44 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             expected,
         } => done(repo.write_resolution(&path, &content, mark, expected)),
         Op::ResolveSide { path, side } => done(repo.resolve_with_side(&path, side)),
+    }
+}
+
+/// Candidate collection and Git's deciding-rule checks stay on the repository thread.
+fn read_ignore(repo: &Repo, query: &IgnoreQuery) -> canopy_core::Result<IgnoreData> {
+    match query {
+        IgnoreQuery::Paths => repo.ignored_paths(1000).map(IgnoreData::Paths),
+        IgnoreQuery::Why(path) => {
+            let matched = repo.why_ignored(path)?;
+            let needle = path.trim_end_matches('/');
+            let prefix = format!("{needle}/");
+            let tracked = repo.git().index()?.iter().any(|entry| {
+                let path = String::from_utf8_lossy(&entry.path);
+                path == needle || path.starts_with(&prefix)
+            });
+            Ok(IgnoreData::Why { matched, tracked })
+        }
+        IgnoreQuery::Preview { rule, target } => {
+            let index = repo.git().index()?;
+            let mut paths = index
+                .iter()
+                .map(|entry| String::from_utf8_lossy(&entry.path).into_owned())
+                .collect::<Vec<_>>();
+            let status = repo.status(MissingObjects::Fail)?;
+            paths.extend(status.unstaged.into_iter().map(|entry| entry.path));
+            paths.extend(status.untracked_dirs.into_iter().map(|dir| dir.path));
+            let ignored = repo.ignored_paths(1000)?;
+            paths.extend(ignored.paths);
+            paths.sort();
+            paths.dedup();
+            let truncated = ignored.truncated || paths.len() > 1000;
+            paths.truncate(1000);
+            Ok(IgnoreData::Preview {
+                file: repo.ignore_destination(*target, rule.path())?.file,
+                preview: repo.preview_ignore_rule(rule, *target, &paths)?,
+                truncated,
+            })
+        }
     }
 }
 

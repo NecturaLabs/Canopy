@@ -1070,10 +1070,15 @@ impl eframe::App for CanopyApp {
         if let Some(d) = self.dialogs.current_mut() {
             crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
             let consent = is_consent(d);
+            let dialog_tab = if let Dialog::Ignore(form) = d {
+                self.tabs.iter().find(|t| t.path == form.repo)
+            } else {
+                self.tabs.get(self.active)
+            };
             match dialogs::show(
                 &ctx,
                 d,
-                self.tabs.get(self.active),
+                dialog_tab,
                 &mut self.folder_picker,
                 self.clone.is_some(),
                 &self.updater,

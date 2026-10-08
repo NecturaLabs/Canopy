@@ -332,6 +332,13 @@ impl CanopyApp {
                     Action::AddRemoteDialog,
                 ),
                 (
+                    e(icon::EYE_SLASH, "Ignore rules…", "Changes", None),
+                    Action::OpenDialog(Dialog::Ignore(Box::new(dialogs::IgnoreForm::new(
+                        tab.path.clone(),
+                        None,
+                    )))),
+                ),
+                (
                     e(
                         icon::SLIDERS_HORIZONTAL,
                         "Repository settings…",

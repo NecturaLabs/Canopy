@@ -46,6 +46,7 @@ pub use git2::Oid;
 pub use graph::{GraphRow, LineEnd, Segment as GraphSegment};
 pub use ignore::{
     IgnoreDestination, IgnoreMatch, IgnoreOutcome, IgnorePreview, IgnoreRule, IgnoreTarget,
+    IgnoreTemplate, IgnoredPaths,
 };
 pub use lfs::{LfsFile, LfsPointer};
 pub use merged::{MergedBranch, MergedReason};

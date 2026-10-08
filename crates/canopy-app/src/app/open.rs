@@ -8,6 +8,7 @@ use super::*;
 /// How a new repository starts.
 #[derive(Debug)]
 pub(super) struct NewRepo {
+    pub(super) ignore_template: canopy_core::IgnoreTemplate,
     /// Its first branch, unless `follow_config` and `init.defaultBranch` names one.
     pub(super) branch: String,
     pub(super) follow_config: bool,
@@ -71,6 +72,7 @@ fn open(path: &std::path::Path, create: Option<&NewRepo>) -> canopy_core::Result
     };
     if let Some(new) = create {
         Repo::init(&path, &new.branch, new.follow_config)?;
+        Repo::open(&path)?.add_ignore_template(new.ignore_template)?;
     }
     let root = Repo::open(&path)?.workdir().to_path_buf();
     Ok(root.canonicalize().unwrap_or(root))
@@ -166,12 +168,18 @@ impl CanopyApp {
     }
 
     /// Creates a repository at `path`, then opens it.
-    pub(super) fn init_repo(&mut self, ctx: &egui::Context, path: PathBuf) {
+    pub(super) fn init_repo(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        ignore_template: canopy_core::IgnoreTemplate,
+    ) {
         self.request_open(
             ctx,
             OpenRequest {
                 path,
                 create: Some(NewRepo {
+                    ignore_template,
                     branch: self.settings.initial_branch().to_owned(),
                     follow_config: self.settings.git_options().follow_config,
                 }),

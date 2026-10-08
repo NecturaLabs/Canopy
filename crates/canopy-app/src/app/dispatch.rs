@@ -8,6 +8,11 @@ impl CanopyApp {
     pub(super) fn apply(&mut self, ctx: &egui::Context, actions: Vec<Action>) {
         for action in actions {
             match action {
+                Action::ReadIgnore { repo, query } => {
+                    if let Some(t) = self.tabs.iter_mut().find(|t| t.path == repo) {
+                        t.read_ignore(query);
+                    }
+                }
                 Action::Op(op) => {
                     if let Some(t) = self.tab() {
                         t.op(op);
@@ -47,7 +52,7 @@ impl CanopyApp {
                 Action::OpenRepo(p) => self.open_repo(ctx, p),
                 Action::SwitchWorktree(p) => self.switch_worktree(ctx, p),
                 Action::Clone { url, dest } => self.start_clone(ctx, url, dest),
-                Action::Init(p) => self.init_repo(ctx, p),
+                Action::Init(p, template) => self.init_repo(ctx, p, template),
                 Action::ForgetRecent(p) => self.settings.recent.retain(|r| r != &p),
                 Action::CloseTab(i) => {
                     if i < self.tabs.len() {

@@ -309,7 +309,15 @@ fn lists(
         // The illustration and the summary live in the main pane (`clean_home`); here the
         // column only says there is nothing to list.
         flip.item(ui, clean_key(), None, |ui| {
-            list_header(ui, "Changes", 0, Tone::Neutral, |_| {});
+            list_header(ui, "Changes", 0, Tone::Neutral, |ui| {
+                if IconButton::new(icon::EYE_SLASH, "Ignore rules…")
+                    .size(Size::Sm)
+                    .show(ui)
+                    .clicked()
+                {
+                    actions.push(ignore_rules(tab));
+                }
+            });
         });
     } else {
         let (conflicts, unstaged, staged) = visible_lists(st);
@@ -327,6 +335,13 @@ fn lists(
     }
     ui.spacing_mut().item_spacing.y = spacing;
     ui.spacing_mut().interact_size.y = row_height;
+}
+
+/// Shared entry point from the Changes header and overflow menu.
+fn ignore_rules(tab: &RepoTab) -> Action {
+    Action::OpenDialog(crate::views::dialogs::Dialog::Ignore(Box::new(
+        crate::views::dialogs::IgnoreForm::new(tab.path.clone(), None),
+    )))
 }
 
 /// The main pane of a clean working tree: the illustration and where the branch stands, with
@@ -587,6 +602,13 @@ fn list(
                     .size(Size::Sm)
                     .show(ui);
                 menu::menu(&more, |m| {
+                    if m.item(icon::EYE_SLASH, "Ignore rules…")
+                        .show(m.ui)
+                        .clicked()
+                    {
+                        actions.push(ignore_rules(tab));
+                    }
+                    m.separator();
                     if m.item(icon::ARROW_COUNTER_CLOCKWISE, "Discard all changes…")
                         .danger()
                         .show(m.ui)
@@ -715,6 +737,40 @@ fn list(
             }
             if m.item(icon::COPY, "Copy path").show(m.ui).clicked() {
                 actions.push(Action::Copy(entry.path.clone()));
+            }
+            m.separator();
+            if m.item(icon::EYE_SLASH, "Ignore…").show(m.ui).clicked() {
+                actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Ignore(
+                    Box::new(crate::views::dialogs::IgnoreForm::new(
+                        tab.path.clone(),
+                        Some(entry.path.clone()),
+                    )),
+                )));
+            }
+            if m.item(icon::QUESTION, "Why ignored…").show(m.ui).clicked() {
+                actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Ignore(
+                    Box::new(
+                        crate::views::dialogs::IgnoreForm::new(
+                            tab.path.clone(),
+                            Some(entry.path.clone()),
+                        )
+                        .why(),
+                    ),
+                )));
+            }
+            if entry.kind != canopy_core::ChangeKind::Untracked
+                && !conflicted
+                && m.item(icon::MINUS_CIRCLE, "Stop tracking…")
+                    .danger()
+                    .show(m.ui)
+                    .clicked()
+            {
+                actions.push(Action::Confirm {
+                    title: format!("Stop tracking {}?", entry.path),
+                    body: "Files on disk are kept. Their removal from Git is staged for commit; collaborators will lose the tracked copy when they pull that commit. Add an ignore rule separately to keep it out of future commits.".into(),
+                    confirm: "Stop tracking".into(), danger: true,
+                    op: Op::StopTracking(entry.path.clone()),
+                });
             }
             if which == List::Unstaged {
                 m.separator();

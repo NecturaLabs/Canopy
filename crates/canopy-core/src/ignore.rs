@@ -11,6 +11,51 @@ use std::path::{Path, PathBuf};
 use crate::paths::{check_relative, os_path, refuse_link, safe_join, write_atomic};
 use crate::{Error, Repo, Result, cli};
 
+/// Small built-in starter rules, added only when explicitly selected during repository creation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IgnoreTemplate {
+    #[default]
+    None,
+    Rust,
+    Node,
+    Python,
+}
+
+impl IgnoreTemplate {
+    pub const ALL: [Self; 4] = [Self::None, Self::Rust, Self::Node, Self::Python];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Rust => "Rust",
+            Self::Node => "Node / JavaScript",
+            Self::Python => "Python",
+        }
+    }
+
+    pub fn patterns(self) -> &'static [&'static str] {
+        match self {
+            Self::None => &[],
+            Self::Rust => &["/target/", "**/*.rs.bk"],
+            Self::Node => &["/node_modules/", "/dist/", "*.tsbuildinfo"],
+            Self::Python => &[
+                "__pycache__/",
+                "*.py[cod]",
+                ".venv/",
+                ".pytest_cache/",
+                ".mypy_cache/",
+            ],
+        }
+    }
+}
+
+/// A bounded, non-recursive list of ignored working-tree paths (ignored folders stay collapsed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgnoredPaths {
+    pub paths: Vec<String>,
+    pub truncated: bool,
+}
+
 /// Which file a new ignore rule goes into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IgnoreTarget {
@@ -316,6 +361,58 @@ fn append_line(existing: &[u8], line: &str, ignore_case: bool) -> Option<Vec<u8>
 }
 
 impl Repo {
+    /// Ignored paths for the management UI, without opening ignored directories or downloading.
+    pub fn ignored_paths(&self, limit: usize) -> Result<IgnoredPaths> {
+        let mut options = git2::StatusOptions::new();
+        options
+            .include_ignored(true)
+            .include_untracked(false)
+            .recurse_ignored_dirs(false)
+            .recurse_untracked_dirs(true)
+            .show(git2::StatusShow::Workdir)
+            .renames_head_to_index(false)
+            .renames_index_to_workdir(false);
+        let statuses = self.git().statuses(Some(&mut options))?;
+        let mut paths = statuses
+            .iter()
+            .filter(|entry| entry.status().contains(git2::Status::IGNORED))
+            .map(|entry| String::from_utf8_lossy(entry.path_bytes()).into_owned())
+            .take(limit.saturating_add(1))
+            .collect::<Vec<_>>();
+        paths.sort();
+        let truncated = paths.len() > limit;
+        paths.truncate(limit);
+        Ok(IgnoredPaths { paths, truncated })
+    }
+
+    /// Appends a starter template atomically, retaining existing rules and refusing symlinks.
+    /// Returns whether the file changed; None does not create a file.
+    pub fn add_ignore_template(&self, template: IgnoreTemplate) -> Result<bool> {
+        if template == IgnoreTemplate::None {
+            return Ok(false);
+        }
+        let file = self
+            .ignore_destination(IgnoreTarget::Root, ".gitignore")?
+            .file;
+        refuse_link(&file)?;
+        let mut bytes = match std::fs::read(&file) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e.into()),
+        };
+        let mut changed = false;
+        for pattern in template.patterns() {
+            if let Some(next) = append_line(&bytes, pattern, false) {
+                bytes = next;
+                changed = true;
+            }
+        }
+        if changed {
+            write_atomic(&file, &bytes)?;
+        }
+        Ok(changed)
+    }
+
     /// Where a rule for `path` aimed at `target` would be written, and the folder its patterns
     /// are relative to.
     pub fn ignore_destination(

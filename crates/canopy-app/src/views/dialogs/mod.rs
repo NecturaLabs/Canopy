@@ -32,6 +32,7 @@ use crate::worker::Op;
 mod common;
 pub(crate) use common::{tilde_in, valid_ref_name};
 mod credential;
+mod ignore;
 mod reader;
 mod stack;
 mod start;
@@ -44,6 +45,7 @@ use common::{
     swallow_enter, tilde, working,
 };
 use credential::credential;
+pub use ignore::IgnoreForm;
 pub use stack::DialogStack;
 pub use start::Start;
 pub use url::{UrlBuilder, UrlSource};
@@ -51,6 +53,7 @@ pub use url::{UrlBuilder, UrlSource};
 /// Every dialog Canopy shows.
 #[derive(Debug, Clone)]
 pub enum Dialog {
+    Ignore(Box<IgnoreForm>),
     Open {
         path: String,
         /// Recently opened repositories, offered under the field.
@@ -69,6 +72,7 @@ pub enum Dialog {
     },
     NewRepository {
         path: String,
+        ignore_template: canopy_core::IgnoreTemplate,
         /// The folder asked for, while it is created and opened.
         pending: Option<std::path::PathBuf>,
         /// Why it could not be created, in git's words.
@@ -239,6 +243,7 @@ impl Dialog {
     pub fn new_repository(path: String) -> Self {
         Self::NewRepository {
             path,
+            ignore_template: canopy_core::IgnoreTemplate::None,
             pending: None,
             error: None,
         }
@@ -316,6 +321,7 @@ pub fn show(
     // footer.
     let mut extra: Option<Outcome> = None;
     let outcome = match dialog {
+        Dialog::Ignore(form) => return ignore::show(ctx, salt, form, tab),
         Dialog::Identity {
             name,
             email,
@@ -526,6 +532,7 @@ pub fn show(
         }
         Dialog::NewRepository {
             path,
+            ignore_template,
             pending,
             error,
         } => {
@@ -561,6 +568,12 @@ pub fn show(
                     if *path != typed {
                         *error = None;
                     }
+                    let templates = canopy_core::IgnoreTemplate::ALL.map(|template| (template, template.label()));
+                    Select::new(ignore_template, &templates).label(".gitignore template")
+                        .enabled(!busy).show(ui);
+                    if !ignore_template.patterns().is_empty() {
+                        note(ui, ignore_template.patterns().join(" · "), p.text_dim);
+                    }
                     if let Some(asked) = pending.as_deref() {
                         working(ui, &format!("Creating {}…", tilde(asked)));
                     }
@@ -577,7 +590,7 @@ pub fn show(
                     let folder = crate::settings::expand_home(path.trim());
                     *error = None;
                     *pending = Some(folder.clone());
-                    Outcome::RunKeep(vec![Action::Init(folder)])
+                    Outcome::RunKeep(vec![Action::Init(folder, *ignore_template)])
                 }
             })
         }

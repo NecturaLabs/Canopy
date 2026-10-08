@@ -29,6 +29,10 @@ pub enum AppearanceChoice {
 /// Something the user asked for, collected during a frame and applied after it.
 #[derive(Debug, Clone)]
 pub enum Action {
+    ReadIgnore {
+        repo: PathBuf,
+        query: crate::worker::IgnoreQuery,
+    },
     Op(Op),
     /// `op` in the repository at `repo`, whichever tab is active (a confirmation answered after
     /// the user moved to another tab); nothing when that repository's tab is closed.
@@ -51,7 +55,7 @@ pub enum Action {
         url: String,
         dest: PathBuf,
     },
-    Init(PathBuf),
+    Init(PathBuf, canopy_core::IgnoreTemplate),
     ForgetRecent(PathBuf),
     CloseTab(usize),
     SwitchTab(usize),

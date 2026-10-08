@@ -46,7 +46,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `options.rs` | Canopy's git choices (`GitOptions`: follow the git configuration, autostash, follow-tags, `ConflictStyle`, `PushDefault`, `Cleanup`, tag pruning), kept on the `Repo` and set by the worker from Settings, and the flags and `-c` overrides each run gets: none for a choice the user's configuration sets while Canopy follows it, Canopy's choice otherwise (ADR 0012). |
 | `paths.rs` | `safe_join`: the only way `canopy-core` touches a file inside a working tree. Refuses empty, absolute, `..` and `.git` paths and any symbolic link component. |
 | `identity.rs` | The identity Git will put into the next commit: author and committer from `git var`, each value's source (environment variable, configuration scope and file, or Git's guess from the computer) from one `git config --get-regexp`, and `set` / `clear` for `user.name` and `user.email` at the local or global scope. Canopy keeps no identity of its own and never writes `author.*` or `committer.*`. Inputs are validated before git runs; `looks_like_placeholder` only warns. |
-| `ignore.rs` | Ignore rules: add a rule to `.gitignore`, `info/exclude` or the global file, preview what it would ignore, ask git why a path is ignored (`check-ignore -v`), stop tracking a path. |
+| `ignore.rs` | Ignore rules: add a rule to `.gitignore`, `info/exclude` or the global file, preview what it would ignore, ask git why a path is ignored (`check-ignore -v`), stop tracking a path. Bounded ignored-path reads with collapsed ignored folders and atomic, optional starter templates. |
 | `flow.rs` | git-flow without the `git flow` binary: the AVH config keys, start and finish for feature, bugfix, release and hotfix, with a `merge-tree` pre-flight that refuses on conflicts. |
 | `merged.rs` | Which local branches are merged into a base (reachable, upstream gone, squash-merged) and which check proved it. |
 | `lfs.rs` | Git LFS awareness without `git-lfs`: pointer parsing, which paths use `filter=lfs`, and whether an object has been downloaded. |
@@ -56,7 +56,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `cli.rs` | Runs the `git` executable non-interactively (`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, no console window on Windows), returns git's stderr on failure and streams `--progress` output line by line for long operations. Keeps the environment's repository variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of `git rev-parse --local-env-vars` but the configuration ones) away from git, so a command works in the repository Canopy gave it, the one it checked and shows. Registers Canopy's askpass hook and redacts URLs and arguments for the log (`redact_url`, `loggable`). |
 
 The app still calls `delete_branch(name, force)` and `stage_all()`, thin wrappers over the newer
-calls. It does not yet use `ignore.rs`, `flow.rs`, `merged.rs`, `lfs.rs`, `submodule.rs`,
+calls. It does not yet use `flow.rs`, `merged.rs`, `lfs.rs`, `submodule.rs`,
 `paths::safe_join`, `publish_branch`, `untracked_children`, `stage_all_except_repositories` or the
 file-mode fields outside the core's own code and tests; the backlog entries for those features
 are the UI work.
@@ -163,6 +163,7 @@ thread.
 | `views/settings_screen.rs` | The settings screen: appearance, Git, integrations, accounts, updates, privacy, keyboard, backup and reset, and this repository; settings search. |
 | `views/dialogs/mod.rs` | `Dialog` and `show`: the modal dialogs (clone, new branch, confirmations, consent, ...). |
 | `views/dialogs/stack.rs` | `DialogStack`: credentials in front, the consent never replaced, a closed prompt always answered. |
+| `views/dialogs/ignore.rs` | Repository-bound ignore form: rule destinations and previews, ignored paths and deciding-rule explanations. Reads and mutations go through the repository worker; serials discard superseded reads and status changes invalidate cached results. |
 | `views/dialogs/reader.rs` | The full-size reading modal for the Terms of Service and Privacy Policy, used by the consent too: a measured column with headings, lists and kit links, scrolling with fades; each document starts at the top when the reader opens. |
 | `views/dialogs/{url,start,credential,update,common}.rs` | The remote URL builder, where a new branch starts, credential prompts, the update dialog (what is new, installing, restarting), shared fields and buttons. |
 | `views/statusbar.rs` | Branch, ahead/behind, repository state, running job. |

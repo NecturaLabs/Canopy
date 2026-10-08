@@ -389,6 +389,11 @@ in the density's metrics:
   local-only status uses the tools' icon/caption alignment and density, separated by a quiet
   divider, without a badge capsule or button behaviour. Its explanation is about repository
   remotes, rather than a promise about all application network activity.
+- Ignore management uses the shared form dialog, labelled fields/selects and segmented pages
+  for Add rule, Ignored files and Why ignored. A preview names the destination and impact before
+  Add rule is enabled. Long path lists scroll inside the dialog; the footer stays reachable.
+  Stop tracking lives in the file context menu behind a danger confirmation that explains the
+  staged removal and keeps the working copy. New repository offers optional starter templates.
 - An unborn branch counts as a branch in the sidebar and shows its name with "no commits yet" in
   both the sidebar and status bar.
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
