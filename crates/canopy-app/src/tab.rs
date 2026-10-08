@@ -924,6 +924,14 @@ impl RepoTab {
             self.requests.quiet_refresh = false;
             self.requests.loading = true;
             h.send(HostJob::List(self.requests.filter));
+            // Refreshing the rows must refresh the open request's body and action state too.
+            // Otherwise a manual refresh leaves its details stale until another selection.
+            if let Some(n) = self.requests.selected
+                && self.requests.details.is_some()
+            {
+                self.requests.details_loading = true;
+                h.send(HostJob::Details(n));
+            }
         }
     }
 
@@ -1693,7 +1701,9 @@ impl RepoTab {
                     if self.requests.selected == Some(n) {
                         self.requests.details_loading = false;
                         // A quiet refresh of the open request that fails leaves it shown.
-                        let kept = result.is_err() && matches!(self.requests.details, Some(Ok(_)));
+                        let kept = self.requests.quiet_refresh
+                            && result.is_err()
+                            && matches!(self.requests.details, Some(Ok(_)));
                         if !kept {
                             self.requests.details = Some(result.map(Arc::new));
                         }
@@ -2801,6 +2811,20 @@ mod tests {
         finish(&events, OpKind::Fetch, Ok(String::new()));
         tab.poll(&[]);
         assert!(tab.host.is_none() && !tab.requests.loading);
+    }
+
+    #[test]
+    fn a_manual_request_refresh_also_reloads_the_open_details() {
+        let (mut tab, _events, host_jobs) = tab_showing_requests();
+        tab.load_requests();
+        let jobs = jobs_of(&host_jobs);
+        assert!(
+            matches!(jobs.as_slice(), [HostJob::List(StateFilter::Open), HostJob::Details(7)]),
+            "both the list and selected request need fresh host data: {jobs:?}"
+        );
+        assert!(tab.requests.loading);
+        assert!(tab.requests.details_loading);
+        assert!(tab.requests.details.is_some(), "keep the old details until refreshed");
     }
 
     #[test]
