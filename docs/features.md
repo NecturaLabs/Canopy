@@ -102,7 +102,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 |---|---|---|---|---|
 | Unstaged, staged and conflicted lists (empty ones hidden while another has content) | Done | Yes | Yes | Yes |
 | Clean working tree summary: branch status, Push/Pull/Publish, last commit | Done | ? | ? | ? |
-| Stage, unstage, discard per file and all (Stage selected beside Stage all) | Done | Yes | Yes | Yes |
+| Stage, unstage, discard per file and all (Stage selected beside Stage all; Ctrl/Shift-click select several files) | Done | Yes | Yes | Yes |
 | Hunk staging, unstaging and discard | Done | Yes | Yes | Yes |
 | Line-level staging | Done | Yes | Yes | Yes |
 | Diff with old and new line numbers | Done | Yes | Yes | Yes |

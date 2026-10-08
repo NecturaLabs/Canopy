@@ -689,6 +689,9 @@ pub struct RepoTab {
     /// Set when loading the details of `selected_commit` failed.
     pub details_error: Option<DetailsError>,
     pub file: Option<FileSelection>,
+    /// Unstaged files picked with Ctrl-click or Shift-click besides the open one, for
+    /// "Stage selected" (see [`Self::stage_targets`]).
+    pub marked: BTreeSet<String>,
     pub diff: Option<Arc<FileDiff>>,
     /// Row layout of `diff` for the diff view, rebuilt only when the diff or layout changes.
     pub diff_layout: Option<crate::views::diff::DiffLayout>,
@@ -814,6 +817,7 @@ impl RepoTab {
             diff_default: diff_prefs,
             highlights: None,
             line_sel: None,
+            marked: BTreeSet::new(),
             resolver: None,
             split_diff: false,
             highlight_diff: true,
@@ -1168,6 +1172,7 @@ impl RepoTab {
     /// way for that file is no longer wanted.
     pub fn deselect_file(&mut self) {
         self.file = None;
+        self.marked.clear();
         self.diff = None;
         self.diff_error = None;
         self.pending_diff = None;
@@ -1243,6 +1248,33 @@ impl RepoTab {
         }
     }
 
+    /// The unstaged files "Stage selected" stages, in list order: the marked ones and the open
+    /// file when it is an unstaged, unconflicted one.
+    pub fn stage_targets(&self) -> Vec<String> {
+        let Some(snap) = &self.snap else {
+            return Vec::new();
+        };
+        let open = self
+            .file
+            .as_ref()
+            .filter(|f| f.source == DiffSource::Unstaged && !f.conflicted)
+            .map(|f| f.entry.path.as_str());
+        snap.status
+            .unstaged
+            .iter()
+            .filter(|f| open == Some(f.path.as_str()) || self.marked.contains(&f.path))
+            .map(|f| f.path.clone())
+            .collect()
+    }
+
+    /// Forgets marked files that are no longer unstaged.
+    fn prune_marked(&mut self) {
+        if let Some(snap) = &self.snap {
+            self.marked
+                .retain(|p| snap.status.unstaged.iter().any(|f| f.path == *p));
+        }
+    }
+
     /// Shows the diff of a file.
     pub fn select_file(&mut self, sel: FileSelection) {
         let key = self.diff_key(&sel);
@@ -1254,6 +1286,13 @@ impl RepoTab {
         }
         if self.file.as_ref() != Some(&sel) {
             self.line_sel = None;
+        }
+        if !self.file.as_ref().is_some_and(|f| {
+            f.source == sel.source
+                && f.entry.path == sel.entry.path
+                && f.conflicted == sel.conflicted
+        }) {
+            self.marked.clear();
         }
         if sel.conflicted {
             if self
@@ -1463,6 +1502,7 @@ impl RepoTab {
                     let had = self.snap.is_some();
                     self.snap_index = SnapIndex::new(&s);
                     self.snap = Some(s);
+                    self.prune_marked();
                     self.generation += 1;
                     self.update_forges(gitlab_hosts);
                     self.load_error = None;
@@ -2142,6 +2182,75 @@ mod tests {
             },
             conflicted: false,
         }
+    }
+
+    fn unstaged_entry(path: &str) -> FileEntry {
+        let mut entry = open_unstaged_file().entry;
+        entry.path = path.into();
+        entry
+    }
+
+    #[test]
+    fn stage_targets_are_the_open_unstaged_file_and_the_marked_ones_in_list_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, _events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let mut snap = RepoSnapshot::default();
+        snap.status.unstaged = ["a.rs", "b.rs", "c.rs", "d.rs"]
+            .map(unstaged_entry)
+            .to_vec();
+        snap.status.staged = vec![unstaged_entry("e.rs")];
+        tab.snap = Some(Arc::new(snap));
+        assert!(tab.stage_targets().is_empty(), "nothing is open");
+
+        tab.select_file(open_unstaged_file());
+        tab.marked
+            .extend(["d.rs".to_owned(), "b.rs".to_owned(), "gone.rs".to_owned()]);
+        assert_eq!(tab.stage_targets(), ["a.rs", "b.rs", "d.rs"]);
+
+        // A staged file is open: only the marked files are staged.
+        tab.file = Some(FileSelection {
+            source: DiffSource::Staged,
+            entry: unstaged_entry("e.rs"),
+            conflicted: false,
+        });
+        assert_eq!(tab.stage_targets(), ["b.rs", "d.rs"]);
+        Ok(())
+    }
+
+    #[test]
+    fn marks_follow_the_selection_and_drop_files_that_left_the_unstaged_list()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, _events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let mut snap = RepoSnapshot::default();
+        snap.status.unstaged = ["a.rs", "b.rs"].map(unstaged_entry).to_vec();
+        tab.snap = Some(Arc::new(snap));
+        tab.select_file(open_unstaged_file());
+        tab.marked.insert("b.rs".into());
+
+        // The same file arriving again with new counts keeps the marks...
+        let mut again = open_unstaged_file();
+        again.entry.additions = 3;
+        tab.select_file(again);
+        assert_eq!(tab.marked.len(), 1);
+        // ...another file replaces the selection.
+        tab.select_file(FileSelection {
+            entry: unstaged_entry("b.rs"),
+            ..open_unstaged_file()
+        });
+        assert!(tab.marked.is_empty());
+
+        tab.marked.insert("a.rs".into());
+        tab.deselect_file();
+        assert!(tab.marked.is_empty());
+        Ok(())
     }
 
     #[test]

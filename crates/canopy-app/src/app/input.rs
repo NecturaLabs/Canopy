@@ -252,7 +252,12 @@ impl CanopyApp {
                 } else if sel.source == canopy_core::DiffSource::Staged {
                     actions.push(Action::Op(Op::Unstage(vec![path])));
                 } else {
-                    actions.push(Action::Op(Op::Stage(vec![path])));
+                    // Every file picked with Ctrl-click or Shift-click, else the open one.
+                    let mut paths = t.stage_targets();
+                    if paths.is_empty() {
+                        paths.push(path);
+                    }
+                    actions.push(Action::Op(Op::Stage(paths)));
                 }
             }
             C::NextConflict
@@ -369,6 +374,48 @@ mod tests {
         let resolver = app.tabs[0].resolver.as_ref().expect("visible resolver");
         assert_eq!(resolver.choices, vec![None]);
         assert_eq!(resolver.editing, None);
+    }
+
+    #[test]
+    fn the_stage_key_stages_every_selected_unstaged_file() {
+        use crate::tab::FileSelection;
+        use crate::worker::Worker;
+        use canopy_core::{ChangeKind, DiffSource, FileEntry};
+        let entry = |path: &str| FileEntry {
+            path: path.into(),
+            old_path: None,
+            kind: ChangeKind::Modified,
+            additions: 0,
+            deletions: 0,
+            lfs: false,
+            old_mode: None,
+            new_mode: None,
+        };
+        let mut app = test_app();
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.view = View::Changes;
+        let mut snap = canopy_core::RepoSnapshot::default();
+        snap.status.unstaged = vec![entry("a.rs"), entry("b.rs"), entry("c.rs")];
+        tab.snap = Some(std::sync::Arc::new(snap));
+        tab.file = Some(FileSelection {
+            source: DiffSource::Unstaged,
+            entry: entry("a.rs"),
+            conflicted: false,
+        });
+        app.tabs.push(tab);
+        let staged = |app: &mut CanopyApp| match run(app, Command::ToggleStage).as_slice() {
+            [Action::Op(Op::Stage(paths))] => paths.clone(),
+            other => panic!("one Stage expected, got {other:?}"),
+        };
+        assert_eq!(staged(&mut app), ["a.rs"]);
+        app.tabs[0].marked.insert("c.rs".into());
+        assert_eq!(staged(&mut app), ["a.rs", "c.rs"]);
     }
 
     /// Shift+F10 is in the keymap table for the cheatsheet, but the focused row opens its menu

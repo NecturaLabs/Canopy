@@ -418,7 +418,9 @@ in the density's metrics:
   Git's pending message when no draft exists.
 - Changes list headers: "Stage all" and "Unstage all" are small kit buttons (`Size::Sm`); the
   Unstaged header adds "Stage selected" immediately to the right of "Stage all" (disabled unless an
-  unstaged file is selected). Narrow columns drop Stage selected's label first, then Stage all's.
+  unstaged file is selected). Ctrl-click toggles and Shift-click extends a selection of several
+  unstaged files from the open one (`RepoTab::marked`, the kit's `Selection` rules); Stage
+  selected, Space and the row menu stage all of them, and any plain selection drops the rest. Narrow columns drop Stage selected's label first, then Stage all's.
   The diff header has no Stage file button: staging a file is that button, the row's action and
   Space. Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero

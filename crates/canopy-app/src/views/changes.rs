@@ -13,7 +13,7 @@ use crate::ui::kit::anim::Flip;
 use crate::ui::kit::chip::CountBadge;
 use crate::ui::kit::field::{TextArea, TextField};
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{RowKind, SectionHeader, caps_galley};
+use crate::ui::kit::row::{RowKind, SectionHeader, Selection, caps_galley};
 use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
 use crate::ui::kit::toggle::Checkbox;
 use crate::ui::kit::{Button, IconButton, Size, Tone, menu, paint};
@@ -584,13 +584,12 @@ fn list(
     let width = ui.available_width();
     let compact = width < 280.0;
     let labelled_selected = width >= STAGE_SELECTED_LABEL_WIDTH;
-    // What "Stage selected" would stage: the unstaged file open in the diff.
-    let staging = tab
-        .file
-        .as_ref()
-        .filter(|s| s.source == DiffSource::Unstaged && !s.conflicted)
-        .map(|s| s.entry.path.clone())
-        .filter(|path| files.iter().any(|f| f.path == *path));
+    // What "Stage selected" stages: the unstaged file open in the diff and the ones marked.
+    let staging = tab.stage_targets();
+    let stage_tip = match staging.len() {
+        0 | 1 => "Stage the selected file".to_owned(),
+        n => format!("Stage the {n} selected files"),
+    };
     flip.item(ui, header_key(which), None, |ui| {
         list_header(ui, title, files.len(), tone, |ui| match which {
             List::Unstaged if !files.is_empty() => {
@@ -600,25 +599,23 @@ fn list(
                     Button::new("Stage selected")
                         .icon(icon::PLUS_CIRCLE)
                         .size(Size::Sm)
-                        .tooltip("Stage the selected file")
+                        .tooltip(&stage_tip)
                         .shortcut(Command::ToggleStage)
                         .id_salt("stage-selected")
-                        .enabled(staging.is_some())
+                        .enabled(!staging.is_empty())
                         .disabled_reason("Select an unstaged file to stage it")
                         .show(ui)
                 } else {
-                    IconButton::new(icon::PLUS_CIRCLE, "Stage selected file")
+                    IconButton::new(icon::PLUS_CIRCLE, &stage_tip)
                         .size(Size::Sm)
                         .shortcut(Command::ToggleStage)
                         .id_salt("stage-selected")
-                        .enabled(staging.is_some())
+                        .enabled(!staging.is_empty())
                         .disabled_reason("Select an unstaged file to stage it")
                         .show(ui)
                 };
-                if let Some(path) = &staging
-                    && selected.clicked()
-                {
-                    actions.push(Action::Op(Op::Stage(vec![path.clone()])));
+                if !staging.is_empty() && selected.clicked() {
+                    actions.push(Action::Op(Op::Stage(staging.clone())));
                 }
                 let stage = if compact {
                     IconButton::new(icon::PLUS, "Stage all files")
@@ -707,7 +704,7 @@ fn list(
         let conflicted = which == List::Conflicted;
         let selected = tab.file.as_ref().is_some_and(|s| {
             s.entry.path == f.path && s.source == source && s.conflicted == conflicted
-        });
+        }) || (which == List::Unstaged && tab.marked.contains(&f.path));
         // The row's action, revealed under the pointer and on the selected row. A conflicted
         // file's is a labelled "Resolve conflicts…": a bare icon would read as "already done".
         let (glyph, tip) = if which == List::Staged {
@@ -743,15 +740,26 @@ fn list(
                 actions.push(Action::Op(toggle()));
             }
         } else if resp.clicked() {
-            tab.select_file(FileSelection {
-                source,
-                entry: f.clone(),
-                conflicted,
-            });
+            let modifiers = ui.input(|i| i.modifiers);
+            if which == List::Unstaged && (modifiers.command || modifiers.shift) {
+                pick(tab, files, i, modifiers);
+            } else {
+                tab.select_file(FileSelection {
+                    source,
+                    entry: f.clone(),
+                    conflicted,
+                });
+            }
         }
         let entry = f.clone();
+        // Several files are selected and this is one of them: the menu stages them all.
+        let group = Some(tab.stage_targets())
+            .filter(|t| which == List::Unstaged && t.len() > 1 && t.contains(&f.path));
         menu::context(&resp, |m| {
-            let first = m.item(glyph, tip);
+            let first = match &group {
+                Some(group) => m.item(glyph, format!("Stage {} files", group.len())),
+                None => m.item(glyph, tip),
+            };
             let first = if conflicted {
                 first
             } else {
@@ -764,6 +772,8 @@ fn list(
                         entry: f.clone(),
                         conflicted,
                     });
+                } else if let Some(group) = &group {
+                    actions.push(Action::Op(Op::Stage(group.clone())));
                 } else {
                     actions.push(Action::Op(toggle()));
                 }
@@ -825,6 +835,32 @@ fn list(
             }
         });
     });
+}
+
+/// Ctrl-click or Shift-click on the unstaged file `index`: marks or unmarks it, or marks the
+/// range from the open file ([`Selection::click`]). The open file stays open and always counts.
+fn pick(tab: &mut RepoTab, files: &[FileEntry], index: usize, modifiers: egui::Modifiers) {
+    let open = tab
+        .file
+        .as_ref()
+        .filter(|s| s.source == DiffSource::Unstaged && !s.conflicted)
+        .and_then(|s| files.iter().position(|f| f.path == s.entry.path));
+    let mut selection = Selection {
+        rows: files
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| Some(*i) == open || tab.marked.contains(&f.path))
+            .map(|(i, _)| i)
+            .collect(),
+        anchor: open,
+    };
+    selection.click(index, modifiers);
+    tab.marked = selection
+        .rows
+        .iter()
+        .filter(|i| Some(**i) != open)
+        .map(|&i| files[i].path.clone())
+        .collect();
 }
 
 /// The button a file row reveals at its right end.
@@ -1427,22 +1463,33 @@ mod tests {
     /// Frames of `show` at 960x600 with a click (press and release in one frame) at `at`;
     /// returns what the click asked for.
     fn click_at(ctx: &egui::Context, tab: &mut RepoTab, at: egui::Pos2) -> Vec<Action> {
+        click_with(ctx, tab, at, egui::Modifiers::NONE)
+    }
+
+    /// [`click_at`] with `modifiers` held.
+    fn click_with(
+        ctx: &egui::Context,
+        tab: &mut RepoTab,
+        at: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) -> Vec<Action> {
         let mut actions = Vec::new();
         for events in [
             Vec::new(),
             vec![
+                egui::Event::ModifiersChanged(modifiers),
                 egui::Event::PointerMoved(at),
                 egui::Event::PointerButton {
                     pos: at,
                     button: egui::PointerButton::Primary,
                     pressed: true,
-                    modifiers: egui::Modifiers::NONE,
+                    modifiers,
                 },
                 egui::Event::PointerButton {
                     pos: at,
                     button: egui::PointerButton::Primary,
                     pressed: false,
-                    modifiers: egui::Modifiers::NONE,
+                    modifiers,
                 },
             ],
         ] {
@@ -1459,6 +1506,70 @@ mod tests {
             output.textures_delta.clear();
         }
         actions
+    }
+
+    #[test]
+    fn ctrl_and_shift_click_pick_several_unstaged_files_for_stage_selected() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let dir = tempfile::tempdir().expect("temporary tab");
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        let mut snap = canopy_core::RepoSnapshot::default();
+        snap.status.unstaged = ["a.rs", "b.rs", "c.rs", "d.rs"].map(entry).to_vec();
+        tab.snap = Some(std::sync::Arc::new(snap));
+        let texts = painted_texts(&ctx, &mut tab, None);
+        let row = |name: &str| {
+            texts.iter().find(|(t, _)| t == name).map_or_else(
+                || panic!("row {name}"),
+                |(_, r)| pos2(r.min.x + 4.0, r.center().y),
+            )
+        };
+        let stage_selected = texts
+            .iter()
+            .find(|(t, _)| t == icon::PLUS_CIRCLE || t == "Stage selected")
+            .map(|(_, r)| r.center())
+            .expect("Stage selected");
+        let staged = |actions: &[Action]| {
+            actions.iter().find_map(|a| match a {
+                Action::Op(Op::Stage(paths)) => Some(paths.clone()),
+                _ => None,
+            })
+        };
+
+        // a.rs is open; Ctrl-click adds d.rs to the selection.
+        click_with(&ctx, &mut tab, row("d.rs"), egui::Modifiers::COMMAND);
+        assert_eq!(tab.marked.iter().collect::<Vec<_>>(), ["d.rs"]);
+        assert_eq!(
+            tab.file.as_ref().map(|f| f.entry.path.as_str()),
+            Some("a.rs"),
+            "the open diff stays"
+        );
+        let actions = click_at(&ctx, &mut tab, stage_selected);
+        assert_eq!(staged(&actions), Some(vec!["a.rs".into(), "d.rs".into()]));
+
+        // Ctrl-click again takes it out.
+        click_with(&ctx, &mut tab, row("d.rs"), egui::Modifiers::COMMAND);
+        assert!(tab.marked.is_empty());
+
+        // Shift-click picks the range from the open file.
+        click_with(&ctx, &mut tab, row("c.rs"), egui::Modifiers::SHIFT);
+        let actions = click_at(&ctx, &mut tab, stage_selected);
+        assert_eq!(
+            staged(&actions),
+            Some(vec!["a.rs".into(), "b.rs".into(), "c.rs".into()])
+        );
+
+        // A plain click opens one file and drops the others.
+        click_at(&ctx, &mut tab, row("b.rs"));
+        assert!(tab.marked.is_empty());
+        let actions = click_at(&ctx, &mut tab, stage_selected);
+        assert_eq!(staged(&actions), Some(vec!["b.rs".into()]));
     }
 
     #[test]

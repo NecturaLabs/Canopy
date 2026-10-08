@@ -40,8 +40,9 @@ commits since the previous build.
   clone update submodules too (Settings → Git → Update submodules, on by default).
 
 - Changes has a Stage selected button right of Stage all, enabled when an unstaged file is
-  selected. The diff header no longer repeats it as Stage file; Space and the row action still
-  stage the file.
+  selected. Ctrl-click and Shift-click pick several unstaged files; Stage selected, Space and
+  the row menu stage them together. The diff header no longer repeats it as Stage file; Space
+  and the row action still stage the file.
 
 - Ignore management in Changes and the command palette: file, extension, folder and custom rules
   with previews; repository-local and global excludes; ignored-path listings and matching-rule
