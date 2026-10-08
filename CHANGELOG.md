@@ -10,6 +10,8 @@ commits since the previous build.
 
 ### Fixed
 
+- Windows uninstall help and purge confirmation now say that saved hosting tokens are deleted
+  along with settings, logs and caches.
 - Finishing a single-commit git-flow feature or bugfix fast-forwards when possible, matching
   AVH git-flow. A diverged branch still merges; larger branches keep a merge commit.
 - Linked worktrees can trust their shared Git folders from the Downloads off dialog. The chip
