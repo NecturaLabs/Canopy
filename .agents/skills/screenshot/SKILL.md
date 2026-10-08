@@ -32,9 +32,10 @@ window on a hidden workspace hangs). To click and type in the app, see `docs/pla
    ```
 
    Add `--size 1024x640` to check small windows, `--theme NAME` for any of the themes in
-   `ThemeId::ALL`, `--view requests` for pull and merge requests (against `tools/mock-hosting.py`,
-   see `tools/README.md`) and `--overlay NAME` for dialogs and screens (`tools/screenshot.sh -h`
-   lists them). The first run builds the release binary, which takes a few minutes; later runs
+   `ThemeId::ALL`, `--view requests` for pull and merge requests. Use `--demo-requests list` with a local-only
+   fixture for deterministic offline requests, or `tools/mock-hosting.py` for mock API-backed
+   scenarios (`tools/README.md`). Use `--overlay NAME` for dialogs, menus and supported screens
+   (`tools/screenshot.sh -h` lists them). The first run builds the release binary, which takes a few minutes; later runs
    only rebuild what changed. Set `CANOPY_BIN` to reuse an existing binary.
 4. Look at every image with the Read tool. For detail, crop and enlarge first:
    `convert in.png -crop 600x360+240+80 +repage -scale 200% crop.png`.
@@ -46,11 +47,12 @@ window on a hidden workspace hangs). To click and type in the app, see `docs/pla
 ## What this can and cannot tell you
 
 - **Can**: layout, alignment, clipping, colours and contrast, fonts, icons, graph geometry,
-  empty and error states, both themes, different window sizes.
+  empty and error states, all built-in themes and their contrast variants, different window sizes.
 - **Cannot**: real frame times or smoothness (Mesa llvmpipe renders on the CPU, far slower than a
   GPU), animations (only one frame is captured), HiDPI scaling (Xvfb runs at scale 1), Wayland
-  specifics, driver bugs, and interaction (hover, menus, dialogs need a state the app can start
-  in). Say so in your report rather than guessing.
+  specifics, driver bugs, and free-form keyboard or pointer interaction. `--overlay` can stage
+  supported menus and dialogs; live workflows require `tools/usersim.sh` on a private display
+  (`docs/playbook.md`). Say so in your report rather than guessing.
 
 ## Troubleshooting
 

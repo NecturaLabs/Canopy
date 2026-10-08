@@ -123,7 +123,7 @@ the conflict banner on the `conflict` fixture. For a dark theme also render Dayl
 and for a light theme Midnight, to confirm nothing leaked: a view that hard-codes a colour looks
 right in one and wrong in the other. Then `--overlay settings` shows the theme card (a miniature
 drawn from the palette) and that the new card selects and persists. For a full pass use the
-`canopy-visual-qa` agent. Tick nothing in `docs/backlog.md` until these images exist.
+`canopy-visual-qa` agent. Do not close the related GitHub Issue until the visual and interaction checks are verified; record any remaining checks on the issue.
 
 ## 6. Docs
 
