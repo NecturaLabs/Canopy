@@ -643,6 +643,65 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
     assert!(notes.is_empty(), "{notes:?}");
 }
 
+#[test]
+fn an_unregistered_legacy_svg_is_removed_only_for_a_registered_png() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    let png = tmp.path().join("data/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = tmp.path().join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    folder(
+        &root,
+        &[("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png", "new png")],
+    );
+    write(&png, "old png");
+    write(&svg, "orphaned svg");
+    let old = parse_receipt(&format!(
+        "icon={}|{}\n",
+        png.display(),
+        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png").display(),
+    ));
+    let mut notes = Vec::new();
+    integrate(&root, 413, &old, &mut notes);
+    assert!(!exists(&svg), "orphaned SVG is removed");
+    assert_eq!(read(&png), "new png");
+    assert_eq!(parse_receipt(&read(&root.join(RECEIPT))).icons.len(), 1);
+    assert!(notes.is_empty(), "{notes:?}");
+
+    // Without a matching installed PNG in the receipt, the same SVG is not ours to delete.
+    write(&svg, "not ours");
+    integrate(&root, 414, &Receipt::default(), &mut notes);
+    assert_eq!(read(&svg), "not ours");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unregistered_symlinked_legacy_svg_is_left_alone() {
+    use std::os::unix::fs::symlink;
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    let png = tmp.path().join("data/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = tmp.path().join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    let target = tmp.path().join("other.svg");
+    folder(
+        &root,
+        &[("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png", "new png")],
+    );
+    write(&png, "old png");
+    write(&target, "external SVG");
+    fs::create_dir_all(svg.parent().expect("parent")).expect("create");
+    symlink(&target, &svg).expect("symlink");
+    let old = parse_receipt(&format!(
+        "icon={}|{}\n",
+        png.display(),
+        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png").display(),
+    ));
+    let mut notes = Vec::new();
+    integrate(&root, 413, &old, &mut notes);
+    assert!(is_symlink(&svg));
+    assert_eq!(read(&target), "external SVG");
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_scalable_icon_that_cannot_be_removed_stays_registered() {
