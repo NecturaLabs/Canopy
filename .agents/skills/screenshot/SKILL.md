@@ -1,6 +1,6 @@
 ---
 name: screenshot
-description: See the running Canopy app as an image. Use whenever a change affects anything visible (views, widgets, theme, fonts, layout, graph drawing, dialogs), before ticking a backlog entry, when asked how something looks, or to attach screenshots to a pull request. Renders headlessly on Xvfb with software OpenGL from a deterministic fixture repository and views the PNG with the Read tool.
+description: See the running Canopy app as an image. Use whenever a change affects anything visible (views, widgets, theme, fonts, layout, graph drawing, dialogs), before closing an Issue's visual acceptance criteria, when asked how something looks, or to attach screenshots to a pull request. Renders headlessly on Xvfb with software OpenGL from a deterministic fixture repository and views the PNG with the Read tool.
 ---
 
 # Screenshot the app

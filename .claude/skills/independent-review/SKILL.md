@@ -70,7 +70,7 @@ the review was not independent.
   re-verifying one fix, the narrowest form: `cargo test -p <crate> <test-name>`.
 - **Visible changes need images, not a diff read.** A reviewer cannot judge layout or colour
   from source; require screenshots from the `screenshot` skill or a `canopy-visual-qa` pass, in
-  both themes where colours are involved.
+  dark and light themes (and high contrast when affected).
 - **Languages present:** Rust, Bash (`tools/`), GitHub Actions YAML, Markdown, SVG. Read only
   those rows of the language tables in the checklists.
 - **Severity in the agent's report:** CRITICAL and HIGH are **Blocking**; MEDIUM is **Should

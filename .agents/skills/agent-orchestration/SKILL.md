@@ -82,8 +82,7 @@ Canopy-specific hazards:
   manager, at integration).
 - **Fixtures and screenshots go in each node's own scratch directory**, never in a shared path and
   never in the user's repositories (`fixture-repo` skill).
-- **The manager runs `tools/check.sh` itself** before claiming the work is done, and ticks
-  `docs/backlog.md` only after the `screenshot` check — neither is delegated away.
+- **The manager runs `tools/check.sh` itself** before claiming the work is done, and updates the related GitHub Issue after the `screenshot` check, closing it only when verified — neither is delegated away.
 
 ## Process
 

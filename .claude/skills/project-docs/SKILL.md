@@ -44,7 +44,7 @@ Canopy's layout, and which change keeps each file true (the update rules come fr
 | `docs/architecture.md` | Architecture overview: crates, modules, threading, data flow, where common changes live, why libgit2 plus the CLI | A module is added or its responsibility changes |
 | `docs/design.md` | Reference: design tokens, typography, components | A token, theme or component changes in `ui/theme.rs` or `ui/widgets.rs` |
 | `docs/features.md` | Reference: feature matrix against Fork, GitKraken, Sourcetree | A feature is added, changed or re-scoped |
-| `docs/backlog.md` | Task board, with acceptance criteria | Owned by the workflow in `AGENTS.md`; not a document this skill restructures |
+| GitHub Issues (`docs/backlog.md` is the migration pointer) | Active task tracker and acceptance criteria | Owned by the workflow in `AGENTS.md`; not a document this skill restructures |
 | `docs/art-prompts.md` | Reference: how the illustrations and app icon are made, and the list of scenes | An illustration is added or changed |
 | `docs/adr/NNNN-<slug>.md` | ADRs, indexed in `docs/adr/README.md` | A consequential decision is made; append-only afterwards; add its row to the index |
 | `CHANGELOG.md` | Keep a Changelog, `[Unreleased]` section | Every user-visible change; the `release` skill turns `[Unreleased]` into a version |

@@ -75,6 +75,6 @@ git's stderr or the libgit2 message. While running, the status bar shows the job
 2. Run the operation on a fixture (`fixture-repo` skill) in the running app and compare the
    resulting state with the CLI (`git log --graph --all --oneline`, `git status`).
 3. Take screenshots of the entry point and result (`screenshot` skill), dark and light.
-4. Tick the backlog entry in `docs/backlog.md` only after steps 1 to 3.
+4. Record code, tests and visual checks on the related GitHub Issue after steps 1 to 3; close it only when its acceptance criteria are verified.
 5. Get an independent review: the `independent-review` skill, with the `canopy-review` agent as
    the reviewer.
