@@ -470,7 +470,15 @@ fn merged_branches_name_the_check_that_matched() {
             .map(|b| b.reason),
         Some(None)
     );
-    repo.merged_branches("nope", true).unwrap_err();
+    let error = repo.merged_branches("nope", true).unwrap_err().to_string();
+    assert!(
+        error.contains("Could not resolve the base 'nope':"),
+        "{error}"
+    );
+    assert!(
+        error.contains("not found") || error.contains("revspec") || error.contains("reference"),
+        "the underlying libgit2 error is preserved: {error}"
+    );
 }
 
 const POINTER_OID: &str = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
