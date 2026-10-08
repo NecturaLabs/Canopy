@@ -5,8 +5,9 @@
 worktree are gone, and so is its remote branch. As of 8 October 2026 on PR #8, branch deletion
 asks `git branch -d` first, safe paths and mode/type-change diffs are live, Stage all reports
 skipped nested repositories, and ignore management is wired with acceptance checks remaining.
-GitHub Issues is the active tracker: #59 covers ignore management, #43–#44 file and directory
-links, and #58 branch workflows. Publishing and untracked-folder expansion still need their
+GitHub Issues is the active tracker: #59 covers ignore management, #44 symbolic links and type
+changes, #43 the remaining core integration, and #58 branch workflows. Publishing and
+untracked-folder expansion still need their
 remaining app wiring; branch deletion still uses its compatibility wrapper.
 Delete this file when the last of those lands and the wrappers are gone. Sections below describe
 the branch as it was handed over; "Left out, and known issues" says what became of each item.
