@@ -1205,7 +1205,7 @@ mod tests {
         frame(&ctx, key(Key::Escape), &mut draw);
         settle(&mut draw);
         assert!(!open_id(&ctx));
-        testkit::click(&ctx, egui::pos2(2.0, 2.0), &mut draw);
+        testkit::click(&ctx, pos2(2.0, 2.0), &mut draw);
         settle(&mut draw);
         let at = trigger.get().center();
         let mut events = testkit::press(at);
