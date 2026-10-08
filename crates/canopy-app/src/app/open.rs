@@ -21,6 +21,8 @@ pub(super) struct OpenRequest {
     pub(super) create: Option<NewRepo>,
     /// Switch to the tab when it opens (a session restore focuses only its first tab).
     pub(super) focus: bool,
+    /// Tab path to replace after the target worktree opens successfully.
+    pub(super) replace: Option<PathBuf>,
 }
 
 /// What the opener thread found.
@@ -111,6 +113,23 @@ impl CanopyApp {
                 path,
                 create: None,
                 focus: true,
+                replace: None,
+            },
+        );
+    }
+
+    /// Switches to a linked worktree only after Git confirms it is openable.
+    pub(super) fn switch_worktree(&mut self, ctx: &egui::Context, path: PathBuf) {
+        let Some(from) = self.tab().map(|t| t.path.clone()) else {
+            return;
+        };
+        self.request_open(
+            ctx,
+            OpenRequest {
+                path,
+                create: None,
+                focus: true,
+                replace: Some(from),
             },
         );
     }
@@ -126,6 +145,7 @@ impl CanopyApp {
                     follow_config: self.settings.git_options().follow_config,
                 }),
                 focus: true,
+                replace: None,
             },
         );
     }
@@ -186,7 +206,11 @@ impl CanopyApp {
                             root.display().to_string(),
                         );
                     }
-                    self.add_tab(ctx, root, request.focus);
+                    if let Some(from) = request.replace {
+                        self.replace_tab(ctx, &from, root);
+                    } else {
+                        self.add_tab(ctx, root, request.focus);
+                    }
                 }
                 Err(_) if asked => {}
                 Err(e) => self.toasts.push(
@@ -204,24 +228,63 @@ impl CanopyApp {
         }
     }
 
+    fn new_tab(&self, ctx: &egui::Context, root: PathBuf) -> RepoTab {
+        let prefs = self.settings.diff_for(&root);
+        let mut tab = RepoTab::new(root, ctx, self.settings.commit_page, prefs);
+        restore_draft(ctx, &mut tab);
+        tab.split_diff = self.settings.split_diff;
+        tab.highlight_diff = self.settings.syntax_highlight;
+        if let Some(v) = self.initial_view {
+            tab.view = v;
+        }
+        tab
+    }
+
     fn add_tab(&mut self, ctx: &egui::Context, root: PathBuf, focus: bool) {
         if let Some(i) = self.tabs.iter().position(|t| t.path == root) {
             if focus {
                 self.active = i;
             }
         } else {
-            let prefs = self.settings.diff_for(&root);
-            let mut tab = RepoTab::new(root.clone(), ctx, self.settings.commit_page, prefs);
-            restore_draft(ctx, &mut tab);
-            tab.split_diff = self.settings.split_diff;
-            tab.highlight_diff = self.settings.syntax_highlight;
-            if let Some(v) = self.initial_view {
-                tab.view = v;
-            }
+            let tab = self.new_tab(ctx, root.clone());
             self.tabs.push(tab);
             if focus || self.tabs.len() == 1 {
                 self.active = self.tabs.len() - 1;
             }
+        }
+        let identity_path = root.clone();
+        self.settings.touch_recent(root);
+        self.request_identity(IdentityJob::ReadRepo(identity_path));
+    }
+
+    /// Replaces the worktree in its existing tab, never a tab the user subsequently switched to.
+    /// A closed source tab is not resurrected when its asynchronous open finally completes.
+    fn replace_tab(&mut self, ctx: &egui::Context, from: &std::path::Path, root: PathBuf) {
+        let Some(source) = self.tabs.iter().position(|t| t.path == from) else {
+            return;
+        };
+        if self.tabs[source].path == root {
+            return;
+        }
+        let focused = self.tab().map(|t| t.path.clone());
+        let former = self.tabs.remove(source);
+        let view = former.view;
+        keep_draft(ctx, &former);
+
+        if !self.tabs.iter().any(|t| t.path == root) {
+            let mut tab = self.new_tab(ctx, root.clone());
+            tab.view = view;
+            self.tabs.insert(source, tab);
+        }
+        let next_focus = if focused.as_deref() == Some(from) {
+            Some(&root)
+        } else {
+            focused.as_ref()
+        };
+        if let Some(index) = next_focus.and_then(|p| self.tabs.iter().position(|t| &t.path == p)) {
+            self.active = index;
+        } else {
+            self.active = self.active.min(self.tabs.len().saturating_sub(1));
         }
         let identity_path = root.clone();
         self.settings.touch_recent(root);
@@ -265,6 +328,55 @@ mod tests {
         let mut alone = test_app();
         alone.open_repo(&ctx, PathBuf::from("/home/ada/src/other"));
         assert!(format!("{:?}", alone.toasts).contains("Could not open repository"));
+    }
+
+    /// Switching a worktree replaces the source tab, preserves its current view and draft,
+    /// and never redirects focus away from a tab chosen while the opener was busy.
+    #[test]
+    fn switching_worktrees_reuses_the_source_tab() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        let c = dir.path().join("c");
+        for path in [&a, &b, &c] {
+            std::fs::create_dir(path).expect("worktree folder");
+        }
+        let mut app = test_app();
+        app.add_tab(&ctx, a.clone(), true);
+        app.tabs[0].view = View::Changes;
+        app.tabs[0].commit_summary = "Unsent".into();
+        app.replace_tab(&ctx, &a, b.clone());
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.tabs[0].path, b);
+        assert_eq!(app.tabs[0].view, View::Changes);
+        assert_eq!(app.active, 0);
+
+        // Switching an inactive source must not steal focus from the active tab.
+        app.add_tab(&ctx, c.clone(), true);
+        app.replace_tab(&ctx, &b, a.clone());
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.tabs[0].path, a);
+        assert_eq!(app.tabs[app.active].path, c);
+        assert_eq!(ctx.data(|d| d.get_temp::<(String, String)>(draft_id(&a))).unwrap().0, "Unsent");
+    }
+
+    #[test]
+    fn switching_to_an_already_open_worktree_never_duplicates_a_tab() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::create_dir(&a).expect("folder");
+        std::fs::create_dir(&b).expect("folder");
+        let mut app = test_app();
+        app.add_tab(&ctx, a.clone(), true);
+        app.add_tab(&ctx, b.clone(), false);
+        app.replace_tab(&ctx, &a, b.clone());
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.tabs[app.active].path, b);
+        app.replace_tab(&ctx, &a, a.clone()); // source was closed in the meantime
+        assert_eq!(app.tabs.len(), 1);
     }
 
     /// review-views-10: closing a tab keeps its unsent commit message; it is back when the

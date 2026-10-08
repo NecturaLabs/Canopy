@@ -45,6 +45,7 @@ impl CanopyApp {
                     self.dialogs.open(d);
                 }
                 Action::OpenRepo(p) => self.open_repo(ctx, p),
+                Action::SwitchWorktree(p) => self.switch_worktree(ctx, p),
                 Action::Clone { url, dest } => self.start_clone(ctx, url, dest),
                 Action::Init(p) => self.init_repo(ctx, p),
                 Action::ForgetRecent(p) => self.settings.recent.retain(|r| r != &p),

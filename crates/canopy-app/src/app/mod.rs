@@ -335,6 +335,7 @@ impl CanopyApp {
                 path,
                 create: None,
                 focus: i == 0,
+                replace: None,
             };
             app.request_open(&cc.egui_ctx, request);
         }

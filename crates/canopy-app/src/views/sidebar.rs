@@ -277,7 +277,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                 if resp.double_clicked() && !b.is_head {
                     actions.push(match worktree {
-                        Some(w) => Action::OpenRepo(w.clone()),
+                        Some(w) => Action::SwitchWorktree(w.clone()),
                         None => Action::Op(Op::Checkout(b.name.clone())),
                     });
                 }
@@ -302,7 +302,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     if !is_head {
                         if let Some(w) = &worktree {
                             if m.item(icon::FOLDER_OPEN, "Open worktree").show(m.ui).clicked() {
-                                actions.push(Action::OpenRepo(w.clone()));
+                                actions.push(Action::SwitchWorktree(w.clone()));
                             }
                         } else if m.item(icon::CHECK, "Check out").show(m.ui).clicked() {
                             actions.push(Action::Op(Op::Checkout(name.clone())));
@@ -371,13 +371,13 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         actions.push(Action::Reveal(head));
                     }
                 if resp.double_clicked() && !w.current {
-                    actions.push(Action::OpenRepo(w.path.clone()));
+                    actions.push(Action::SwitchWorktree(w.path.clone()));
                 }
                 let path = w.path.clone();
                 let current = w.current;
                 menu::context(&resp, |m| {
                     if !current && m.item(icon::FOLDER_OPEN, "Open worktree").show(m.ui).clicked() {
-                        actions.push(Action::OpenRepo(path.clone()));
+                        actions.push(Action::SwitchWorktree(path.clone()));
                     }
                     if m.item(icon::COPY, "Copy path").show(m.ui).clicked() {
                         actions.push(Action::Copy(path.display().to_string()));
@@ -1073,7 +1073,7 @@ mod tests {
         crate::ui::motion::set_reduced(false);
         assert!(
             actions.iter().any(
-                |a| matches!(a, Action::OpenRepo(p) if p == std::path::Path::new("/work/canopy-wt"))
+                |a| matches!(a, Action::SwitchWorktree(p) if p == std::path::Path::new("/work/canopy-wt"))
             ),
             "{actions:?}"
         );
@@ -1127,7 +1127,7 @@ mod tests {
         crate::ui::motion::set_reduced(false);
         assert!(
             actions.iter().any(
-                |a| matches!(a, Action::OpenRepo(p) if p == std::path::Path::new("/work/canopy-wt"))
+                |a| matches!(a, Action::SwitchWorktree(p) if p == std::path::Path::new("/work/canopy-wt"))
             ),
             "{actions:?}"
         );

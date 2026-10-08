@@ -45,6 +45,8 @@ pub enum Action {
     },
     OpenDialog(Dialog),
     OpenRepo(PathBuf),
+    /// Navigate to another linked worktree in the current tab rather than opening a second tab.
+    SwitchWorktree(PathBuf),
     Clone {
         url: String,
         dest: PathBuf,
