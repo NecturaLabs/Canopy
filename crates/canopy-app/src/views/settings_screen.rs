@@ -57,6 +57,7 @@ use crate::worker::Op;
 pub enum Section {
     #[default]
     Appearance,
+    Notifications,
     Git,
     Integrations,
     Accounts,
@@ -70,8 +71,9 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Appearance,
+        Self::Notifications,
         Self::Git,
         Self::Integrations,
         Self::Accounts,
@@ -84,6 +86,7 @@ impl Section {
     fn label(self) -> (&'static str, &'static str) {
         match self {
             Self::Appearance => (icon::PALETTE, "Appearance"),
+            Self::Notifications => (icon::BELL, "Notifications"),
             Self::Git => (icon::GIT_BRANCH, "Git"),
             Self::Integrations => (icon::PLUGS_CONNECTED, "Integrations"),
             Self::Accounts => (icon::KEY, "Accounts"),
@@ -634,6 +637,7 @@ impl Page<'_, '_> {
         } = self;
         match section {
             Section::Appearance => appearance(ui, settings, &mut screen.zoom_preview),
+            Section::Notifications => notifications(ui, &mut settings.notifications),
             Section::Git => git(ui, screen, settings, &data.identity, actions),
             Section::Integrations => {
                 let parent = screen.clone_parent(settings);
@@ -2244,7 +2248,6 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             switch(ui, &mut s.show_avatars, "Author avatars");
         },
     );
-    notifications(ui, &mut s.notifications);
     tooltips(ui, s);
 }
 
