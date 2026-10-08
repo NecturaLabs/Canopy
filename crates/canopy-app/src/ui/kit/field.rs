@@ -8,10 +8,10 @@
 //! error message below, are optional. Text fields always show focus, whatever the input modality.
 //!
 //! **The well** ([`look`]). A field is a well one step off whatever surface it sits on: a
-//! translucent wash of `text` (a lighter plate in a dark theme, a grey well in a light one),
-//! as strong as every text colour allows on every surface, so a field reads as a field on the
-//! pane, the chrome, a card or a dialog alike. Deeper adds the `Field` material's inner shadow
-//! along the top (a recess). Text stops at the well's inner edge, clear of the trailing slot.
+//! translucent wash of `text` in a dark theme, as strong as every text colour allows on every
+//! surface; in a light theme a plate as light as the lightest surface, edged. Either way a field
+//! reads as a field on the pane, the chrome, a card or a dialog alike. Deeper adds the `Field`
+//! material's inner shadow along the top (a recess). Text stops at the well's inner edge, clear of the trailing slot.
 //!
 //! **The edge** is one even hairline at rest, the quietest mix of `edge` and `control_border`
 //! that still stands 3:1 (4.5:1 in strict themes) from every surface and well, so a field is
@@ -136,8 +136,21 @@ pub(crate) fn look(p: &'static Palette, style: Style) -> FieldLook {
             .find(|w| reads_over(*w))
             .unwrap_or(Color32::TRANSPARENT)
     };
-    let wash = strongest(WELL_ALPHA);
-    let hover_wash = strongest(WELL_ALPHA.saturating_add(HOVER_ALPHA));
+    // A dark theme's well is a faint lift of the surface; a light theme's is a plate as light as
+    // the lightest surface it can sit on, which reads as a place to type, where a grey well read
+    // as a disabled control.
+    let (wash, hover_wash) = if p.dark {
+        (
+            strongest(WELL_ALPHA),
+            strongest(WELL_ALPHA.saturating_add(HOVER_ALPHA)),
+        )
+    } else {
+        let plate = grounds
+            .into_iter()
+            .max_by(|a, b| theme::luminance(*a).total_cmp(&theme::luminance(*b)))
+            .unwrap_or(s.pane);
+        (plate, plate)
+    };
     let wells = grounds.map(|g| theme::over(wash, g));
     let base = (0..=20)
         .map(|i| theme::mix(s.edge, p.control_border, crate::ui::count_f32(i) / 20.0))
@@ -464,7 +477,7 @@ impl<'t> Core<'t> {
             left = g + theme::SM;
         }
         let filled = !self.text.is_empty();
-        let counter = self.counter.then(|| {
+        let counter = (self.counter && filled).then(|| {
             let n = self.text.chars().count();
             let color = if n >= COUNTER_DANGER {
                 p.danger
@@ -1906,11 +1919,20 @@ mod tests {
                             "{at}: the bottom edge identifies the field"
                         );
                     }
-                    assert!(
-                        theme::contrast(well, ground) > 1.05,
-                        "{at}: the well is a step off its surface ({:.3})",
-                        theme::contrast(well, ground)
-                    );
+                    if p.dark {
+                        assert!(
+                            theme::contrast(well, ground) > 1.05,
+                            "{at}: the well is a step off its surface ({:.3})",
+                            theme::contrast(well, ground)
+                        );
+                    } else {
+                        // A light theme's plate is as light as any surface, so it stands off the
+                        // darker ones and, on the lightest, by its edge (checked above).
+                        assert!(
+                            theme::luminance(well) >= theme::luminance(ground) - 1e-9,
+                            "{at}: the plate is never darker than its surface"
+                        );
+                    }
                     if !p.strict {
                         assert!(
                             theme::contrast(l.side, ground) < theme::contrast(l.base, ground),

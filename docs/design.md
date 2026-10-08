@@ -514,7 +514,10 @@ press and release in one frame can leave it there) is raised above it at once.
 `kit::field` draws every text input (single-line, search, secret, numeric and the commit composer);
 no view uses egui's `TextEdit` directly. The placeholder reads at 4.5:1 and the field's bottom edge
 and well at 3:1 (4.5:1 at high contrast) on every surface, tested per theme, style and contrast; the
-look is cached per palette, so a high contrast or custom theme never reuses its base theme's. Focus
+look is cached per palette, so a high contrast or custom theme never reuses its base theme's. In a
+dark theme the well is a faint lift of the surface; in a light theme it is a plate as light as the
+lightest surface, so a field never reads as a disabled control. The summary's character count shows
+once something is typed. Focus
 shows a ring for keyboard and pointer alike; the borderless search of the palette and the
 cheatsheet, which has no box, turns the 2 pt line under it to the focus colour. An error is message text with an icon under the field,
 announced as invalid with the message as its description, and never shows before the user typed.

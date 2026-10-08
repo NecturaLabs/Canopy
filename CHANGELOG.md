@@ -29,6 +29,8 @@ commits since the previous build.
 
 ### Changed
 
+- Text fields in light themes are white plates with a clear edge instead of a grey well, so they
+  no longer look disabled; the commit summary shows its character count only once you type.
 - The Privacy Policy describes automatic submodule downloads and their Git settings controls;
   accepting the updated policy is required on the next launch.
 
