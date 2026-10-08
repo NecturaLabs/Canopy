@@ -197,7 +197,7 @@ path, the welcome screen lists recent repositories.
 | `--split` | Show diffs side by side. |
 | `--overlay <NAME>` | Open an overlay (for screenshots): `settings`, `privacy`, `cheatsheet`, `palette`, `consent`, `crash-consent`, `legal`, `licences`, `credential`, `host-key` or `merge`. |
 | `--size <WxH>` | Initial window size (default `1440x900`). |
-| `--screenshot <FILE.png>` | Render the window once the repository has loaded, save a PNG and exit. Used by `tools/screenshot.sh`. |
+| `--screenshot <FILE.png>` | Capture a PNG and exit. Use `tools/screenshot.sh`; direct invocation is refused without the isolated screenshot environment. |
 | `-h`, `--help` / `-V`, `--version` | Help and version. |
 
 Each run writes a JSON-lines log to `logs/` in Canopy's data folder (`~/.local/share/canopy` on
