@@ -1252,6 +1252,18 @@ fn snapshot_completing(
 }
 
 fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::Result<String> {
+    // A fetch nobody asked for does not run what the repository's own files name.
+    if matches!(op, Op::Fetch { quiet: true, .. }) && !trusted_now(repo) {
+        let programs = repo.fetch_programs();
+        if !programs.is_empty() {
+            tracing::info!(programs = ?programs, "auto-fetch skipped: folder not trusted");
+            return Err(canopy_core::Error::Invalid(format!(
+                "Auto-fetch skipped: this repository's own files run programs ({}). \
+                 Trust its folder to allow it.",
+                programs.join(", ")
+            )));
+        }
+    }
     // A pull or a checkout moves what the submodules should be at.
     let moves = matches!(
         op,
@@ -2605,6 +2617,67 @@ mod read_tests {
         worker.send(Job::Details(oldest));
         let events = events_until(&worker, |e| matches!(e, Event::Details(_)));
         assert!(matches!(events.last(), Some(Event::Details(d)) if d.oid == oldest));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_automatic_fetch_runs_a_repositorys_own_programs_only_in_a_trusted_folder() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let up = root.path().join("up");
+        std::fs::create_dir(&up).expect("up");
+        git(&up, &["init", "-q", "-b", "main"]);
+        std::fs::write(up.join("a.txt"), "base\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "base"]);
+        git(root.path(), &["clone", "-q", "up", "copy"]);
+        let copy = root.path().join("copy");
+        let marker = root.path().join("ran");
+        let probe = root.path().join("probe");
+        std::fs::write(
+            &probe,
+            format!(
+                "#!/bin/sh\ntouch '{}'\nexec git-upload-pack \"$@\"\n",
+                marker.display()
+            ),
+        )
+        .expect("probe");
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).expect("mode");
+        git(
+            &copy,
+            &[
+                "config",
+                "remote.origin.uploadpack",
+                &probe.to_string_lossy(),
+            ],
+        );
+        let repo = Repo::open(&copy).expect("open");
+        let fetch = |quiet| Op::Fetch {
+            prune: false,
+            quiet,
+        };
+
+        let error = perform(&repo, fetch(true), |_| {}).expect_err("not trusted");
+        assert!(
+            error.to_string().contains("remote.origin.uploadpack"),
+            "{error}"
+        );
+        assert!(!marker.exists(), "the program ran");
+
+        // A fetch the user starts is theirs to decide, as in a terminal.
+        perform(&repo, fetch(false), |_| {}).expect("fetch");
+        assert!(
+            marker.exists(),
+            "the user's own fetch does not run the program"
+        );
+        std::fs::remove_file(&marker).expect("reset");
+
+        crate::trust::add_for_tests(root.path().to_path_buf());
+        perform(&repo, fetch(true), |_| {}).expect("trusted");
+        assert!(marker.exists());
     }
 
     #[test]

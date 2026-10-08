@@ -628,6 +628,30 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn repository_pager_command_is_not_executed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temporary repository");
+        let path = dir.path();
+        run(path, &["init", "-q"]).expect("initialize repository");
+        run(path, &["config", "user.name", "Ada"]).expect("name");
+        run(path, &["config", "user.email", "ada@example.com"]).expect("email");
+        run(path, &["commit", "-q", "--allow-empty", "-m", "first"]).expect("commit");
+        let pager = path.join("pager");
+        let marker = path.join("pager-ran");
+        std::fs::write(&pager, "#!/bin/sh\ntouch pager-ran\ncat\n").expect("create probe");
+        std::fs::set_permissions(&pager, std::fs::Permissions::from_mode(0o755))
+            .expect("make probe executable");
+        run(path, &["config", "core.pager", "./pager"]).expect("pager");
+        run(path, &["config", "pager.log", "true"]).expect("pager.log");
+
+        let out = run(path, &["log", "--oneline"]).expect("log");
+        assert!(out.contains("first"), "{out}");
+        assert!(!marker.exists(), "repository pager command was executed");
+    }
+
     #[test]
     fn a_git_that_exits_before_reading_its_input_reports_its_own_error() {
         let dir = tempfile::tempdir().expect("tmp");

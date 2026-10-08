@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Fixed
 
+- A repository's own configuration can no longer run a command through `core.fsmonitor` when
+  Canopy reads it, and auto-fetch no longer runs the programs a repository names (SSH command,
+  credential helper, upload-pack, hooks) outside a trusted folder.
 - Historical submodule diffs refresh after fetching missing commits. Submodule cards omit
   text diff controls, and a differing checkout no longer claims to contain new commits.
 - Long submodule sidebar lists render only visible rows, with status derived when it changes.

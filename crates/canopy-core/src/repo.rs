@@ -539,6 +539,12 @@ impl Repo {
         partial::is_in_trusted_folder(&self.git, trusted)
     }
 
+    /// The configuration keys and hooks of the repository itself that make a fetch run a
+    /// program (see [`partial::fetch_programs`]); empty when there are none.
+    pub fn fetch_programs(&self) -> Vec<String> {
+        partial::fetch_programs(&self.git)
+    }
+
     /// The promisor remote a download would use first, to name in a progress message; `None` for
     /// a full clone or when no remote can be fetched from.
     pub fn promisor_remote(&self) -> Option<String> {

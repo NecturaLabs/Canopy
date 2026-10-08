@@ -397,7 +397,7 @@ impl Repo {
         let modules = self.submodule_git_dir(&name)?;
         // `git rm` refuses to edit a `.gitmodules` with unstaged changes, which would leave the
         // submodule deinitialised but not removed.
-        let check = ["diff", "--quiet", "--", ".gitmodules"];
+        let check = ["diff", "--quiet", "--no-ext-diff", "--", ".gitmodules"];
         match cli::run_unchecked(self.workdir(), &check)? {
             out if out.code == Some(0) => {}
             out if out.code == Some(1) => {

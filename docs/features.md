@@ -53,6 +53,13 @@ programs and contact servers. Elsewhere Canopy shows what is on disk, says why a
 download, and the status bar offers "Downloads off · Trust…" with the repository's folder or its
 parent. Nothing is trusted by default (ADR 0009).
 
+The same list guards auto-fetch. A repository whose own files name a program a fetch would run
+(`core.sshCommand`, a credential helper, `remote.<name>.uploadpack`, `core.hooksPath`, a
+`reference-transaction` or `pre-auto-gc` hook) is not fetched by the timer outside a trusted
+folder, and the failure names what it found; a fetch the user starts runs as in a terminal. Every
+git command Canopy runs disables `core.fsmonitor`, which a repository can set to a command that
+git would run on every `git status`.
+
 ## History
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
