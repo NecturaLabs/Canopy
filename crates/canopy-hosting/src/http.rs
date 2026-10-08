@@ -169,12 +169,21 @@ impl Http {
         &self.base
     }
 
+    /// A lookup diagnostic with the private request URL and token hidden. Profile paths may
+    /// contain an author's email, which must not appear in logs or notifications.
+    fn profile_error(&self, context: &str, detail: &str, path: &str) -> Error {
+        let url = format!("{}{}", self.base, path);
+        let detail = detail.replace(&url, "[profile URL]");
+        let detail = if path.is_empty() {
+            detail
+        } else {
+            detail.replace(path, "[profile path]")
+        };
+        Error::Network(shorten(&self.hide_token(&format!("{context}: {detail}"))))
+    }
+
     /// Profile lookup: no redirects, bounded JSON, and no author email in logs. Sends nothing
     /// while the switch is off.
-    #[expect(
-        clippy::map_err_ignore,
-        reason = "kept as it was; docs/backlog.md has the entry to carry the transport's message"
-    )]
     pub(crate) fn avatar_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         if self.stopped() {
             return Err(Error::Stopped);
@@ -185,16 +194,14 @@ impl Http {
             .max_redirects(0)
             .build()
             .call()
-            .map_err(|_| {
-                Error::Network("Profile lookup could not reach the hosting service".into())
-            })?;
+            .map_err(|e| self.profile_error("Profile lookup failed", &e.to_string(), path))?;
         let status = response.status().as_u16();
         let bytes = response
             .body_mut()
             .with_config()
             .limit(1024 * 1024)
             .read_to_vec()
-            .map_err(|_| Error::Network("Could not read the profile response".into()))?;
+            .map_err(|e| self.profile_error("Could not read the profile response", &e.to_string(), path))?;
         if !(200..300).contains(&status) {
             return Err(map_status_with_token(
                 status,
@@ -706,6 +713,27 @@ pub(crate) fn encode(s: &str) -> String {
 mod tests {
     use super::*;
     use ureq::http::HeaderValue;
+
+    #[test]
+    fn profile_errors_preserve_the_cause_without_exposing_request_data() {
+        let http = Http::new(
+            ForgeKind::GitLab,
+            "https://gitlab.example/api/v4",
+            Some("private-auth-token-123".to_owned()),
+        );
+        let path = "/avatar?email=private@example.com&size=64";
+        let full_url = format!("{}{path}", http.base());
+        let diagnostic = format!(
+            "connection refused at {full_url}: private-auth-token-123 (path {path})"
+        );
+        let message = http
+            .profile_error("Profile lookup failed", &diagnostic, path)
+            .to_string();
+        assert!(message.contains("connection refused"), "{message}");
+        assert!(!message.contains("private@example.com"), "{message}");
+        assert!(!message.contains("private-auth-token-123"), "{message}");
+        assert!(!message.contains(full_url.as_str()), "{message}");
+    }
 
     #[test]
     fn plain_text_drops_what_hides_or_reorders_text() {
