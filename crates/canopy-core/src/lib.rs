@@ -32,6 +32,7 @@ mod pull_preview;
 pub mod repo;
 pub mod status;
 pub mod submodule;
+pub mod tools;
 pub mod update;
 
 pub use conflict::{
@@ -61,3 +62,4 @@ pub use submodule::{
     SUBMODULE_LOG_LIMIT, SubmoduleChange, SubmoduleCommit, SubmoduleInfo, SubmoduleLog,
     SubmoduleState, submodule_add_problem,
 };
+pub use tools::MissingTool;

@@ -258,6 +258,20 @@ impl Resolver {
     }
 }
 
+/// Whether `program` is reported missing for the first time in this run: one toast for it, not
+/// one for every repository that needs it.
+fn first_report(program: &str) -> bool {
+    static TOLD: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let mut told = TOLD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if told.iter().any(|p| p == program) {
+        return false;
+    }
+    told.push(program.to_owned());
+    true
+}
+
 /// Outcome of a finished operation, surfaced as a toast by the app.
 #[derive(Debug)]
 pub struct Notice {
@@ -730,6 +744,7 @@ pub struct RepoTab {
     pub pull_config: Option<PullConfig>,
     /// The branch `pull_config` was last asked for (`None`: detached or unborn), once asked.
     pull_config_asked: bool,
+    tools_asked: bool,
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
@@ -835,6 +850,7 @@ impl RepoTab {
             git_options: None,
             pull_config: None,
             pull_config_asked: false,
+            tools_asked: false,
             pull_config_branch: None,
             force_delete_offer: None,
             force_push_offer: None,
@@ -1509,6 +1525,10 @@ impl RepoTab {
                     self.filter_for = String::from("\u{0}");
                     if !had || self.selected_commit.is_none() {
                         // A restored working-copy draft must survive initial history setup.
+                    if !self.tools_asked {
+                        self.tools_asked = true;
+                        self.worker.send(Job::Tools);
+                    }
                         if self.file.is_none()
                             && let Some(h) = head.or_else(|| {
                                 self.snap
@@ -1680,6 +1700,15 @@ impl RepoTab {
                             .is_none_or(|snap| snap.state != canopy_core::RepoState::Clean)
                         || !self.commit_summary.trim().is_empty()
                         || !self.commit_body.trim().is_empty()
+                Event::ToolsMissing(tools) => {
+                    for tool in tools.into_iter().filter(|t| first_report(&t.program)) {
+                        notices.push(Notice {
+                            ok: false,
+                            title: format!("{} is not installed", tool.program),
+                            body: format!("{}. {}", tool.needed_for, tool.install.join(" ")),
+                        });
+                    }
+                }
                     {
                         continue;
                     }
@@ -2277,6 +2306,7 @@ mod tests {
                     Event::Snapshot(Arc::new(RepoSnapshot::default()))
                 } else {
                     Event::Status(canopy_core::WorkingStatus::default())
+            tab.tools_asked = true;
                 })
                 .expect("refresh");
             tab.poll(&[]);
@@ -3113,6 +3143,35 @@ mod tests {
         crossbeam_channel::Sender<Event>,
         crossbeam_channel::Receiver<HostJob>,
     ) {
+    #[test]
+    fn a_missing_tool_is_reported_once_per_run() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let missing = |program: &str| canopy_core::MissingTool {
+            program: program.into(),
+            needed_for: "this repository stores files with Git LFS",
+            install: vec!["Run brew install git-lfs.".into()],
+        };
+        events.send(Event::ToolsMissing(vec![missing("git-lfs-test-tool")]))?;
+        let notices = tab.poll(&[]);
+        assert_eq!(notices.len(), 1);
+        assert!(!notices[0].ok);
+        assert_eq!(notices[0].title, "git-lfs-test-tool is not installed");
+        assert!(notices[0].body.contains("Git LFS"), "{}", notices[0].body);
+        assert!(
+            notices[0].body.contains("brew install"),
+            "{}",
+            notices[0].body
+        );
+
+        events.send(Event::ToolsMissing(vec![missing("git-lfs-test-tool")]))?;
+        assert!(tab.poll(&[]).is_empty(), "already reported");
+        Ok(())
+    }
+
         use canopy_core::forge::ForgeKind;
         let (worker, events, _jobs) = Worker::detached();
         let mut tab =

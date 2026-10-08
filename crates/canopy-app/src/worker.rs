@@ -335,6 +335,8 @@ pub enum Job {
     PullConfig,
     /// Where a force push of the current branch would go ([`Repo::force_push_target`]), for the
     /// question that asks before it.
+    /// The programs the repository needs that the system lacks (`Repo::missing_tools`).
+    Tools,
     PushTarget,
     /// How the operations that follow have git behave (Settings → Git).
     Options(canopy_core::GitOptions),
@@ -416,6 +418,8 @@ pub enum Event {
     PullConfig(Result<canopy_core::PullConfig, String>),
     /// The answer to [`Job::PushTarget`]: git's own message when it cannot tell.
     PushTarget(Result<canopy_core::PushTarget, String>),
+    /// The answer to [`Job::Tools`].
+    ToolsMissing(Vec<canopy_core::MissingTool>),
     MergeMessage(String),
     /// A new commit message after a squash, never an amend prefill.
     SquashMessage(String),
@@ -699,6 +703,7 @@ impl Job {
             Self::PushTarget => "push-target",
             Self::Options(_) => "options",
             Self::Op(_) => "operation",
+            Self::Tools => "tools",
         }
     }
 }
@@ -914,6 +919,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     let file = repo
                         .conflict_file(&path)
                         .map(Arc::new)
+                Job::Tools => emit(Event::ToolsMissing(repo.missing_tools())),
                         .map_err(|e| e.to_string());
                     emit(Event::Conflict { path, kind, file });
                 }

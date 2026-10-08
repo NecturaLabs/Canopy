@@ -20,6 +20,7 @@ Update this table in the same change that adds or alters a feature.
 | Releases named by build number (`build 412 (a1b2c3d)`), shown in About, `--version`, logs and the update check; no version bumps | Done | ? | ? | ? |
 | Builds for Linux arm64 and Intel macOS | Experimental | No | Yes | Yes |
 | Network operations through the system `git` (credential helpers, SSH config, hooks) | Done | Yes | ? | Partial |
+| Missing programs named when a repository is opened: `git` itself (dialog) and, for the repository that needs them, `git-lfs` (its attributes use LFS), `ssh` (an SSH remote) and the signing program (`gpg`, `gpgsm` or `ssh-keygen`, or the one `gpg.*program` names); one toast each per run, with install steps for the system | Done | ? | ? | ? |
 
 ## Repositories
 
