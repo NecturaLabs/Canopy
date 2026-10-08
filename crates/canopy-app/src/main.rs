@@ -330,16 +330,20 @@ fn icon() -> Option<egui::IconData> {
     })
 }
 
+/// A screenshot must use the isolated environment prepared by tools/screenshot.sh.
+fn validate_screenshot_launch(launch: &Launch, isolated: bool) -> Result<(), &'static str> {
+    if launch.screenshot.is_some() && !isolated {
+        return Err("--screenshot requires tools/screenshot.sh (isolated home and data folders)");
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     // Started by git or ssh to ask for a credential: answer through the running app and exit,
     // before touching logs or windows.
     if askpass::is_client() {
         std::process::exit(askpass::run_client());
     }
-    // Normal detail until the settings load; the app then applies the user's choice.
-    logging::init(logging::LogLevel::Normal);
-    canopy_hosting::set_build(build_info::NUMBER);
-
     #[expect(
         clippy::print_stderr,
         reason = "a bad command line is reported on the terminal that gave it, before any window"
@@ -351,6 +355,15 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(2);
         }
     };
+
+    // Reject direct screenshot runs before creating a log or opening the user's desktop.
+    // The screenshot wrapper supplies an isolated home and explicitly opts in.
+    let isolated = std::env::var("CANOPY_SCREENSHOT_ISOLATED").is_ok_and(|v| v == "1");
+    validate_screenshot_launch(&launch, isolated).map_err(anyhow::Error::msg)?;
+
+    // Normal detail until Settings load; their log setting takes over afterwards.
+    logging::init(logging::LogLevel::Normal);
+    canopy_hosting::set_build(build_info::NUMBER);
 
     // The editor, terminal and file manager the open actions use when Settings names none.
     system_apps::refresh(None);
