@@ -14,6 +14,10 @@ commits since the previous build.
   clears when its refused commit details are hidden or a failed status refresh leaves no refusal
   on screen.
 - A failed avatar-cache write removes its temporary file and preserves the previous cache.
+- With `core.symlinks=false`, unstaged diffs refuse real symbolic links before reading their
+  targets; ordinary files used to emulate links still support diffing and staging.
+- Symbolic-link diffs identify their old and new targets. Mode changes remain visible when
+  there are also content changes.
 - A clone whose submodules cannot be downloaded is kept and opened with git's message, instead of
   reporting a failure and blocking a second try because the folder exists.
 - A failed download in a partial clone is no longer tried again on every file-watcher refresh;

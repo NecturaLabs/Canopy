@@ -710,6 +710,21 @@ impl Repo {
         context: u32,
         whitespace: Whitespace,
     ) -> Result<git2::Diff<'_>> {
+        // With core.symlinks=false, libgit2 reads symlink-mode worktree entries as plain files,
+        // even when the path is a real link. Refuse those before it can read the target; the
+        // ordinary files Git uses to emulate links still pass. Hunk and line staging share this.
+        if matches!(source, DiffSource::Unstaged)
+            && self
+                .git
+                .config()?
+                .get_bool("core.symlinks")
+                .is_ok_and(|symlinks| !symlinks)
+        {
+            crate::paths::safe_join(&self.workdir, path)?;
+            if let Some(old) = old_path {
+                crate::paths::safe_join(&self.workdir, old)?;
+            }
+        }
         let mut opts = diff::options(path, old_path, context, whitespace);
         let d = match source {
             DiffSource::Unstaged => self.git.diff_index_to_workdir(None, Some(&mut opts))?,

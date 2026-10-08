@@ -123,6 +123,11 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
 | Commit message templates and linting | Planned | ? | Yes | ? |
 
+Unstaged diffs refuse actual symbolic links when `core.symlinks=false`, because libgit2 would
+otherwise read their targets as regular files. Git's ordinary-file link emulation still works.
+Link diffs label their target paths; type changes still show their mode transition, and mode
+changes remain visible alongside content changes.
+
 ## Branches and merging
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |

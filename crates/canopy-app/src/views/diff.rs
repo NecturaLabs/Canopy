@@ -347,6 +347,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         submodule_card(ui, change);
         return;
     }
+    if let Some(text) = metadata_note(&d) {
+        ui.add_space(theme::SM);
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(theme::MD);
+            ui.label(RichText::new(text).size(m.meta_size).color(p.text_dim));
+        });
+        ui.add_space(theme::SM);
+    }
     if d.binary {
         empty(
             ui,
@@ -1255,8 +1263,31 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     }
 }
 
-/// What a change of Git file mode means, in words (`0o100_644` plain file, `0o100755` executable,
-/// `0o120000` symbolic link).
+/// Explains mode changes alongside content, and identifies symbolic-link target lines.
+fn metadata_note(diff: &FileDiff) -> Option<&'static str> {
+    const LINK: u32 = 0o120_000;
+    // The empty state already explains mode-only changes. With content changes the mode needs
+    // saying too, so an executable-bit change is not hidden by its hunks.
+    if let Some((old, new)) = diff.mode_change() {
+        return (diff.binary || !diff.hunks.is_empty()).then(|| mode_note(old, new));
+    }
+    let old = diff.old_mode == Some(LINK);
+    let new = diff.new_mode == Some(LINK);
+    if !old && !new {
+        return None;
+    }
+    if diff.binary || diff.hunks.is_empty() {
+        return Some("Symbolic link.");
+    }
+    Some(match (old, new) {
+        (true, true) => "Symbolic link targets: − old, + new.",
+        (true, false) => "Old symbolic link target (−).",
+        (false, true) => "New symbolic link target (+).",
+        (false, false) => return None,
+    })
+}
+
+/// What a change of Git file mode means, in words.
 fn mode_note(old: u32, new: u32) -> &'static str {
     const FILE: u32 = 0o100_644;
     const EXECUTABLE: u32 = 0o100_755;

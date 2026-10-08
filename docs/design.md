@@ -770,6 +770,9 @@ confirmation says "Trust these folders" and includes the displayed directories; 
 choice retains those directories when they are outside the parent. The status bar's Downloads off
 chip explains visible refusals and disappears when their commit details are hidden.
 
+Diff metadata below the header identifies symbolic-link target paths and mode changes alongside
+content changes, using the theme's metadata size and subdued text colour.
+
 ### Git identity
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings

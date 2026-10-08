@@ -393,6 +393,163 @@ fn rename_and_checkout_refuse_option_shaped_names() {
 // --- File modes and type changes ---------------------------------------------------------------
 
 #[cfg(unix)]
+#[test]
+fn real_symlinks_never_read_the_target_when_core_symlinks_is_false() {
+    use canopy_core::{DiffSource, HunkAction, LineKind, Whitespace};
+    let (dir, _) = fixture();
+    let p = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    let before = outside.path().join("before.txt");
+    let after = outside.path().join("after.txt");
+    fs::write(&before, "outside contents before\n").unwrap();
+    fs::write(&after, "outside contents after\n").unwrap();
+    std::os::unix::fs::symlink(&before, p.join("link")).unwrap();
+    git(p, &["add", "--", "link"]);
+    git(p, &["commit", "-q", "-m", "feat: link"]);
+    fs::remove_file(p.join("link")).unwrap();
+    std::os::unix::fs::symlink(&after, p.join("link")).unwrap();
+
+    git(p, &["config", "core.symlinks", "true"]);
+    let repo = Repo::open(p).unwrap();
+    let supported = repo
+        .file_diff(
+            &DiffSource::Unstaged,
+            "link",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
+        .unwrap();
+    assert!(
+        supported
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .any(|line| { line.kind == LineKind::Added && line.text == after.to_string_lossy() })
+    );
+    assert!(
+        supported
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .all(|line| !line.text.contains("outside contents"))
+    );
+
+    git(p, &["config", "core.symlinks", "false"]);
+    let repo = Repo::open(p).unwrap();
+
+    let cli = git(p, &["diff", "--", "link"]);
+    assert!(cli.contains(&format!("+{}", after.display())), "{cli}");
+    assert!(!cli.contains("outside contents"), "{cli}");
+    let err = repo
+        .file_diff(
+            &DiffSource::Unstaged,
+            "link",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::UnsafePath { .. }), "{err}");
+    for result in [
+        repo.apply_hunk(HunkAction::Stage, "link", 0, (0, 0, 0, 0), 3),
+        repo.apply_lines(HunkAction::Stage, "link", 0, (0, 0, 0, 0), &[0], 3),
+    ] {
+        assert!(
+            matches!(result, Err(Error::UnsafePath { .. })),
+            "{result:?}"
+        );
+    }
+
+    // Whole-file staging still follows Git's semantics, and a staged read uses blob contents.
+    repo.stage(&["link".to_owned()]).unwrap();
+    let diff = repo
+        .file_diff(
+            &DiffSource::Staged,
+            "link",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
+        .unwrap();
+    let added: Vec<_> = diff
+        .hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .filter(|line| line.kind == LineKind::Added)
+        .map(|line| line.text.as_str())
+        .collect();
+    assert_eq!(added, vec![after.to_str().unwrap()]);
+    assert_eq!(
+        fs::read_to_string(&after).unwrap(),
+        "outside contents after\n"
+    );
+
+    // Broken links are refused too, without trying to open the missing target.
+    fs::remove_file(p.join("link")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("missing"), p.join("link")).unwrap();
+    let err = repo
+        .file_diff(
+            &DiffSource::Unstaged,
+            "link",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::UnsafePath { .. }), "{err}");
+}
+
+#[test]
+fn emulated_symlinks_keep_their_mode_and_diff_target_text() {
+    use canopy_core::{DiffSource, LineKind, Whitespace};
+    let (dir, _) = fixture();
+    let p = dir.path();
+    fs::write(p.join("link"), "first-target").unwrap();
+    let blob = git(p, &["hash-object", "-w", "link"]);
+    let entry = format!("120000,{},link", blob.trim());
+    git(p, &["update-index", "--add", "--cacheinfo", &entry]);
+    git(p, &["commit", "-q", "-m", "feat: emulated link"]);
+    git(p, &["config", "core.symlinks", "false"]);
+    let repo = Repo::open(p).unwrap();
+    assert_eq!(git(p, &["status", "--porcelain"]), "");
+    assert!(repo.status(MissingObjects::Fail).unwrap().is_clean());
+
+    fs::write(p.join("link"), "second-target").unwrap();
+    let diff = repo
+        .file_diff(
+            &DiffSource::Unstaged,
+            "link",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
+        .unwrap();
+    assert_eq!(diff.old_mode, Some(0o120_000));
+    assert_eq!(diff.new_mode, Some(0o120_000));
+    assert_eq!(diff.hunks.len(), 1);
+    let lines = &diff.hunks[0].lines;
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0].kind, LineKind::Removed);
+    assert_eq!(lines[0].text, "first-target");
+    assert_eq!(lines[1].kind, LineKind::Added);
+    assert_eq!(lines[1].text, "second-target");
+    let cli = git(p, &["diff", "--", "link"]);
+    assert!(cli.contains("-first-target"), "{cli}");
+    assert!(cli.contains("+second-target"), "{cli}");
+
+    repo.stage(&["link".to_owned()]).unwrap();
+    let status = repo.status(MissingObjects::Fail).unwrap();
+    assert!(status.unstaged.is_empty(), "{status:?}");
+    assert_eq!(status.staged[0].new_mode, Some(0o120_000));
+}
+
+#[cfg(unix)]
 fn chmod(p: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(p, fs::Permissions::from_mode(mode)).expect("chmod");
