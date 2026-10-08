@@ -82,17 +82,19 @@ mkdir -p "$(dirname "$out")"
 out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 rm -f "$out_abs"
 
+# Both display backends must keep screenshots clear of the user's Canopy and Git state.
+isolated=$(mktemp -d)
+trap 'rm -rf "$isolated"' EXIT
+mkdir -p "$isolated/home" "$isolated/tmp"
+printf '[user]\n\tname = Showcase Author\n\temail = author@example.com\n' > "$isolated/gitconfig"
+
 if command -v xvfb-run >/dev/null; then
   # Private home, data, config and cache folders, a fixed Git identity and no TERMINAL, EDITOR or
   # VISUAL: the image must not depend on (or write to) your own Canopy state, such as its saved
   # window size, your Git configuration or your programs (Settings > Integrations names them),
   # and a path under "~" must not show your own home folder.
-  isolated=$(mktemp -d)
-  trap 'rm -rf "$isolated"' EXIT
-  mkdir -p "$isolated/home"
-  printf '[user]\n\tname = Showcase Author\n\temail = author@example.com\n' > "$isolated/gitconfig"
   # Force X11 inside Xvfb even when called from a Wayland session.
-  env -u WAYLAND_DISPLAY -u TERMINAL -u EDITOR -u VISUAL LIBGL_ALWAYS_SOFTWARE=1 HOME="$isolated/home" \
+  env -u WAYLAND_DISPLAY -u TERMINAL -u EDITOR -u VISUAL LIBGL_ALWAYS_SOFTWARE=1 CANOPY_SCREENSHOT_ISOLATED=1 HOME="$isolated/home" \
     XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache" \
     GIT_CONFIG_GLOBAL="$isolated/gitconfig" GIT_CONFIG_NOSYSTEM=1 \
     timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \
@@ -101,13 +103,17 @@ else
   workspace=${CANOPY_WORKSPACE:-3}
   [[ $workspace =~ ^[1-9][0-9]*$ ]] || { echo "invalid CANOPY_WORKSPACE: $workspace" >&2; exit 2; }
   native_dir=$(mktemp -d "$(dirname "$out_abs")/.canopy-shot.XXXXXX")
-  trap 'rm -f "$native_dir/run.sh" "$native_dir/run.log" "$native_dir/status"; rmdir "$native_dir"' EXIT
+  trap 'rm -f "$native_dir/run.sh" "$native_dir/run.log" "$native_dir/status"; rmdir "$native_dir"; rm -rf "$isolated"' EXIT
   CANOPY_BIN=$(realpath "$CANOPY_BIN")
   command=(env)
   if [[ -z ${WAYLAND_DISPLAY:-} ]]; then command+=(-u WAYLAND_DISPLAY); fi
-  for name in XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME TMPDIR CANOPY_HOSTING_API_BASE; do
+  for name in CANOPY_HOSTING_API_BASE; do
     if [[ -v $name ]]; then command+=("$name=${!name}"); fi
   done
+  command+=(CANOPY_SCREENSHOT_ISOLATED=1 HOME="$isolated/home" \
+    XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" \
+    XDG_CACHE_HOME="$isolated/cache" TMPDIR="$isolated/tmp" \
+    GIT_CONFIG_GLOBAL="$isolated/gitconfig" GIT_CONFIG_NOSYSTEM=1)
   command+=(timeout 60 "$CANOPY_BIN" --screenshot "$out_abs" --size "$size" "${extra[@]}" "${repo_args[@]}")
   {
     printf '#!/usr/bin/env bash\n'
