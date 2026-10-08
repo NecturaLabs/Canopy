@@ -1862,12 +1862,16 @@ mod read_tests {
     #[test]
     fn exiting_waits_for_the_threads_of_dropped_workers() {
         let (ended_tx, ended) = crossbeam_channel::bounded::<()>(0);
+        let (start_tx, start_rx) = crossbeam_channel::bounded::<()>(0);
         let thread = std::thread::spawn(move || {
+            // The interval only starts after the test has started measuring.
+            start_rx.recv().expect("start shutdown worker");
             std::thread::sleep(Duration::from_millis(200));
             drop(ended_tx);
         });
         ENDING.lock().expect("lock").push(ended);
         let started = Instant::now();
+        start_tx.send(()).expect("start worker");
         wait_for_threads(Duration::from_secs(5));
         let waited = started.elapsed();
         assert!(
