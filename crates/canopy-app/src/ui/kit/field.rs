@@ -300,7 +300,7 @@ impl<'t> Core<'t> {
             tooltip: None,
             disabled_reason: None,
             width: None,
-            size: Size::Md,
+            size: Size::Lg,
             counter: false,
             guide: None,
             shortcut: None,
@@ -1120,7 +1120,7 @@ impl<'t> TextField<'t> {
         self.core.loading = loading;
         self
     }
-    /// `Sm` for compact fields; `Md` by default.
+    /// `Sm` for compact fields; `Lg` by default.
     pub fn size(mut self, size: Size) -> Self {
         self.core.size = size;
         self
@@ -1157,9 +1157,10 @@ pub struct SearchField<'t> {
 
 impl<'t> SearchField<'t> {
     pub fn new(text: &'t mut String) -> Self {
-        Self {
-            core: Core::new(text, Kind::Search),
-        }
+        let mut core = Core::new(text, Kind::Search);
+        // Filters sit in toolbars and lists: one size below a form field.
+        core.size = Size::Md;
+        Self { core }
     }
     /// Busy (results are loading): a spinner in the trailing slot after `LOADING_DELAY`.
     pub fn loading(mut self, loading: bool) -> Self {
@@ -1362,7 +1363,7 @@ impl<'v> NumberField<'v> {
             disabled_reason: None,
             tooltip: None,
             width: None,
-            size: Size::Md,
+            size: Size::Lg,
             id_salt: None,
             id: None,
             force: None,
@@ -1861,7 +1862,7 @@ mod tests {
                 });
                 assert_eq!(
                     heights,
-                    vec![m.control, m.control, m.control],
+                    vec![m.control_lg, m.control, m.control_lg],
                     "{density:?} {style:?}"
                 );
             }

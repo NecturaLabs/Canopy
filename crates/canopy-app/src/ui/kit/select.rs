@@ -83,7 +83,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             error: None,
             width: None,
             fit: false,
-            size: Size::Md,
+            size: Size::Lg,
             enabled: true,
             loading: false,
             tooltip: None,

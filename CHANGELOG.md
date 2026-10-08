@@ -279,6 +279,9 @@ commits since the previous build.
 
 ### Changed
 
+- Text fields, number fields and selects are taller (32 pt, 28 in Dense) so forms and the commit
+  composer read less cramped and line up with their buttons; search fields stay compact.
+
 - What your git configuration sets still decides; everywhere else Canopy's git choices follow
   today's recommended practice and are passed to git explicitly: a pull only fast-forwards
   unless you choose otherwise, uncommitted changes are set aside around a pull or rebase, a push
