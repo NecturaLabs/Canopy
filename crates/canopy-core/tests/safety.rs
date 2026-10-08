@@ -1011,6 +1011,73 @@ fn preview_of_a_root_negation_lists_the_file_it_makes_visible() {
 }
 
 #[test]
+fn literal_negation_previews_agree_with_git_for_punctuation_and_case() {
+    for (pattern, path, ignore_case) in [("!foo@", "foo@", false), ("!keep.log", "keep.LOG", true)]
+    {
+        let (dir, repo) = fixture();
+        let p = dir.path();
+        git(
+            p,
+            &[
+                "config",
+                "core.ignorecase",
+                if ignore_case { "true" } else { "false" },
+            ],
+        );
+        fs::write(p.join(".gitignore"), "*\n").unwrap();
+        fs::write(p.join(path), "kept\n").unwrap();
+        let rule = IgnoreRule::Custom {
+            pattern: pattern.into(),
+            near: ".gitignore".into(),
+        };
+        let preview = repo
+            .preview_ignore_rule(&rule, IgnoreTarget::Root, &[path.into()])
+            .unwrap();
+        repo.add_ignore_rule(&rule, IgnoreTarget::Root).unwrap();
+        assert!(
+            repo.why_ignored(path)
+                .unwrap()
+                .is_some_and(|matched| matched.negated()),
+            "git exposes {path}"
+        );
+        assert_eq!(
+            preview.unignored,
+            [path],
+            "{pattern} must preview Git's outcome"
+        );
+    }
+}
+
+#[test]
+fn negation_previews_preserve_gits_trailing_space_rules() {
+    for (pattern, included) in [("!foo ", false), ("!foo\\ ", true)] {
+        let (dir, repo) = fixture();
+        let p = dir.path();
+        fs::write(p.join(".gitignore"), "*\n").unwrap();
+        let rule = IgnoreRule::Custom {
+            pattern: pattern.into(),
+            near: ".gitignore".into(),
+        };
+        let preview = repo
+            .preview_ignore_rule(&rule, IgnoreTarget::Root, &["foo ".into()])
+            .unwrap();
+        repo.add_ignore_rule(&rule, IgnoreTarget::Root).unwrap();
+        assert_eq!(
+            repo.why_ignored("foo ")
+                .unwrap()
+                .is_some_and(|matched| matched.negated()),
+            included,
+            "Git's trailing-space semantics: {pattern:?}"
+        );
+        assert_eq!(
+            preview.unignored.contains(&"foo ".into()),
+            included,
+            "preview follows Git: {pattern:?}"
+        );
+    }
+}
+
+#[test]
 fn preview_escapes_the_nearest_folder() {
     let (dir, repo) = fixture();
     let p = dir.path();

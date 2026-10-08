@@ -295,11 +295,11 @@ fn root_relative(pattern: &str, base: &str) -> String {
     }
 }
 
-/// `pattern` with its last literal character wrapped in a bracket expression when it is a `!`
+/// `pattern` with a literal character wrapped in a bracket expression when it is a `!`
 /// pattern without a wildcard, which matches the same paths. libgit2 does not apply an in-memory
 /// negation that has no wildcard (`!keep.log`) over a matching rule of a `.gitignore`, so the
 /// preview would miss the paths such a rule makes visible.
-fn with_wildcard(pattern: &str) -> String {
+fn with_wildcard(pattern: &str, ignore_case: bool) -> String {
     if !pattern.starts_with('!') {
         return pattern.to_owned();
     }
@@ -315,17 +315,22 @@ fn with_wildcard(pattern: &str) -> String {
     let mut i = 0;
     while i < chars.len() {
         let escaped = chars[i] == '\\';
-        last = Some((i + usize::from(escaped), escaped));
+        if !escaped && !matches!(chars[i], '/' | '[' | ']' | '^' | '!' | ' ') {
+            last = Some(i);
+        }
         i += if escaped { 2 } else { 1 };
     }
     match last {
-        Some((at, false))
-            if chars
-                .get(at)
-                .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_')) =>
-        {
+        Some(at) => {
             let head: String = chars[..at].iter().collect();
-            format!("{head}[{}]{}", chars[at], "/".repeat(slashes))
+            let ch = chars[at];
+            let class = if ignore_case && ch.is_ascii_alphabetic() {
+                format!("{}{}", ch.to_ascii_lowercase(), ch.to_ascii_uppercase())
+            } else {
+                ch.to_string()
+            };
+            let tail: String = chars[at + 1..].iter().collect();
+            format!("{head}[{class}]{tail}{}", "/".repeat(slashes))
         }
         _ => pattern.to_owned(),
     }
@@ -588,7 +593,14 @@ impl Repo {
             .iter()
             .map(|p| scratch.is_path_ignored(p))
             .collect::<std::result::Result<_, _>>()?;
-        scratch.add_ignore_rule(&with_wildcard(&root_relative(&pattern, &dest.base)))?;
+        let ignore_case = scratch
+            .config()
+            .and_then(|config| config.get_bool("core.ignorecase"))
+            .unwrap_or(false);
+        scratch.add_ignore_rule(&with_wildcard(
+            &root_relative(&pattern, &dest.base),
+            ignore_case,
+        ))?;
         let mut preview = IgnorePreview::default();
         for ((path, rule_now), was_without) in paths.iter().zip(deciding).zip(without) {
             let with = scratch.is_path_ignored(path)?;
@@ -754,14 +766,14 @@ mod tests {
 
     #[test]
     fn negations_get_a_wildcard_for_the_preview() {
-        assert_eq!(with_wildcard("!keep.log"), "!keep.lo[g]");
-        assert_eq!(with_wildcard("!/sub/keep.log"), "!/sub/keep.lo[g]");
-        assert_eq!(with_wildcard("!build/"), "!buil[d]/");
-        assert_eq!(with_wildcard("!*.log"), "!*.log");
-        assert_eq!(with_wildcard("!*.lo[g"), "!*.lo[g");
-        assert_eq!(with_wildcard("!a\\*"), "!a\\*");
-        assert_eq!(with_wildcard("keep.log"), "keep.log");
-        assert_eq!(with_wildcard("!"), "!");
+        assert_eq!(with_wildcard("!keep.log", false), "!keep.lo[g]");
+        assert_eq!(with_wildcard("!/sub/keep.log", false), "!/sub/keep.lo[g]");
+        assert_eq!(with_wildcard("!build/", false), "!buil[d]/");
+        assert_eq!(with_wildcard("!*.log", false), "!*.log");
+        assert_eq!(with_wildcard("!*.lo[g", false), "!*.lo[g");
+        assert_eq!(with_wildcard("!a\\*", false), "!a\\*");
+        assert_eq!(with_wildcard("keep.log", false), "keep.log");
+        assert_eq!(with_wildcard("!", false), "!");
     }
 
     #[test]
