@@ -5793,8 +5793,14 @@ mod tests {
         let original = settings.notifications;
         let page = draw_screen(SettingsScreen::at(Section::Notifications), &mut settings);
         assert_eq!(page.section, Section::Notifications);
-        assert_eq!(settings.notifications, original, "opening the page must not reset filters");
-        let matches = draw_screen(SettingsScreen::searching("Finished operations"), &mut settings);
+        assert_eq!(
+            settings.notifications, original,
+            "opening the page must not reset filters"
+        );
+        let matches = draw_screen(
+            SettingsScreen::searching("Finished operations"),
+            &mut settings,
+        );
         assert!(matches.search.count(Section::Notifications) > 0);
         assert_eq!(matches.search.count(Section::Appearance), 0);
         assert_eq!(settings.notifications, original);
