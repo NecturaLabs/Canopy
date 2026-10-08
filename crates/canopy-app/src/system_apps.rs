@@ -542,7 +542,7 @@ mod linux {
                         let without_escapes = arg.replace("%%", "");
                         if ["%f", "%F", "%u", "%U", "%d", "%D"]
                             .iter()
-                            .any(|code| without_escapes.contains(code))
+                            .any(|code| without_escapes.contains(*code))
                         {
                             dropped_embedded_file_code = true;
                         } else {
@@ -553,7 +553,7 @@ mod linux {
                     }
                 }
             }
-            if dropped_embedded_file_code && !words.iter().any(|w| w == file_code) {
+            if dropped_embedded_file_code && !words.iter().any(|w| w.as_str() == file_code) {
                 words.push(file_code.to_owned());
             }
             words.join(" ")
