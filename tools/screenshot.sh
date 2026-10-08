@@ -105,7 +105,7 @@ else
   native_dir=$(mktemp -d "$(dirname "$out_abs")/.canopy-shot.XXXXXX")
   trap 'rm -f "$native_dir/run.sh" "$native_dir/run.log" "$native_dir/status"; rmdir "$native_dir"; rm -rf "$isolated"' EXIT
   CANOPY_BIN=$(realpath "$CANOPY_BIN")
-  command=(env)
+  command=(env -u TERMINAL -u EDITOR -u VISUAL)
   if [[ -z ${WAYLAND_DISPLAY:-} ]]; then command+=(-u WAYLAND_DISPLAY); fi
   if [[ -v CANOPY_HOSTING_API_BASE ]]; then
     command+=("CANOPY_HOSTING_API_BASE=$CANOPY_HOSTING_API_BASE")
