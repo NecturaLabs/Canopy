@@ -243,7 +243,7 @@ impl FactsCache {
 }
 
 /// The search over every section: what is typed, and what the last frame found.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Search {
     query: String,
     /// Put the caret in the search field on the next frame.
@@ -254,6 +254,19 @@ struct Search {
     to_results: bool,
     /// Matches per section in the last frame drawn, in section order.
     counts: Vec<(Section, usize)>,
+}
+
+impl Default for Search {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            // A newly opened modal must take keyboard focus away from the underlying screen.
+            focus: true,
+            jump: None,
+            to_results: false,
+            counts: Vec::new(),
+        }
+    }
 }
 
 impl Search {
@@ -5694,6 +5707,49 @@ mod tests {
                 .map(|b| b.y0);
         }
         top.expect("the heading is drawn")
+    }
+
+    #[test]
+    fn newly_opened_settings_focuses_its_search() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut screen = SettingsScreen::default();
+        let mut settings = Settings::default();
+        let mut tokens = TokenStore::default();
+        let mut actions = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui.ctx(),
+                        &mut screen,
+                        &mut settings,
+                        &mut tokens,
+                        &SettingsData {
+                            tabs: &[],
+                            update: &UpdateState::Idle,
+                            identity: IdentityView {
+                                repo: None,
+                                identity: None,
+                                error: None,
+                            },
+                        },
+                        &mut actions,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            Some(crate::ui::kit::field::edit_id(search_id())),
+            "Settings must take keyboard focus when opened"
+        );
     }
 
     #[test]
