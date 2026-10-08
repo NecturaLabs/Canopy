@@ -528,6 +528,7 @@ fn header(
     let m = theme::metrics();
     let compact = ui.available_height() < theme::XL * 10.0;
     let single_row = ui.available_width() >= 720.0;
+    let gitlink = sel.entry.old_mode == Some(0o160_000) || sel.entry.new_mode == Some(0o160_000);
     // One row of small controls fills `file_header_height`; wrapped rows get the usual gaps.
     let vertical_padding = if single_row {
         ((m.file_header_height - m.control_sm) / 2.0).max(0.0)
@@ -578,16 +579,18 @@ fn header(
                 }
             };
             let mut controls = |ui: &mut Ui| {
-                diff_options(ui, tab, actions);
-                if !sel.conflicted {
-                    let one_column = tab
-                        .diff
-                        .as_deref()
-                        .is_some_and(|d| gutters(d) != (true, true));
-                    layout_toggle(ui, tab.split_diff, one_column, single_row, actions);
-                }
-                if let Some(d) = &tab.diff {
-                    DiffStat::new(d.additions, d.deletions).show(ui);
+                if !gitlink {
+                    diff_options(ui, tab, actions);
+                    if !sel.conflicted {
+                        let one_column = tab
+                            .diff
+                            .as_deref()
+                            .is_some_and(|d| gutters(d) != (true, true));
+                        layout_toggle(ui, tab.split_diff, one_column, single_row, actions);
+                    }
+                    if let Some(d) = &tab.diff {
+                        DiffStat::new(d.additions, d.deletions).show(ui);
+                    }
                 }
                 let path = sel.entry.path.clone();
                 let file_action = |label: &str, glyph: &str| {
@@ -1252,7 +1255,7 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     }
 }
 
-/// What a change of Git file mode means, in words (`0o100644` plain file, `0o100755` executable,
+/// What a change of Git file mode means, in words (`0o100_644` plain file, `0o100755` executable,
 /// `0o120000` symbolic link).
 fn mode_note(old: u32, new: u32) -> &'static str {
     const FILE: u32 = 0o100_644;
@@ -1465,6 +1468,51 @@ mod tests {
             !added.iter().any(|t| t.contains("No commits between")),
             "an added submodule has nothing to compare: {added:?}"
         );
+    }
+
+    #[test]
+    fn a_gitlink_header_omits_text_diff_controls_but_keeps_unstaging() {
+        use crate::ui::kit::testkit::{ctx, spoken};
+        let ctx = ctx();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        for mode in [0o100_644, 0o160_000] {
+            let sel = crate::tab::FileSelection {
+                source: DiffSource::Staged,
+                entry: canopy_core::FileEntry {
+                    path: "deps/lib".into(),
+                    old_path: None,
+                    kind: ChangeKind::Modified,
+                    additions: 0,
+                    deletions: 0,
+                    lfs: false,
+                    old_mode: Some(mode),
+                    new_mode: Some(mode),
+                },
+                conflicted: false,
+            };
+            let mut nodes = Vec::new();
+            for _ in 0..3 {
+                nodes = spoken(&ctx, |ui| header(ui, &mut tab, &sel, &mut Vec::new()));
+            }
+            let has = |label: &str| nodes.iter().any(|n| n.label.as_deref() == Some(label));
+            assert!(has("Unstage file"), "whole-file actions remain available");
+            assert_eq!(
+                has("3 lines"),
+                mode != 0o160_000,
+                "text options are inapplicable to gitlinks: {nodes:?}"
+            );
+            assert_eq!(
+                has("Diff layout"),
+                mode != 0o160_000,
+                "gitlinks have no text columns: {nodes:?}"
+            );
+        }
     }
 
     #[test]

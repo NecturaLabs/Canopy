@@ -566,6 +566,8 @@ pub struct SnapIndex {
     pub remote_branches: Vec<Vec<usize>>,
     /// The widest graph row, in lanes.
     pub graph_lanes: u16,
+    /// Visible submodule indices and their status, including unstaged content changes.
+    pub submodules: Vec<(usize, canopy_core::SubmoduleState)>,
 }
 
 impl SnapIndex {
@@ -582,10 +584,32 @@ impl SnapIndex {
                 remote_branches[r].push(i);
             }
         }
-        Self {
+        let mut index = Self {
             remote_branches,
             graph_lanes: s.graph.iter().map(|g| g.width).max().unwrap_or(1),
-        }
+            submodules: Vec::new(),
+        };
+        index.update_submodules(s);
+        index
+    }
+
+    fn update_submodules(&mut self, s: &RepoSnapshot) {
+        let modified: HashSet<&str> = s.status.unstaged.iter().map(|e| e.path.as_str()).collect();
+        self.submodules = s
+            .submodules
+            .iter()
+            .enumerate()
+            .filter(|(_, sm)| !sm.is_removal_staged())
+            .map(|(i, sm)| {
+                let state = match sm.state() {
+                    canopy_core::SubmoduleState::Clean if modified.contains(sm.path.as_str()) => {
+                        canopy_core::SubmoduleState::Dirty
+                    }
+                    state => state,
+                };
+                (i, state)
+            })
+            .collect();
     }
 }
 
@@ -1362,6 +1386,11 @@ impl RepoTab {
         let Some(snap) = &self.snap else { return };
         let Some(sel) = &self.file else { return };
         if matches!(sel.source, DiffSource::Commit(_)) {
+            // The recorded pointers are immutable, but fetching a submodule changes which
+            // commits and log entries are available locally.
+            if sel.entry.old_mode == Some(0o160_000) || sel.entry.new_mode == Some(0o160_000) {
+                self.reload_diff();
+            }
             return;
         }
         let st = &snap.status;
@@ -1481,6 +1510,7 @@ impl RepoTab {
                         let s = Arc::make_mut(s);
                         s.status = st;
                         s.status_unavailable = None;
+                        self.snap_index.update_submodules(s);
                     }
                     self.reconcile_file_selection();
                     self.clear_obsolete_refusal();
@@ -2111,6 +2141,60 @@ mod tests {
                 new_mode: None,
             },
             conflicted: false,
+        }
+    }
+
+    #[test]
+    fn refresh_reloads_a_historical_gitlink_without_losing_its_selection() {
+        for full in [false, true] {
+            let (worker, events, jobs) = Worker::detached();
+            let mut tab =
+                RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+            tab.snap = Some(Arc::new(RepoSnapshot::default()));
+            tab.pull_config_asked = true;
+            let mut selection = open_unstaged_file();
+            selection.source = DiffSource::Commit(Oid::from_bytes(&[1; 20]).expect("oid"));
+            selection.entry.path = "deps/lib".into();
+            selection.entry.old_mode = Some(0o160_000);
+            selection.entry.new_mode = Some(0o160_000);
+            tab.select_file(selection.clone());
+            let Ok(Job::Diff(key)) = jobs.try_recv() else {
+                panic!("initial diff request");
+            };
+            let old = Arc::new(FileDiff::default());
+            tab.diff = Some(Arc::clone(&old));
+            events
+                .send(if full {
+                    Event::Snapshot(Arc::new(RepoSnapshot::default()))
+                } else {
+                    Event::Status(canopy_core::WorkingStatus::default())
+                })
+                .expect("refresh");
+            tab.poll(&[]);
+            assert_eq!(tab.file.as_ref(), Some(&selection));
+            assert!(Arc::ptr_eq(tab.diff.as_ref().expect("retained diff"), &old));
+            assert!(
+                matches!(jobs.try_recv(), Ok(Job::Diff(refreshed)) if refreshed == key),
+                "historical gitlink availability can change on refresh, full={full}"
+            );
+            let current = Arc::new(FileDiff {
+                submodule: Some(canopy_core::SubmoduleChange {
+                    old: Some(Oid::from_bytes(&[1; 20]).expect("oid")),
+                    new: Some(Oid::from_bytes(&[2; 20]).expect("oid")),
+                    old_present: true,
+                    new_present: true,
+                    log: canopy_core::SubmoduleLog::default(),
+                }),
+                ..FileDiff::default()
+            });
+            events
+                .send(Event::Diff(key, Ok(Arc::clone(&current))))
+                .expect("loaded diff");
+            tab.poll(&[]);
+            assert!(Arc::ptr_eq(
+                tab.diff.as_ref().expect("current diff"),
+                &current
+            ));
         }
     }
 

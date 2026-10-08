@@ -593,9 +593,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
         // Submodules: only in a repository that has some; "+" adds one, the palette too.
         // A removal that is staged but not committed is no longer a submodule to act on.
-        let submodules: Vec<&canopy_core::SubmoduleInfo> = snap.submodules.iter().filter(|sm| !sm.is_removal_staged()).collect();
-        if !submodules.is_empty() {
-            let (open, header) = section_with_action(ui, tab, "submodules", "Submodules", icon::PACKAGE, submodules.len(), false, Some((icon::PLUS, "Add submodule…")));
+        let submodules = tab.snap_index.submodules.len();
+        if submodules > 0 {
+            let (open, header) = section_with_action(ui, tab, "submodules", "Submodules", icon::PACKAGE, submodules, false, Some((icon::PLUS, "Add submodule…")));
             if header.value {
                 actions.push(Action::OpenDialog(Dialog::AddSubmodule { url: String::new(), path: String::new(), branch: String::new() }));
             }
@@ -611,17 +611,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 }
             });
             if open {
-                let list = Roving::new(ui.ctx(), ("sidebar-submodules", &tab.path), submodules.len(), Some(0));
+                let list = Roving::new(ui.ctx(), ("sidebar-submodules", &tab.path), submodules, Some(0));
                 ui.scope(|ui| {
                 a11y::group(ui, Role::List, "Submodules");
-                for (i, sm) in submodules.iter().copied().enumerate() {
-                    // The superproject's status lists a submodule with uncommitted content, which
-                    // the cheap read in the snapshot does not look for.
-                    let modified = snap.status.unstaged.iter().any(|e| e.path == sm.path);
-                    let state = match sm.state() {
-                        SubmoduleState::Clean if modified => SubmoduleState::Dirty,
-                        other => other,
-                    };
+                virtual_rows(ui, submodules, row_h, |ui, i| {
+                    let (index, state) = tab.snap_index.submodules[i];
+                    let sm = &snap.submodules[index];
                     let commit = sm.workdir_id.or(sm.index_id).map(canopy_core::short_id);
                     let detail = match state {
                         SubmoduleState::Clean => commit.clone().unwrap_or_default(),
@@ -664,7 +659,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             actions.push(remove_submodule(&path));
                         }
                     });
-                }
+                });
                 });
             }
         }
@@ -799,6 +794,10 @@ mod tests {
         events: Vec<egui::Event>,
         actions: &mut Vec<Action>,
     ) -> (Vec<egui::accesskit::Node>, Option<String>) {
+        // These fixtures assign snapshots directly instead of receiving a worker event.
+        if let Some(snap) = &tab.snap {
+            tab.snap_index = crate::tab::SnapIndex::new(snap);
+        }
         let mut out = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -1266,6 +1265,40 @@ mod tests {
         let _ = sidebar_frame(&ctx, &mut tab, events, &mut actions);
         crate::ui::motion::set_reduced(false);
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    #[test]
+    fn a_large_submodule_list_only_builds_visible_rows() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        ctx.enable_accesskit();
+        let mut tab = branch_tab();
+        let snap = std::sync::Arc::make_mut(tab.snap.as_mut().expect("snapshot"));
+        snap.submodules = (0..1000)
+            .map(|i| canopy_core::SubmoduleInfo {
+                name: format!("deps/lib-{i}"),
+                path: format!("deps/lib-{i}"),
+                url: None,
+                head_id: Some(oid(7)),
+                index_id: Some(oid(7)),
+                workdir_id: Some(oid(7)),
+                conflicted: false,
+                dirty: None,
+            })
+            .collect();
+        for key in ["branches", "worktrees", "remotes", "tags", "stashes"] {
+            tab.collapsed.insert(key.into());
+        }
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let rows = nodes
+            .iter()
+            .filter(|n| n.label().is_some_and(|s| s.contains(", submodule,")))
+            .count();
+        assert!(
+            rows > 0 && rows < 30,
+            "built {rows} submodule rows for a 700-point viewport"
+        );
     }
 
     /// A removed submodule is staged for deletion, not committed yet; it leaves the list at

@@ -350,10 +350,10 @@ Canopy-specific folders.
   for those rows is computed once per snapshot, on the worker.
 - Large results cross from the worker as `Arc`s (snapshot, commit details, diff, conflict file)
   and the tab keeps them that way: a frame clones pointers, never the data. Facts a frame would
-  otherwise recompute from the snapshot (remote branches per remote, graph width) are derived
-  once when it arrives (`tab::SnapIndex`).
+  otherwise recompute from the snapshot (remote branches per remote, graph width, visible submodule rows and their states) are derived
+  once when it arrives (`tab::SnapIndex`). Submodule states also update on status-only events.
 - Every list that grows with the repository is virtualised: the history table, the sidebar's
-  branches, remote branches, tags and stashes, changed files (Changes and commit details) and the
+  branches, remote branches, tags, stashes and submodules, changed files (Changes and commit details) and the
   request list lay out and paint only the rows in view (`commit_detail::virtual_rows`), so a
   frame costs the same for 2000 or 200,000 commits or tags.
 - Diffs are computed on the worker when a file is selected and kept in the tab until the

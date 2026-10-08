@@ -28,7 +28,7 @@ impl SubmoduleState {
         match self {
             Self::Conflicted => "Conflicted",
             Self::NotInitialized => "Not initialized",
-            Self::NewCommits => "New commits",
+            Self::NewCommits => "Different checkout",
             Self::Dirty => "Modified content",
             Self::Clean => "Up to date",
         }
