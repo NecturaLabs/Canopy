@@ -592,8 +592,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         }
 
         // Submodules: only in a repository that has some; "+" adds one, the palette too.
-        if !snap.submodules.is_empty() {
-            let (open, header) = section_with_action(ui, tab, "submodules", "Submodules", icon::PACKAGE, snap.submodules.len(), false, Some((icon::PLUS, "Add submodule…")));
+        // A removal that is staged but not committed is no longer a submodule to act on.
+        let submodules: Vec<&canopy_core::SubmoduleInfo> = snap.submodules.iter().filter(|sm| !sm.is_removal_staged()).collect();
+        if !submodules.is_empty() {
+            let (open, header) = section_with_action(ui, tab, "submodules", "Submodules", icon::PACKAGE, submodules.len(), false, Some((icon::PLUS, "Add submodule…")));
             if header.value {
                 actions.push(Action::OpenDialog(Dialog::AddSubmodule { url: String::new(), path: String::new(), branch: String::new() }));
             }
@@ -609,10 +611,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 }
             });
             if open {
-                let list = Roving::new(ui.ctx(), ("sidebar-submodules", &tab.path), snap.submodules.len(), Some(0));
+                let list = Roving::new(ui.ctx(), ("sidebar-submodules", &tab.path), submodules.len(), Some(0));
                 ui.scope(|ui| {
                 a11y::group(ui, Role::List, "Submodules");
-                for (i, sm) in snap.submodules.iter().enumerate() {
+                for (i, sm) in submodules.iter().copied().enumerate() {
                     // The superproject's status lists a submodule with uncommitted content, which
                     // the cheap read in the snapshot does not look for.
                     let modified = snap.status.unstaged.iter().any(|e| e.path == sm.path);
@@ -1264,6 +1266,46 @@ mod tests {
         let _ = sidebar_frame(&ctx, &mut tab, events, &mut actions);
         crate::ui::motion::set_reduced(false);
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// A removed submodule is staged for deletion, not committed yet; it leaves the list at
+    /// once instead of staying behind as "Not initialized" with an Initialize action.
+    #[test]
+    fn a_submodule_whose_removal_is_staged_leaves_the_list() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = branch_tab();
+        let sub = |path: &str, index: Option<u8>| canopy_core::SubmoduleInfo {
+            name: path.into(),
+            path: path.into(),
+            url: Some(format!("https://example.com/{path}.git")),
+            head_id: Some(oid(7)),
+            index_id: index.map(oid),
+            workdir_id: index.map(oid),
+            conflicted: false,
+            dirty: None,
+        };
+        if let Some(snap) = tab.snap.as_mut() {
+            std::sync::Arc::make_mut(snap).submodules =
+                vec![sub("deps/lib", Some(7)), sub("deps/gone", None)];
+        }
+        for key in ["branches", "worktrees", "remotes", "tags", "stashes"] {
+            tab.collapsed.insert(key.to_owned());
+        }
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        crate::ui::motion::set_reduced(false);
+        assert!(
+            named(&nodes, "deps/lib, submodule, Up to date").is_some(),
+            "the kept submodule is listed"
+        );
+        assert!(
+            named(&nodes, "deps/gone, submodule, Not initialized").is_none(),
+            "the removed one is not"
+        );
     }
 
     #[test]
