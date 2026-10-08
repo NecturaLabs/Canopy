@@ -201,7 +201,9 @@ impl Http {
             .with_config()
             .limit(1024 * 1024)
             .read_to_vec()
-            .map_err(|e| self.profile_error("Could not read the profile response", &e.to_string(), path))?;
+            .map_err(|e| {
+                self.profile_error("Could not read the profile response", &e.to_string(), path)
+            })?;
         if !(200..300).contains(&status) {
             return Err(map_status_with_token(
                 status,
@@ -723,9 +725,8 @@ mod tests {
         );
         let path = "/avatar?email=private@example.com&size=64";
         let full_url = format!("{}{path}", http.base());
-        let diagnostic = format!(
-            "connection refused at {full_url}: private-auth-token-123 (path {path})"
-        );
+        let diagnostic =
+            format!("connection refused at {full_url}: private-auth-token-123 (path {path})");
         let message = http
             .profile_error("Profile lookup failed", &diagnostic, path)
             .to_string();
