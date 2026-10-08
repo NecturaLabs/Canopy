@@ -148,21 +148,32 @@ impl Http {
         self.token.is_some()
     }
 
-    /// `text` with this client's own token replaced, before it is cut short or cleaned
-    /// ([`shorten`]), so not even part of it is left. A server can echo the token in any form;
-    /// tokens of a known form are also caught by [`plain_text`].
+    /// Normalizes diagnostic text before replacing this client's token, without truncation.
     fn hide_token(&self, text: &str) -> String {
+        let text = plain_text(text, usize::MAX);
         match &self.token {
             Some(token) if token.len() >= MIN_TOKEN_LEN => text.replace(token.as_str(), REDACTED),
-            _ => text.to_owned(),
+            _ => text,
         }
     }
 
-    /// Parses a JSON response; the parser's message, which can quote the server, carries no
-    /// token.
+    /// Parses JSON without quoting response values in type errors; syntax errors retain their
+    /// parser diagnostic. Both include the location of the failure.
     fn parse<T: DeserializeOwned>(&self, bytes: &[u8], what: &str) -> Result<T> {
-        serde_json::from_slice(bytes)
-            .map_err(|e| Error::Parse(shorten(&self.hide_token(&format!("{what}: {e}")))))
+        serde_json::from_slice(bytes).map_err(|e| {
+            // serde Debug-escapes quoted strings, so stripping invisible characters from
+            // its message cannot recover an echoed token for redaction.
+            let detail = if e.is_data() {
+                format!(
+                    "response data has an unexpected format (values <redacted>) at line {} column {}",
+                    e.line(),
+                    e.column()
+                )
+            } else {
+                e.to_string()
+            };
+            Error::Parse(shorten(&self.hide_token(&format!("{what}: {detail}"))))
+        })
     }
 
     pub(crate) fn base(&self) -> &str {
@@ -379,7 +390,7 @@ impl Http {
                 .map(|e| e.message.trim())
                 .filter(|m| !m.is_empty())
                 .collect();
-            let message = shorten(&self.hide_token(&plain_text(&messages.join("; "), usize::MAX)));
+            let message = shorten(&self.hide_token(&messages.join("; ")));
             Error::Api {
                 status: 200,
                 message: if message.is_empty() {
@@ -715,6 +726,37 @@ pub(crate) fn encode(s: &str) -> String {
 mod tests {
     use super::*;
     use ureq::http::HeaderValue;
+
+    #[test]
+    fn transport_error_tokens_are_cleaned_before_redaction() {
+        let http = Http::new(
+            ForgeKind::GitLab,
+            "https://gitlab.example/api/v4",
+            Some("arbitrarySecretToken1234567".to_owned()),
+        );
+        let message = shorten(&http.hide_token("bad header: arbitrarySecret\u{200b}Token1234567"));
+        assert!(!message.contains("Secret"), "{message}");
+        assert!(message.contains("bad header"), "{message}");
+    }
+
+    #[test]
+    fn parse_errors_redact_normalized_client_tokens() {
+        let token = "arbitrarySecretToken1234567";
+        let http = Http::new(
+            ForgeKind::GitLab,
+            "https://gitlab.example/api/v4",
+            Some(token.to_owned()),
+        );
+        for body in [
+            br#""arbitrarySecretToken1234567""#.as_slice(),
+            br#""arbitrarySecret\u0054oken1234567""#.as_slice(),
+            b"\"arbitrarySecret\xe2\x80\x8bToken1234567\"".as_slice(),
+        ] {
+            let message = http.parse::<u64>(body, "response").unwrap_err().to_string();
+            assert!(!message.contains("Secret"), "{message}");
+            assert!(message.contains("line 1 column"), "{message}");
+        }
+    }
 
     #[test]
     fn profile_errors_preserve_the_cause_without_exposing_request_data() {

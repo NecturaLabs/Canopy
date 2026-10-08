@@ -109,6 +109,8 @@ commits since the previous build.
 
 ### Security
 
+- Hosting diagnostics hide tokens after normalizing invisible characters. JSON shape errors
+  report the failure location without quoting response values that could contain a token.
 - Files Canopy reads or writes inside a repository (the conflict resolver) refuse paths that leave
   the working tree, name `.git`, or cross a symbolic link; a conflicted file behind a symlinked
   folder now gives an error instead of opening.

@@ -181,6 +181,9 @@ list, selection and open request stay on screen, and a failed refresh keeps them
 the Requests view reloads a list older than a minute. These use the same list and details calls
 as Reload, and only with hosting on and a list already loaded.
 
+Hosting error messages hide the client token after normalizing invisible characters. A response
+with the wrong JSON shape reports its failure location without quoting the returned values.
+
 ## Interface
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
