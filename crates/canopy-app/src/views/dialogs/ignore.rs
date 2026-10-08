@@ -56,7 +56,8 @@ impl IgnoreForm {
     }
 
     fn rule(&self) -> IgnoreRule {
-        let path = if self.kind == Kind::Pattern && self.path.trim().is_empty() {
+        let hidden = self.kind == Kind::Pattern && self.target != IgnoreTarget::Nearest;
+        let path = if hidden || self.kind == Kind::Pattern && self.path.trim().is_empty() {
             ".gitignore".to_owned()
         } else {
             self.path.trim().to_owned()
@@ -279,6 +280,24 @@ mod tests {
             !focused_after_opening(&mut IgnoreForm::new(repo, Some("a.log".into()))),
             "a prefilled path leaves Enter free to add the rule"
         );
+    }
+
+    #[test]
+    fn a_pattern_ignores_a_path_left_by_another_kind_unless_saved_at_the_nearest_file() {
+        let mut form = IgnoreForm::new(PathBuf::from("fixture"), Some("../x".into()));
+        form.kind = Kind::Pattern;
+        form.pattern = "*.log".into();
+        let custom = |near: &str| IgnoreRule::Custom {
+            pattern: "*.log".into(),
+            near: near.into(),
+        };
+        assert_eq!(
+            form.rule(),
+            custom(".gitignore"),
+            "a hidden path must not decide where the root rule is validated"
+        );
+        form.target = IgnoreTarget::Nearest;
+        assert_eq!(form.rule(), custom("../x"), "the visible path is used");
     }
 
     #[test]
