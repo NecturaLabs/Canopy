@@ -147,6 +147,8 @@ fn error_help(
             "The host did not accept your credentials.",
             Some(Offer::Accounts),
         ))
+    } else if lower.contains("unable to read askpass response") {
+        Some(("Sign-in was cancelled.", None))
     } else if lower.contains("could not resolve host")
         || lower.contains("could not resolve hostname")
     {
@@ -955,6 +957,15 @@ fn local_offset_minutes(seconds: i64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelling_a_sign_in_prompt_is_not_reported_as_git_failing() {
+        let raw =
+            "git fetch failed: error: unable to read askpass response from '/opt/canopy/canopy'";
+        let (help, offer) = error_help("Could not fetch", raw, None).expect("a plain explanation");
+        assert_eq!(help, "Sign-in was cancelled.");
+        assert!(offer.is_none());
+    }
 
     #[test]
     fn topic_filters_apply_to_each_category_and_live_cards() {
