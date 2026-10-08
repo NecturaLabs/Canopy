@@ -109,27 +109,29 @@ fn refused_reason(remotes: &[String]) -> String {
     )
 }
 
-/// Whether the repository's working folder and its git directory both lie inside one of the
+/// Whether the repository's working folder and all Git configuration directories lie inside one of the
 /// `trusted` folders.
 ///
 /// A download runs `git fetch` in the repository, and git then obeys the repository's own
 /// configuration, which can name programs to run (`core.sshCommand`, a credential helper) and
 /// servers to contact. Canopy therefore downloads without being asked only for a repository the
 /// user placed in a folder they trust. The git directory counts too: a repository whose `.git`
-/// file points elsewhere takes its configuration from there.
+/// file points elsewhere takes its configuration from there. Linked worktrees also read a
+/// private git directory's `config.worktree` when `extensions.worktreeConfig` is enabled.
 ///
 /// Every path is resolved first (symbolic links, `..`), so a link or a relative spelling can
 /// neither enter nor leave a trusted folder, and `/a/bc` is not inside `/a/b`. A trusted folder
 /// that cannot be resolved (removed, unreadable) trusts nothing, and a filesystem root is never
 /// accepted as a trusted folder.
 pub fn is_in_trusted_folder(repo: &Repository, trusted: &[std::path::PathBuf]) -> bool {
-    paths_in_trusted_folder(repo.commondir(), repo.workdir(), trusted)
+    paths_in_trusted_folder(repo.commondir(), repo.path(), repo.workdir(), trusted)
 }
 
-/// [`is_in_trusted_folder`] for the two folders it looks at: the common git directory and, when
-/// there is one, the working folder.
+/// [`is_in_trusted_folder`] for the common git directory, this worktree's own git directory
+/// (which may hold `config.worktree`), and its working folder when present.
 pub fn paths_in_trusted_folder(
     common_dir: &Path,
+    git_dir: &Path,
     workdir: Option<&Path>,
     trusted: &[std::path::PathBuf],
 ) -> bool {
@@ -141,12 +143,13 @@ pub fn paths_in_trusted_folder(
     let inside = |path: &Path| {
         std::fs::canonicalize(path).is_ok_and(|p| trusted.iter().any(|t| p.starts_with(t)))
     };
-    inside(common_dir) && workdir.is_none_or(inside)
+    inside(common_dir) && inside(git_dir) && workdir.is_none_or(inside)
 }
 
 /// What decides, right before each `git fetch` starts, whether the repository (its common git
-/// directory and working folder) may download. The application installs it.
-type DownloadGate = fn(common_dir: &Path, workdir: Option<&Path>) -> bool;
+/// directory, worktree-private git directory and working folder) may download. The
+/// application installs it.
+type DownloadGate = fn(common_dir: &Path, git_dir: &Path, workdir: Option<&Path>) -> bool;
 
 static DOWNLOAD_GATE: std::sync::OnceLock<DownloadGate> = std::sync::OnceLock::new();
 
@@ -162,7 +165,7 @@ pub fn set_download_gate(gate: DownloadGate) {
 fn download_allowed(repo: &Repository) -> bool {
     DOWNLOAD_GATE
         .get()
-        .is_none_or(|gate| gate(repo.commondir(), repo.workdir()))
+        .is_none_or(|gate| gate(repo.commondir(), repo.path(), repo.workdir()))
 }
 
 /// Whether `repo` is a partial clone: it has a promisor remote, or objects that came from one
@@ -494,6 +497,27 @@ mod tests {
         let mut anchor = root.path().to_path_buf();
         while anchor.pop() {}
         assert!(!trust(&[&anchor]));
+    }
+
+    #[test]
+    fn a_private_git_directory_outside_trust_refuses_downloads() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let trusted = root.path().join("trusted");
+        let common = trusted.join("main.git");
+        let work = trusted.join("worktree");
+        let private = root.path().join("outside").join("worktrees").join("feature");
+        for path in [&common, &work, &private] {
+            std::fs::create_dir_all(path).expect("test folder");
+        }
+        let folders = [trusted];
+        assert!(
+            paths_in_trusted_folder(&common, &common, Some(&work), &folders),
+            "all Git configuration and worktree folders are inside the trusted root"
+        );
+        assert!(
+            !paths_in_trusted_folder(&common, &private, Some(&work), &folders),
+            "the worktree's private config cannot run outside trust"
+        );
     }
 
     #[cfg(unix)]

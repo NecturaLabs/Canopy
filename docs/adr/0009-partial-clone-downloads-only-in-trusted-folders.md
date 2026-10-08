@@ -17,7 +17,7 @@ push stay the user's own action; only the automatic download needed a guard.
 ## Decision
 
 A repository downloads missing objects on its own only when its working folder and its git
-directory both lie inside a folder the user trusted in Settings (Privacy, Trusted folders;
+directory, the linked worktree's private git directory (which can hold `config.worktree`), and the working folder all lie inside a folder the user trusted in Settings (Privacy, Trusted folders;
 `Settings::trusted_folders`). Nothing is trusted by default. Every path is resolved first (symbolic
 links, `..`), so a link cannot carry trust into or out of a folder; a folder that cannot be resolved
 trusts nothing; a filesystem root is never accepted (`partial::is_in_trusted_folder`).

@@ -117,9 +117,9 @@ fn is_root(path: &Path) -> bool {
 /// Gives core the rule every download passes right where `git fetch` would start, so that no
 /// read path reaches a fetch around the trust list. Safe to call again.
 pub fn install_gate() {
-    canopy_core::partial::set_download_gate(|common_dir, workdir| {
+    canopy_core::partial::set_download_gate(|common_dir, git_dir, workdir| {
         TRUST.decide(|folders| {
-            canopy_core::partial::paths_in_trusted_folder(common_dir, workdir, folders)
+            canopy_core::partial::paths_in_trusted_folder(common_dir, git_dir, workdir, folders)
         })
     });
 }
