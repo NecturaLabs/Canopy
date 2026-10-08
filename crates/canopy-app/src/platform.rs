@@ -185,14 +185,18 @@ fn with_path(
         if placeholders.contains(&arg.as_str()) {
             used = true;
             out.push(path.as_os_str().to_owned());
-        } else if let Some(code) = placeholders.iter().find(|c| arg.contains(**c)) {
-            return Err(format!(
-                "In the command, {code} must be a word of its own, not part of {arg}, so a file \
-                 name can never become part of another argument. Change it in Settings → \
-                 Integrations."
-            ));
         } else {
-            out.push(OsString::from(arg));
+            // Desktop Exec uses %% for a literal percent. Test the original word before
+            // unescaping, so %%f remains literal rather than becoming a file placeholder.
+            let literal_free = arg.replace("%%", "");
+            if let Some(code) = placeholders.iter().find(|c| literal_free.contains(**c)) {
+                return Err(format!(
+                    "In the command, {code} must be a word of its own, not part of {arg}, so a file \
+                     name can never become part of another argument. Change it in Settings → \
+                     Integrations."
+                ));
+            }
+            out.push(OsString::from(arg.replace("%%", "%")));
         }
     }
     if add && !used {
@@ -678,6 +682,22 @@ mod tests {
         }
         assert_eq!(program_name("/usr/bin/code"), "code");
         assert_eq!(program_name(r"C:\Apps\Code.EXE"), "code");
+    }
+
+    #[test]
+    fn escaped_percent_sequences_are_not_file_placeholders() {
+        let file = Path::new("/repo/real file.rs");
+        let args = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            with_path(args(&["--label", "%%f"]), &["%f", "%F"], file, true).unwrap(),
+            ["--label", "%f", "/repo/real file.rs"]
+        );
+        assert_eq!(
+            with_path(args(&["--file=%%f"]), &["%f", "%F"], file, true).unwrap(),
+            ["--file=%f", "/repo/real file.rs"]
+        );
+        let bad = with_path(args(&["--file=%%%f"]), &["%f"], file, true).unwrap_err();
+        assert!(bad.contains("word of its own"), "{bad}");
     }
 
     #[test]
