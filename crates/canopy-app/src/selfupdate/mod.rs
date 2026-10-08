@@ -688,7 +688,10 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
     for (png_dst, _) in old.icons.iter().filter(|(dst, src)| {
         src == &png_src && dst.ends_with(format!("hicolor/256x256/apps/{APP_ID}.png"))
     }) {
-        let Some(hicolor) = png_dst.parent().and_then(Path::parent).and_then(Path::parent)
+        let Some(hicolor) = png_dst
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
         else {
             continue;
         };
@@ -696,8 +699,7 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
         if old.icons.iter().any(|(dst, _)| *dst == legacy) {
             continue;
         }
-        if legacy.symlink_metadata().is_ok_and(|m| m.is_file())
-            && fs::remove_file(&legacy).is_err()
+        if legacy.symlink_metadata().is_ok_and(|m| m.is_file()) && fs::remove_file(&legacy).is_err()
         {
             notes.push(format!("could not remove legacy icon {}", legacy.display()));
         }

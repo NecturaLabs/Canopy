@@ -647,8 +647,12 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
 fn an_unregistered_legacy_svg_is_removed_only_for_a_registered_png() {
     let tmp = tempfile::tempdir().expect("tmp");
     let root = tmp.path().join("root");
-    let png = tmp.path().join("data/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
-    let svg = tmp.path().join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    let png = tmp
+        .path()
+        .join("data/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = tmp
+        .path()
+        .join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
     folder(
         &root,
         &[(
@@ -661,7 +665,8 @@ fn an_unregistered_legacy_svg_is_removed_only_for_a_registered_png() {
     let old = parse_receipt(&format!(
         "icon={}|{}\n",
         png.display(),
-        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png").display(),
+        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png")
+            .display(),
     ));
     let mut notes = Vec::new();
     integrate(&root, 413, &old, &mut notes);
@@ -682,8 +687,12 @@ fn an_unregistered_symlinked_legacy_svg_is_left_alone() {
     use std::os::unix::fs::symlink;
     let tmp = tempfile::tempdir().expect("tmp");
     let root = tmp.path().join("root");
-    let png = tmp.path().join("data/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
-    let svg = tmp.path().join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    let png = tmp
+        .path()
+        .join("data/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = tmp
+        .path()
+        .join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
     let target = tmp.path().join("other.svg");
     folder(
         &root,
@@ -699,7 +708,8 @@ fn an_unregistered_symlinked_legacy_svg_is_left_alone() {
     let old = parse_receipt(&format!(
         "icon={}|{}\n",
         png.display(),
-        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png").display(),
+        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png")
+            .display(),
     ));
     let mut notes = Vec::new();
     integrate(&root, 413, &old, &mut notes);
