@@ -71,6 +71,8 @@ pub struct GitFacts {
     pub autostash: Vec<ConfigValue>,
     /// `push.followTags`.
     pub follow_tags: Option<ConfigValue>,
+    /// `submodule.recurse`.
+    pub submodule_recurse: Option<ConfigValue>,
     /// `push.default`.
     pub push_default: Option<ConfigValue>,
     /// `merge.conflictStyle`.
@@ -182,6 +184,7 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
         .filter_map(|key| get_bool(dir, scope, key).ok().flatten())
         .collect();
     facts.follow_tags = get_bool(dir, scope, "push.followTags").ok().flatten();
+    facts.submodule_recurse = get_bool(dir, scope, "submodule.recurse").ok().flatten();
     facts.push_default = get("push.default").ok().flatten();
     facts.conflict_style = get("merge.conflictStyle").ok().flatten();
     facts.cleanup = get("commit.cleanup").ok().flatten();

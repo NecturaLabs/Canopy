@@ -136,6 +136,9 @@ pub struct GitOptions {
     /// A pruning fetch also deletes local tags the remote does not have (`--prune-tags`), tags
     /// never pushed included.
     pub prune_tags: bool,
+    /// After a pull or a checkout, and in a new clone, the submodules are brought to the
+    /// commits the superproject records (`git submodule update --init --recursive`).
+    pub recurse_submodules: bool,
 }
 
 impl Default for GitOptions {
@@ -150,6 +153,7 @@ impl Default for GitOptions {
             push_default: PushDefault::Simple,
             cleanup: Cleanup::Whitespace,
             prune_tags: false,
+            recurse_submodules: true,
         }
     }
 }
@@ -161,7 +165,7 @@ fn flag(on: bool, yes: &'static str, no: &'static str) -> &'static str {
 impl Repo {
     /// Whether the git configuration decides the choice its keys match (`pattern`, a regular
     /// expression over lower-case key names): Canopy follows it and it sets one of them.
-    fn config_decides(&self, pattern: &str) -> bool {
+    pub(crate) fn config_decides(&self, pattern: &str) -> bool {
         self.options().follow_config
             && cli::run_unchecked(self.workdir(), &["config", "--get-regexp", pattern])
                 .is_ok_and(|o| o.code == Some(0))

@@ -842,6 +842,7 @@ fn synonyms(title: &str) -> &'static str {
         "Pull strategy" => "pull rebase merge fast-forward ff only",
         "Follow my git config" => "pull rebase pull.rebase pull.ff configuration follow default",
         "Prune on fetch" => "prune stale remote branches delete",
+        "Update submodules" => "submodule recurse pull checkout clone recursive",
         "Fetch in the background" => "auto fetch automatic interval minutes",
         "Add Signed-off-by" => "signoff sign-off dco trailer",
         "Commits per page" => "history load more limit",
@@ -2990,6 +2991,39 @@ fn git(
                     "Push tags with their commits",
                 );
                 switch(ui, &mut s.follow_tags, "Push tags with their commits");
+            });
+        },
+    );
+    row_with_note(
+        ui,
+        "Update submodules",
+        "After a pull or a checkout, and in a new clone, submodules follow the commits the repository records (git submodule update --init --recursive). Recommended: on.",
+        f.and_then(|f| {
+            config_note(
+                &f.submodule_recurse.iter().collect::<Vec<_>>(),
+                follow,
+                |v| v.as_bool() == Some(s.recurse_submodules),
+                |v| v.as_bool() == Some(true),
+                "on",
+                if s.recurse_submodules {
+                    "--recurse-submodules"
+                } else {
+                    "--no-recurse-submodules"
+                },
+                "pulls and checkouts",
+            )
+        })
+        .as_ref(),
+        |ui| {
+            let set = f.is_some_and(|f| f.submodule_recurse.is_some());
+            ui.add_enabled_ui(!decided(set), |ui| {
+                revert(
+                    ui,
+                    &mut s.recurse_submodules,
+                    &DEFAULTS.recurse_submodules,
+                    "Update submodules",
+                );
+                switch(ui, &mut s.recurse_submodules, "Update submodules");
             });
         },
     );

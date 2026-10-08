@@ -1247,7 +1247,24 @@ fn snapshot_completing(
     Ok(snap)
 }
 
-fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Result<String> {
+fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::Result<String> {
+    // A pull or a checkout moves what the submodules should be at.
+    let moves = matches!(
+        op,
+        Op::Pull { .. }
+            | Op::Checkout(_)
+            | Op::CheckoutRemote { .. }
+            | Op::CheckoutDetached(_)
+            | Op::CreateBranch { checkout: true, .. }
+    );
+    let out = perform_op(repo, op, &mut progress)?;
+    if moves {
+        repo.follow_submodules(&mut progress)?;
+    }
+    Ok(out)
+}
+
+fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Result<String> {
     let done = |r: canopy_core::Result<()>| r.map(|()| String::new());
     match op {
         Op::AddIgnore { rule, target } => repo.add_ignore_rule(&rule, target).map(|out| {

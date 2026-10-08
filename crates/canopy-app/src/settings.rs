@@ -408,6 +408,9 @@ pub struct Settings {
     pub autostash: bool,
     /// A push also sends the annotated tags on the commits it pushes (`--follow-tags`).
     pub follow_tags: bool,
+    /// After a pull or checkout, and in a new clone, submodules follow the commits the
+    /// repository records (`git submodule update --init --recursive`).
+    pub recurse_submodules: bool,
     /// How conflicts are written into files (`merge.conflictStyle`).
     #[serde(deserialize_with = "known")]
     pub conflict_style: ConflictMode,
@@ -525,6 +528,7 @@ impl Default for Settings {
             signoff: false,
             autostash: true,
             follow_tags: true,
+            recurse_submodules: true,
             conflict_style: ConflictMode::Zdiff3,
             push_default: PushMode::Simple,
             cleanup: CleanupMode::Whitespace,
@@ -657,6 +661,7 @@ impl Settings {
             push_default: self.push_default.push_default(),
             cleanup: self.cleanup.cleanup(),
             prune_tags: self.prune_tags,
+            recurse_submodules: self.recurse_submodules,
         }
     }
 
@@ -1039,6 +1044,7 @@ mod tests {
                 push_default: PushDefault::Simple,
                 cleanup: Cleanup::Whitespace,
                 prune_tags: false,
+                recurse_submodules: true,
             }
         );
         assert_eq!(s.git_options(), GitOptions::default());
@@ -1055,6 +1061,7 @@ mod tests {
             push_default: PushMode::Current,
             cleanup: CleanupMode::Strip,
             prune_tags: true,
+            recurse_submodules: false,
             initial_branch: "  trunk ".into(),
             ..Settings::default()
         };
@@ -1068,6 +1075,7 @@ mod tests {
                 push_default: PushDefault::Current,
                 cleanup: Cleanup::Strip,
                 prune_tags: true,
+                recurse_submodules: false,
             }
         );
         assert_eq!(s.initial_branch(), "trunk");

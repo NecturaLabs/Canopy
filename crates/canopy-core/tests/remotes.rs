@@ -131,8 +131,13 @@ fn a_new_remote_takes_neither_credentials_nor_options() {
 fn a_clone_url_with_credentials_is_refused_before_git_runs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let dest = dir.path().join("r");
-    let err = canopy_core::ops::clone("https://user:secret@127.0.0.1:9/o/r.git", &dest, |_| {})
-        .expect_err("credentials refused");
+    let err = canopy_core::ops::clone(
+        "https://user:secret@127.0.0.1:9/o/r.git",
+        &dest,
+        false,
+        |_| {},
+    )
+    .expect_err("credentials refused");
     assert!(err.to_string().contains("user name and password"), "{err}");
     assert!(!err.to_string().contains("secret"), "{err}");
     assert!(!dest.exists());

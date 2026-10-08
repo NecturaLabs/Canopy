@@ -37,6 +37,7 @@ its own choice explicitly:
 | Prune tags too | off | `remote.<name>.pruneTags`, else `fetch.pruneTags` | `-c fetch.pruneTags=…` while following, else `--prune-tags` / `--no-prune-tags` |
 | Autostash for pull and rebase | on | `rebase.autoStash` (rebases), `merge.autoStash` (merges) | `--autostash` / `--no-autostash` (merges: git 2.27 and later) |
 | Push annotated tags with their commits | on | `push.followTags` | `--follow-tags` / `--no-follow-tags` |
+| Update submodules after a pull or checkout, and in a clone | on | `submodule.recurse` (pull and checkout only: git ignores it for `clone`) | after a pull or checkout, `git submodule update --init --recursive` unless the configuration decides; `clone --recurse-submodules` |
 | Push to | the branch's upstream, when the names match | `push.default` (a force push follows only `simple`, `upstream` or `current`, so it never sends other branches) | `-c push.default=simple` (or upstream, current) |
 | Conflict style | both sides and the original, trimmed | `merge.conflictStyle` | `-c merge.conflictStyle=zdiff3` (`diff3` before git 2.35) |
 | First branch of a new repository | `main` | `init.defaultBranch` | `git init --initial-branch=<name>` (`symbolic-ref` before git 2.28) |

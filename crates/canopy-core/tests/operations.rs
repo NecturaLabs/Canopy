@@ -627,7 +627,7 @@ fn push_and_fetch_against_a_local_remote() {
 
     let clone_dir = tempfile::tempdir().expect("tempdir");
     let dest = clone_dir.path().join("copy");
-    canopy_core::ops::clone(&url, &dest, |_| {}).expect("clone");
+    canopy_core::ops::clone(&url, &dest, false, |_| {}).expect("clone");
     let copy = Repo::open(&dest).expect("open clone");
     assert_eq!(copy.snapshot(10).expect("snapshot").commits.len(), 2);
 }
@@ -650,7 +650,7 @@ fn upstream_and_clone() -> (tempfile::TempDir, Repo, tempfile::TempDir, Repo) {
     let (up_dir, up) = fixture();
     let clone_dir = tempfile::tempdir().expect("tempdir");
     let dest = clone_dir.path().join("clone");
-    canopy_core::ops::clone(&up_dir.path().to_string_lossy(), &dest, |_| {}).expect("clone");
+    canopy_core::ops::clone(&up_dir.path().to_string_lossy(), &dest, false, |_| {}).expect("clone");
     configure(&dest);
     // The clone checked its files out under the system-wide core.autocrlf=true of Git for
     // Windows, as CRLF; with it now false they would read as edited, and a pull's autostash would
@@ -1984,7 +1984,7 @@ fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
 
     let clone_dir = tempfile::tempdir().expect("tempdir");
     let dest = clone_dir.path().join("clone");
-    canopy_core::ops::clone(&server_url, &dest, |_| {}).expect("clone");
+    canopy_core::ops::clone(&server_url, &dest, false, |_| {}).expect("clone");
     configure(&dest);
     let repo = Repo::open(&dest).expect("open");
     let head = |repo: &Repo| {
@@ -2090,7 +2090,7 @@ fn checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone() {
 
     let clone_dir = tempfile::tempdir().expect("tempdir");
     let dest = clone_dir.path().join("clone");
-    canopy_core::ops::clone(&server_url, &dest, |_| {}).expect("clone");
+    canopy_core::ops::clone(&server_url, &dest, false, |_| {}).expect("clone");
     configure(&dest);
     let repo = Repo::open(&dest).expect("open");
     let rev = |r: &str| git(&dest, &["rev-parse", r]).trim().to_owned();
@@ -2124,7 +2124,7 @@ fn checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone() {
     let (_d2, other) = {
         let d = tempfile::tempdir().expect("tempdir");
         let dest2 = d.path().join("clone");
-        canopy_core::ops::clone(&server_url, &dest2, |_| {}).expect("clone");
+        canopy_core::ops::clone(&server_url, &dest2, false, |_| {}).expect("clone");
         configure(&dest2);
         let r = Repo::open(&dest2).expect("open");
         (d, r)

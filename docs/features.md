@@ -31,7 +31,7 @@ Update this table in the same change that adds or alters a feature.
 | Several repositories in tabs; closing or changing a worktree preserves unsent commit messages, conflict edits and request comments for this session | Done | Yes | Yes | Yes |
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
 | Auto refresh (file watcher, window focus) | Done | Yes | Yes | Yes |
-| Submodules: a sidebar section with state, open in a tab, initialize/update, sync, add and confirmed remove; a submodule's diff lists the commits between its two pointers; recursion on pull, checkout and clone is planned | In progress (#60) | Yes | Yes | Yes |
+| Submodules: a sidebar section with state, open in a tab, initialize/update, sync, add and confirmed remove; a submodule's diff lists the commits between its two pointers; pull, checkout and clone bring submodules along (Settings → Git → Update submodules) | In progress (#60) | Yes | Yes | Yes |
 | Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and switches to one in the current tab; creating and removing them is planned | Done | Yes | Yes | ? |
 | Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
 | Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Done | Yes | ? | ? |

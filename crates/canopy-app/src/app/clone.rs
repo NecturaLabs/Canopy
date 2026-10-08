@@ -10,6 +10,7 @@ pub(super) enum CloneMsg {
 
 impl CanopyApp {
     pub(super) fn start_clone(&mut self, ctx: &egui::Context, url: String, dest: PathBuf) {
+        let recurse = self.settings.recurse_submodules;
         let (tx, rx) = unbounded();
         let thread_ctx = ctx.clone();
         // The status bar shows the URL for the whole clone.
@@ -21,7 +22,7 @@ impl CanopyApp {
                     let _ = tx.send(m);
                     thread_ctx.request_repaint();
                 };
-                let result = clone_repository(&url, &dest, |l| {
+                let result = clone_repository(&url, &dest, recurse, |l| {
                     send(CloneMsg::Progress(canopy_core::cli::redact_url(l)));
                 });
                 send(CloneMsg::Done(result));
@@ -65,6 +66,7 @@ impl CanopyApp {
 fn clone_repository(
     url: &str,
     dest: &std::path::Path,
+    recurse_submodules: bool,
     progress: impl FnMut(&str),
 ) -> Result<PathBuf, String> {
     if dest
@@ -76,7 +78,7 @@ fn clone_repository(
             dest.display()
         ));
     }
-    canopy_core::ops::clone(url, dest, progress)
+    canopy_core::ops::clone(url, dest, recurse_submodules, progress)
         .map_err(|e| canopy_core::cli::redact_url(&e.to_string()))?;
     Ok(dest.to_path_buf())
 }
@@ -216,7 +218,7 @@ mod tests {
         Repo::init(&source, "main", false).expect("empty local repository");
         let dest = dir.path().join("existing");
         std::fs::create_dir(&dest).expect("existing destination");
-        let result = clone_repository(&source.to_string_lossy(), &dest, |_| {});
+        let result = clone_repository(&source.to_string_lossy(), &dest, false, |_| {});
         assert!(
             result.is_err(),
             "existing folders must be refused before Git accepts an empty one"

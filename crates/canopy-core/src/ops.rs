@@ -176,19 +176,26 @@ impl HunkAction {
     }
 }
 
-/// Clones `url` into `dest`, reporting progress lines. A URL with credentials is refused
+/// Clones `url` into `dest`, reporting progress lines, with its submodules when
+/// `recurse_submodules`. A URL with credentials is refused
 /// ([`remote_url_problem`]): the clone would keep it as its `origin`.
-pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
+pub fn clone(
+    url: &str,
+    dest: &Path,
+    recurse_submodules: bool,
+    progress: impl FnMut(&str),
+) -> Result<()> {
     let url = url.trim();
     if let Some(problem) = remote_url_problem(url) {
         return Err(Error::Invalid(problem.into()));
     }
     let dest_str = dest.to_string_lossy();
-    cli::run_streaming(
-        None,
-        &["clone", "--progress", "--", url, &dest_str],
-        progress,
-    )?;
+    let mut args = vec!["clone", "--progress"];
+    if recurse_submodules {
+        args.push("--recurse-submodules");
+    }
+    args.extend(["--", url, &dest_str]);
+    cli::run_streaming(None, &args, progress)?;
     Ok(())
 }
 

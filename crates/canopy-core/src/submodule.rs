@@ -327,6 +327,26 @@ impl Repo {
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
 
+    /// Brings the submodules to the commits the checked-out commit records, after a pull or a
+    /// checkout, when [`crate::GitOptions::recurse_submodules`] says so. Where the git
+    /// configuration sets `submodule.recurse` and Canopy follows it, git's own commands did what
+    /// it says, so nothing is done here. A failure says the pull or checkout itself succeeded.
+    pub fn follow_submodules(&self, progress: impl FnMut(&str)) -> Result<()> {
+        if !self.options().recurse_submodules || self.config_decides(r"^submodule\.recurse$") {
+            return Ok(());
+        }
+        if self.submodules(false)?.is_empty() {
+            return Ok(());
+        }
+        self.submodule_update(None, true, true, progress)
+            .map(drop)
+            .map_err(|e| {
+                Error::invalid(format!(
+                    "The branch changed, but the submodules could not be updated: {e}"
+                ))
+            })
+    }
+
     /// `git submodule sync [--recursive] -- [<path>]`: copies the URLs in `.gitmodules` into the
     /// configuration (after a URL changed upstream).
     pub fn submodule_sync(&self, path: Option<&str>, recursive: bool) -> Result<String> {

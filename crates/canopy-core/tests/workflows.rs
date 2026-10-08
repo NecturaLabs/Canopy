@@ -12,8 +12,8 @@ use std::path::Path;
 use std::process::Command;
 
 use canopy_core::{
-    ChangeKind, DiffSource, FlowConfig, FlowFinish, FlowKind, MergedReason, MissingObjects, Repo,
-    SubmoduleState, Whitespace, submodule_add_problem,
+    ChangeKind, DiffSource, FlowConfig, FlowFinish, FlowKind, GitOptions, MergedReason,
+    MissingObjects, Repo, SubmoduleState, Whitespace, submodule_add_problem,
 };
 
 #[expect(
@@ -746,6 +746,31 @@ fn submodule_add_adopts_a_repository_already_in_place() {
     let staged = git(&sup, &["diff", "--cached", "--name-only"]);
     assert_eq!(staged.lines().collect::<Vec<_>>(), [".gitmodules", "other"]);
     repo.submodule_add("", "x", None, |_| {}).unwrap_err();
+}
+
+#[test]
+fn following_submodules_checks_out_the_recorded_commit_unless_told_not_to() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+    git(&sub, &["checkout", "-q", "main"]);
+
+    repo.set_options(GitOptions {
+        recurse_submodules: false,
+        ..GitOptions::default()
+    });
+    repo.follow_submodules(|_| {}).expect("off");
+    assert_ne!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+
+    repo.set_options(GitOptions::default());
+    // Where the git configuration sets submodule.recurse, git's own commands decide.
+    git(&sup, &["config", "submodule.recurse", "false"]);
+    repo.follow_submodules(|_| {}).expect("decided by git");
+    assert_ne!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+    git(&sup, &["config", "--unset", "submodule.recurse"]);
+
+    repo.follow_submodules(|_| {}).expect("on");
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
 }
 
 #[test]
