@@ -408,7 +408,6 @@ mod tests {
         validate_screenshot_launch(&launch, true).expect("isolated screenshots are allowed");
     }
 
-
     #[test]
     fn custom_theme_specs_set_their_keys_over_the_defaults() {
         use ui::custom_theme::CustomTheme;
