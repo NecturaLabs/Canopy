@@ -240,8 +240,9 @@ commits since the previous build.
   opening the folder, instead of waiting forever.
 - Each password or passphrase prompt starts with its answer hidden, even after you showed the
   previous one's.
-- Closing a tab keeps its unsent commit message until you open the repository again in the same
-  session.
+- Closing a tab or switching worktrees keeps its unsent commit message, conflict choices and
+  hand edits, and request comments until you open the repository again in the same session.
+  Comments return only to their own host, project and request.
 - A build skipped in the update dialog by an earlier version stays skipped.
 - The Accounts link in a toast opens Settings the same way the Settings button does, and Open logs
   folder says when the folder cannot be created.

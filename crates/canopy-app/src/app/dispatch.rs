@@ -452,14 +452,7 @@ impl CanopyApp {
                 Action::CreateRequest { source } => self.create_request(ctx, &source),
                 Action::Host(job) => {
                     if let Some(t) = self.tab() {
-                        let kind = t.host.as_ref().map(|h| h.forge.kind);
-                        if let Some(kind) = kind {
-                            t.requests.busy = Some(match &job {
-                                HostJob::Create(_) => format!("Creating {}", kind.request_noun()),
-                                _ => "Working…".into(),
-                            });
-                        }
-                        t.host_job(job);
+                        t.host_action(job);
                     }
                 }
                 Action::CheckoutRequest(r) => self.checkout_request(r),

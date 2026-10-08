@@ -130,6 +130,11 @@ impl Resolver {
         }
     }
 
+    /// Whether leaving this file would discard unsaved resolution work.
+    pub fn has_draft(&self) -> bool {
+        self.editing.is_some() || self.choices.iter().any(Option::is_some)
+    }
+
     /// Conflicts in the file (0 while loading or for whole-file conflicts).
     pub fn conflicts(&self) -> usize {
         match &self.file {
@@ -197,7 +202,12 @@ impl Resolver {
                     .flatten()
             })
             .collect();
-        if choices.len() != self.choices.len()
+        let edited_region_changed = self
+            .editing
+            .as_ref()
+            .is_some_and(|(i, _)| old.get(*i).is_none() || old.get(*i) != new.get(*i).copied());
+        if edited_region_changed
+            || choices.len() != self.choices.len()
             || choices.iter().zip(&self.choices).any(|(a, b)| a != b)
         {
             self.editing = None;
@@ -483,6 +493,14 @@ pub struct Finished {
 /// How old the request list may be when its view opens before it is loaded again.
 const REQUESTS_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// An unsent comment, isolated by forge project and request number.
+#[derive(Debug, Clone)]
+pub struct RequestCommentDraft {
+    forge: Forge,
+    number: u64,
+    body: String,
+}
+
 /// Pull or merge requests of the tab's forge.
 #[derive(Debug)]
 pub struct Requests {
@@ -500,6 +518,8 @@ pub struct Requests {
     /// An action in flight ("Merging PR #12").
     pub busy: Option<String>,
     pub comment: String,
+    /// Exact submitted body; a late result must not discard text edited since submission.
+    pub pending_comment: Option<(u64, String)>,
     pub merge_method: MergeMethod,
     /// Where the token came from; `None` while unknown, `Some(None)` without a token.
     #[expect(
@@ -527,6 +547,7 @@ impl Default for Requests {
             details_quiet_refresh: false,
             busy: None,
             comment: String::new(),
+            pending_comment: None,
             merge_method: MergeMethod::Merge,
             token: None,
             loaded_at: None,
@@ -651,7 +672,7 @@ pub struct RepoTab {
     pub highlights: Option<Arc<Highlights>>,
     /// Lines picked in the diff for line-level staging.
     pub line_sel: Option<LineSelection>,
-    /// The conflict resolver, while a conflicted file is selected.
+    /// The selected conflict resolver, retained while hidden if it has authored work.
     pub resolver: Option<Resolver>,
     /// Side-by-side diff and syntax highlighting (from the settings).
     pub split_diff: bool,
@@ -700,6 +721,8 @@ pub struct RepoTab {
     /// Self-hosted GitLab hosts the user listed in settings: environment tokens may go there.
     pub trusted_gitlab_hosts: Vec<String>,
     pub requests: Requests,
+    /// Drafts survive hosting initialization and worktree tab replacement for this run.
+    pub request_comments: Vec<RequestCommentDraft>,
     /// The promisor remote a read needed but Canopy did not download from, because the
     /// repository is outside every trusted folder; the status bar offers to trust it.
     pub downloads_refused: Option<String>,
@@ -789,6 +812,7 @@ impl RepoTab {
             host: None,
             trusted_gitlab_hosts: Vec::new(),
             requests: Requests::default(),
+            request_comments: Vec::new(),
             downloads_refused: None,
             trust_version: 0,
             avatars: crate::avatars::Avatars::default(),
@@ -896,6 +920,7 @@ impl RepoTab {
         if self.host.as_ref().map(|h| &h.forge) == want.as_ref() {
             return;
         }
+        self.request_comments = self.request_comment_drafts();
         self.requests = Requests::default();
         self.avatars = crate::avatars::Avatars::default();
         let trusted = self.trusted_gitlab_hosts.clone();
@@ -920,6 +945,8 @@ impl RepoTab {
         saved_token: Option<String>,
         enabled: bool,
     ) {
+        self.request_comments = self.request_comment_drafts();
+        self.requests.comment.clear();
         self.host = None;
         self.ensure_host(ctx, saved_token, enabled);
     }
@@ -982,14 +1009,41 @@ impl RepoTab {
         }
     }
 
+    /// Includes the currently edited comment without changing its displayed text.
+    pub fn request_comment_drafts(&self) -> Vec<RequestCommentDraft> {
+        let mut drafts = self.request_comments.clone();
+        if !self.requests.comment.is_empty()
+            && let Some(number) = self.requests.selected
+            && let Some(host) = &self.host
+        {
+            drafts.retain(|draft| draft.forge != host.forge || draft.number != number);
+            drafts.push(RequestCommentDraft {
+                forge: host.forge.clone(),
+                number,
+                body: self.requests.comment.clone(),
+            });
+        }
+        drafts
+    }
+
     /// Shows one request.
     pub fn select_request(&mut self, number: u64) {
         if self.requests.selected == Some(number) && self.requests.details.is_some() {
             return;
         }
+        self.request_comments = self.request_comment_drafts();
         self.requests.selected = Some(number);
         self.requests.details = None;
-        self.requests.comment.clear();
+        self.requests.comment = self
+            .host
+            .as_ref()
+            .and_then(|host| {
+                self.request_comments
+                    .iter()
+                    .position(|draft| draft.forge == host.forge && draft.number == number)
+            })
+            .map(|index| self.request_comments.remove(index).body)
+            .unwrap_or_default();
         if self.host.is_some() {
             self.requests.details_loading = true;
             self.request_details(number);
@@ -1004,6 +1058,19 @@ impl RepoTab {
         if let Some(h) = &self.host {
             h.send(job);
         }
+    }
+
+    /// Starts a user action and records the comment whose completion may clear its draft.
+    pub fn host_action(&mut self, job: HostJob) {
+        let Some(host) = &self.host else { return };
+        self.requests.busy = Some(match &job {
+            HostJob::Create(_) => format!("Creating {}", host.forge.kind.request_noun()),
+            _ => "Working…".into(),
+        });
+        if let HostJob::Comment(number, body) = &job {
+            self.requests.pending_comment = Some((*number, body.clone()));
+        }
+        self.host_job(job);
     }
 
     /// Toggles the on-demand history filter.
@@ -1154,7 +1221,7 @@ impl RepoTab {
                 self.resolver = Some(Resolver::new(sel.entry.path.clone()));
             }
             self.worker.send(Job::Conflict(sel.entry.path.clone()));
-        } else {
+        } else if self.resolver.as_ref().is_none_or(|r| !r.has_draft()) {
             self.resolver = None;
         }
         self.file = Some(sel);
@@ -1345,11 +1412,14 @@ impl RepoTab {
                     self.load_error = None;
                     self.filter_for = String::from("\u{0}");
                     if !had || self.selected_commit.is_none() {
-                        if let Some(h) = head.or_else(|| {
-                            self.snap
-                                .as_ref()
-                                .and_then(|s| s.commits.first().map(|c| c.oid))
-                        }) {
+                        // A restored working-copy draft must survive initial history setup.
+                        if self.file.is_none()
+                            && let Some(h) = head.or_else(|| {
+                                self.snap
+                                    .as_ref()
+                                    .and_then(|s| s.commits.first().map(|c| c.oid))
+                            })
+                        {
                             self.select_commit(h);
                             self.scroll_to_selected = true;
                         }
@@ -1675,6 +1745,7 @@ impl RepoTab {
     fn poll_host(&mut self, notices: &mut Vec<Notice>) {
         let Some(host) = &self.host else { return };
         let kind = host.forge.kind;
+        let forge = host.forge.clone();
         let ctx = host.context().clone();
         let events: Vec<HostEvent> = host.events.try_iter().collect();
         for ev in events {
@@ -1708,6 +1779,8 @@ impl RepoTab {
                         });
                         self.requests.list = Some(result.map(Arc::from));
                         if !keep {
+                            self.request_comments = self.request_comment_drafts();
+                            self.requests.comment.clear();
                             self.requests.selected = None;
                             self.requests.details = None;
                             if let Some(n) = first {
@@ -1757,10 +1830,26 @@ impl RepoTab {
                     result,
                 } => {
                     self.requests.busy = None;
+                    let submitted = if action == HostAction::Comment {
+                        self.requests.pending_comment.take()
+                    } else {
+                        None
+                    };
                     match result {
                         Ok(()) => {
-                            if action == HostAction::Comment {
-                                self.requests.comment.clear();
+                            if let Some((posted_number, body)) = submitted
+                                && number == Some(posted_number)
+                            {
+                                if self.requests.selected == number
+                                    && self.requests.comment.trim() == body
+                                {
+                                    self.requests.comment.clear();
+                                }
+                                self.request_comments.retain(|draft| {
+                                    draft.forge != forge
+                                        || draft.number != posted_number
+                                        || draft.body.trim() != body
+                                });
                             }
                             notices.push(Notice {
                                 ok: true,
@@ -1781,12 +1870,8 @@ impl RepoTab {
                             body: e,
                         }),
                     }
+                    // Refresh the request currently shown, without stealing a later selection.
                     self.load_requests();
-                    if let Some(n) = number {
-                        self.requests.details = None;
-                        self.requests.selected = None;
-                        self.select_request(n);
-                    }
                 }
             }
         }
@@ -2176,6 +2261,25 @@ mod tests {
             .expect("message");
         tab.poll(&[]);
         assert_eq!(tab.commit_summary, "Typed draft");
+    }
+
+    #[test]
+    fn reloading_discards_an_edit_for_a_changed_conflict() {
+        let mut resolver = Resolver::new("f".into());
+        resolver.reload(
+            None,
+            Ok(Arc::new(ConflictFile::parse(
+                "<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n",
+            ))),
+        );
+        resolver.editing = Some((0, "authored for a and b".into()));
+        resolver.reload(
+            None,
+            Ok(Arc::new(ConflictFile::parse(
+                "<<<<<<< ours\nchanged a\n=======\nb\n>>>>>>> theirs\n",
+            ))),
+        );
+        assert_eq!(resolver.editing, None, "the edited region changed on disk");
     }
 
     #[test]
@@ -2832,6 +2936,58 @@ mod tests {
         finish(&events, OpKind::Fetch, Ok(String::new()));
         tab.poll(&[]);
         assert!(tab.host.is_none() && !tab.requests.loading);
+    }
+
+    #[test]
+    fn a_late_comment_result_preserves_current_request_and_draft() {
+        for result in [Ok(()), Err("offline".into())] {
+            let (mut tab, _, _) = tab_showing_requests();
+            let forge = tab.host.as_ref().expect("host").forge.clone();
+            let (host, events, _) = HostWorker::detached(forge);
+            tab.host = Some(host);
+            tab.requests.comment = "submitted text".into();
+            tab.host_action(HostJob::Comment(7, "submitted text".into()));
+            tab.select_request(8);
+            tab.requests.comment = "other request draft".into();
+            let succeeded = result.is_ok();
+            events
+                .send(HostEvent::Done {
+                    label: "Commenting".into(),
+                    action: HostAction::Comment,
+                    number: Some(7),
+                    result,
+                })
+                .expect("result");
+            tab.poll(&[]);
+            assert_eq!(tab.requests.selected, Some(8));
+            assert_eq!(tab.requests.comment, "other request draft");
+            tab.select_request(7);
+            assert_eq!(
+                tab.requests.comment,
+                if succeeded { "" } else { "submitted text" }
+            );
+        }
+    }
+
+    #[test]
+    fn a_comment_result_does_not_clear_new_text_on_the_same_request() {
+        let (mut tab, _, _) = tab_showing_requests();
+        let forge = tab.host.as_ref().expect("host").forge.clone();
+        let (host, events, _) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        tab.requests.comment = "submitted text".into();
+        tab.host_action(HostJob::Comment(7, "submitted text".into()));
+        tab.requests.comment = "new unsent text".into();
+        events
+            .send(HostEvent::Done {
+                label: "Commenting".into(),
+                action: HostAction::Comment,
+                number: Some(7),
+                result: Ok(()),
+            })
+            .expect("result");
+        tab.poll(&[]);
+        assert_eq!(tab.requests.comment, "new unsent text");
     }
 
     #[test]

@@ -267,7 +267,14 @@ impl CanopyApp {
                 if let Some(r) = self
                     .tabs
                     .get_mut(self.active)
-                    .filter(|t| t.view == View::Changes)
+                    .filter(|t| {
+                        t.view == View::Changes
+                            && t.file.as_ref().zip(t.resolver.as_ref()).is_some_and(
+                                |(file, resolver)| {
+                                    file.conflicted && file.entry.path == resolver.path
+                                },
+                            )
+                    })
                     .and_then(|t| t.resolver.as_mut())
                 {
                     match command {
@@ -306,6 +313,62 @@ mod tests {
         let mut actions = Vec::new();
         app.command(&ctx, command, 0, &mut actions);
         actions
+    }
+
+    #[test]
+    fn conflict_shortcuts_leave_a_hidden_resolution_draft_untouched() {
+        use crate::tab::{FileSelection, Resolver};
+        use crate::worker::Worker;
+        use canopy_core::{ChangeKind, Choice, ConflictFile, DiffSource, FileEntry};
+        let mut app = test_app();
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.view = View::Changes;
+        let mut resolver = Resolver::new("conflict.txt".into());
+        resolver.reload(
+            None,
+            Ok(std::sync::Arc::new(ConflictFile::parse(
+                "<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n",
+            ))),
+        );
+        resolver.choices[0] = Some(Choice::Custom("saved choice".into()));
+        resolver.editing = Some((0, "unfinished text".into()));
+        tab.resolver = Some(resolver);
+        tab.file = Some(FileSelection {
+            source: DiffSource::Unstaged,
+            entry: FileEntry {
+                path: "ordinary.txt".into(),
+                old_path: None,
+                kind: ChangeKind::Modified,
+                additions: 0,
+                deletions: 0,
+                lfs: false,
+                old_mode: None,
+                new_mode: None,
+            },
+            conflicted: false,
+        });
+        app.tabs.push(tab);
+        run(&mut app, Command::ClearChoice);
+        let resolver = app.tabs[0].resolver.as_ref().expect("hidden draft");
+        assert_eq!(
+            resolver.choices,
+            vec![Some(Choice::Custom("saved choice".into()))]
+        );
+        assert_eq!(resolver.editing, Some((0, "unfinished text".into())));
+
+        let file = app.tabs[0].file.as_mut().expect("selected file");
+        file.conflicted = true;
+        file.entry.path = "conflict.txt".into();
+        run(&mut app, Command::ClearChoice);
+        let resolver = app.tabs[0].resolver.as_ref().expect("visible resolver");
+        assert_eq!(resolver.choices, vec![None]);
+        assert_eq!(resolver.editing, None);
     }
 
     /// Shift+F10 is in the keymap table for the cheatsheet, but the focused row opens its menu

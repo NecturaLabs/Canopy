@@ -27,7 +27,7 @@ Update this table in the same change that adds or alters a feature.
 |---|---|---|---|---|
 | Open, init | Done | Yes | Yes | Yes |
 | Clone with live progress | Done | Yes | Yes | Yes |
-| Several repositories in tabs | Done | Yes | Yes | Yes |
+| Several repositories in tabs; closing or changing a worktree preserves unsent commit messages, conflict edits and request comments for this session | Done | Yes | Yes | Yes |
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
 | Auto refresh (file watcher, window focus) | Done | Yes | Yes | Yes |
 | Submodules | Planned (backend merged) | Yes | Yes | Yes |
