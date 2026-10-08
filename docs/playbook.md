@@ -3,7 +3,8 @@
 How to operate on Canopy beyond the code: live runs, update testing, releasing. Kept for the next
 session; edit it when a step changes. Rules and product limits stay in `AGENTS.md`.
 
-What is open lives in `docs/backlog.md`, not here; a release's numbered build is `git rev-list
+What is open lives in [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues), not here;
+`docs/backlog.md` is the migration record. A release's numbered build is `git rev-list
 --count` on `main` (`release` skill).
 
 ## Checks
@@ -18,8 +19,9 @@ access), `python3 tools/stall-check.py`, `packaging/test-install.sh`.
   "interrupted install exits 130" checks there, which looked like an ignored SIGINT and was the
   space.
 - Keep `TMPDIR` on a filesystem that accepts non-UTF-8 file names. On NTFS the test
-  `non_utf8_folders_are_listed_and_never_staged_as_gitlinks` fails with "Invalid argument", and
-  `check.sh` stops there (`CONTRIBUTING.md`, `docs/backlog.md`).
+  `non_utf8_folders_are_listed_and_never_staged_as_gitlinks` reports that the filesystem refused
+  the name, with `TMPDIR` and NTFS in the explanation (`CONTRIBUTING.md`). The check script
+  still runs the remaining test binaries through `--no-fail-fast` before reporting the failure.
 - `cargo test` stops at the first test binary that fails, so later binaries never run;
   `check.sh` and CI's test job pass `--no-fail-fast` to see every failure in one run.
 - `shellcheck` and `cargo deny` run only when installed; CI runs them either way.
