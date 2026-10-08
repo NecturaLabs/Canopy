@@ -683,6 +683,10 @@ mod tests {
             "from https://<redacted>@one/x to https://two/y@z"
         );
         assert_eq!(
+            redact_url("fatal: from https://alice:first-secret@one/r to https://bob:second-secret@two/r"),
+            "fatal: from https://<redacted>@one/r to https://<redacted>@two/r"
+        );
+        assert_eq!(
             loggable(&[
                 "config",
                 "--local",
