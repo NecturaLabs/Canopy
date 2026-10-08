@@ -1262,8 +1262,9 @@ fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::
             | Op::CheckoutDetached(_)
             | Op::CreateBranch { checkout: true, .. }
     );
+    let continuing = matches!(op, Op::ContinueOrAbort { abort: false, .. });
     let out = perform_op(repo, op, &mut progress)?;
-    if moves {
+    if moves || (continuing && repo.git().state() == git2::RepositoryState::Clean) {
         repo.follow_submodules(&mut progress)?;
     }
     Ok(out)
@@ -1807,6 +1808,132 @@ mod read_tests {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    #[test]
+    fn continuing_a_conflicted_pull_follows_the_incoming_submodule_pointer() {
+        for (strategy, state, recurse) in [
+            (PullStrategy::Rebase, RepoState::Rebase, true),
+            (PullStrategy::Merge, RepoState::Merge, true),
+            (PullStrategy::Rebase, RepoState::Rebase, false),
+        ] {
+            let root = tempfile::tempdir().expect("tempdir");
+            std::fs::create_dir(root.path().join("home")).expect("home");
+            std::fs::write(root.path().join("home/gitconfig"), "").expect("gitconfig");
+            let library = root.path().join("library");
+            let upstream = root.path().join("upstream");
+            let copy = root.path().join("copy");
+            for path in [&library, &upstream] {
+                std::fs::create_dir(path).expect("repo folder");
+                git(path, &["init", "-q", "-b", "main"]);
+                git(path, &["config", "commit.gpgsign", "false"]);
+                git(path, &["config", "core.autocrlf", "false"]);
+                std::fs::write(path.join("a.txt"), "base\n").expect("file");
+                git(path, &["add", "a.txt"]);
+                git(path, &["commit", "-q", "-m", "initial"]);
+            }
+            let library_url = library.to_string_lossy();
+            git(
+                &upstream,
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    "--",
+                    &library_url,
+                    "deps/lib",
+                ],
+            );
+            git(&upstream, &["commit", "-q", "-m", "add library"]);
+            git(
+                root.path(),
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "clone",
+                    "-q",
+                    "--recurse-submodules",
+                    &upstream.to_string_lossy(),
+                    &copy.to_string_lossy(),
+                ],
+            );
+            for (key, value) in [
+                ("user.name", "Ada Lovelace"),
+                ("user.email", "ada@example.com"),
+                ("commit.gpgsign", "false"),
+                ("core.autocrlf", "false"),
+                ("core.hooksPath", "no-test-hooks"),
+            ] {
+                git(&copy, &["config", key, value]);
+            }
+            let old = Oid::from_str(&git(&library, &["rev-parse", "HEAD"])).expect("old");
+            std::fs::write(library.join("a.txt"), "new library\n").expect("file");
+            git(&library, &["commit", "-q", "-am", "advance library"]);
+            let new = Oid::from_str(&git(&library, &["rev-parse", "HEAD"])).expect("new");
+            for parent in [&upstream, &copy] {
+                git(&parent.join("deps/lib"), &["fetch", "-q", "origin"]);
+            }
+            git(
+                &upstream.join("deps/lib"),
+                &["checkout", "-q", "--detach", &new.to_string()],
+            );
+            std::fs::write(upstream.join("a.txt"), "upstream\n").expect("file");
+            git(&upstream, &["add", "a.txt", "deps/lib"]);
+            git(&upstream, &["commit", "-q", "-m", "advance upstream"]);
+            std::fs::write(copy.join("a.txt"), "local\n").expect("file");
+            git(&copy, &["commit", "-q", "-am", "local conflict"]);
+            let repo = Repo::open(&copy).expect("open");
+            repo.set_options(canopy_core::GitOptions {
+                follow_config: false,
+                recurse_submodules: recurse,
+                autostash: false,
+                ..Default::default()
+            });
+            perform(
+                &repo,
+                Op::Pull {
+                    strategy,
+                    follow_config: false,
+                    prune: false,
+                    checked: None,
+                },
+                |_| {},
+            )
+            .expect_err("pull stops on conflict");
+            assert!(repo.stopped_on_conflicts().expect("conflict state"));
+            assert_eq!(
+                repo.submodules(false).expect("submodules")[0].workdir_id,
+                Some(old)
+            );
+            std::fs::write(copy.join("a.txt"), "resolved\n").expect("resolution");
+            repo.stage(&["a.txt".into()]).expect("stage resolution");
+            perform(
+                &repo,
+                Op::ContinueOrAbort {
+                    state,
+                    abort: false,
+                },
+                |_| {},
+            )
+            .expect("continue");
+            let submodule = &repo.submodules(false).expect("submodules")[0];
+            assert_eq!(submodule.head_id, Some(new), "{strategy:?}");
+            assert_eq!(submodule.index_id, Some(new), "{strategy:?}");
+            assert_eq!(
+                submodule.workdir_id,
+                Some(if recurse { new } else { old }),
+                "{strategy:?}, recurse={recurse}"
+            );
+            if recurse {
+                repo.stage_all().expect("stage all");
+                assert_eq!(
+                    repo.submodules(false).expect("submodules")[0].index_id,
+                    Some(new),
+                    "Stage all preserves the incoming pointer"
+                );
+            }
+        }
     }
 
     /// A pull asks first when only a fast-forward is allowed and the branches diverged, or when
