@@ -105,7 +105,7 @@ impl CanopyApp {
                 }
                 Action::Refresh => {
                     if let Some(t) = self.tab() {
-                        t.refresh();
+                        t.refresh_by_user();
                         if t.view == View::Requests {
                             t.load_requests();
                         }

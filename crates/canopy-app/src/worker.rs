@@ -316,6 +316,8 @@ pub enum Job {
     Ignore { serial: u64, query: IgnoreQuery },
     /// Full snapshot with up to this many commits (0 keeps the current limit).
     Refresh(usize),
+    /// The user's Retry after a download failed: forget the failure and read again, downloading.
+    RetryDownloads,
     /// Status only (working tree changed).
     RefreshStatus,
     /// Details of one commit.
@@ -333,10 +335,10 @@ pub enum Job {
     Conflict(String),
     /// What the configuration asks a pull to do on the current branch (`Repo::pull_config`).
     PullConfig,
-    /// Where a force push of the current branch would go ([`Repo::force_push_target`]), for the
-    /// question that asks before it.
     /// The programs the repository needs that the system lacks (`Repo::missing_tools`).
     Tools,
+    /// Where a force push of the current branch would go ([`Repo::force_push_target`]), for the
+    /// question that asks before it.
     PushTarget,
     /// How the operations that follow have git behave (Settings → Git).
     Options(canopy_core::GitOptions),
@@ -416,10 +418,10 @@ pub enum Event {
     /// The answer to [`Job::PullConfig`]: git's own message when the configuration cannot be
     /// read.
     PullConfig(Result<canopy_core::PullConfig, String>),
-    /// The answer to [`Job::PushTarget`]: git's own message when it cannot tell.
-    PushTarget(Result<canopy_core::PushTarget, String>),
     /// The answer to [`Job::Tools`].
     ToolsMissing(Vec<canopy_core::MissingTool>),
+    /// The answer to [`Job::PushTarget`]: git's own message when it cannot tell.
+    PushTarget(Result<canopy_core::PushTarget, String>),
     MergeMessage(String),
     /// A new commit message after a squash, never an amend prefill.
     SquashMessage(String),
@@ -691,6 +693,7 @@ impl Job {
     fn kind(&self) -> &'static str {
         match self {
             Self::Refresh(_) => "refresh",
+            Self::RetryDownloads => "retry-downloads",
             Self::Ignore { .. } => "ignore",
             Self::RefreshStatus => "status",
             Self::Details(_) => "details",
@@ -700,10 +703,10 @@ impl Job {
             Self::SquashMessage(_) => "squash-message",
             Self::Conflict(_) => "conflict",
             Self::PullConfig => "pull-config",
+            Self::Tools => "tools",
             Self::PushTarget => "push-target",
             Self::Options(_) => "options",
             Self::Op(_) => "operation",
-            Self::Tools => "tools",
         }
     }
 }
@@ -729,6 +732,9 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     let mut last_diff: Option<(DiffKey, Arc<FileDiff>)> = None;
     // The repository is opened again for every batch; the options outlive it.
     let mut options = canopy_core::GitOptions::default();
+    // Why the last download of the working tree status failed: later refreshes show it instead
+    // of trying the network again, until the user retries.
+    let mut status_failure: Option<canopy_core::StatusUnavailable> = None;
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -739,6 +745,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         for job in batch {
             match job {
                 Job::Refresh(n) => want_full = Some(n),
+                Job::RetryDownloads => {
+                    status_failure = None;
+                    want_full = Some(0);
+                }
                 Job::RefreshStatus => want_status = true,
                 other => rest.push(other),
             }
@@ -909,6 +919,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         repo.pull_config().map_err(|e| e.to_string()),
                     ));
                 }
+                Job::Tools => emit(Event::ToolsMissing(repo.missing_tools())),
                 Job::PushTarget => {
                     emit(Event::PushTarget(
                         repo.force_push_target().map_err(|e| e.to_string()),
@@ -919,7 +930,6 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     let file = repo
                         .conflict_file(&path)
                         .map(Arc::new)
-                Job::Tools => emit(Event::ToolsMissing(repo.missing_tools())),
                         .map_err(|e| e.to_string());
                     emit(Event::Conflict { path, kind, file });
                 }
@@ -1044,7 +1054,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     }
                     mutated = true;
                 }
-                Job::Refresh(_) | Job::RefreshStatus => {}
+                Job::Refresh(_) | Job::RetryDownloads | Job::RefreshStatus => {}
             }
             tracing::debug!(
                 job = kind,
@@ -1058,7 +1068,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         }
         if want_full.is_some() || mutated {
             let started = Instant::now();
-            match snapshot_completing(&repo, limit, &emit, &allowed) {
+            match snapshot_completing(&repo, limit, &emit, &allowed, &mut status_failure) {
                 Ok(s) => {
                     tracing::debug!(
                         commits = s.commits.len(),
@@ -1073,7 +1083,12 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 }
             }
         } else if want_status {
-            match read_downloading(&emit, &allowed, |m| repo.status(m)) {
+            let remembered = status_failure.is_some();
+            let read = |m| {
+                // After a failed download only what is on disk is read.
+                repo.status(if remembered { MissingObjects::Fail } else { m })
+            };
+            match read_downloading(&emit, &allowed, read) {
                 Ok(s) => emit(Event::Status(s)),
                 Err(e) => emit(Event::Failed(e.to_string())),
             }
@@ -1215,19 +1230,29 @@ fn read_downloading<T>(
 
 /// A snapshot whose status is filled in even in a partial clone that lacks the tree of `HEAD`:
 /// the history comes first and never fails because of it; if downloading the tree fails the
-/// snapshot carries the reason ([`RepoSnapshot::status_unavailable`]).
+/// snapshot carries the reason ([`RepoSnapshot::status_unavailable`]). A download that failed
+/// is kept in `failure` and shown by the snapshots after it without another try, until it is
+/// cleared (the user's Retry).
 fn snapshot_completing(
     repo: &Repo,
     limit: usize,
     emit: &impl Fn(Event),
     allowed: &impl Fn() -> bool,
+    failure: &mut Option<canopy_core::StatusUnavailable>,
 ) -> canopy_core::Result<RepoSnapshot> {
     let mut snap = repo.snapshot(limit)?;
+    if snap.status_unavailable.is_none() {
+        *failure = None;
+    }
     if snap
         .status_unavailable
         .as_ref()
         .is_some_and(|u| u.can_download)
     {
+        if let Some(remembered) = failure.as_ref() {
+            snap.status_unavailable = Some(remembered.clone());
+            return Ok(snap);
+        }
         if !allowed() {
             let error = download_refused(emit, repo.promisor_remote());
             snap.status_unavailable = Some(canopy_core::StatusUnavailable {
@@ -1253,6 +1278,7 @@ fn snapshot_completing(
         if let Some(u) = &snap.status_unavailable {
             tracing::warn!(reason = %canopy_core::cli::redact_url(&u.message), "status not downloaded");
         }
+        *failure = snap.status_unavailable.clone().filter(|u| u.can_download);
     }
     Ok(snap)
 }
@@ -2684,6 +2710,47 @@ mod read_tests {
         crate::trust::add_for_tests(root.path().to_path_buf());
         perform(&repo, fetch(true), |_| {}).expect("trusted");
         assert!(marker.exists());
+    }
+
+    #[test]
+    fn a_failed_status_download_is_remembered_until_retry() {
+        let (root, src, copy, oldest, _) = trusted_partial_clone("--filter=tree:0");
+        git(&copy, &["reset", "-q", "--soft", &oldest.to_string()]);
+        let moved = root.path().join("src-moved");
+        std::fs::rename(&src, &moved).expect("hide the remote");
+        let worker = Worker::spawn(copy, &egui::Context::default());
+        // The snapshots from the next `Snapshot` on, and whether a download ran before it.
+        let next = |worker: &Worker| -> (Arc<RepoSnapshot>, bool) {
+            let mut downloaded = false;
+            loop {
+                match worker
+                    .events
+                    .recv_timeout(Duration::from_secs(60))
+                    .expect("the worker answers")
+                {
+                    Event::Progress(line) if line.starts_with("Downloading") => downloaded = true,
+                    Event::Snapshot(snap) => return (snap, downloaded),
+                    _ => {}
+                }
+            }
+        };
+
+        worker.send(Job::Refresh(100));
+        let (snap, downloaded) = next(&worker);
+        assert!(downloaded, "the first read tries the download");
+        let unavailable = snap.status_unavailable.as_ref().expect("no tree");
+        assert!(unavailable.can_download, "{unavailable:?}");
+
+        worker.send(Job::Refresh(0));
+        let (again, downloaded) = next(&worker);
+        assert!(!downloaded, "a refresh does not download again");
+        assert_eq!(again.status_unavailable, snap.status_unavailable);
+
+        std::fs::rename(&moved, &src).expect("restore the remote");
+        worker.send(Job::RetryDownloads);
+        let (healed, downloaded) = next(&worker);
+        assert!(downloaded, "Retry downloads");
+        assert_eq!(healed.status_unavailable, None);
     }
 
     #[test]

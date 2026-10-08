@@ -54,6 +54,10 @@ programs and contact servers. Elsewhere Canopy shows what is on disk, says why a
 download, and the status bar offers "Downloads off · Trust…" with the repository's folder or its
 parent. Nothing is trusted by default (ADR 0009).
 
+A download of the working tree status that failed (server unreachable) is remembered: the
+refreshes the file watcher makes show the same message without trying the network again, until
+the user presses Retry or Refresh. A download is killed after ten minutes.
+
 The same list guards auto-fetch. A repository whose own files name a program a fetch would run
 (`core.sshCommand`, a credential helper, `remote.<name>.uploadpack`, `core.hooksPath`, a
 `reference-transaction` or `pre-auto-gc` hook) is not fetched by the timer outside a trusted

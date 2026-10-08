@@ -10,6 +10,8 @@ commits since the previous build.
 
 ### Fixed
 
+- A failed download in a partial clone is no longer tried again on every file-watcher refresh;
+  Retry or Refresh tries again, and a download that hangs is stopped after ten minutes.
 - A repository's own configuration can no longer run a command through `core.fsmonitor` when
   Canopy reads it, and auto-fetch no longer runs the programs a repository names (SSH command,
   credential helper, upload-pack, hooks) outside a trusted folder.
@@ -25,11 +27,11 @@ commits since the previous build.
 
 ### Added
 
-- Stage all says which folders it left out because they hold a repository of their own, and
-  what to do instead.
 - Canopy names the programs a repository needs and the system lacks (`git-lfs`, `ssh`, the signing
   program) when it is opened, with install steps for the system.
 
+- Stage all says which folders it left out because they hold a repository of their own, and
+  what to do instead.
 
 - A diff that only changes a file's mode now says what happened: made executable, no longer
   executable, or a file turned into a symbolic link and back.

@@ -296,7 +296,18 @@ pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
 /// Runs `cmd`, a git command built with [`command`], and collects its output, but gives up after
 /// `limit`: the child is killed and the call fails. For reads that share a thread with other
 /// work, where a repository whose configuration makes git block must not stall everything behind it.
-pub(crate) fn output_within(mut cmd: Command, args: &[&str], limit: Duration) -> Result<Output> {
+pub(crate) fn output_within(cmd: Command, args: &[&str], limit: Duration) -> Result<Output> {
+    output_within_input(cmd, args, limit, None)
+}
+
+/// [`output_within`] feeding `input` to standard input from a thread of its own, so a git that
+/// stops reading cannot hold up the limit.
+pub(crate) fn output_within_input(
+    mut cmd: Command,
+    args: &[&str],
+    limit: Duration,
+    input: Option<Vec<u8>>,
+) -> Result<Output> {
     fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
@@ -309,11 +320,21 @@ pub(crate) fn output_within(mut cmd: Command, args: &[&str], limit: Duration) ->
     let started = Instant::now();
     let mut child = cmd
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(Error::GitMissing)?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        // A git that exits early closes its end; its exit status and stderr say why.
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
     let status = loop {
@@ -393,6 +414,22 @@ pub fn run_unchecked(workdir: &Path, args: &[&str]) -> Result<Output> {
         stdout: out.stdout,
         stderr: out.stderr,
     })
+}
+
+/// Like [`run_with_input`], but a git still running after `limit` is killed and the call fails
+/// with [`Error::Invalid`] saying it did not answer.
+pub(crate) fn run_with_input_within(
+    workdir: &Path,
+    args: &[&str],
+    input: &[u8],
+    limit: Duration,
+) -> Result<String> {
+    let out = output_within_input(command(Some(workdir)), args, limit, Some(input.to_vec()))?;
+    if out.code == Some(0) {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(failure(args, &out.stdout, &out.stderr))
+    }
 }
 
 /// Like [`run`], feeding `input` to standard input.
@@ -970,6 +1007,32 @@ mod tests {
             .expect("a quick command finishes");
         assert_eq!(quick.code, Some(0));
         assert!(!quick.stdout.is_empty(), "git printed no version");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_git_given_input_is_killed_at_the_limit() {
+        let dir = tempfile::tempdir().expect("tmp");
+        run(dir.path(), &["init", "-q"]).expect("init");
+        run(dir.path(), &["config", "alias.nap", "!sleep 3"]).expect("alias");
+        let started = Instant::now();
+        let err = run_with_input_within(
+            dir.path(),
+            &["nap"],
+            &vec![b'x'; 1 << 20],
+            Duration::from_millis(300),
+        )
+        .expect_err("outlasts the limit");
+        assert!(started.elapsed() < Duration::from_secs(2), "{err}");
+        assert!(err.to_string().contains("did not answer"), "{err}");
+        let out = run_with_input_within(
+            dir.path(),
+            &["hash-object", "--stdin"],
+            b"hello\n",
+            Duration::from_secs(30),
+        )
+        .expect("a quick command finishes");
+        assert_eq!(out.trim(), "ce013625030ba8dba906f756967f9e9ca394464a");
     }
 
     #[test]

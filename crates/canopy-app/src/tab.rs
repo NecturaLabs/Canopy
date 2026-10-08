@@ -906,6 +906,22 @@ impl RepoTab {
         self.worker.send(Job::Refresh(self.commit_limit));
     }
 
+    /// A refresh the user asked for (the Refresh command, the Retry on the empty Changes list): it
+    /// also tries again a download of the working tree status that failed, which the refreshes
+    /// the file watcher makes leave alone.
+    pub fn refresh_by_user(&self) {
+        let retry = self
+            .snap
+            .as_ref()
+            .and_then(|s| s.status_unavailable.as_ref())
+            .is_some_and(|u| u.can_download);
+        if retry {
+            self.worker.send(Job::RetryDownloads);
+        } else {
+            self.refresh();
+        }
+    }
+
     /// The strategy the Pull tool uses, and the configuration it came from when Canopy follows
     /// a strategy the user's git configuration sets.
     pub fn pull_default(&self) -> (canopy_core::PullStrategy, Option<&PullConfig>) {
@@ -1508,6 +1524,10 @@ impl RepoTab {
                     }
                     // The pull settings depend on the current branch: read them again when it
                     // changes (and for the first snapshot).
+                    if !self.tools_asked {
+                        self.tools_asked = true;
+                        self.worker.send(Job::Tools);
+                    }
                     if !self.pull_config_asked || self.pull_config_branch != s.head.branch {
                         self.pull_config_asked = true;
                         self.pull_config_branch.clone_from(&s.head.branch);
@@ -1525,10 +1545,6 @@ impl RepoTab {
                     self.filter_for = String::from("\u{0}");
                     if !had || self.selected_commit.is_none() {
                         // A restored working-copy draft must survive initial history setup.
-                    if !self.tools_asked {
-                        self.tools_asked = true;
-                        self.worker.send(Job::Tools);
-                    }
                         if self.file.is_none()
                             && let Some(h) = head.or_else(|| {
                                 self.snap
@@ -1684,6 +1700,15 @@ impl RepoTab {
                         self.pull_config = None;
                     }
                 },
+                Event::ToolsMissing(tools) => {
+                    for tool in tools.into_iter().filter(|t| first_report(&t.program)) {
+                        notices.push(Notice {
+                            ok: false,
+                            title: format!("{} is not installed", tool.program),
+                            body: format!("{}. {}", tool.needed_for, tool.install.join(" ")),
+                        });
+                    }
+                }
                 Event::PushTarget(result) => match result {
                     Ok(target) => self.force_push_offer = Some(target),
                     Err(e) => notices.push(Notice {
@@ -1700,15 +1725,6 @@ impl RepoTab {
                             .is_none_or(|snap| snap.state != canopy_core::RepoState::Clean)
                         || !self.commit_summary.trim().is_empty()
                         || !self.commit_body.trim().is_empty()
-                Event::ToolsMissing(tools) => {
-                    for tool in tools.into_iter().filter(|t| first_report(&t.program)) {
-                        notices.push(Notice {
-                            ok: false,
-                            title: format!("{} is not installed", tool.program),
-                            body: format!("{}. {}", tool.needed_for, tool.install.join(" ")),
-                        });
-                    }
-                }
                     {
                         continue;
                     }
@@ -2290,6 +2306,7 @@ mod tests {
                 RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
             tab.snap = Some(Arc::new(RepoSnapshot::default()));
             tab.pull_config_asked = true;
+            tab.tools_asked = true;
             let mut selection = open_unstaged_file();
             selection.source = DiffSource::Commit(Oid::from_bytes(&[1; 20]).expect("oid"));
             selection.entry.path = "deps/lib".into();
@@ -2306,7 +2323,6 @@ mod tests {
                     Event::Snapshot(Arc::new(RepoSnapshot::default()))
                 } else {
                     Event::Status(canopy_core::WorkingStatus::default())
-            tab.tools_asked = true;
                 })
                 .expect("refresh");
             tab.poll(&[]);
@@ -3128,22 +3144,6 @@ mod tests {
     }
 
     #[test]
-    fn reloading_the_conflict_file_forgets_measured_heights() {
-        let mut r = Resolver::new("f".into());
-        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
-        r.layout = crate::views::resolve::Layout::with_height(1, 0, 99.0);
-        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
-        assert!(r.layout.is_empty());
-    }
-
-    /// A tab on a forge whose request list is on screen, with request 7 open: the channels to
-    /// feed it and read what it asks of the repository and hosting threads.
-    fn tab_showing_requests() -> (
-        RepoTab,
-        crossbeam_channel::Sender<Event>,
-        crossbeam_channel::Receiver<HostJob>,
-    ) {
-    #[test]
     fn a_missing_tool_is_reported_once_per_run() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         let dir = tempfile::tempdir()?;
@@ -3172,6 +3172,22 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn reloading_the_conflict_file_forgets_measured_heights() {
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
+        r.layout = crate::views::resolve::Layout::with_height(1, 0, 99.0);
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
+        assert!(r.layout.is_empty());
+    }
+
+    /// A tab on a forge whose request list is on screen, with request 7 open: the channels to
+    /// feed it and read what it asks of the repository and hosting threads.
+    fn tab_showing_requests() -> (
+        RepoTab,
+        crossbeam_channel::Sender<Event>,
+        crossbeam_channel::Receiver<HostJob>,
+    ) {
         use canopy_core::forge::ForgeKind;
         let (worker, events, _jobs) = Worker::detached();
         let mut tab =

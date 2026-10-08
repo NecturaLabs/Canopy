@@ -40,6 +40,10 @@ pub enum MissingObjects {
     Download,
 }
 
+/// How long one download may take before git is killed and the read fails, so a server that
+/// never answers cannot hold the repository's thread for good.
+const DOWNLOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// How many fetch-and-retry rounds a read may take: trees (treeless clones), then blobs, then a
 /// last round for anything the read needed that the first estimate missed.
 const MAX_ROUNDS: usize = 4;
@@ -364,7 +368,7 @@ pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Resul
             objects = wanted.len(),
             "downloading missing objects"
         );
-        match cli::run_with_input(workdir, &args, input.as_bytes()) {
+        match cli::run_with_input_within(workdir, &args, input.as_bytes(), DOWNLOAD_LIMIT) {
             Ok(_) => {}
             Err(Error::Cli { stderr, .. }) => {
                 last_error = Some(stderr);
