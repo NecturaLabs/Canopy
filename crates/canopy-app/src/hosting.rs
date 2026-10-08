@@ -218,7 +218,8 @@ pub fn token_page(kind: ForgeKind, host: &str) -> String {
 pub enum HostJob {
     Avatar(canopy_core::Oid, String),
     List(StateFilter),
-    Details(u64),
+    /// Request number and the tab's monotonically changing details generation.
+    Details(u64, u64),
     Create(NewRequest),
     /// Merge with this method, only if the head is still this commit.
     Merge(u64, MergeMethod, Option<String>),
@@ -233,7 +234,7 @@ impl HostJob {
         match self {
             Self::Avatar(..) => "Loading an author picture".into(),
             Self::List(_) => format!("Loading {}s", kind.request_noun()),
-            Self::Details(i) => format!("Loading {n} #{i}"),
+            Self::Details(i, _) => format!("Loading {n} #{i}"),
             Self::Create(_) => format!("Creating {}", kind.request_noun()),
             Self::Merge(i, _, _) => format!("Merging {n} #{i}"),
             Self::SetOpen(i, true) => format!("Reopening {n} #{i}"),
@@ -254,7 +255,7 @@ pub enum HostEvent {
     },
     Token(Option<TokenSource>),
     List(StateFilter, Result<Vec<RequestSummary>, String>),
-    Details(u64, Box<Result<RequestDetails, String>>),
+    Details(u64, u64, Box<Result<RequestDetails, String>>),
     Created(Result<RequestSummary, String>),
     /// An action finished; the list and the request should be reloaded.
     Done {
@@ -626,8 +627,9 @@ fn serve_jobs(
                     waiting = Some((Shown { list, filter, rows }, due));
                 }
             }
-            HostJob::Details(n) => send(HostEvent::Details(
+            HostJob::Details(n, generation) => send(HostEvent::Details(
                 n,
+                generation,
                 Box::new(client.details(n).map_err(s)),
             )),
             HostJob::Create(req) => send(HostEvent::Created(client.create(&req).map_err(s))),
@@ -1067,7 +1069,7 @@ mod tests {
         }));
         let (worker, thread) = worker_for(&base);
         worker.send(HostJob::List(StateFilter::Open));
-        worker.send(HostJob::Details(1));
+        worker.send(HostJob::Details(1, 1));
         worker.send(HostJob::Comment(1, "Looks good".into()));
         let mut lists = 0;
         while lists < 2 {
@@ -1114,10 +1116,10 @@ mod tests {
         query_arrived
             .recv_timeout(Duration::from_secs(10))
             .expect("the list's query was sent");
-        worker.send(HostJob::Details(1));
+        worker.send(HostJob::Details(1, 1));
         let opened = loop {
             match worker.events.recv_timeout(Duration::from_secs(5)) {
-                Ok(HostEvent::Details(n, details)) => break (n, details.is_ok()),
+                Ok(HostEvent::Details(n, _, details)) => break (n, details.is_ok()),
                 Ok(_) => {}
                 Err(e) => panic!("the request waited for the list's checks: {e}"),
             }

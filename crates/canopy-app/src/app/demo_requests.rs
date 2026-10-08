@@ -1044,7 +1044,7 @@ mod tests {
             tab.load_requests();
             tab.select_request(425);
             tab.host_job(crate::hosting::HostJob::List(StateFilter::All));
-            tab.host_job(crate::hosting::HostJob::Details(425));
+            tab.host_job(crate::hosting::HostJob::Details(425, 0));
             tab.ensure_host(&ctx, Some("not-a-token".into()), true);
             assert!(!has_thread(&tab), "{spec}: a click started an API thread");
             assert!(

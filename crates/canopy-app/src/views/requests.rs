@@ -977,7 +977,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                             if retry.is_some() {
                                 tab.requests.details = None;
                                 tab.requests.details_loading = true;
-                                tab.host_job(HostJob::Details(number));
+                                tab.request_details(number);
                             }
                         }
                         (None, Some(d)) => {

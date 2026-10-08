@@ -493,6 +493,8 @@ pub struct Requests {
     pub selected: Option<u64>,
     pub details: Option<Result<Arc<RequestDetails>, String>>,
     pub details_loading: bool,
+    /// Rejects responses from an earlier selection or reload, even for the same request.
+    pub details_generation: u64,
     /// An action in flight ("Merging PR #12").
     pub busy: Option<String>,
     pub comment: String,
@@ -519,6 +521,7 @@ impl Default for Requests {
             selected: None,
             details: None,
             details_loading: false,
+            details_generation: 0,
             busy: None,
             comment: String::new(),
             merge_method: MergeMethod::Merge,
@@ -918,19 +921,25 @@ impl RepoTab {
         self.ensure_host(ctx, saved_token, enabled);
     }
 
+    /// Enqueue a fresh details load with an identity that invalidates older responses.
+    pub fn request_details(&mut self, number: u64) {
+        self.requests.details_generation = self.requests.details_generation.wrapping_add(1);
+        self.host_job(HostJob::Details(number, self.requests.details_generation));
+    }
+
     /// Reloads the request list.
     pub fn load_requests(&mut self) {
-        if let Some(h) = &self.host {
+        if self.host.is_some() {
             self.requests.quiet_refresh = false;
             self.requests.loading = true;
-            h.send(HostJob::List(self.requests.filter));
+            self.host_job(HostJob::List(self.requests.filter));
             // Refreshing the rows must refresh the open request's body and action state too.
             // Otherwise a manual refresh leaves its details stale until another selection.
             if let Some(n) = self.requests.selected
                 && self.requests.details.is_some()
             {
                 self.requests.details_loading = true;
-                h.send(HostJob::Details(n));
+                self.request_details(n);
             }
         }
     }
@@ -940,16 +949,15 @@ impl RepoTab {
     /// (hosting off, no consent, no forge) or while the list was never loaded: a tab nobody
     /// opened asks its forge for nothing.
     pub fn refresh_requests_quietly(&mut self) {
-        let Some(h) = &self.host else { return };
-        if self.requests.list.is_none() {
+        if self.host.is_none() || self.requests.list.is_none() {
             return;
         }
         self.requests.quiet_refresh = true;
-        h.send(HostJob::List(self.requests.filter));
+        self.host_job(HostJob::List(self.requests.filter));
         if let Some(n) = self.requests.selected
             && self.requests.details.is_some()
         {
-            h.send(HostJob::Details(n));
+            self.request_details(n);
         }
     }
 
@@ -974,9 +982,12 @@ impl RepoTab {
         self.requests.selected = Some(number);
         self.requests.details = None;
         self.requests.comment.clear();
-        if let Some(h) = &self.host {
+        if self.host.is_some() {
             self.requests.details_loading = true;
-            h.send(HostJob::Details(number));
+            self.request_details(number);
+        } else {
+            // Invalidate an in-flight result from an old host even if no new one is sent.
+            self.requests.details_generation = self.requests.details_generation.wrapping_add(1);
         }
     }
 
@@ -1697,8 +1708,10 @@ impl RepoTab {
                         }
                     }
                 }
-                HostEvent::Details(n, result) => {
-                    if self.requests.selected == Some(n) {
+                HostEvent::Details(n, generation, result) => {
+                    if self.requests.selected == Some(n)
+                        && self.requests.details_generation == generation
+                    {
                         self.requests.details_loading = false;
                         // A quiet refresh of the open request that fails leaves it shown.
                         let kept = self.requests.quiet_refresh
@@ -2768,7 +2781,7 @@ mod tests {
                 "{kind:?} asked for the list again: {jobs:?}"
             );
             assert!(
-                jobs.iter().any(|j| matches!(j, HostJob::Details(7))),
+                jobs.iter().any(|j| matches!(j, HostJob::Details(7, _))),
                 "{kind:?} asked for the open request again: {jobs:?}"
             );
             assert!(!tab.requests.loading, "{kind:?} showed a spinner");
@@ -2821,7 +2834,7 @@ mod tests {
         assert!(
             matches!(
                 jobs.as_slice(),
-                [HostJob::List(StateFilter::Open), HostJob::Details(7)]
+                [HostJob::List(StateFilter::Open), HostJob::Details(7, _)]
             ),
             "both the list and selected request need fresh host data: {jobs:?}"
         );
@@ -2844,10 +2857,11 @@ mod tests {
 
         // Request 7 is still in flight when the user selects request 9.
         tab.select_request(9);
-        assert!(matches!(jobs.try_recv(), Ok(HostJob::Details(9))));
+        assert!(matches!(jobs.try_recv(), Ok(HostJob::Details(9, _))));
         assert!(tab.requests.details.is_none());
         host_events.send(HostEvent::Details(
             7,
+            0,
             Box::new(Err("obsolete request body".into())),
         ))?;
         // An old filter's list result must not alter the current request selection.
@@ -2863,6 +2877,7 @@ mod tests {
 
         host_events.send(HostEvent::Details(
             9,
+            tab.requests.details_generation,
             Box::new(Err("current request failure".into())),
         ))?;
         tab.poll(&[]);
@@ -2870,6 +2885,48 @@ mod tests {
         assert!(matches!(
             &tab.requests.details,
             Some(Err(message)) if message == "current request failure"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn revisiting_a_request_discards_its_older_in_flight_response()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, _events, _jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().ok_or("no host")?.forge.clone();
+        let (host, host_events, host_jobs) = HostWorker::detached(forge);
+        tab.host = Some(host);
+
+        tab.select_request(9);
+        let first = tab.requests.details_generation;
+        tab.select_request(7);
+        tab.select_request(9);
+        let latest = tab.requests.details_generation;
+        assert_ne!(first, latest);
+        assert_eq!(jobs_of(&host_jobs).len(), 3);
+
+        // Same number, but this is an obsolete result from the first visit.
+        host_events.send(HostEvent::Details(
+            9,
+            first,
+            Box::new(Err("obsolete failure".into())),
+        ))?;
+        tab.poll(&[]);
+        assert_eq!(tab.requests.selected, Some(9));
+        assert!(tab.requests.details.is_none());
+        assert!(tab.requests.details_loading);
+
+        host_events.send(HostEvent::Details(
+            9,
+            latest,
+            Box::new(Err("latest failure".into())),
+        ))?;
+        tab.poll(&[]);
+        assert!(!tab.requests.details_loading);
+        assert!(matches!(
+            &tab.requests.details,
+            Some(Err(message)) if message == "latest failure"
         ));
         Ok(())
     }
