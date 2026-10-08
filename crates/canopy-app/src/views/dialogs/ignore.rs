@@ -129,7 +129,12 @@ pub(super) fn show(
                     }
                     if form.kind != Kind::Pattern || form.target == IgnoreTarget::Nearest {
                         let focus = form.path.is_empty() && (form.kind != Kind::Pattern || !form.pattern.is_empty());
-                        field(ui, if form.kind == Kind::Pattern { "Path for nearest .gitignore" } else { "Relative path" }, &mut form.path, "", focus);
+                        let (label, hint) = match form.kind {
+                            Kind::Pattern => ("Path for nearest .gitignore", "e.g. build/output.log"),
+                            Kind::Folder => ("Relative path", "e.g. build"),
+                            Kind::File | Kind::Extension => ("Relative path", "e.g. build/output.log"),
+                        };
+                        field(ui, label, &mut form.path, hint, focus);
                     }
                     let targets = [(IgnoreTarget::Root, ".gitignore at the root"), (IgnoreTarget::Nearest, "Nearest .gitignore"), (IgnoreTarget::RepositoryExclude, "This repository only"), (IgnoreTarget::Global, "All repositories")];
                     Select::new(&mut form.target, &targets).label("Save rule in").show(ui);
@@ -191,12 +196,13 @@ pub(super) fn show(
                             None => note(ui, "No matching rule.", p.text_dim),
                             Some(matched) => {
                                 note(ui, format!("{} by {}:{}", if matched.negated() { "Included" } else { "Ignored" }, matched.source, matched.line), p.text_dim);
-                                note(ui, &matched.pattern, p.text);
+                                ui.add(egui::Label::new(RichText::new(&matched.pattern).monospace().size(theme::metrics().mono_size).color(p.text)).wrap());
                             }
                         }
                         if *tracked {
                             ui.add_space(theme::SM);
-                            note(ui, "This path is tracked. Stop tracking it to let ignore rules take effect.", p.text_dim);
+                            let ignoring = matched.as_ref().is_some_and(|m| !m.negated());
+                            note(ui, if ignoring { "Tracked, so the rule does not apply to it." } else { "This path is tracked." }, p.text_dim);
                             if Button::new("Stop tracking…").secondary().size(Size::Sm).enabled(tab.running.is_none()).show(ui).clicked() {
                                 actions.push(Action::OpenDialog(Dialog::Confirm {
                                     title: format!("Stop tracking {}?", form.path.trim()),
