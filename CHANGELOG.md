@@ -21,7 +21,7 @@ commits since the previous build.
   with Canopy's recommendation and, where your git configuration sets it, its value and file.
 - A notification center: the bell at the right end of the status bar lists the last 100
   notifications, whether or not they showed as a card, with copy and clear all, and an
-  unread count for errors and other notices that need you. Settings → Appearance → Notifications
+  unread count for errors and other notices that need you. Settings → Notifications
   turns the bottom-right cards off or chooses them per type (errors, needs your attention,
   updates, finished operations, confirmations); by default only the first three pop up.
 - Settings → Appearance → Tooltips: Helpful (the default) shows only what the screen does not

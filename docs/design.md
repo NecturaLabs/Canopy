@@ -671,7 +671,7 @@ right as it fades, and the cards above one that left slide into its place (`TOAS
 with reduced motion).
 
 Each notification has a topic (`ui::toast::Topic`: Errors, Needs your attention, Updates,
-Finished operations, Confirmations); Settings → Appearance → Notifications chooses which show as
+Finished operations, Confirmations); Settings → Notifications chooses which show as
 cards, and by default only the first three do. Every notification, card or not, goes to the
 notification center: the bell at the right end of the status bar (`BELL`, `BELL_SLASH` while
 cards are off) opens a 360-point popover listing the last 100, newest first. Each row is laid out

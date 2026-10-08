@@ -204,7 +204,7 @@ as Reload, and only with hosting on and a list already loaded.
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |
 | Notification cards that stay as long as their words take to read (5–10 s, errors 8–15 s, decisions 15 s then the center), paused while pointed at, focused or the window is away; decisions as two named buttons, no close button | Done | ? | ? | ? |
-| Notification settings (Appearance → Notifications): cards on or off, and per type — errors, needs your attention, updates, finished operations, confirmations; by default only the first three show as cards | Done | ? | ? | ? |
+| Notification settings (Settings → Notifications): cards on or off, and per type — errors, needs your attention, updates, finished operations, confirmations; by default only the first three show as cards | Done | ? | ? | ? |
 | Tooltip settings (Appearance → Tooltips): Helpful (default; only what the screen does not show), All, or Off (only why a control is unavailable), and a Quick, Normal or Slow delay | Done | ? | ? | ? |
 | Links: a web link shows its address and offers Copy link; links in text are underlined; a cut-off field value shows whole in a tooltip | Unreleased | ? | ? | ? |
 | A settings file cannot turn on tag pruning, automatic fetching or beta builds, fetch more often, stop following your git configuration or choose where a push goes | Unreleased | ? | ? | ? |
