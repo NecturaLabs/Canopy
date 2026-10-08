@@ -2441,6 +2441,9 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> Response 
                     mini.right() - TICK_INSET - TICK / 2.0,
                     mini.top() + TICK_INSET + TICK / 2.0,
                 );
+                // The miniatures have different backgrounds. A ring from the preview
+                // palette keeps the selected mark legible on both light and dark cards.
+                ui.painter().circle_filled(c, TICK / 2.0 + 2.0, tp.text);
                 ui.painter().circle_filled(c, TICK / 2.0, p.accent);
                 ui.painter().text(
                     c,
