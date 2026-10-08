@@ -1,3 +1,4 @@
+// Glass rendering and color-compositing regression tests.
 #![expect(
     clippy::disallowed_methods,
     reason = "test backdrops are arbitrary colours, not the theme's"

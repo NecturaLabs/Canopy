@@ -1,3 +1,4 @@
+// Exercises self-update installation, verification, and rollback behavior.
 use super::*;
 
 fn write(path: &Path, text: &str) {
