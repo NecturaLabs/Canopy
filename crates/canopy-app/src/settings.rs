@@ -789,6 +789,34 @@ fn expand_home_in(typed: &str, home: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    /// An arbitrary hue chosen with the sliders is saved and comes back, and it colours the
+    /// theme: the picker's whole purpose.
+    #[test]
+    fn an_arbitrary_custom_colour_persists_and_recolours_the_theme() {
+        let chosen = CustomTheme {
+            accent_hue: 133,
+            tint_hue: 17,
+            tint: 40,
+            ..CustomTheme::default()
+        };
+        let saved = serde_json::to_string(&Settings {
+            custom_theme: chosen,
+            ..Settings::default()
+        })
+        .expect("save");
+        let restored: Settings = serde_json::from_str(&saved).expect("load");
+        assert_eq!(restored.custom_theme, chosen);
+        let neighbour = CustomTheme {
+            accent_hue: 134,
+            ..chosen
+        };
+        assert_ne!(
+            chosen.palette().accent,
+            CustomTheme::default().palette().accent
+        );
+        assert_ne!(chosen.palette().accent, neighbour.palette().accent);
+    }
+
     use eframe::Storage as _;
 
     use super::*;
