@@ -85,9 +85,7 @@ fn init() -> sentry::ClientInitGuard {
     o.attach_stacktrace = false;
     o.auto_session_tracking = true;
     o.session_mode = sentry::SessionMode::Application;
-    o.before_send = Some(Arc::new(move |event| {
-        (!is_accessibility_bus_panic(&event)).then(|| scrub(event, &home))
-    }));
+    o.before_send = Some(Arc::new(move |event| prepare_report(event, &home)));
     o.before_breadcrumb = Some(Arc::new(|_| None));
     // The default integrations, except that panics carry the file and line where they happened:
     // release builds have no symbols, so the stack trace alone would only be addresses.
@@ -104,12 +102,52 @@ fn init() -> sentry::ClientInitGuard {
 /// A panic in the AT-SPI thread of `accesskit_unix`: with no accessibility bus on the session
 /// (a minimal desktop, a container) it unwraps the failed registry call on its own thread.
 /// Canopy keeps running without screen-reader support, so nobody has a crash to report.
-fn is_accessibility_bus_panic(event: &Event<'_>) -> bool {
-    event.exception.values.iter().any(|e| {
-        e.value
-            .as_deref()
-            .is_some_and(|v| v.contains("accesskit_unix"))
+pub fn is_accessibility_bus_panic(message: &str, source: &str) -> bool {
+    let mut components = source.rsplit(['/', '\\']);
+    if components.next() != Some("context.rs") || components.next() != Some("src") {
+        return false;
+    }
+    let package = components.next().unwrap_or_default();
+    let accesskit = package == "accesskit_unix"
+        || package.strip_prefix("accesskit_unix-").is_some_and(|v| {
+            !v.is_empty()
+                && v.split('.')
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        });
+    accesskit
+        && message.starts_with("called `Result::unwrap()` on an `Err` value: MethodError(")
+        && message.contains("\"org.freedesktop.DBus.Error.ServiceUnknown\"")
+        && message
+            .contains("\"The name org.a11y.atspi.Registry was not provided by any .service files\"")
+}
+
+fn is_accessibility_bus_event(event: &Event<'_>) -> bool {
+    let [exception] = event.exception.values.as_slice() else {
+        return false;
+    };
+    if exception.ty != "panic" {
+        return false;
+    }
+    let Some((message, location)) = exception
+        .value
+        .as_deref()
+        .and_then(|value| value.rsplit_once(" (at "))
+    else {
+        return false;
+    };
+    let Some(location) = location.strip_suffix(')') else {
+        return false;
+    };
+    let mut parts = location.rsplitn(3, ':');
+    let column = parts.next().and_then(|v| v.parse::<u32>().ok());
+    let line = parts.next().and_then(|v| v.parse::<u32>().ok());
+    parts.next().is_some_and(|source| {
+        column.is_some() && line.is_some() && is_accessibility_bus_panic(message, source)
     })
+}
+
+fn prepare_report(event: Event<'static>, home: &str) -> Option<Event<'static>> {
+    (!is_accessibility_bus_event(&event)).then(|| scrub(event, home))
 }
 
 /// The event for a panic: its message followed by where it happened, `src/x.rs:12:5`.
@@ -513,17 +551,46 @@ mod tests {
         let panic_in = |file: &str| {
             let mut event = Event::default();
             event.exception.values.push(Exception {
+                ty: "panic".into(),
                 value: Some(format!(
-                    "called `Result::unwrap()` on an `Err` value (at {file}:61:29)"
+                    "called `Result::unwrap()` on an `Err` value: MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\"), Some(\"The name org.a11y.atspi.Registry was not provided by any .service files\"), Msg {{ type: Error }}) (at {file}:61:29)"
                 )),
                 ..Default::default()
             });
             event
         };
         let theirs = "/home/ada/.cargo/registry/src/x/accesskit_unix-0.21.1/src/context.rs";
-        assert!(is_accessibility_bus_panic(&panic_in(theirs)));
-        assert!(!is_accessibility_bus_panic(&panic_in("src/worker.rs")));
-        assert!(!is_accessibility_bus_panic(&Event::default()));
+        assert!(prepare_report(panic_in(theirs), "/home/ada").is_none());
+        assert!(prepare_report(panic_in("src/worker.rs"), "/home/ada").is_some());
+        assert!(prepare_report(Event::default(), "/home/ada").is_some());
+    }
+
+    #[test]
+    fn unrelated_accessibility_panics_are_reported_and_scrubbed() {
+        let source = "/home/ada/.cargo/registry/accesskit_unix-0.21.1/src/context.rs";
+        for message in [
+            "called `Option::unwrap()` on a `None` value",
+            "called `Result::unwrap()` on an `Err` value: PoisonError { .. }",
+            "called `Result::unwrap()` on an `Err` value: MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.AccessDenied\"), Some(\"The name org.a11y.atspi.Registry was not provided by any .service files\"), Msg { type: Error })",
+            "called `Result::unwrap()` on an `Err` value: MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\"), Some(\"The name org.a11y.Bus was not provided by any .service files\"), Msg { type: Error })",
+        ] {
+            let mut event = Event::default();
+            event.exception.values.push(Exception {
+                ty: "panic".into(),
+                value: Some(format!(
+                    "{message} ghp_abcdefgh12345678 (at {source}:61:29)"
+                )),
+                ..Default::default()
+            });
+            let report = prepare_report(event, "/home/ada").expect("real panic must be reported");
+            let value = report.exception.values[0]
+                .value
+                .as_deref()
+                .expect("message");
+            assert!(value.contains(message), "{message}");
+            assert!(value.contains("<token>"), "token was not scrubbed");
+            assert!(!value.contains("/home/ada"), "home was not scrubbed");
+        }
     }
 
     #[test]

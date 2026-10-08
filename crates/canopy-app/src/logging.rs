@@ -333,23 +333,38 @@ fn install_panic_hook() {
                 .map(|s| (*s).to_owned())
                 .or_else(|| info.payload().downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "(no message)".to_owned());
-            let location = info
-                .location()
-                .map(|l| format!("{}:{}", l.file(), l.line()))
-                .unwrap_or_default();
+            let location = info.location().map(|l| (l.file(), l.line()));
             let thread = std::thread::current()
                 .name()
                 .unwrap_or("unnamed")
                 .to_owned();
-            let backtrace = std::backtrace::Backtrace::force_capture();
-            let report = render_report(&message, &location, &thread, &backtrace.to_string());
-            match write_report(&dir, &report) {
-                Ok(path) => tracing::error!("crash report written to {}", path.display()),
+            match write_panic_report(&dir, &message, location, &thread) {
+                Ok(Some(path)) => tracing::error!("crash report written to {}", path.display()),
+                Ok(None) => {}
                 Err(e) => tracing::error!("could not write a crash report: {e}"),
             }
         }
         default(info);
     }));
+}
+
+fn write_panic_report(
+    dir: &Path,
+    message: &str,
+    location: Option<(&str, u32)>,
+    thread: &str,
+) -> std::io::Result<Option<PathBuf>> {
+    if location
+        .is_some_and(|(file, _)| crate::crash_reports::is_accessibility_bus_panic(message, file))
+    {
+        return Ok(None);
+    }
+    let location = location
+        .map(|(file, line)| format!("{file}:{line}"))
+        .unwrap_or_default();
+    let backtrace = std::backtrace::Backtrace::force_capture();
+    let report = render_report(message, &location, thread, &backtrace.to_string());
+    write_report(dir, &report).map(Some)
 }
 
 /// The text of a crash report.
@@ -451,6 +466,61 @@ fn unseen_in(dir: &Path, last_seen: &str) -> Option<CrashReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_accessibility_registry_does_not_create_a_local_crash_report() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let crashes = dir.path().join("crashes");
+        let message = "called `Result::unwrap()` on an `Err` value: MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\"), Some(\"The name org.a11y.atspi.Registry was not provided by any .service files\"), Msg { type: Error })";
+        let source = "/build/registry/accesskit_unix-0.21.1/src/context.rs";
+        let report = write_panic_report(&crashes, message, Some((source, 61)), "unnamed")
+            .expect("write panic report");
+        assert_eq!(report, None, "nonfatal accessibility panic was reported");
+        assert!(
+            !crashes.exists(),
+            "nonfatal panic created a crash directory"
+        );
+        assert_eq!(
+            unseen_in(&crashes, ""),
+            None,
+            "false crash dialog next launch"
+        );
+    }
+
+    #[test]
+    fn other_panics_still_create_local_reports() {
+        let missing_registry = "called `Result::unwrap()` on an `Err` value: MethodError(OwnedErrorName(\"org.freedesktop.DBus.Error.ServiceUnknown\"), Some(\"The name org.a11y.atspi.Registry was not provided by any .service files\"), Msg { type: Error })";
+        let accesskit = "/build/registry/accesskit_unix-0.21.1/src/context.rs";
+        for (message, location) in [
+            (missing_registry, Some(("src/worker.rs", 61))),
+            (
+                missing_registry,
+                Some(("/build/accesskit_unix_other/src/context.rs", 61)),
+            ),
+            (
+                missing_registry,
+                Some(("/build/accesskit_unix-0.21.1/src/adapter.rs", 61)),
+            ),
+            (missing_registry, None),
+            ("index out of bounds", Some(("src/worker.rs", 12))),
+            (
+                "called `Result::unwrap()` on an `Err` value: PoisonError { .. }",
+                Some((accesskit, 61)),
+            ),
+        ] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let crashes = dir.path().join("crashes");
+            let path = write_panic_report(&crashes, message, location, "unnamed")
+                .expect("write report")
+                .expect("real panic report");
+            let report = unseen_in(&crashes, "").expect("next launch must offer real crash");
+            assert_eq!(report.path, path);
+            assert_eq!(
+                report.message,
+                message.chars().take(300).collect::<String>()
+            );
+        }
+    }
 
     #[test]
     #[expect(
