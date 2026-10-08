@@ -301,6 +301,21 @@ linux_flow() {
     check "old scalable icon removed" [ ! -e "$svg" ]
     check "old scalable icon removed where it was registered" [ ! -e "$svg_a" ]
     check "and dropped from the receipt" [ -z "$(grep -F "scalable" "$opt/.canopy-install")" ]
+
+    echo "== a legacy SVG absent from the receipt"
+    # Builds <=192 could discard the SVG receipt line without removing its installed copy.
+    echo "untracked old svg" >"$svg"
+    run_status
+    check "install exits 0 after orphan cleanup" [ "$status" = 0 ]
+    check "orphan SVG removed using the registered PNG" [ ! -e "$svg" ]
+    check "orphan is not added to receipt" [ -z "$(grep -F "scalable" "$opt/.canopy-install")" ]
+    echo "another user's svg" >"$tmp/untouched.svg"
+    ln -s "$tmp/untouched.svg" "$svg"
+    run_status
+    check "install exits 0 with symlinked SVG" [ "$status" = 0 ]
+    check "unregistered symlink is preserved" [ -L "$svg" ]
+    check "symlink target is preserved" [ "$(cat "$tmp/untouched.svg")" = "another user's svg" ]
+    rm "$svg" "$tmp/untouched.svg"
     rmdir "$(dirname "$svg")" "$(dirname "$(dirname "$svg")")"
     rm -rf "$home/data-a"
 
