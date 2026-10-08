@@ -296,9 +296,9 @@ fn root_relative(pattern: &str, base: &str) -> String {
 }
 
 /// `pattern` with its last literal character wrapped in a bracket expression when it is a `!`
-/// pattern, which matches the same paths. libgit2 does not apply an in-memory negation that has
-/// no wildcard (`!keep.log`) over a matching rule of a `.gitignore`, so the preview would miss
-/// the paths such a rule makes visible.
+/// pattern without a wildcard, which matches the same paths. libgit2 does not apply an in-memory
+/// negation that has no wildcard (`!keep.log`) over a matching rule of a `.gitignore`, so the
+/// preview would miss the paths such a rule makes visible.
 fn with_wildcard(pattern: &str) -> String {
     if !pattern.starts_with('!') {
         return pattern.to_owned();
@@ -306,6 +306,11 @@ fn with_wildcard(pattern: &str) -> String {
     let body = pattern.trim_end_matches('/');
     let slashes = pattern.len() - body.len();
     let chars: Vec<char> = body.chars().collect();
+    // A pattern with a wildcard needs no help, and rewriting it would lose libgit2's case folding
+    // or turn an unfinished bracket expression into a finished one.
+    if chars.iter().any(|ch| matches!(ch, '*' | '?' | '[')) {
+        return pattern.to_owned();
+    }
     let mut last = None;
     let mut i = 0;
     while i < chars.len() {
@@ -752,7 +757,8 @@ mod tests {
         assert_eq!(with_wildcard("!keep.log"), "!keep.lo[g]");
         assert_eq!(with_wildcard("!/sub/keep.log"), "!/sub/keep.lo[g]");
         assert_eq!(with_wildcard("!build/"), "!buil[d]/");
-        assert_eq!(with_wildcard("!*.log"), "!*.lo[g]");
+        assert_eq!(with_wildcard("!*.log"), "!*.log");
+        assert_eq!(with_wildcard("!*.lo[g"), "!*.lo[g");
         assert_eq!(with_wildcard("!a\\*"), "!a\\*");
         assert_eq!(with_wildcard("keep.log"), "keep.log");
         assert_eq!(with_wildcard("!"), "!");

@@ -897,6 +897,28 @@ fn preview_reports_what_a_rule_would_change_without_writing() {
 }
 
 #[test]
+fn preview_of_a_negation_follows_git_for_case_and_unfinished_classes() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    fs::write(p.join(".gitignore"), "*.log\n").unwrap();
+    git(p, &["config", "core.ignorecase", "true"]);
+    let paths = ["keep.log".to_owned()];
+    let preview = |pattern: &str| {
+        let rule = IgnoreRule::Custom {
+            pattern: pattern.into(),
+            near: "keep.log".into(),
+        };
+        repo.preview_ignore_rule(&rule, IgnoreTarget::Root, &paths)
+            .unwrap()
+            .unignored
+    };
+    // With ignorecase, git matches `*.LOG` against keep.log, so the rule makes it visible.
+    assert_eq!(preview("!*.LOG"), ["keep.log"]);
+    // An unfinished class matches nothing in git, so the file stays ignored.
+    assert!(preview("!*.lo[g").is_empty());
+}
+
+#[test]
 fn ignore_case_setting_decides_duplicates() {
     let (dir, repo) = fixture();
     let p = dir.path();
