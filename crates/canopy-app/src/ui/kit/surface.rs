@@ -1971,16 +1971,30 @@ mod tests {
                 .show(ui);
         };
         let parts = testkit::parts(&ctx, "Warning", show);
-        for text in ["Authentication needed", "Set up an SSH agent before retrying."] {
-            assert_eq!(parts.iter().filter(|part| *part == text).count(), 1, "{parts:?}");
+        for text in [
+            "Authentication needed",
+            "Set up an SSH agent before retrying.",
+        ] {
+            assert_eq!(
+                parts.iter().filter(|part| *part == text).count(),
+                1,
+                "{parts:?}"
+            );
         }
         let nodes = testkit::spoken(&ctx, show);
         let retry = nodes
             .iter()
-            .find(|node| node.label.as_deref().is_some_and(|name| name.starts_with("Retry")))
+            .find(|node| {
+                node.label
+                    .as_deref()
+                    .is_some_and(|name| name.starts_with("Retry"))
+            })
             .expect("disabled Retry action");
         assert!(retry.disabled);
-        assert_eq!(retry.description.as_deref(), Some("No SSH agent is available"));
+        assert_eq!(
+            retry.description.as_deref(),
+            Some("No SSH agent is available")
+        );
     }
 
     /// A11Y-15: an action card is a button; a card that is one choice of a group (a theme) is a
