@@ -920,6 +920,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 Job::Op(mut op) => {
                     let label = op.label();
                     let kind = op.kind();
+                    let stage_all = matches!(op, Op::StageAll);
                     let announce = op.announce();
                     // A pull or a rebase: it can autostash, and stopping on conflicts is not a
                     // failure.
@@ -1021,6 +1022,9 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         // Not a failure: the conflicts are the user's to resolve.
                         emit(Event::Conflicted(label));
                     } else {
+                        // Frequent and quiet, unless it left folders out.
+                        let announce =
+                            announce || (stage_all && matches!(&result, Ok(m) if !m.is_empty()));
                         emit(Event::OpFinished {
                             label,
                             kind,
@@ -1299,7 +1303,9 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
             .stop_tracking(&path)
             .map(|()| format!("Kept {path} locally and staged its removal from Git.")),
         Op::Stage(p) => done(repo.stage(&p)),
-        Op::StageAll => done(repo.stage_all()),
+        Op::StageAll => repo
+            .stage_all_except_repositories()
+            .map(|left_out| left_out_message(&left_out)),
         Op::Unstage(p) => done(repo.unstage(&p)),
         Op::UnstageAll => done(repo.unstage_all()),
         Op::Discard(f) => done(repo.discard(&f)),
@@ -1396,6 +1402,31 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         } => done(repo.write_resolution(&path, &content, mark, expected)),
         Op::ResolveSide { path, side } => done(repo.resolve_with_side(&path, side)),
     }
+}
+
+/// What Stage all says when it left out folders that hold a repository of their own (staging
+/// them would record bare gitlinks nobody can clone); empty when it left out nothing.
+fn left_out_message(folders: &[String]) -> String {
+    if folders.is_empty() {
+        return String::new();
+    }
+    let shown: Vec<&str> = folders.iter().take(3).map(String::as_str).collect();
+    let more = folders.len() - shown.len();
+    let names = if more > 0 {
+        format!("{} and {more} more", shown.join(", "))
+    } else {
+        shown.join(", ")
+    };
+    format!(
+        "Left out {names}: {} a repository of its own. Add {} as a submodule, or ignore {}.",
+        if folders.len() == 1 {
+            "it is"
+        } else {
+            "they are"
+        },
+        if folders.len() == 1 { "it" } else { "them" },
+        if folders.len() == 1 { "it" } else { "them" },
+    )
 }
 
 /// Candidate collection and Git's deciding-rule checks stay on the repository thread.
@@ -1657,6 +1688,17 @@ mod tests {
 /// Reads in partial clones: coalescing, offline first, downloads.
 #[cfg(test)]
 mod read_tests {
+    #[test]
+    fn stage_all_names_the_repositories_it_left_out() {
+        assert_eq!(left_out_message(&[]), "");
+        assert_eq!(
+            left_out_message(&["a/".into()]),
+            "Left out a/: it is a repository of its own. Add it as a submodule, or ignore it."
+        );
+        let many: Vec<String> = ["a/", "b/", "c/", "d/"].map(String::from).to_vec();
+        assert!(left_out_message(&many).starts_with("Left out a/, b/, c/ and 1 more: they are"));
+    }
+
     use std::cell::{Cell, RefCell};
 
     use canopy_core::Error;

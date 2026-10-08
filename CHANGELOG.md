@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Added
 
+- Stage all says which folders it left out because they hold a repository of their own, and
+  what to do instead.
+
 - A diff that only changes a file's mode now says what happened: made executable, no longer
   executable, or a file turned into a symbolic link and back.
 
