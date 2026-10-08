@@ -190,6 +190,10 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
     }
     let rect = ui.allocate_space(vec2(width, spec.height)).1;
     let id = ui.id().with(spec.id_salt);
+    // Register even disabled rows: a roving arrow must skip them, not target an inert row.
+    if let Some((list, index)) = spec.roving {
+        list.register(&c, index, enabled);
+    }
     // In a list with one Tab stop only that row (or the one with focus) takes focus from Tab.
     let tab_stop = enabled
         && match spec.roving {
@@ -1561,7 +1565,7 @@ pub struct Roving {
 }
 
 /// What a [`Roving`] list keeps between frames.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct RovingState {
     /// The row Tab stops on.
     stop: usize,
@@ -1578,6 +1582,35 @@ struct RovingState {
     stop_shown_before: bool,
     /// A row stood in for the stop this frame (the stop was not shown the frame before).
     stand_in: bool,
+    /// Enabled rows observed in the last render (and those already shown this render).
+    enabled: Vec<bool>,
+}
+
+/// Find the next enabled row along the requested axis. Unknown virtualized rows stay eligible
+/// until they are rendered, so scrolling can still bring them into view.
+fn next_enabled_row(
+    from: usize,
+    len: usize,
+    by: usize,
+    forward: bool,
+    enabled: &[bool],
+) -> Option<usize> {
+    let mut at = if forward {
+        from.checked_add(by)
+    } else {
+        from.checked_sub(by)
+    };
+    while let Some(index) = at.filter(|&i| i < len) {
+        if enabled.get(index).copied().unwrap_or(true) {
+            return Some(index);
+        }
+        at = if forward {
+            index.checked_add(by)
+        } else {
+            index.checked_sub(by)
+        };
+    }
+    None
 }
 
 impl Roving {
@@ -1597,6 +1630,8 @@ impl Roving {
             st.stop_shown_before = st.stop_shown;
             st.stop_shown = false;
             st.stand_in = false;
+            st.enabled.resize(len, true);
+            st.enabled.truncate(len);
             if !st.visited
                 && let Some(i) = initial
             {
@@ -1604,6 +1639,11 @@ impl Roving {
             }
             st.stop = st.stop.min(last);
             st.pending = st.pending.map(|p| p.min(last));
+            if !st.enabled.get(st.stop).copied().unwrap_or(true) {
+                st.stop = next_enabled_row(st.stop, len, 1, true, &st.enabled)
+                    .or_else(|| next_enabled_row(st.stop, len, 1, false, &st.enabled))
+                    .unwrap_or(st.stop);
+            }
         });
         Self {
             id,
@@ -1653,6 +1693,22 @@ impl Roving {
             st.stop = index;
             st.visited = true;
             st.pending = Some(index);
+        });
+    }
+
+    /// Register a row's availability even when disabled (and therefore not interactive).
+    /// The next frame knows which rows an arrow must skip. A row disabled while a focus
+    /// transfer is pending forwards that transfer rather than trapping it.
+    fn register(&self, ctx: &egui::Context, index: usize, enabled: bool) {
+        ctx.data_mut(|d| {
+            let st = d.get_temp_mut_or_default::<RovingState>(self.id);
+            if let Some(available) = st.enabled.get_mut(index) {
+                *available = enabled;
+            }
+            if !enabled && st.pending == Some(index) {
+                let forward = index >= st.stop;
+                st.pending = next_enabled_row(index, self.len, 1, forward, &st.enabled);
+            }
         });
     }
 
@@ -1714,20 +1770,24 @@ impl Roving {
             let step = |forward: Key, back: Key, by: usize| {
                 ui.input_mut(|i| {
                     if i.consume_key(Modifiers::NONE, forward) {
-                        Some(index.saturating_add(by))
+                        Some((by, true))
                     } else if i.consume_key(Modifiers::NONE, back) {
-                        Some(index.saturating_sub(by))
+                        Some((by, false))
                     } else {
                         None
                     }
                 })
             };
-            let mut to = step(Key::ArrowDown, Key::ArrowUp, self.columns);
+            let mut move_by = step(Key::ArrowDown, Key::ArrowUp, self.columns);
             if horizontal {
-                to = to.or_else(|| step(Key::ArrowRight, Key::ArrowLeft, 1));
+                move_by = move_by.or_else(|| step(Key::ArrowRight, Key::ArrowLeft, 1));
             }
-            to.map(|t| t.min(self.len.saturating_sub(1)))
-                .filter(|t| *t != index)
+            let enabled = ctx
+                .data(|d| d.get_temp::<RovingState>(self.id))
+                .map_or_else(Vec::new, |st| st.enabled);
+            move_by.and_then(|(by, forward)| {
+                next_enabled_row(index, self.len, by, forward, &enabled)
+            })
         } else {
             None
         };
@@ -2135,6 +2195,48 @@ mod tests {
             "Tab enters on the stop and leaves the list; the arrows move inside it"
         );
         assert_eq!(moves, [(2, 3), (3, 4), (4, 3)], "the view hears each move");
+    }
+
+    /// Disabled rows must not become the destination of an arrow: before this fix, the
+    /// pending target stayed on the disabled row and the roving list stopped navigating.
+    #[test]
+    fn roving_arrows_skip_disabled_rows_in_both_directions() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        let mut moves = Vec::new();
+        let mut show = |ui: &mut Ui| {
+            super::super::Button::new("Before").show(ui);
+            let list = Roving::new(ui.ctx(), "disabled-list", 6, Some(0));
+            for i in 0..6 {
+                ListRow::new(("disabled-row", i))
+                    .label(format!("Row {i}"))
+                    .enabled(!matches!(i, 1 | 2 | 4))
+                    .roving(list, i)
+                    .show(ui);
+            }
+            if let Some(m) = list.moved(ui.ctx()) {
+                moves.push(m);
+            }
+            super::super::Button::new("After").show(ui);
+        };
+        run(&ctx, Vec::new(), &mut show);
+        let mut path = Vec::new();
+        for keypress in [
+            Key::Tab,
+            Key::Tab,
+            Key::ArrowDown,
+            Key::ArrowDown,
+            Key::ArrowDown,
+            Key::ArrowUp,
+            Key::ArrowUp,
+        ] {
+            path.push(focus_after(&ctx, vec![key(keypress)], &mut show).unwrap_or_default());
+        }
+        assert_eq!(
+            path,
+            ["Before", "Row 0", "Row 3", "Row 5", "Row 5", "Row 3", "Row 0"]
+        );
+        assert_eq!(moves, [(0, 3), (3, 5), (5, 3), (3, 0)]);
     }
 
     /// usersim F14: a click puts keyboard focus on the row it selected, so the arrows move on from
