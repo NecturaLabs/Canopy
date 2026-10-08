@@ -5783,6 +5783,24 @@ mod tests {
     }
 
     #[test]
+    fn notification_preferences_have_their_own_page_and_search_section() {
+        assert!(Section::ALL.contains(&Section::Notifications));
+        assert_eq!(Section::Notifications.label().1, "Notifications");
+        let mut settings = Settings::default();
+        settings.notifications.finished = true;
+        settings.notifications.errors = false;
+        settings.notifications.confirmations = true;
+        let original = settings.notifications;
+        let page = draw_screen(SettingsScreen::at(Section::Notifications), &mut settings);
+        assert_eq!(page.section, Section::Notifications);
+        assert_eq!(settings.notifications, original, "opening the page must not reset filters");
+        let matches = draw_screen(SettingsScreen::searching("Finished operations"), &mut settings);
+        assert!(matches.search.count(Section::Notifications) > 0);
+        assert_eq!(matches.search.count(Section::Appearance), 0);
+        assert_eq!(settings.notifications, original);
+    }
+
+    #[test]
     fn backup_reset_and_consent_are_found() {
         let mut settings = Settings::default();
         let found = |query: &str, settings: &mut Settings| {
