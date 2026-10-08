@@ -555,6 +555,9 @@ fn discard_all(files: &[FileEntry]) -> Action {
     }
 }
 
+/// The list header's width from which "Stage selected" keeps its label beside "Stage all".
+const STAGE_SELECTED_LABEL_WIDTH: f32 = 372.0;
+
 fn list(
     ui: &mut Ui,
     tab: &mut RepoTab,
@@ -576,10 +579,47 @@ fn list(
     } else {
         tone
     };
-    let compact = ui.available_width() < 280.0;
+    // Narrower columns drop the labels, Stage selected first: it sits beside Stage all, and both
+    // keep their tooltips.
+    let width = ui.available_width();
+    let compact = width < 280.0;
+    let labelled_selected = width >= STAGE_SELECTED_LABEL_WIDTH;
+    // What "Stage selected" would stage: the unstaged file open in the diff.
+    let staging = tab
+        .file
+        .as_ref()
+        .filter(|s| s.source == DiffSource::Unstaged && !s.conflicted)
+        .map(|s| s.entry.path.clone())
+        .filter(|path| files.iter().any(|f| f.path == *path));
     flip.item(ui, header_key(which), None, |ui| {
         list_header(ui, title, files.len(), tone, |ui| match which {
             List::Unstaged if !files.is_empty() => {
+                // The header lays out right to left: Stage selected is added first, so it sits
+                // to the right of Stage all.
+                let selected = if labelled_selected {
+                    Button::new("Stage selected")
+                        .icon(icon::PLUS_CIRCLE)
+                        .size(Size::Sm)
+                        .tooltip("Stage the selected file")
+                        .shortcut(Command::ToggleStage)
+                        .id_salt("stage-selected")
+                        .enabled(staging.is_some())
+                        .disabled_reason("Select an unstaged file to stage it")
+                        .show(ui)
+                } else {
+                    IconButton::new(icon::PLUS_CIRCLE, "Stage selected file")
+                        .size(Size::Sm)
+                        .shortcut(Command::ToggleStage)
+                        .id_salt("stage-selected")
+                        .enabled(staging.is_some())
+                        .disabled_reason("Select an unstaged file to stage it")
+                        .show(ui)
+                };
+                if let Some(path) = &staging
+                    && selected.clicked()
+                {
+                    actions.push(Action::Op(Op::Stage(vec![path.clone()])));
+                }
                 let stage = if compact {
                     IconButton::new(icon::PLUS, "Stage all files")
                         .size(Size::Sm)
@@ -1344,12 +1384,12 @@ mod tests {
         // show theirs only under the pointer.
         let rest = painted_texts(&ctx, &mut tab, None);
         // Row actions only: the list headers' "Stage all" and "Unstage all" buttons draw the
-        // same glyphs as their icons, after a label rather than a file name, and the diff's
-        // file header beside the list has its own "Stage file" button after the file name.
+        // same glyphs as their icons, after a label rather than a file name.
         let list_right = rest
             .iter()
-            .find(|(t, _)| t == "Stage all")
+            .filter(|(t, _)| t == "Stage all" || t == "Stage selected" || t == icon::PLUS_CIRCLE)
             .map(|(_, r)| r.max.x + theme::LG)
+            .reduce(f32::max)
             .expect("painted list header");
         let shown = |texts: &[(String, Rect)], glyph: &str| {
             texts
@@ -1382,6 +1422,99 @@ mod tests {
             );
             painted_texts(&ctx, &mut tab, Some(pos2(5.0, 595.0)));
         }
+    }
+
+    /// Frames of `show` at 960x600 with a click (press and release in one frame) at `at`;
+    /// returns what the click asked for.
+    fn click_at(ctx: &egui::Context, tab: &mut RepoTab, at: egui::Pos2) -> Vec<Action> {
+        let mut actions = Vec::new();
+        for events in [
+            Vec::new(),
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        ] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(960.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui, tab, &mut actions);
+                },
+            );
+            output.textures_delta.clear();
+        }
+        actions
+    }
+
+    #[test]
+    fn stage_selected_sits_right_of_stage_all_and_stages_the_selected_file() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let dir = tempfile::tempdir().expect("temporary tab");
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        let mut snap = unstaged_snapshot();
+        snap.status.staged = vec![entry("README.md")];
+        tab.snap = Some(std::sync::Arc::new(snap));
+        let texts = painted_texts(&ctx, &mut tab, None);
+        let find = |label: &str| texts.iter().find(|(t, _)| t == label).map(|(_, r)| *r);
+        let all = find("Stage all").expect("Stage all");
+        // This column is too narrow for the label, so the button is its icon.
+        let selected = find(icon::PLUS_CIRCLE).expect("Stage selected");
+        assert!(
+            selected.min.x > all.max.x && (selected.center().y - all.center().y).abs() < 4.0,
+            "Stage selected follows Stage all on its row: {selected:?} after {all:?}"
+        );
+        assert!(
+            find("Stage file").is_none(),
+            "the diff header no longer carries Stage file"
+        );
+        let staged = tab
+            .file
+            .clone()
+            .expect("the first unstaged file is selected");
+        let actions = click_at(&ctx, &mut tab, selected.center());
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                Action::Op(Op::Stage(paths)) if paths == std::slice::from_ref(&staged.entry.path)
+            )),
+            "Stage selected stages the selected file: {actions:?}"
+        );
+        // With a staged file selected there is nothing to stage, and the button says so.
+        tab.select_file(FileSelection {
+            source: DiffSource::Staged,
+            entry: entry("README.md"),
+            conflicted: false,
+        });
+        painted_texts(&ctx, &mut tab, None);
+        let actions = click_at(&ctx, &mut tab, selected.center());
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, Action::Op(Op::Stage(_)))),
+            "Stage selected is disabled for a staged file: {actions:?}"
+        );
     }
 
     #[test]

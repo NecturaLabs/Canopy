@@ -18,6 +18,10 @@ commits since the previous build.
   confirmation. A submodule's diff lists the commits between its two pointers. Pull, checkout and
   clone update submodules too (Settings → Git → Update submodules, on by default).
 
+- Changes has a Stage selected button right of Stage all, enabled when an unstaged file is
+  selected. The diff header no longer repeats it as Stage file; Space and the row action still
+  stage the file.
+
 - Ignore management in Changes and the command palette: file, extension, folder and custom rules
   with previews; repository-local and global excludes; ignored-path listings and matching-rule
   explanations. Stop tracking confirms the staged removal while keeping the local file. New
@@ -155,7 +159,9 @@ commits since the previous build.
   least a moment, so a quick click that starts an operation no longer flashes.
 
 - Select menus stay within their containing dialog or panel, open above the field when needed
-  and scroll through longer lists. Keyboard navigation also works after opening with the mouse.
+  and scroll through longer lists. Keyboard navigation also works after opening with the mouse,
+  and the highlighted option scrolls into view in both directions. A quick click that opens a
+  select in Settings or a dialog no longer leaves the list hidden behind it.
 
 - With a screen reader running, closing a dialog (such as the force push confirmation) no
   longer crashes Canopy.
