@@ -400,6 +400,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn screenshot_requires_explicit_isolation_but_normal_launch_does_not() {
+        let mut launch = Launch::default();
+        assert!(validate_screenshot_launch(&launch, false).is_ok());
+        launch.screenshot = Some(PathBuf::from("capture.png"));
+        assert!(validate_screenshot_launch(&launch, false).is_err());
+        assert!(validate_screenshot_launch(&launch, true).is_ok());
+    }
+
+
+    #[test]
     fn custom_theme_specs_set_their_keys_over_the_defaults() {
         use ui::custom_theme::CustomTheme;
         assert_eq!(parse_custom_theme(""), Ok(CustomTheme::default()));
