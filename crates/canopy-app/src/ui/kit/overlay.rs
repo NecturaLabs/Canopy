@@ -39,6 +39,8 @@ const DISC: f32 = 30.0;
 /// Gap between a tooltip or popover and its anchor.
 const TOOLTIP_GAP: f32 = 8.0;
 pub(crate) const POPOVER_GAP: f32 = 6.0;
+/// Inherited bounds for controls whose popup must stay inside a containing surface.
+pub(crate) const POPUP_BOUNDS_TAG: &str = "canopy-popup-bounds";
 /// Widest tooltip.
 const TOOLTIP_WIDTH: f32 = 260.0;
 /// A tooltip's shortcut keycaps (spec 4.11: `KeyChord` at 18 pt).
@@ -222,10 +224,57 @@ pub fn floating<R>(
     add: impl FnOnce(&mut Ui) -> R,
 ) -> InnerResponse<R> {
     let slot = ui.painter().add(Shape::Noop);
-    let r = Frame::new().inner_margin(margin).show(ui, add);
+    let bounds_id = ui.id().with(("popup-host-bounds", layer));
+    let measured = ui.ctx().data(|d| d.get_temp::<Rect>(bounds_id));
+    let r = Frame::new().inner_margin(margin).show(ui, |ui| {
+        if layer == Layer::Dialog {
+            let bounds =
+                measured.unwrap_or_else(|| ui.max_rect().intersect(ui.ctx().content_rect()));
+            ui.scope_builder(
+                UiBuilder::new().ui_stack_info(
+                    egui::UiStackInfo::default().with_tag_value(POPUP_BOUNDS_TAG, bounds),
+                ),
+                add,
+            )
+            .inner
+        } else {
+            add(ui)
+        }
+    });
+    if layer == Layer::Dialog && measured != Some(r.response.rect) {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(bounds_id, r.response.rect));
+        ui.ctx().request_repaint();
+    }
     let shapes = surface_shapes(ui.painter(), r.response.rect, layer);
     ui.painter().set(slot, Shape::Vec(shapes));
     InnerResponse::new(r.inner, r.response)
+}
+
+/// The enclosing dialog or main panel, rather than the field's narrow layout row.
+pub(crate) fn popup_bounds(ui: &Ui) -> Rect {
+    let screen = ui.ctx().content_rect();
+    if let Some(bounds) = ui
+        .stack()
+        .iter()
+        .find_map(|node| node.tags().get_downcast::<Rect>(POPUP_BOUNDS_TAG).copied())
+    {
+        return bounds.intersect(screen);
+    }
+    ui.stack()
+        .iter()
+        .find(|node| {
+            matches!(
+                node.kind(),
+                Some(
+                    egui::UiKind::CentralPanel
+                        | egui::UiKind::LeftPanel
+                        | egui::UiKind::RightPanel
+                        | egui::UiKind::Window
+                )
+            )
+        })
+        .map_or(screen, |node| node.max_rect.intersect(screen))
 }
 
 /// The room a modal card (a dialog, the settings screen) may fill: the window inside `XL` at the

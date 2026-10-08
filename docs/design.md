@@ -488,6 +488,13 @@ dialogs) are modal: Tab stays inside, and closing gives focus back to what had i
 never takes focus; Tab does.
 
 
+### Select
+
+Select lists stay inside their containing dialog, settings card or main panel. They open above
+the field when that side has more room, limit their width to the host and scroll when the options
+cannot fit. Pointer presses focus the field, so arrows, Home/End, typing and Enter work after
+opening with the mouse as well as from the keyboard.
+
 ### Text field
 
 `kit::field` draws every text input (single-line, search, secret, numeric and the commit composer);

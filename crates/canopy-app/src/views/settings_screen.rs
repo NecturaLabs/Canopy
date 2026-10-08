@@ -489,6 +489,10 @@ pub fn show(
             let mut child = ui.new_child(
                 UiBuilder::new()
                     .id_salt("settings-body")
+                    .ui_stack_info(
+                        egui::UiStackInfo::default()
+                            .with_tag_value(overlay::POPUP_BOUNDS_TAG, shell),
+                    )
                     .max_rect(body)
                     .layout(Layout::top_down(Align::Min)),
             );

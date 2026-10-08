@@ -256,6 +256,11 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         let mut set_open: Option<bool> = None;
         let mut picked: Option<usize> = None;
         if can_open && !forced_open {
+            // Give focus on press, so egui can install the arrow-key filter on release before
+            // the next input frame. Re-requesting focus on release resets that filter.
+            if trigger.is_pointer_button_down_on() && !trigger.has_focus() {
+                trigger.request_focus();
+            }
             if trigger.has_focus() {
                 ctx.data_mut(|d| d.insert_temp(typing_id(), (trigger.id, popup_id)));
             }
@@ -274,6 +279,9 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 });
             }
             if pointer_click {
+                if !trigger.has_focus() {
+                    trigger.request_focus();
+                }
                 set_open = Some(!open);
                 st = ListState {
                     highlight: None,
@@ -477,15 +485,39 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             let anchor = rect.expand2(vec2(LIST_OVERHANG, 0.0));
             let item_h = m.menu_item_height;
             let rows = crate::ui::count_f32(self.options.len());
+            let bounds = overlay::popup_bounds(ui);
             let list_w = anchor
                 .width()
-                .max(LIST_MIN_WIDTH.min(anchor.width() + 120.0));
+                .max(LIST_MIN_WIDTH.min(anchor.width() + 120.0))
+                .min(bounds.width());
             let visible = rows.min(LIST_ROWS);
-            let list_h = visible * item_h + 2.0 * m.menu_pad;
+            let desired_h = visible * item_h + 2.0 * m.menu_pad;
+            let below = (bounds.bottom() - anchor.bottom() - LIST_GAP).max(0.0);
+            let above = (anchor.top() - LIST_GAP - bounds.top()).max(0.0);
+            let opens_below = desired_h <= below || below >= above;
+            let room = if opens_below { below } else { above };
+            // A tiny host can leave no row-sized space on either side; keep the list inside it
+            // even then, overlapping the trigger rather than making options unreachable.
+            let list_h = desired_h.min(if room >= item_h + 2.0 * m.menu_pad {
+                room
+            } else {
+                bounds.height()
+            });
+            let x = anchor
+                .left()
+                .clamp(bounds.left(), (bounds.right() - list_w).max(bounds.left()));
+            let y = if opens_below {
+                anchor.bottom() + LIST_GAP
+            } else {
+                anchor.top() - LIST_GAP - list_h
+            }
+            .clamp(bounds.top(), (bounds.bottom() - list_h).max(bounds.top()));
             let popup = Popup::new(popup_id, ctx.clone(), anchor, ui.layer_id())
                 .kind(egui::PopupKind::Popup)
+                .at_position(pos2(x, y))
                 .align(RectAlign::BOTTOM_START)
-                .gap(LIST_GAP)
+                .align_alternatives(&[])
+                .gap(0.0)
                 .width(list_w)
                 .frame(egui::Frame::NONE)
                 .close_behavior(PopupCloseBehavior::CloseOnClickOutside);
@@ -502,6 +534,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 .or_else(|| self.name.clone())
                 .unwrap_or_default();
             let shown = popup.show(|ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(bounds));
                 let layer = ui.layer_id();
                 let e = Entrance::of(
                     ui.ctx(),
@@ -1041,6 +1074,86 @@ mod tests {
             ctx.memory(|m| m.has_focus(id)),
             "focus stays on the trigger"
         );
+    }
+
+    #[test]
+    fn a_pointer_opened_select_can_be_finished_with_the_keyboard() {
+        let ctx = testkit::ctx();
+        let mut v = 0_u8;
+        let mut rect = egui::Rect::NOTHING;
+        frame(&ctx, Vec::new(), |ui| rect = show(ui, &mut v).rect);
+        testkit::click(&ctx, rect.center(), |ui| {
+            show(ui, &mut v);
+        });
+        assert!(open_id(&ctx));
+        frame(&ctx, key(Key::ArrowDown), |ui| {
+            show(ui, &mut v);
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            show(ui, &mut v);
+        });
+        frame(&ctx, key(Key::Enter), |ui| {
+            show(ui, &mut v);
+        });
+        assert_eq!(
+            v, 1,
+            "Down and Enter choose the next option after a pointer click"
+        );
+        assert!(!open_id(&ctx));
+    }
+
+    #[test]
+    fn a_select_list_stays_inside_its_dialog_and_scrolls_to_the_last_option() {
+        for (width, before, after) in [
+            (280.0, 140.0, 0.0),
+            (280.0, 0.0, 280.0),
+            (100.0, 80.0, 80.0),
+        ] {
+            let ctx = testkit::ctx();
+            let id = Id::new("bounded-select");
+            let mut value = 0_u8;
+            let options = (0..20)
+                .map(|i| (i, format!("Option {i}")))
+                .collect::<Vec<_>>();
+            let options = options
+                .iter()
+                .map(|(i, label)| (*i, label.as_str()))
+                .collect::<Vec<_>>();
+            let host = std::cell::Cell::new(egui::Rect::NOTHING);
+            let trigger = std::cell::Cell::new(egui::Rect::NOTHING);
+            let mut draw = |ui: &mut Ui| {
+                host.set(
+                    overlay::floating(ui, overlay::Layer::Dialog, egui::Margin::same(16), |ui| {
+                        ui.set_width(width);
+                        ui.add_space(before);
+                        trigger.set(Select::new(&mut value, &options).id(id).show(ui).rect);
+                        ui.add_space(after);
+                    })
+                    .response
+                    .rect,
+                );
+            };
+            for _ in 0..3 {
+                frame(&ctx, Vec::new(), &mut draw);
+            }
+            let at = trigger.get().center();
+            testkit::click(&ctx, at, &mut draw);
+            for _ in 0..3 {
+                frame(&ctx, Vec::new(), &mut draw);
+            }
+            let list = egui::containers::AreaState::load(&ctx, id.with("kit-select-list"))
+                .expect("open select")
+                .rect();
+            assert!(
+                host.get().contains_rect(list),
+                "list {list:?} escapes host {:?}",
+                host.get()
+            );
+            frame(&ctx, key(Key::End), &mut draw);
+            frame(&ctx, Vec::new(), &mut draw);
+            frame(&ctx, key(Key::Enter), &mut draw);
+            assert_eq!(value, 19, "the bounded list still reaches every option");
+        }
     }
 
     #[test]
