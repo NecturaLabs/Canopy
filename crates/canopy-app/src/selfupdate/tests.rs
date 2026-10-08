@@ -645,7 +645,7 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
 }
 
 #[test]
-fn an_unregistered_legacy_svg_is_removed_only_for_a_registered_png() {
+fn an_unregistered_svg_is_preserved_even_for_a_registered_png() {
     let tmp = tempfile::tempdir().expect("tmp");
     let root = tmp.path().join("root");
     let png = tmp
@@ -662,7 +662,7 @@ fn an_unregistered_legacy_svg_is_removed_only_for_a_registered_png() {
         )],
     );
     write(&png, "old png");
-    write(&svg, "orphaned svg");
+    write(&svg, "user's custom svg");
     let old = parse_receipt(&format!(
         "icon={}|{}\n",
         png.display(),
@@ -671,7 +671,11 @@ fn an_unregistered_legacy_svg_is_removed_only_for_a_registered_png() {
     ));
     let mut notes = Vec::new();
     integrate(&root, 413, &old, &mut notes);
-    assert!(!exists(&svg), "orphaned SVG is removed");
+    assert_eq!(
+        read(&svg),
+        "user's custom svg",
+        "the PNG receipt does not own this SVG"
+    );
     assert_eq!(read(&png), "new png");
     assert_eq!(parse_receipt(&read(&root.join(RECEIPT))).icons.len(), 1);
     assert!(notes.is_empty(), "{notes:?}");

@@ -681,29 +681,6 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
             notes.push(format!("could not write {}", dst.display()));
         }
     }
-    // Builds <=192 sometimes removed the scalable SVG from the receipt without removing its
-    // installed copy. Trust the recorded PNG to identify this installation's icon directory;
-    // never remove a symlink or an SVG still registered for normal legacy cleanup above.
-    let png_src = root.join(format!("share/icons/hicolor/256x256/apps/{APP_ID}.png"));
-    for (png_dst, _) in old.icons.iter().filter(|(dst, src)| {
-        src == &png_src && dst.ends_with(format!("hicolor/256x256/apps/{APP_ID}.png"))
-    }) {
-        let Some(hicolor) = png_dst
-            .parent()
-            .and_then(Path::parent)
-            .and_then(Path::parent)
-        else {
-            continue;
-        };
-        let legacy = hicolor.join(format!("scalable/apps/{APP_ID}.svg"));
-        if old.icons.iter().any(|(dst, _)| *dst == legacy) {
-            continue;
-        }
-        if legacy.symlink_metadata().is_ok_and(|m| m.is_file()) && fs::remove_file(&legacy).is_err()
-        {
-            notes.push(format!("could not remove legacy icon {}", legacy.display()));
-        }
-    }
     for link in &old.links {
         if fs::read_link(link).is_ok_and(|t| t == root.join("bin/canopy")) {
             lines.push(format!("link={}", link.display()));

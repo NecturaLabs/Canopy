@@ -842,17 +842,6 @@ integrate_linux() {
                 fi
             done
     fi
-    # Builds <=192 could lose the SVG receipt line during an update. Only clean the exact
-    # legacy icon when this installation's old receipt still owns the adjacent PNG.
-    legacy=$DATA_HOME/icons/hicolor/scalable/apps/$APP_ID.svg
-    png_dst=$DATA_HOME/icons/hicolor/256x256/apps/$APP_ID.png
-    png_src=$ROOT/share/icons/hicolor/256x256/apps/$APP_ID.png
-    if [ -f "$receipt" ] && grep -qxF "icon=$png_dst|$png_src" "$receipt" &&
-        ! grep -qF "icon=$legacy|" "$receipt" && [ -f "$legacy" ] && [ ! -L "$legacy" ]; then
-        if ! rm -f -- "$legacy" 2>/dev/null; then
-            warn "could not remove legacy icon $legacy"
-        fi
-    fi
     src=$ROOT/share/icons/hicolor/256x256/apps/$APP_ID.png
     dst=$DATA_HOME/icons/hicolor/256x256/apps/$APP_ID.png
     if [ ! -f "$src" ]; then
