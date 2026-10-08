@@ -508,19 +508,11 @@ fn code_lines_at(
             m.ui.ctx().copy_text(lines.join("\n"));
         }
     });
-    // A side's preview (no line numbers) drops the indentation its lines share, measured once
-    // per block rather than every frame.
+    // A side's preview (no line numbers) drops shared indentation. Recompute it for the
+    // current content: a pointer-based cache can reuse an old value after a reload and
+    // retains one context-memory entry for every block ever displayed.
     let indent = if first_line.is_none() {
-        let key = resp
-            .id
-            .with(("common-indent", lines.as_ptr() as usize, lines.len()));
-        ui.ctx()
-            .data(|d| d.get_temp::<usize>(key))
-            .unwrap_or_else(|| {
-                let indent = common_indent(lines);
-                ui.ctx().data_mut(|d| d.insert_temp(key, indent));
-                indent
-            })
+        common_indent(lines)
     } else {
         0
     };
