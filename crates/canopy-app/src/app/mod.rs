@@ -1027,6 +1027,13 @@ impl eframe::App for CanopyApp {
             crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
         }
         self.folder_picker.begin_frame();
+        // Settings gives keyboard focus back to what had it when it closes, as the palette does.
+        crate::ui::kit::a11y::return_focus(
+            &ctx,
+            "settings",
+            self.settings_screen.is_some(),
+            egui::LayerId::new(egui::Order::Foreground, egui::Id::new("settings")),
+        );
         if let Some(screen) = &mut self.settings_screen {
             let before = Watched::of(&self.settings);
             let active_tab = self.tabs.get(self.active);

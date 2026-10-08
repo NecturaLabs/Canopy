@@ -15,7 +15,7 @@ commits since the previous build.
 - A failed download in a partial clone is no longer tried again on every file-watcher refresh;
   Retry or Refresh tries again, and a download that hangs is stopped after ten minutes.
 - The title bar's tools take Tab from left to right.
-- Settings' section list and theme cards are one Tab stop each, moved with the arrow keys.
+- Settings' section list and theme cards are one Tab stop each, moved with the arrow keys. Closing Settings gives keyboard focus back to the control that had it.
 - A repository's own configuration can no longer run a command through `core.fsmonitor` when
   Canopy reads it, and auto-fetch no longer runs the programs a repository names (SSH command,
   credential helper, upload-pack, hooks) outside a trusted folder.

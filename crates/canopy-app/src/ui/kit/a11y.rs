@@ -149,6 +149,42 @@ impl FocusReturn {
     }
 }
 
+/// [`FocusReturn`] for an overlay whose state the caller keeps (`open`), not the overlay itself:
+/// call it once a frame, before the overlay is drawn, with its `layer`. Focus is remembered the
+/// frame `open` turns true and given back the frame after it turns false (egui clears focus at
+/// the end of a frame that an Escape closed the overlay in, so earlier would be lost).
+pub fn return_focus(
+    ctx: &Context,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    open: bool,
+    layer: LayerId,
+) {
+    let id = Id::new(("kit-return-focus", Id::new(id_salt)));
+    let state: Option<(FocusReturn, Option<u64>)> = ctx.data(|d| d.get_temp(id));
+    let pass = ctx.cumulative_pass_nr();
+    match (open, state) {
+        (true, None) => {
+            let mut back = FocusReturn::default();
+            back.remember(ctx);
+            ctx.data_mut(|d| d.insert_temp(id, (back, None::<u64>)));
+        }
+        (true, Some((back, Some(_)))) => {
+            // Opened again before the focus went back.
+            ctx.data_mut(|d| d.insert_temp(id, (back, None::<u64>)));
+        }
+        (false, Some((back, None))) => {
+            ctx.data_mut(|d| d.insert_temp(id, (back, Some(pass))));
+            ctx.request_repaint();
+        }
+        (false, Some((mut back, Some(closed)))) if pass > closed => {
+            ctx.data_mut(|d| d.remove_temp::<(FocusReturn, Option<u64>)>(id));
+            back.restore(ctx, layer);
+            ctx.request_repaint();
+        }
+        _ => {}
+    }
+}
+
 /// Keeps keyboard focus and the pointer inside `layer` and the layers above it for this frame:
 /// Tab cycles through the overlay's own controls, and nothing behind it takes a key or a click.
 /// Call it every frame the overlay is open, with the overlay's lowest layer (its scrim).
@@ -255,6 +291,27 @@ mod tests {
         ctx.memory_mut(|m| m.request_focus(Id::new("elsewhere")));
         back.restore(&ctx, LayerId::background());
         assert!(!ctx.memory(|m| m.has_focus(id)), "restored only once");
+    }
+
+    #[test]
+    fn an_overlay_the_caller_tracks_gives_focus_back_when_it_closes() {
+        let ctx = testkit::ctx();
+        let layer = LayerId::new(Order::Foreground, Id::new("settings"));
+        let trigger = Id::new("trigger");
+        ctx.memory_mut(|m| m.request_focus(trigger));
+        return_focus(&ctx, "settings", false, layer);
+        return_focus(&ctx, "settings", true, layer);
+        ctx.memory_mut(|m| m.request_focus(Id::new("search")));
+        return_focus(&ctx, "settings", true, layer);
+        assert!(
+            !ctx.memory(|m| m.has_focus(trigger)),
+            "not while it is open"
+        );
+        return_focus(&ctx, "settings", false, layer);
+        assert!(!ctx.memory(|m| m.has_focus(trigger)), "the frame after");
+        testkit::frame(&ctx, Vec::new(), |_| {});
+        return_focus(&ctx, "settings", false, layer);
+        assert!(ctx.memory(|m| m.has_focus(trigger)));
     }
 
     /// Tab moves only between the overlay's controls while it traps focus.
