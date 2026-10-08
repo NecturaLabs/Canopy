@@ -733,7 +733,12 @@ mod tests {
         let text = format!("{prefix}{label}");
         let mut galley = None;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            let job = LayoutJob::simple(text.clone(), FontId::proportional(16.0), Color32::WHITE, 115.0);
+            let job = LayoutJob::simple(
+                text.clone(),
+                FontId::proportional(16.0),
+                Color32::WHITE,
+                115.0,
+            );
             galley = Some(ui.fonts_mut(|f| f.layout_job(job)));
         });
         output.textures_delta.clear();
