@@ -24,12 +24,13 @@ Use fixtures for anything destructive, never a repository you care about.
 ## Checks
 
 `tools/check.sh` runs CI's checks for this platform (`cargo fmt --all --check`,
-`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the release
+`cargo clippy --workspace --all-targets --locked -- -D warnings`,
+`cargo test --workspace --locked`, the release
 tooling self-test, the licence-notice check, the documentation check and the hidden-window
 stall check (Linux, with a C compiler and `libwayland-server`), plus `shellcheck` and
 `cargo deny check` when they are installed) and one CI does not: the installer test, on Linux and
 macOS. It must pass before
-you merge; a failure already listed in `docs/backlog.md` is reported, not hidden. Keep `TMPDIR` on
+you merge; a failure documented in a [GitHub Issue](https://github.com/NecturaLabs/Canopy/issues) is reported, not hidden. Keep `TMPDIR` on
 a filesystem that accepts non-UTF-8 file names (the default `/tmp` does; NTFS does not).
 
 ## Lints
@@ -45,6 +46,12 @@ itself a warning, and an `expect` fails once its finding is gone. Views convert 
 integer and float types through the helpers in `ui/mod.rs` (`points_i8`, `count_f32`,
 `saturate_u8` and the rest) rather than casting by hand.
 
+## Issues and pull requests
+
+Use [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues) for all backlog work, defects and follow-ups. Before starting, check for an existing issue and record partial progress there; close it only when its acceptance criteria are met. Do not add tasks to `docs/backlog.md`, which is a historical pointer. Follow the issue types, area and priority labels in [AGENTS.md](AGENTS.md).
+
+Keep independently reviewable work in atomic commits. Contribute to the existing feature branch or pull request for the work; do not open a duplicate PR. A PR needs an accurate summary, testing status, remaining risks and links to its issues. Wait for the owner's approval before merging.
+
 ## Commit messages
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
@@ -58,8 +65,8 @@ Example: `feat(changes): stage individual lines from the diff viewer`.
 
 ## Before merging
 
-- [ ] One logical change, on top of the current `main`.
-- [ ] `tools/check.sh` passes.
+- [ ] Changes are reviewable as individual commits, based on current `main` or the agreed PR branch.
+- [ ] `tools/check.sh` passes, and all required GitHub Actions checks pass for the PR head.
 - [ ] New or changed Git operations have tests against a temporary repository.
 - [ ] UI changes include before and after screenshots (dark, and light where colours change),
       taken with `tools/screenshot.sh` on a fixture.
