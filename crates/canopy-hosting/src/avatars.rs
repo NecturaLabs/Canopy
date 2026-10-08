@@ -40,12 +40,14 @@ impl std::fmt::Debug for Avatar {
     }
 }
 
+/// Preserve the transport's cause without revealing an author's private picture URL.
+fn picture_error(context: &str, detail: &str, url: &str) -> Error {
+    let detail = detail.replace(url, "[picture URL]");
+    Error::Network(crate::http::shorten(&format!("{context}: {detail}")))
+}
+
 impl Avatar {
     /// Downloads this picture without credentials or redirects, on a background thread.
-    #[expect(
-        clippy::map_err_ignore,
-        reason = "kept as it was; docs/backlog.md has the entry to carry the transport's message"
-    )]
     pub fn download(&self) -> Result<Vec<u8>> {
         let mut config = ureq::Agent::config_builder()
             .http_status_as_error(false)
@@ -67,7 +69,7 @@ impl Avatar {
             .get(&self.url)
             .header("Accept", "image/png, image/jpeg")
             .call()
-            .map_err(|_| Error::Network("Could not download the profile picture".into()))?;
+            .map_err(|e| picture_error("Could not download the profile picture", &e.to_string(), &self.url))?;
         let status = response.status().as_u16();
         if status == 429 {
             return Err(Error::RateLimited {
@@ -85,7 +87,13 @@ impl Avatar {
             .with_config()
             .limit(MAX_AVATAR_BYTES)
             .read_to_vec()
-            .map_err(|_| Error::Network("Profile picture is unreadable or exceeds 2 MiB".into()))
+            .map_err(|e| {
+                picture_error(
+                    "Profile picture is unreadable or exceeds 2 MiB",
+                    &e.to_string(),
+                    &self.url,
+                )
+            })
     }
 }
 
@@ -226,6 +234,20 @@ pub(crate) fn repository(http: &Http, kind: ForgeKind, project: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picture_errors_preserve_the_cause_without_exposing_the_url() {
+        let url = "https://avatars.githubusercontent.com/u/17?size=64&private=value";
+        let error = picture_error(
+            "Could not download the profile picture",
+            &format!("connection refused for {url}"),
+            url,
+        );
+        let message = error.to_string();
+        assert!(message.contains("connection refused"), "{message}");
+        assert!(!message.contains("private=value"), "{message}");
+        assert!(!message.contains(url), "{message}");
+    }
 
     #[test]
     fn picture_hosts_are_exact_and_never_contain_credentials() {
