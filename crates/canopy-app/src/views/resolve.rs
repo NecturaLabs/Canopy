@@ -1228,6 +1228,45 @@ mod tests {
     /// QV2-4: a side's preview drops the indentation its lines share, and a line that does not
     /// fit is cut before a word or number, never inside one.
     #[test]
+    fn a_reused_preview_buffer_renders_changed_indentation() {
+        let ctx = context();
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let render = |lines: &[String]| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1000.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        let color = palette(ui.ctx()).text;
+                        code_lines_at(ui, lines, color, None, "preview");
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            output
+                .shapes
+                .into_iter()
+                .filter_map(|shape| match shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut lines = vec!["        first".to_owned(), "        second".to_owned()];
+        let address = lines.as_ptr();
+        assert!(render(&lines).iter().any(|text| text == "second"));
+        lines[0].clear();
+        lines[0].push_str("first");
+        assert_eq!(lines.as_ptr(), address, "reuse the same preview allocation");
+        assert!(render(&lines).iter().any(|text| text == "        second"));
+    }
+
+    #[test]
     fn previews_drop_shared_indentation_and_cut_between_words() {
         let lines: Vec<String> = [
             "        Self { attempts: 4, backoff_ms: 250 }",
