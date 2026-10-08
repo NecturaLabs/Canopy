@@ -5022,12 +5022,9 @@ mod tests {
         fn has_outline(shape: &egui::Shape, color: Color32) -> bool {
             match shape {
                 egui::Shape::Circle(circle) => {
-                    (circle.radius - (TICK / 2.0 + 2.0)).abs() < 0.1
-                        && circle.fill == color
+                    (circle.radius - (TICK / 2.0 + 2.0)).abs() < 0.1 && circle.fill == color
                 }
-                egui::Shape::Vec(shapes) => {
-                    shapes.iter().any(|shape| has_outline(shape, color))
-                }
+                egui::Shape::Vec(shapes) => shapes.iter().any(|shape| has_outline(shape, color)),
                 _ => false,
             }
         }
@@ -5052,9 +5049,10 @@ mod tests {
                     },
                 );
                 output.textures_delta.clear();
-                let outlined = output.shapes.iter().any(|clipped| {
-                    has_outline(&clipped.shape, theme_id.palette().text)
-                });
+                let outlined = output
+                    .shapes
+                    .iter()
+                    .any(|clipped| has_outline(&clipped.shape, theme_id.palette().text));
                 assert_eq!(outlined, selected, "{theme_id:?}: selected={selected}");
             }
         }
