@@ -141,7 +141,9 @@ commits since the previous build.
 ### Fixed
 
 - Select menus stay within their containing dialog or panel, open above the field when needed
-  and scroll through longer lists. Keyboard navigation also works after opening with the mouse.
+  and scroll through longer lists. Keyboard navigation also works after opening with the mouse,
+  and the highlighted option scrolls into view in both directions. A quick click that opens a
+  select in Settings or a dialog no longer leaves the list hidden behind it.
 
 - With a screen reader running, closing a dialog (such as the force push confirmation) no
   longer crashes Canopy.

@@ -308,6 +308,8 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     };
                 } else if open {
                     let at = st.highlight.or(chosen);
+                    // Whatever opened the list, a key puts the highlight in charge of the scroll.
+                    st.by_keyboard |= down || up || home || end;
                     if down {
                         st.highlight = Some(at.map_or(0, |i| (i + 1).min(last)));
                     } else if up {
@@ -574,9 +576,10 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 // Only the rows in view are built (a list of every branch can be long), so the
                 // row the keyboard moved to is brought into view by the offset, not by the row.
                 if let Some(i) = st.highlight.filter(|_| st.by_keyboard) {
+                    // The scroll area hashes its salt once more to name its state.
                     let offset = egui::scroll_area::State::load(
                         ui.ctx(),
-                        child.make_persistent_id(scroll_id),
+                        child.make_persistent_id(egui::IdSalt::new(scroll_id)),
                     )
                     .map_or(0.0, |state| state.offset.y);
                     let top = crate::ui::count_f32(i) * item_h;
@@ -665,6 +668,16 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 }
                 chose
             });
+            // A press that lands in the frame the list first opens leaves a modal over it (egui
+            // ranks both on top and keeps the order they had), so raise the list until it clears
+            // any modal.
+            if let Some(shown) = &shown {
+                let layer = shown.response.layer_id;
+                if !ctx.memory(|m| m.is_above_modal_layer(layer)) {
+                    ctx.move_to_top(layer);
+                    ctx.request_repaint();
+                }
+            }
             if let Some(inner) = shown
                 && let Some(i) = inner.inner
             {
@@ -1154,6 +1167,118 @@ mod tests {
             frame(&ctx, key(Key::Enter), &mut draw);
             assert_eq!(value, 19, "the bounded list still reaches every option");
         }
+    }
+
+    /// A real pointer can press and release inside one frame (a quick click, or a slow frame).
+    /// Egui keeps every layer's rank between uses, so a list opened before sits under a modal
+    /// that was pressed since; in that frame both ask for the top and the old rank won, leaving
+    /// the list open but unseen and out of reach.
+    #[test]
+    fn a_list_opened_by_a_one_frame_click_in_a_modal_is_above_the_modal() {
+        let ctx = testkit::ctx();
+        let id = Id::new("modal-select");
+        let list_id = id.with("kit-select-list");
+        let mut value = 0_u8;
+        let trigger = std::cell::Cell::new(egui::Rect::NOTHING);
+        let mut draw = |ui: &mut Ui| {
+            egui::Modal::new(Id::new("select-in-modal")).show(ui.ctx(), |ui| {
+                trigger.set(Select::new(&mut value, &STRATEGIES).id(id).show(ui).rect);
+            });
+        };
+        let settle = |draw: &mut dyn FnMut(&mut Ui)| {
+            for _ in 0..4 {
+                frame(&ctx, Vec::new(), &mut *draw);
+            }
+        };
+        let list_on_top = || {
+            let list = egui::containers::AreaState::load(&ctx, list_id)
+                .expect("open select")
+                .rect();
+            ctx.layer_id_at(list.center())
+                == Some(egui::LayerId::new(egui::Order::Foreground, list_id))
+        };
+        settle(&mut draw);
+        // Used once the ordinary way, then the modal is pressed again.
+        testkit::click(&ctx, trigger.get().center(), &mut draw);
+        settle(&mut draw);
+        assert!(list_on_top(), "a list opened by a click is on top");
+        frame(&ctx, key(Key::Escape), &mut draw);
+        settle(&mut draw);
+        assert!(!open_id(&ctx));
+        testkit::click(&ctx, egui::pos2(2.0, 2.0), &mut draw);
+        settle(&mut draw);
+        let at = trigger.get().center();
+        let mut events = testkit::press(at);
+        events.extend(testkit::release(at));
+        frame(&ctx, events, &mut draw);
+        settle(&mut draw);
+        assert!(open_id(&ctx));
+        assert!(list_on_top(), "the list is the top layer over the modal");
+    }
+
+    #[test]
+    fn keys_after_a_pointer_open_scroll_the_list_to_the_highlight() {
+        let ctx = testkit::ctx();
+        let id = Id::new("scrolled-select");
+        let mut value = 0_u8;
+        let labels: Vec<String> = (0..20).map(|i| format!("Option {i}")).collect();
+        let options: Vec<(u8, &str)> = (0..20_u8).zip(labels.iter().map(String::as_str)).collect();
+        let trigger = std::cell::Cell::new(egui::Rect::NOTHING);
+        let mut draw = |ui: &mut Ui| {
+            trigger.set(Select::new(&mut value, &options).id(id).show(ui).rect);
+        };
+        for _ in 0..3 {
+            frame(&ctx, Vec::new(), &mut draw);
+        }
+        testkit::click(&ctx, trigger.get().center(), &mut draw);
+        for _ in 0..3 {
+            frame(&ctx, Vec::new(), &mut draw);
+        }
+        frame(&ctx, key(Key::End), &mut draw);
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame(&ctx, Vec::new(), &mut draw);
+        }
+        let list = egui::containers::AreaState::load(&ctx, id.with("kit-select-list"))
+            .expect("open select")
+            .rect();
+        let row_of = |shapes: &[egui::epaint::ClippedShape], label: &str| {
+            shapes.iter().find_map(|c| match &c.shape {
+                // The trigger shows the chosen value in the same words; only rows below it count.
+                egui::Shape::Text(t)
+                    if t.galley.text() == label && t.visual_bounding_rect().min.y >= list.min.y =>
+                {
+                    Some(t.visual_bounding_rect())
+                }
+                _ => None,
+            })
+        };
+        let last = row_of(&shapes, "Option 19");
+        assert!(
+            last.is_some_and(|row| list.contains_rect(row)),
+            "End shows the last option inside the list: {last:?} in {list:?}"
+        );
+        frame(&ctx, key(Key::Home), &mut draw);
+        for _ in 0..3 {
+            shapes = frame(&ctx, Vec::new(), &mut draw);
+        }
+        let first = row_of(&shapes, "Option 0");
+        assert!(
+            first.is_some_and(|row| list.contains_rect(row)),
+            "Home scrolls back to the first option: {first:?} in {list:?}"
+        );
+        // Closed and opened again from the keyboard, the list starts at the chosen option.
+        frame(&ctx, key(Key::End), &mut draw);
+        frame(&ctx, key(Key::Escape), &mut draw);
+        frame(&ctx, key(Key::ArrowDown), &mut draw);
+        for _ in 0..3 {
+            shapes = frame(&ctx, Vec::new(), &mut draw);
+        }
+        let chosen = row_of(&shapes, "Option 0");
+        assert!(
+            chosen.is_some_and(|row| list.contains_rect(row)),
+            "a reopened list shows the chosen option: {chosen:?} in {list:?}"
+        );
     }
 
     #[test]
