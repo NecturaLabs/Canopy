@@ -1956,6 +1956,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_callout_announces_each_text_once_and_names_unavailable_actions() {
+        use super::super::testkit;
+        let ctx = ctx();
+        let show = |ui: &mut Ui| {
+            Callout::new(Tone::Warning, "Set up an SSH agent before retrying.")
+                .title("Authentication needed")
+                .action(
+                    NoticeAction::new("Retry")
+                        .enabled(false)
+                        .disabled_reason("No SSH agent is available"),
+                )
+                .show(ui);
+        };
+        let parts = testkit::parts(&ctx, "Warning", show);
+        for text in ["Authentication needed", "Set up an SSH agent before retrying."] {
+            assert_eq!(parts.iter().filter(|part| *part == text).count(), 1, "{parts:?}");
+        }
+        let nodes = testkit::spoken(&ctx, show);
+        let retry = nodes
+            .iter()
+            .find(|node| node.label.as_deref().is_some_and(|name| name.starts_with("Retry")))
+            .expect("disabled Retry action");
+        assert!(retry.disabled);
+        assert_eq!(retry.description.as_deref(), Some("No SSH agent is available"));
+    }
+
     /// A11Y-15: an action card is a button; a card that is one choice of a group (a theme) is a
     /// radio button, checked or not, never a toggle button.
     #[test]
