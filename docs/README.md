@@ -8,7 +8,7 @@ in a document no longer exists.
 
 | You want to know | Read |
 |---|---|
-| What to work on next; what is open | [backlog.md](backlog.md) |
+| What to work on next; what is open | [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues?q=is%3Aissue+is%3Aopen) ([migration record](backlog.md)) |
 | Which module owns what, how data and threads flow, where a common change goes | [architecture.md](architecture.md) |
 | Why something was decided the way it was | [adr/](adr/README.md) |
 | What Canopy does today, what is planned, how it compares | [features.md](features.md) |
@@ -38,8 +38,9 @@ in a document no longer exists.
   the script lists them), and that the two copies of the skills match.
 - **Point in time, never edited when the code moves on**: the records in `adr/`. A later record
   supersedes an earlier one.
-- **The queue**: `backlog.md` holds only open tasks; a finished one is deleted, and history lives in
-  `CHANGELOG.md` and `git log`.
+- **The queue**: GitHub Issues holds the open tasks and their verification status. Update
+  issue descriptions and close verified work there, not in `backlog.md`, which is now a static
+  migration record and tracker link. See `../AGENTS.md` for issue workflow rules.
 - **Research, dated, may lag the code**: [specs/ui-spec.md](specs/ui-spec.md),
   [specs/lfs-flow-spec.md](specs/lfs-flow-spec.md) and
   [specs/git-identity.md](specs/git-identity.md) (findings and design of the shipped identity
