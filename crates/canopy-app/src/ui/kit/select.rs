@@ -349,6 +349,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                             .position(|(_, l)| l.to_lowercase().starts_with(&st.typed))
                         {
                             st.highlight = Some(i);
+                            st.by_keyboard = true;
                         }
                     }
                 }
@@ -1279,6 +1280,50 @@ mod tests {
             chosen.is_some_and(|row| list.contains_rect(row)),
             "a reopened list shows the chosen option: {chosen:?} in {list:?}"
         );
+    }
+
+    #[test]
+    fn typing_after_a_pointer_open_reveals_the_matching_option() {
+        let ctx = testkit::ctx();
+        let id = Id::new("typed-scrolled-select");
+        let mut value = 0_u8;
+        let labels: Vec<String> = (0..20)
+            .map(|i| {
+                if i == 19 {
+                    "Zulu".into()
+                } else {
+                    format!("Option {i}")
+                }
+            })
+            .collect();
+        let options: Vec<(u8, &str)> = (0..20_u8).zip(labels.iter().map(String::as_str)).collect();
+        let trigger = std::cell::Cell::new(egui::Rect::NOTHING);
+        let mut draw = |ui: &mut Ui| {
+            trigger.set(Select::new(&mut value, &options).id(id).show(ui).rect);
+        };
+        for _ in 0..3 {
+            frame(&ctx, Vec::new(), &mut draw);
+        }
+        testkit::click(&ctx, trigger.get().center(), &mut draw);
+        frame(&ctx, vec![Event::Text("z".into())], &mut draw);
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame(&ctx, Vec::new(), &mut draw);
+        }
+        let list = egui::containers::AreaState::load(&ctx, id.with("kit-select-list"))
+            .expect("open select")
+            .rect();
+        let matched = shapes.iter().find_map(|c| match &c.shape {
+            egui::Shape::Text(t) if t.galley.text() == "Zulu" => Some(t.visual_bounding_rect()),
+            _ => None,
+        });
+        assert!(
+            matched.is_some_and(|row| list.contains_rect(row)),
+            "the typed match must be visible: {matched:?} in {list:?}"
+        );
+        frame(&ctx, key(Key::Enter), &mut draw);
+        assert_eq!(value, 19);
+        assert!(!open_id(&ctx));
     }
 
     #[test]
