@@ -5698,11 +5698,13 @@ mod tests {
 
     #[test]
     fn settings_opened_at_a_group_shows_its_heading() {
-        let plain = heading_top(SettingsScreen::at(Section::Appearance), "Notifications");
+        // Notifications moved to their own page; Tooltips is still below the initial
+        // Appearance fold, and opening the group must bring that heading into view.
+        let plain = heading_top(SettingsScreen::at(Section::Appearance), "Tooltips");
         assert!(plain > 800.0, "below the fold by default: {plain}");
         let revealed = heading_top(
-            SettingsScreen::at_group(Section::Appearance, "Notifications"),
-            "Notifications",
+            SettingsScreen::at_group(Section::Appearance, "Tooltips"),
+            "Tooltips",
         );
         assert!(
             (0.0..400.0).contains(&revealed),
