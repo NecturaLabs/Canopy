@@ -791,7 +791,7 @@ dependencies = [
 
 [[package]]
 name = "canopy-app"
-version = "0.2.1-beta.1"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "canopy-core",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "canopy-core"
-version = "0.2.1-beta.1"
+version = "0.0.0"
 dependencies = [
  "git2",
  "tempfile",
@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "canopy-hosting"
-version = "0.2.1-beta.1"
+version = "0.0.0"
 dependencies = [
  "canopy-core",
  "chrono",

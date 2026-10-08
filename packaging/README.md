@@ -13,6 +13,16 @@ besides the binary lives here and in `assets/`.
 | `macos/Info.plist` | `Info.plist` of `Canopy.app` (bundle id `io.necturalabs.Canopy`); the release fills in `@BUILD@` (the build number) as both bundle versions. |
 | `../assets/icon-{64,256,512}.png` | Application icon. Linux archives carry the 256 px PNG; the macOS `.icns` is generated from the 512 px PNG during the release. |
 
+## Crate versions and release builds
+
+The workspace crates use the fixed Cargo version `0.0.0` and are not published to crates.io.
+It is **not** the version shown to users and must not be incremented for releases. Canopy
+releases are identified by a `build-N` tag, where `N` is the commit count on `main`.
+`tools/release.py` determines the number; the release workflow embeds it in the executable,
+archives, update manifests and installer metadata. Cargo's version appears only in private
+package metadata and the corresponding entries in `Cargo.lock`. The earlier
+`0.2.1-beta.1` value was a legacy pre-numbered release, not an active version stream.
+
 ## The one-line installers
 
 ```sh

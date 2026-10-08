@@ -5,7 +5,9 @@ members = ["crates/canopy-core", "crates/canopy-app", "crates/canopy-hosting"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.2.1-beta.1"
+# Cargo package metadata is not a Canopy release number. Published builds use build-N tags
+# and git rev-list --count on main; the three private crates are never published to crates.io.
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["NecturaLabs"]
