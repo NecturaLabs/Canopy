@@ -268,6 +268,35 @@ pub(crate) struct Interact {
     pub focus: f32,
 }
 
+/// Whether a press that ended is still shown ([`super::motion::PRESS_MIN`] after it began), so a
+/// quick click is seen. Always false with reduced motion. While it lingers, a repaint is asked
+/// for at its end.
+fn lingering_press(ctx: &egui::Context, id: Id, down: bool) -> bool {
+    let key = id.with("kit-press-since");
+    let now = ctx.input(|i| i.time);
+    let since = ctx.data_mut(|d| {
+        if down {
+            let since = d.get_temp::<f64>(key).unwrap_or(now);
+            d.insert_temp(key, since);
+            return Some(since);
+        }
+        d.get_temp::<f64>(key)
+    });
+    let Some(since) = since else {
+        return false;
+    };
+    if down {
+        return false;
+    }
+    let left = f64::from(super::motion::time(super::motion::PRESS_MIN)) - (now - since);
+    if left > 0.0 {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
+        return true;
+    }
+    ctx.data_mut(|d| d.remove::<f64>(key));
+    false
+}
+
 impl Interact {
     pub(crate) fn of(
         ctx: &egui::Context,
@@ -278,7 +307,8 @@ impl Interact {
         let f = force.unwrap_or_default();
         let id = response.id;
         let hovered = enabled && (f.hover || response.hovered());
-        let held = enabled && (f.pressed || response.is_pointer_button_down_on());
+        let down = f.pressed || response.is_pointer_button_down_on();
+        let held = enabled && (down || (force.is_none() && lingering_press(ctx, id, down)));
         let focused = f.focus || (response.has_focus() && focus_visible(ctx));
         if force.is_some() {
             // A forced progress shows the transition part-way (the gallery's motion strip).
@@ -299,7 +329,13 @@ impl Interact {
                 super::motion::FAST,
                 super::motion::FAST_OUT,
             ),
-            press: anim::ease_bool(ctx, id.with("kit-press"), held, 0.0, super::motion::FAST),
+            press: anim::ease_bool(
+                ctx,
+                id.with("kit-press"),
+                held,
+                super::motion::PRESS_IN,
+                super::motion::FAST,
+            ),
             held,
             focus: anim::ease_bool(ctx, id.with("kit-focus"), focused, super::motion::FAST, 0.0),
         }
@@ -318,6 +354,33 @@ mod tests {
     /// usersim F19: a pointer press ends visible focus even in a frame where no focused widget
     /// asked (a right click that opens a context menu), so the menu does not show its first item
     /// as keyboard focused.
+    /// A click that is over within a frame or two still shows as a press for `PRESS_MIN`.
+    #[test]
+    fn a_quick_press_stays_visible_for_a_moment() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("quick");
+        let at = |t: f64, down: bool| {
+            let mut shown = false;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(t),
+                    ..Default::default()
+                },
+                |_| shown = super::lingering_press(&ctx, id, down),
+            );
+            out.textures_delta.clear();
+            shown
+        };
+        crate::ui::motion::set_reduced(false);
+        assert!(
+            !at(1.0, true),
+            "while down, the press is shown by being down"
+        );
+        assert!(at(1.03, false), "just released");
+        assert!(!at(1.5, false), "gone after the minimum");
+        assert!(!at(1.6, false));
+    }
+
     #[test]
     fn a_pointer_press_hides_focus_though_nobody_asked_that_frame() {
         let ctx = testkit::ctx();

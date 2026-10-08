@@ -145,6 +145,9 @@ commits since the previous build.
 
 ### Fixed
 
+- Pressing a button, including the top bar's operation tools, eases in and stays visible for at
+  least a moment, so a quick click that starts an operation no longer flashes.
+
 - Select menus stay within their containing dialog or panel, open above the field when needed
   and scroll through longer lists. Keyboard navigation also works after opening with the mouse.
 

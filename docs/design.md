@@ -251,6 +251,7 @@ kit's helpers in `ui/kit/anim.rs`.
 |---|---|---|
 | (none) | 0 | Rows, selection, menu-item highlight, palette filtering, keyboard-opened menus change at once |
 | `FAST` / `FAST_OUT` | 80 / 120ms | Hover in and out, press release, focus ring in |
+| `PRESS_IN` / `PRESS_MIN` | 50 / 100ms | A press eases in; it stays visible at least this long after the button goes up, so a quick click (or one that starts an operation) is seen |
 | `BASE` | 150ms | Chevrons, label crossfades, tooltips, field halo |
 | `SLOW` | 220ms | Dialog and popover entrance |
 | `TOAST_IN` | 280ms | Toast slide-in |

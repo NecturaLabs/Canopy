@@ -17,6 +17,12 @@ use super::theme::MotionCharacter;
 
 /// Hover-in, press release, focus ring in, icon opacity, colour crossfades.
 pub const FAST: f32 = 0.08;
+/// A press eases in over this long (the tint, not the scale spring), so a click reads as a
+/// press rather than a flash.
+pub const PRESS_IN: f32 = 0.05;
+/// A press stays visible at least this long after its pointer button went up, so a quick click
+/// (or one that starts an operation and turns its tool inert) still shows.
+pub const PRESS_MIN: f32 = 0.1;
 /// Hover-out.
 pub const FAST_OUT: f32 = 0.12;
 /// Chevron rotation, label crossfades, tooltip in, field halo.
