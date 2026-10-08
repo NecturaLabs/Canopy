@@ -268,26 +268,27 @@ pub(crate) struct Interact {
     pub focus: f32,
 }
 
-/// Whether a press that ended is still shown ([`super::motion::PRESS_MIN`] after it began), so a
+/// Whether a press that ended is still shown ([`super::motion::PRESS_MIN`] after release), so a
 /// quick click is seen. Always false with reduced motion. While it lingers, a repaint is asked
 /// for at its end.
-fn lingering_press(ctx: &egui::Context, id: Id, down: bool) -> bool {
+fn lingering_press(ctx: &egui::Context, id: Id, down: bool, clicked: bool) -> bool {
     let key = id.with("kit-press-since");
+    let down_key = id.with("kit-press-down");
     let now = ctx.input(|i| i.time);
     let since = ctx.data_mut(|d| {
         if down {
-            let since = d.get_temp::<f64>(key).unwrap_or(now);
-            d.insert_temp(key, since);
-            return Some(since);
+            d.insert_temp(down_key, true);
+            return None;
+        }
+        if d.get_temp::<bool>(down_key).unwrap_or(false) || clicked {
+            d.remove::<bool>(down_key);
+            d.insert_temp(key, now);
         }
         d.get_temp::<f64>(key)
     });
     let Some(since) = since else {
         return false;
     };
-    if down {
-        return false;
-    }
     let left = f64::from(super::motion::time(super::motion::PRESS_MIN)) - (now - since);
     if left > 0.0 {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
@@ -307,8 +308,10 @@ impl Interact {
         let f = force.unwrap_or_default();
         let id = response.id;
         let hovered = enabled && (f.hover || response.hovered());
-        let down = f.pressed || response.is_pointer_button_down_on();
-        let held = enabled && (down || (force.is_none() && lingering_press(ctx, id, down)));
+        let down = f.pressed || (enabled && response.is_pointer_button_down_on());
+        let lingering =
+            force.is_none() && lingering_press(ctx, id, down, enabled && response.clicked());
+        let held = (enabled && down) || lingering;
         let focused = f.focus || (response.has_focus() && focus_visible(ctx));
         if force.is_some() {
             // A forced progress shows the transition part-way (the gallery's motion strip).
@@ -366,7 +369,7 @@ mod tests {
                     time: Some(t),
                     ..Default::default()
                 },
-                |_| shown = super::lingering_press(&ctx, id, down),
+                |_| shown = super::lingering_press(&ctx, id, down, false),
             );
             out.textures_delta.clear();
             shown
@@ -379,6 +382,108 @@ mod tests {
         assert!(at(1.03, false), "just released");
         assert!(!at(1.5, false), "gone after the minimum");
         assert!(!at(1.6, false));
+    }
+
+    #[test]
+    fn a_pointer_press_lingers_through_the_widget_interaction() {
+        let ctx = egui::Context::default();
+        crate::ui::motion::set_reduced(false);
+        let at = |time, events| {
+            let mut held = false;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response =
+                        ui.allocate_response(egui::vec2(100.0, 30.0), egui::Sense::click());
+                    held = super::Interact::of(&ctx, &response, true, None).held;
+                },
+            );
+            out.textures_delta.clear();
+            held
+        };
+        let pos = egui::pos2(15.0, 15.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        assert!(!at(0.9, vec![egui::Event::PointerMoved(pos)]));
+        assert!(at(1.0, vec![button(true)]), "the pointer holds the widget");
+        assert!(at(1.03, vec![button(false)]), "release remains visible");
+        assert!(!at(1.5, vec![]), "the press expires");
+    }
+
+    #[test]
+    fn quick_clicks_remain_visible_when_the_action_becomes_disabled() {
+        for same_frame in [false, true] {
+            let ctx = egui::Context::default();
+            crate::ui::motion::set_reduced(false);
+            let pos = egui::pos2(15.0, 15.0);
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let at = |time, events, enabled| {
+                let mut held = false;
+                let mut clicked = false;
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let sense = if enabled {
+                            egui::Sense::click()
+                        } else {
+                            egui::Sense::hover()
+                        };
+                        let response = ui.allocate_response(egui::vec2(100.0, 30.0), sense);
+                        held = super::Interact::of(&ctx, &response, enabled, None).held;
+                        clicked = response.clicked();
+                    },
+                );
+                out.textures_delta.clear();
+                (held, clicked)
+            };
+            assert_eq!(
+                at(0.9, vec![egui::Event::PointerMoved(pos)], true),
+                (false, false)
+            );
+            let events = if same_frame {
+                vec![button(true), button(false)]
+            } else {
+                vec![button(true)]
+            };
+            assert!(
+                at(1.0, events, true).0,
+                "the click reads as a press: same_frame={same_frame}"
+            );
+            let events = if same_frame {
+                vec![]
+            } else {
+                vec![button(false)]
+            };
+            assert_eq!(
+                at(1.03, events, false),
+                (true, false),
+                "the inert action keeps its feedback: same_frame={same_frame}"
+            );
+            let released_at = if same_frame { 1.0 } else { 1.03 };
+            assert_eq!(
+                at(released_at + 0.08, vec![], false),
+                (true, false),
+                "the minimum is measured from release"
+            );
+            assert_eq!(at(released_at + 0.12, vec![], false), (false, false));
+        }
     }
 
     #[test]
