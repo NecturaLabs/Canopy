@@ -495,6 +495,8 @@ pub struct Requests {
     pub details_loading: bool,
     /// Rejects responses from an earlier selection or reload, even for the same request.
     pub details_generation: u64,
+    /// Failure policy of the current details generation, independent of the list response.
+    pub details_quiet_refresh: bool,
     /// An action in flight ("Merging PR #12").
     pub busy: Option<String>,
     pub comment: String,
@@ -522,6 +524,7 @@ impl Default for Requests {
             details: None,
             details_loading: false,
             details_generation: 0,
+            details_quiet_refresh: false,
             busy: None,
             comment: String::new(),
             merge_method: MergeMethod::Merge,
@@ -923,6 +926,11 @@ impl RepoTab {
 
     /// Enqueue a fresh details load with an identity that invalidates older responses.
     pub fn request_details(&mut self, number: u64) {
+        self.request_details_with_policy(number, false);
+    }
+
+    fn request_details_with_policy(&mut self, number: u64, quiet: bool) {
+        self.requests.details_quiet_refresh = quiet;
         self.requests.details_generation = self.requests.details_generation.wrapping_add(1);
         self.host_job(HostJob::Details(number, self.requests.details_generation));
     }
@@ -957,7 +965,7 @@ impl RepoTab {
         if let Some(n) = self.requests.selected
             && self.requests.details.is_some()
         {
-            self.request_details(n);
+            self.request_details_with_policy(n, true);
         }
     }
 
@@ -1714,7 +1722,7 @@ impl RepoTab {
                     {
                         self.requests.details_loading = false;
                         // A quiet refresh of the open request that fails leaves it shown.
-                        let kept = self.requests.quiet_refresh
+                        let kept = self.requests.details_quiet_refresh
                             && result.is_err()
                             && matches!(self.requests.details, Some(Ok(_)));
                         if !kept {
@@ -2928,6 +2936,64 @@ mod tests {
             &tab.requests.details,
             Some(Err(message)) if message == "latest failure"
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_quiet_list_failure_does_not_turn_the_details_reload_into_an_explicit_one()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tab, _events, _jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().ok_or("no host")?.forge.clone();
+        let (host, host_events, _host_jobs) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        let details = Arc::new(RequestDetails {
+            summary: RequestSummary {
+                number: 7,
+                title: String::new(),
+                author: String::new(),
+                state: canopy_hosting::RequestState::Open,
+                draft: false,
+                source_branch: "feature".into(),
+                target_branch: "main".into(),
+                from_fork: false,
+                created_at: 0,
+                updated_at: 0,
+                web_url: String::new(),
+                labels: Vec::new(),
+                rollup: None,
+            },
+            body: String::new(),
+            head_sha: None,
+            mergeable: None,
+            commits: None,
+            changed_files: None,
+            additions: None,
+            deletions: None,
+            reviews: Vec::new(),
+            checks: Vec::new(),
+            comments: Vec::new(),
+        });
+        tab.requests.details = Some(Ok(Arc::clone(&details)));
+        tab.refresh_requests_quietly();
+        host_events.send(HostEvent::List(StateFilter::Open, Err("offline".into())))?;
+        host_events.send(HostEvent::Details(
+            7,
+            tab.requests.details_generation,
+            Box::new(Err("offline".into())),
+        ))?;
+        tab.poll(&[]);
+        assert!(matches!(&tab.requests.details, Some(Ok(kept)) if Arc::ptr_eq(kept, &details)));
+        assert!(!tab.requests.details_loading);
+
+        // The next manual reload must still surface its failure.
+        tab.load_requests();
+        host_events.send(HostEvent::Details(
+            7,
+            tab.requests.details_generation,
+            Box::new(Err("offline".into())),
+        ))?;
+        tab.poll(&[]);
+        assert!(matches!(&tab.requests.details, Some(Err(_))));
         Ok(())
     }
 
