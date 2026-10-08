@@ -781,7 +781,7 @@ A row's help is one sentence; longer explanation sits behind a "More" link and o
 row at reading width (560 points). Settings → Keyboard shows one key column of the cheatsheet's
 keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo
 and a tick; hover is a neutral hairline. Cards fill the row in whole columns and reflow with the
-width. Text-field placeholders are italic and faint, and fields in a section share one width.
+width, using a 180-point minimum so the theme name and default/dark/light caption stay apart. Text-field placeholders are italic and faint, and fields in a section share one width.
 Long paths in settings are cut in the middle with the whole path in a tooltip.
 
 Browse opens the native folder chooser on a background thread. The requesting button displays

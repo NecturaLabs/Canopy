@@ -2421,7 +2421,7 @@ fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> Respon
 }
 
 /// The narrowest and widest a theme card is laid out.
-const THEME_CARD_MIN: f32 = 150.0;
+const THEME_CARD_MIN: f32 = 180.0;
 const THEME_CARD_MAX: f32 = 200.0;
 /// The miniature's height, and the size of the window it stands for (concept `.tcard svg`).
 const MINI_HEIGHT: f32 = 58.0;
