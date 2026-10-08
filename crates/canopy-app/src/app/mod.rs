@@ -1105,9 +1105,10 @@ impl eframe::App for CanopyApp {
                 let entries = self.palette_entries();
                 self.palette.set_entries(inputs, entries);
             }
-            if let Some(a) = self.palette.show(&ctx) {
-                actions.push(a);
-            }
+        }
+        // Run the closed frame too: the palette restores focus to the previous widget here.
+        if let Some(a) = self.palette.show(&ctx) {
+            actions.push(a);
         }
         if self.cheatsheet.open {
             crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
