@@ -14,6 +14,8 @@ use crate::{Error, Repo, Result};
 
 /// The `gitflow.*` entries Canopy writes: five branch names, three prefixes.
 const ENTRY_COUNT: usize = 8;
+/// A feature or bugfix with exactly one commit beyond its base may finish by fast-forwarding.
+const SINGLE_COMMIT: usize = 1;
 
 /// A kind of git-flow branch. `bugfix` behaves like `feature`; `support` is not offered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -369,8 +371,9 @@ impl Repo {
     /// Finishes the branch of `kind` called `name` (without its prefix) and leaves the
     /// development branch checked out.
     ///
-    /// Feature and bugfix: `git switch <develop>`, `git merge --no-ff <branch>` (or `--squash`
-    /// and a commit with git's prepared message), then `git branch -d` (`-D` after a squash).
+    /// Feature and bugfix: `git switch <develop>`, then `git merge --ff <branch>` for exactly one
+    /// commit beyond develop, otherwise `--no-ff` (or `--squash` and a commit with git's prepared
+    /// message), then `git branch -d` (`-D` after a squash).
     ///
     /// Release and hotfix: `git switch <master>`, `git merge --no-ff <branch>`,
     /// `git tag -a <versiontag><name>`, `git switch <develop>`, `git merge --no-ff <tag>` (or
@@ -400,6 +403,12 @@ impl Repo {
 
         if !kind.is_release_like() {
             self.preflight(&config.develop, &branch)?;
+            let fast_forward = if options.squash {
+                false
+            } else {
+                let base = self.git().refname_to_id(&heads(&config.develop))?;
+                self.git().graph_ahead_behind(tip, base)?.0 == SINGLE_COMMIT
+            };
             self.switch_cmd(&["-q", &config.develop])?;
             if options.squash {
                 // `--ff` so a `merge.ff=only` setting cannot refuse a diverged squash.
@@ -409,7 +418,8 @@ impl Repo {
                     self.git_cmd(&["commit", "-q", "--no-edit"])?;
                 }
             } else {
-                self.git_cmd(&["merge", "--no-ff", "--no-edit", "-q", &branch])?;
+                let mode = if fast_forward { "--ff" } else { "--no-ff" };
+                self.git_cmd(&["merge", mode, "--no-edit", "-q", &branch])?;
             }
             if options.delete_branch {
                 let flag = if options.squash { "-D" } else { "-d" };

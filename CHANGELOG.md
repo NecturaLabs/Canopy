@@ -10,6 +10,8 @@ commits since the previous build.
 
 ### Fixed
 
+- Finishing a single-commit git-flow feature or bugfix fast-forwards when possible, matching
+  AVH git-flow. A diverged branch still merges; larger branches keep a merge commit.
 - Linked worktrees can trust their shared Git folders from the Downloads off dialog. The chip
   clears when its refused commit details are hidden or a failed status refresh leaves no refusal
   on screen.

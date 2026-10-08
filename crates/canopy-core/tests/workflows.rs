@@ -199,6 +199,56 @@ fn feature_start_and_finish_match_the_git_commands() {
 }
 
 #[test]
+fn a_single_commit_feature_or_bugfix_finishes_with_a_fast_forward() {
+    for kind in [FlowKind::Feature, FlowKind::Bugfix] {
+        for setting in ["false", "only"] {
+            let (dir, repo, cli) = flow_twins();
+            let (p, c) = (dir.path(), cli.path());
+            let branch = repo.flow_start(kind, "small", None).expect("start");
+            git(c, &["switch", "-q", "-c", &branch, "develop"]);
+            for d in [p, c] {
+                git(d, &["config", "merge.ff", setting]);
+                commit_file(d, "small.txt", "one change\n", "feat: one small change");
+            }
+            let tip = git(p, &["rev-parse", "HEAD"]);
+
+            repo.flow_finish(kind, "small", &FlowFinish::default())
+                .expect("finish");
+            git(c, &["switch", "-q", "develop"]);
+            git(c, &["merge", "--ff", "--no-edit", "-q", &branch]);
+            git(c, &["branch", "-d", &branch]);
+
+            assert_eq!(git(p, &["rev-parse", "HEAD"]), tip);
+            assert_eq!(shape(p), shape(c));
+        }
+    }
+}
+
+#[test]
+fn a_diverged_single_commit_feature_finishes_with_a_merge() {
+    let (dir, repo, cli) = flow_twins();
+    let (p, c) = (dir.path(), cli.path());
+    let branch = repo
+        .flow_start(FlowKind::Feature, "small", None)
+        .expect("start");
+    git(c, &["switch", "-q", "-c", &branch, "develop"]);
+    for d in [p, c] {
+        commit_file(d, "small.txt", "one change\n", "feat: one small change");
+        git(d, &["switch", "-q", "develop"]);
+        commit_file(d, "other.txt", "another change\n", "feat: develop moved");
+        git(d, &["config", "merge.ff", "only"]);
+    }
+
+    repo.flow_finish(FlowKind::Feature, "small", &FlowFinish::default())
+        .expect("finish");
+    git(c, &["merge", "--ff", "--no-edit", "-q", &branch]);
+    git(c, &["branch", "-d", &branch]);
+
+    assert_eq!(shape(p), shape(c));
+    assert!(shape(p).contains("Merge branch 'feature/small' into develop"));
+}
+
+#[test]
 fn bugfix_squash_finish_matches_the_git_commands() {
     let (dir, repo, cli) = flow_twins();
     let (p, c) = (dir.path(), cli.path());

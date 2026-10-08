@@ -148,6 +148,10 @@ changes remain visible alongside content changes.
 | git-flow | Planned (backend merged) | Yes | Yes | Yes |
 | Bisect | Planned | ? | ? | ? |
 
+The git-flow backend finishes a single-commit feature or bugfix by fast-forwarding when possible,
+matching AVH. Diverged branches still merge; branches with multiple commits keep a merge commit.
+The git-flow UI remains planned.
+
 ## Remotes
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
