@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 6 October 2026
+Last updated: 8 October 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -111,6 +111,8 @@ Pictures are stored as small thumbnails in the avatars folder inside Canopy's da
 ## Git
 
 Clone, fetch, pull and push run the Git program installed on your computer. Git connects directly to the remotes you configured, with your own Git settings and credentials. NecturaLabs receives none of this traffic.
+
+Updating or adding a submodule can make Git clone or fetch from that submodule's configured URL. Clone, pull, switching branches and completing a merge or rebase can also initialize and update submodules to their recorded commits. Settings → Git → Update submodules controls these automatic updates. For pull, branch switches and merge or rebase completion, an explicit submodule.recurse setting decides instead when Follow my git config is on. Manual submodule updates still run when you choose them. These requests use your Git credentials and expose your IP address and the requested object identifiers to the submodule's server. NecturaLabs receives none of this traffic.
 
 In a partial clone (a repository cloned with a filter such as --filter=blob:none), opening the repository, refreshing it, viewing a commit or viewing a diff can make Git contact the remote the repository was cloned from, to download the file contents and folder listings that were left out of the clone. This also happens without you pressing Fetch, and only for what the repository, commit or file you opened needs. Canopy does it on its own only for repositories inside a folder you chose to trust in Settings (Privacy, Trusted folders), because Git then follows the repository's own configuration, which can run programs and contact servers. Anywhere else Canopy downloads nothing and shows a Trust button instead. Git asks for your credentials through Canopy, as for any other Git operation, and the server receives your IP address and the identifiers of the objects it is asked for. NecturaLabs receives none of this traffic.
 

@@ -27,7 +27,7 @@ pub const PRIVACY: &str = include_str!("../../../../docs/legal/privacy-policy.md
 /// "Last updated" of the Terms of Service, as `YYYY-MM-DD`.
 pub const TERMS_VERSION: &str = "2026-10-03";
 /// "Last updated" of the Privacy Policy, as `YYYY-MM-DD`.
-pub const PRIVACY_VERSION: &str = "2026-10-06";
+pub const PRIVACY_VERSION: &str = "2026-10-08";
 
 /// A list item's dot, and how far below the line's middle its x-height sits.
 const BULLET_RADIUS: f32 = 2.5;
