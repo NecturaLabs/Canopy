@@ -1657,9 +1657,7 @@ impl Roving {
     /// focus (the selection moved with j and k, a click, a search) focus moves to it.
     pub fn follow(&self, ctx: &egui::Context, selected: usize) {
         let selected = selected.min(self.len.saturating_sub(1));
-        let focused = ctx
-            .data(|d| d.get_temp::<RovingState>(self.id))
-            .and_then(|st| st.focused);
+        let focused = ctx.data_mut(|d| d.get_temp_mut_or_default::<RovingState>(self.id).focused);
         let in_list = focused.is_some_and(|(_, id)| ctx.memory(|m| m.has_focus(id)));
         ctx.data_mut(|d| {
             let st = d.get_temp_mut_or_default::<RovingState>(self.id);
@@ -1681,8 +1679,7 @@ impl Roving {
 
     /// The rows an arrow moved from and to this frame, once the rows have been shown.
     pub fn moved(&self, ctx: &egui::Context) -> Option<(usize, usize)> {
-        ctx.data(|d| d.get_temp::<RovingState>(self.id))
-            .and_then(|st| st.moved)
+        ctx.data_mut(|d| d.get_temp_mut_or_default::<RovingState>(self.id).moved)
     }
 
     /// Moves focus to row `index` when it is next shown (a tree row's parent or first child).
@@ -1717,8 +1714,7 @@ impl Roving {
     /// shown while the stop is scrolled away.
     pub(crate) fn takes_tab(&self, ctx: &egui::Context, index: usize, id: Option<Id>) -> bool {
         let last = ctx
-            .data(|d| d.get_temp::<RovingState>(self.id))
-            .and_then(|st| st.focused)
+            .data_mut(|d| d.get_temp_mut_or_default::<RovingState>(self.id).focused)
             .filter(|(at, _)| *at == index)
             .map(|(_, f)| f);
         let focused = id.or(last).is_some_and(|f| ctx.memory(|m| m.has_focus(f)));
@@ -1744,9 +1740,7 @@ impl Roving {
     /// focus (Left and Right stay with a `tree` row, which opens and closes on them).
     pub(crate) fn row(&self, ui: &Ui, response: &Response, index: usize, tree: bool) {
         let ctx = ui.ctx();
-        let pending = ctx
-            .data(|d| d.get_temp::<RovingState>(self.id))
-            .and_then(|st| st.pending);
+        let pending = ctx.data_mut(|d| d.get_temp_mut_or_default::<RovingState>(self.id).pending);
         if pending == Some(index) {
             response.request_focus();
             ctx.data_mut(|d| d.get_temp_mut_or_default::<RovingState>(self.id).pending = None);
@@ -1782,11 +1776,12 @@ impl Roving {
             if horizontal {
                 move_by = move_by.or_else(|| step(Key::ArrowRight, Key::ArrowLeft, 1));
             }
-            let enabled = ctx
-                .data(|d| d.get_temp::<RovingState>(self.id))
-                .map_or_else(Vec::new, |st| st.enabled);
-            move_by
-                .and_then(|(by, forward)| next_enabled_row(index, self.len, by, forward, &enabled))
+            move_by.and_then(|(by, forward)| {
+                ctx.data_mut(|d| {
+                    let st = d.get_temp_mut_or_default::<RovingState>(self.id);
+                    next_enabled_row(index, self.len, by, forward, &st.enabled)
+                })
+            })
         } else {
             None
         };
