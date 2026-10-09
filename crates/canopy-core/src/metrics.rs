@@ -150,6 +150,7 @@ impl Repo {
         let values: BTreeMap<_, _> = storage
             .lines()
             .filter_map(|line| line.split_once(": "))
+            .filter(|(key, _)| matches!(*key, "count" | "in-pack" | "size" | "size-pack"))
             .map(|(key, value)| {
                 value
                     .parse::<u64>()
@@ -169,7 +170,8 @@ impl Repo {
 
     /// Every local branch compared with the cached default branch and its upstream.
     /// Uses remote HEAD (origin first), then main/master; an unknown default stays absent.
-    /// Squash detection is skipped in partial clones so merge-tree cannot fetch objects.
+    /// Squash detection is skipped for partial clones and custom merge/filter drivers, so this read
+    /// cannot fetch missing objects or execute repository-defined programs.
     pub fn branch_metrics(&self) -> Result<Vec<BranchMetrics>> {
         self.branch_metrics_at(now()?)
     }
@@ -189,7 +191,11 @@ impl Repo {
                 .git()
                 .find_reference(&format!("refs/remotes/{remote}/HEAD"))
             {
-                let resolved = head.resolve()?;
+                let resolved = match head.resolve() {
+                    Ok(resolved) => resolved,
+                    Err(error) if error.code() == git2::ErrorCode::NotFound => continue,
+                    Err(error) => return Err(error.into()),
+                };
                 if let Some(full) = resolved.name()?.strip_prefix("refs/remotes/") {
                     // Prefer the local counterpart of the cached remote default.
                     let short = full.strip_prefix(&format!("{remote}/")).unwrap_or(full);
@@ -213,11 +219,10 @@ impl Repo {
 
     fn branch_metrics_at(&self, now: i64) -> Result<Vec<BranchMetrics>> {
         let base = self.metrics_default()?;
+        let squash = !partial::is_partial_clone(self.git()) && self.metrics_squash_is_safe()?;
         let merged = base
             .as_ref()
-            .map(|(_, id)| {
-                self.merged_branches(&id.to_string(), !partial::is_partial_clone(self.git()))
-            })
+            .map(|(_, id)| self.merged_branches(&id.to_string(), squash))
             .transpose()?
             .unwrap_or_default();
         let branches: Vec<_> = self
@@ -293,6 +298,21 @@ impl Repo {
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
+    }
+
+    fn metrics_squash_is_safe(&self) -> Result<bool> {
+        // Git also sees environment configuration overrides that libgit2 does not read.
+        let keys = self.local_metrics_command(&["config", "--name-only", "--list"])?;
+        Ok(!keys.lines().any(|key| {
+            let key = key.to_ascii_lowercase();
+            (key.starts_with("merge.") && key.ends_with(".driver"))
+                || (key.starts_with("filter.")
+                    && [".clean", ".smudge", ".process"]
+                        .iter()
+                        .any(|suffix| key.ends_with(suffix)))
+                || (key.starts_with("remote.") && key.ends_with(".promisor"))
+                || key == "extensions.partialclone"
+        }))
     }
 
     fn metrics_divergence(&self, tip: Oid, base: Oid) -> Result<Divergence> {
@@ -584,6 +604,186 @@ mod tests {
                 .expect("cached default")
                 .iter()
                 .all(|b| b.default_branch.as_deref() == Some("trunk"))
+        );
+    }
+    #[test]
+    fn repository_metrics_accepts_alternate_object_stores() {
+        let source = tempfile::tempdir().expect("source");
+        let dest = tempfile::tempdir().expect("destination");
+        git(source.path(), &["init", "-q", "-b", "main"], MONDAY);
+        git(
+            source.path(),
+            &["commit", "--allow-empty", "-qm", "root"],
+            MONDAY,
+        );
+        git(
+            source.path(),
+            &[
+                "clone",
+                "--shared",
+                "--",
+                source.path().to_str().expect("source path"),
+                dest.path().to_str().expect("destination path"),
+            ],
+            MONDAY,
+        );
+        let oracle = git(dest.path(), &["count-objects", "-v"], MONDAY);
+        assert!(oracle.lines().any(|line| line.starts_with("alternate: ")));
+        let repo = Repo::open(dest.path()).expect("repo");
+        let metrics = repo
+            .repository_metrics_at(MONDAY)
+            .expect("metrics with alternate store");
+        assert_eq!(metrics.objects, 0);
+        assert_eq!(metrics.size_bytes, 0);
+        assert_eq!(metrics.authors[0].commits, 1);
+        assert_eq!(metrics.weeks[51].commits, 1);
+        assert!(metrics.last_commit.is_some());
+    }
+    #[test]
+    fn branch_metrics_falls_back_when_cached_remote_head_is_dangling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"], MONDAY);
+        git(p, &["commit", "--allow-empty", "-qm", "root"], MONDAY);
+        git(
+            p,
+            &[
+                "config",
+                "remote.origin.url",
+                "https://invalid.example/repo",
+            ],
+            MONDAY,
+        );
+        git(
+            p,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/deleted",
+            ],
+            MONDAY,
+        );
+        let repo = Repo::open(p).expect("repo");
+        let metrics = repo
+            .branch_metrics_at(MONDAY)
+            .expect("dangling default falls back");
+        assert_eq!(metrics[0].default_branch.as_deref(), Some("main"));
+        assert_eq!(
+            metrics[0].default_divergence,
+            Some(Divergence {
+                ahead: 0,
+                behind: 0
+            })
+        );
+    }
+    #[test]
+    fn branch_metrics_does_not_execute_custom_merge_drivers() {
+        if let Some(path) = std::env::var_os("CANOPY_METRICS_DRIVER_FIXTURE") {
+            let path = Path::new(&path);
+            Repo::open(path)
+                .expect("child repo")
+                .branch_metrics_at(MONDAY)
+                .expect("child metrics");
+            assert!(
+                !path.join("driver-ran").exists(),
+                "environment merge driver executed"
+            );
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"], MONDAY);
+        std::fs::write(p.join(".gitattributes"), "tracked.txt merge=probe\n").expect("attributes");
+        std::fs::write(p.join("tracked.txt"), "base\n").expect("base");
+        git(p, &["add", "--", ".gitattributes", "tracked.txt"], MONDAY);
+        git(p, &["commit", "-qm", "root"], MONDAY);
+        git(p, &["switch", "-qc", "topic"], MONDAY);
+        std::fs::write(p.join("tracked.txt"), "topic\n").expect("topic");
+        git(p, &["commit", "-qam", "topic"], MONDAY);
+        git(p, &["switch", "-q", "main"], MONDAY);
+        std::fs::write(p.join("tracked.txt"), "main\n").expect("main");
+        git(p, &["commit", "-qam", "main"], MONDAY);
+        git(
+            p,
+            &[
+                "config",
+                "merge.probe.driver",
+                "echo ran > driver-ran; true",
+            ],
+            MONDAY,
+        );
+        let repo = Repo::open(p).expect("repo");
+        let metrics = repo.branch_metrics_at(MONDAY).expect("metrics");
+        assert!(
+            !p.join("driver-ran").exists(),
+            "insights executed the repository's merge driver"
+        );
+        assert_eq!(
+            metrics
+                .iter()
+                .find(|b| b.name == "topic")
+                .expect("topic")
+                .merged,
+            None
+        );
+        // Git sees these process-local overrides; libgit2 does not.
+        git(p, &["config", "--unset", "merge.probe.driver"], MONDAY);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a child test process isolates Git environment overrides"
+        )]
+        let child = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "metrics::tests::branch_metrics_does_not_execute_custom_merge_drivers",
+            ])
+            .env("CANOPY_METRICS_DRIVER_FIXTURE", p)
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "merge.probe.driver")
+            .env("GIT_CONFIG_VALUE_0", "echo ran > driver-ran; true")
+            .output()
+            .expect("child test");
+        assert!(
+            child.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+    }
+    #[test]
+    fn branch_metrics_does_not_execute_renormalization_filters() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"], MONDAY);
+        std::fs::write(p.join(".gitattributes"), "tracked.txt filter=probe\n").expect("attributes");
+        std::fs::write(p.join("tracked.txt"), "base\n").expect("base");
+        git(p, &["add", "--", ".gitattributes", "tracked.txt"], MONDAY);
+        git(p, &["commit", "-qm", "root"], MONDAY);
+        git(p, &["switch", "-qc", "topic"], MONDAY);
+        std::fs::write(p.join("tracked.txt"), "topic\n").expect("topic");
+        git(p, &["commit", "-qam", "topic"], MONDAY);
+        git(p, &["switch", "-q", "main"], MONDAY);
+        std::fs::write(p.join("tracked.txt"), "main\n").expect("main");
+        git(p, &["commit", "-qam", "main"], MONDAY);
+        git(p, &["config", "merge.renormalize", "true"], MONDAY);
+        git(
+            p,
+            &["config", "filter.probe.clean", "echo ran > filter-ran; cat"],
+            MONDAY,
+        );
+        let repo = Repo::open(p).expect("repo");
+        let metrics = repo.branch_metrics_at(MONDAY).expect("metrics");
+        assert!(
+            !p.join("filter-ran").exists(),
+            "insights executed the repository's filter"
+        );
+        assert_eq!(
+            metrics
+                .iter()
+                .find(|b| b.name == "topic")
+                .expect("topic")
+                .merged,
+            None
         );
     }
 }
