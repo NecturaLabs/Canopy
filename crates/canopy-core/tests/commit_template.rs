@@ -96,3 +96,27 @@ fn a_missing_template_file_says_so() {
     let error = repo.commit_template().expect_err("missing");
     assert!(error.to_string().contains("nowhere.txt"), "{error}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_template_that_is_not_a_regular_file_is_refused_not_read() {
+    let (_dir, repo) = repository();
+    git(
+        repo.workdir(),
+        &["config", "commit.template", "/dev/zero"],
+        None,
+    );
+    let error = repo
+        .commit_template()
+        .expect_err("a device is not a template");
+    assert!(error.to_string().contains("not a regular file"), "{error}");
+}
+
+#[test]
+fn a_huge_template_is_refused() {
+    let (dir, repo) = repository();
+    fs::write(dir.path().join("big"), vec![b'x'; 300 * 1024]).expect("write");
+    git(repo.workdir(), &["config", "commit.template", "big"], None);
+    let error = repo.commit_template().expect_err("too large");
+    assert!(error.to_string().contains("too large"), "{error}");
+}

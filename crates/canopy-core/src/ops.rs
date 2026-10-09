@@ -1,6 +1,7 @@
 //! Operations that change a repository. All of them run the `git` executable (see [`crate::cli`])
 //! so hooks, signing, filters and credentials behave as they do in a terminal.
 
+use std::io::Read;
 use std::path::Path;
 
 use git2::Oid;
@@ -9,6 +10,9 @@ use crate::cli;
 use crate::diff::{DiffSource, Whitespace};
 use crate::model::{ChangeKind, FileEntry, RepoState};
 use crate::{Error, MissingObjects, PushDefault, Repo, Result};
+
+/// The most of a commit template Canopy reads, in bytes.
+const COMMIT_TEMPLATE_LIMIT: u64 = 256 * 1024;
 
 /// How far `git reset` goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -449,12 +453,23 @@ impl Repo {
             return Ok(None);
         }
         let path = self.workdir().join(path);
-        let text = std::fs::read(&path).map_err(|e| {
+        let unreadable = |e: &dyn std::fmt::Display| {
             Error::invalid(format!(
                 "Could not read the commit template {}: {e}",
                 path.display()
             ))
-        })?;
+        };
+        let meta = std::fs::metadata(&path).map_err(|e| unreadable(&e))?;
+        if !meta.is_file() {
+            return Err(unreadable(&"it is not a regular file"));
+        }
+        let mut text = Vec::new();
+        std::fs::File::open(&path)
+            .and_then(|file| file.take(COMMIT_TEMPLATE_LIMIT + 1).read_to_end(&mut text))
+            .map_err(|e| unreadable(&e))?;
+        if u64::try_from(text.len()).is_ok_and(|len| len > COMMIT_TEMPLATE_LIMIT) {
+            return Err(unreadable(&"it is too large"));
+        }
         let text = String::from_utf8_lossy(&text);
         let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
         Ok(Some(kept.join("\n").trim_end().to_owned()))
