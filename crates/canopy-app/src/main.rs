@@ -51,7 +51,7 @@ OPTIONS:
                               diff-options,
                               settings-integrations, settings-accounts, settings-updates,
                               settings-keyboard, settings-backup, settings-repository,
-                              settings-search, about, repository-insights, toasts, notifications, branch-selected,
+                              settings-search, about, repository-insights, clean-stale, toasts, notifications, branch-selected,
                               gallery, menu-remotes, menu-branch, menu-commit, menu-file, open,
                               open-error, clone,
                               clone-running, clone-error, init, new-branch, rename, add-submodule,
