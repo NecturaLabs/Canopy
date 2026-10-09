@@ -126,6 +126,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Commit composer with summary counter; follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
 | Unsent commit message kept when its tab closes, until the repository opens again (same session) | Done | ? | ? | ? |
 | Amend | Done | Yes | Yes | Yes |
+| The commit template (`commit.template`) fills an empty message field once per tab; a draft or an amend keeps its text | Unreleased | Yes | ? | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
 | Commit message templates and linting | Planned | ? | Yes | ? |
 

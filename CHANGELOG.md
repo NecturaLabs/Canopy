@@ -69,6 +69,8 @@ commits since the previous build.
 
 ### Added
 
+- The commit message field starts with your Git `commit.template` when it is empty (once per
+  open repository, never over a draft or an amend); a template that cannot be read is reported.
 - Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick,
   and Apply patch… in the palette applies a patch file, or the `.patch` files of a folder, as
   commits that keep their authors; a patch that does not fit stops in "Applying patches" with

@@ -759,6 +759,8 @@ pub struct RepoTab {
     /// The branch `pull_config` was last asked for (`None`: detached or unborn), once asked.
     pull_config_asked: bool,
     tools_asked: bool,
+    /// The commit template was asked for, once for the tab.
+    template_asked: bool,
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
@@ -872,6 +874,7 @@ impl RepoTab {
             pull_config: None,
             pull_config_asked: false,
             tools_asked: false,
+            template_asked: false,
             pull_config_branch: None,
             force_delete_offer: None,
             force_push_offer: None,
@@ -1578,6 +1581,10 @@ impl RepoTab {
                         self.tools_asked = true;
                         self.worker.send(Job::Tools);
                     }
+                    if !self.template_asked {
+                        self.template_asked = true;
+                        self.worker.send(Job::CommitTemplate);
+                    }
                     if !self.pull_config_asked || self.pull_config_branch != s.head.branch {
                         self.pull_config_asked = true;
                         self.pull_config_branch.clone_from(&s.head.branch);
@@ -1754,6 +1761,34 @@ impl RepoTab {
                             Some((self.commit_summary.clone(), self.commit_body.clone()));
                     }
                 }
+                Event::CommitTemplate(result) => match result {
+                    Ok(Some(template))
+                        if !self.amend
+                            && self.snap.as_ref().is_some_and(|snap| {
+                                snap.state == canopy_core::RepoState::Clean
+                            })
+                            && self.commit_summary.trim().is_empty()
+                            && self.commit_body.trim().is_empty() =>
+                    {
+                        let mut parts = template.trim_start().splitn(2, '\n');
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim_end()
+                            .clone_into(&mut self.commit_summary);
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_body);
+                    }
+                    Ok(_) => {}
+                    Err(body) => notices.push(Notice {
+                        ok: false,
+                        title: "Could not read the commit template".into(),
+                        body,
+                    }),
+                },
                 Event::PullConfig(result) => match result {
                     Ok(config) => self.pull_config = Some(config),
                     Err(e) => {
@@ -2381,6 +2416,7 @@ mod tests {
             tab.snap = Some(Arc::new(RepoSnapshot::default()));
             tab.pull_config_asked = true;
             tab.tools_asked = true;
+            tab.template_asked = true;
             let mut selection = open_unstaged_file();
             selection.source = DiffSource::Commit(Oid::from_bytes(&[1; 20]).expect("oid"));
             selection.entry.path = "deps/lib".into();
@@ -2671,6 +2707,67 @@ mod tests {
                 assert!(tab.commit_body.is_empty(), "{:?}", tab.commit_body);
             }
         }
+    }
+
+    /// #92: the commit template fills an empty message field once; a draft, an amend and a merge
+    /// keep theirs, and a template that cannot be read is reported.
+    #[test]
+    fn the_commit_template_fills_only_an_empty_message_field() {
+        let clean = || {
+            Event::Snapshot(Arc::new(RepoSnapshot {
+                state: canopy_core::RepoState::Clean,
+                ..Default::default()
+            }))
+        };
+        let template = || Event::CommitTemplate(Ok(Some("\nfeat: \n\nWhy:\nHow:\n".into())));
+        let fresh = || {
+            let (worker, events, jobs) = Worker::detached();
+            let mut tab =
+                RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+            events.send(clean()).expect("snapshot");
+            tab.poll(&[]);
+            (tab, events, jobs)
+        };
+
+        let (mut tab, events, jobs) = fresh();
+        let asked = std::iter::from_fn(|| jobs.try_recv().ok())
+            .filter(|j| matches!(j, Job::CommitTemplate))
+            .count();
+        assert_eq!(asked, 1, "asked once, at the first snapshot");
+        events.send(clean()).expect("snapshot");
+        tab.poll(&[]);
+        assert!(
+            std::iter::from_fn(|| jobs.try_recv().ok()).all(|j| !matches!(j, Job::CommitTemplate)),
+            "not asked again"
+        );
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat:");
+        assert_eq!(tab.commit_body, "Why:\nHow:");
+
+        let (mut tab, events, _jobs) = fresh();
+        tab.commit_body = "my draft".into();
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "");
+        assert_eq!(tab.commit_body, "my draft");
+
+        let (mut tab, events, _jobs) = fresh();
+        tab.amend = true;
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "", "never on an amend");
+
+        let (mut tab, events, _jobs) = fresh();
+        events.send(Event::CommitTemplate(Ok(None))).expect("none");
+        events
+            .send(Event::CommitTemplate(Err("fatal: bad config".into())))
+            .expect("error");
+        let notices = tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "");
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].title, "Could not read the commit template");
+        assert!(notices[0].body.contains("bad config"));
     }
 
     #[test]

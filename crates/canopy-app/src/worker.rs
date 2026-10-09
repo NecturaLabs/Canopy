@@ -346,6 +346,9 @@ pub enum Job {
     HeadMessage,
     /// Git's pending merge message, read off the UI thread.
     MergeMessage,
+    /// The commit template the configuration names (`Repo::commit_template`), for a new commit's
+    /// empty message field.
+    CommitTemplate,
     /// A commit message for the squash merge of this branch, with git's summary of the squashed
     /// commits (`.git/SQUASH_MSG`) as the body.
     SquashMessage(String),
@@ -446,6 +449,9 @@ pub enum Event {
     /// The answer to [`Job::PushTarget`]: git's own message when it cannot tell.
     PushTarget(Result<canopy_core::PushTarget, String>),
     MergeMessage(String),
+    /// The answer to [`Job::CommitTemplate`]: `None` without a template, git's own message when it
+    /// cannot be read.
+    CommitTemplate(Result<Option<String>, String>),
     /// A new commit message after a squash, never an amend prefill.
     SquashMessage(String),
     Conflict {
@@ -723,6 +729,7 @@ impl Job {
             Self::Diff(_) => "diff",
             Self::HeadMessage => "head-message",
             Self::MergeMessage => "merge-message",
+            Self::CommitTemplate => "commit-template",
             Self::SquashMessage(_) => "squash-message",
             Self::Conflict(_) => "conflict",
             Self::PullConfig => "pull-config",
@@ -939,6 +946,9 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         ))),
                     }
                 }
+                Job::CommitTemplate => emit(Event::CommitTemplate(
+                    repo.commit_template().map_err(|e| e.to_string()),
+                )),
                 Job::SquashMessage(target) => {
                     let path = repo.git().path().join("SQUASH_MSG");
                     let body = std::fs::read_to_string(path).unwrap_or_default();
@@ -2662,6 +2672,30 @@ mod read_tests {
             matches!(events.last(), Some(Event::Conflicted(_))),
             "{events:?}"
         );
+    }
+
+    /// #92: the repository thread reads the commit template; a missing file is reported, not
+    /// swallowed.
+    #[test]
+    fn the_worker_reads_the_commit_template() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let ask = |copy: &Path| {
+            let worker = worker_with_canopys_choices(copy.to_path_buf());
+            worker.send(Job::CommitTemplate);
+            let events = events_until(&worker, |e| matches!(e, Event::CommitTemplate(_)));
+            match events.into_iter().last() {
+                Some(Event::CommitTemplate(result)) => result,
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(ask(&copy), Ok(None));
+        std::fs::write(copy.join("msg.txt"), "feat: \n# comment\nWhy:\n").expect("write");
+        git(&copy, &["config", "commit.template", "msg.txt"]);
+        assert_eq!(ask(&copy), Ok(Some("feat: \nWhy:".into())));
+        git(&copy, &["config", "commit.template", "gone.txt"]);
+        let error = ask(&copy).expect_err("no such file");
+        assert!(error.contains("gone.txt"), "{error}");
     }
 
     /// PS-F1: the Pull menu's default comes from the repository thread, never the UI thread.
