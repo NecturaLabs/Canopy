@@ -150,7 +150,7 @@ pub(super) fn show(
     let busy = tab.is_none_or(|tab| tab.running.is_some());
     let counts = candidates.map_or((0, 0), |candidates| form.counts(candidates));
     let changed = std::cell::Cell::new(false);
-    let result = KitDialog::new(salt).title("Clean up stale…").icon(icon::TRASH)
+    let result = KitDialog::new(salt).title("Clean up stale worktrees and branches").icon(icon::TRASH)
         .width(DialogWidth::Form).destructive().initial_focus(InitialFocus::Cancel)
         .body(|ui| {
             note(ui, format!("Last commit older than {} days. Change the period in Settings → Git.", form.older_than_days), p.text_dim);
