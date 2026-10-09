@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- What changes and why. Link the backlog entry or issue. -->
+<!-- What changes and why. Link the GitHub issues and state which acceptance criteria this PR completes. -->
 
 ## Screenshots
 

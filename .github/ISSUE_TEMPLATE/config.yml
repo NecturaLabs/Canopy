@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+- name: Search existing issues
+  url: https://github.com/NecturaLabs/Canopy/issues
+  about: Find related work and record progress on the existing issue when possible.
+- name: Contributor and triage guide
+  url: https://github.com/NecturaLabs/Canopy/blob/main/CONTRIBUTING.md#issues-and-pull-requests
+  about: Read issue types, labels, acceptance criteria and verification conventions.

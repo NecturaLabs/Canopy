@@ -1,0 +1,177 @@
+[
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "Existing behaviour is incorrect or fails."
+  },
+  {
+    "name": "enhancement",
+    "color": "a2eeef",
+    "description": "New or expanded user-facing capability."
+  },
+  {
+    "name": "maintenance",
+    "color": "fef2c0",
+    "description": "Internal upkeep, refactoring, tooling or process work."
+  },
+  {
+    "name": "documentation",
+    "color": "0075ca",
+    "description": "Documentation changes with no product behaviour change."
+  },
+  {
+    "name": "verification",
+    "color": "d4c5f9",
+    "description": "Checks of implemented behaviour, with recorded evidence."
+  },
+  {
+    "name": "owner-action",
+    "color": "e99695",
+    "description": "Owner decision, legal information or external-account action."
+  },
+  {
+    "name": "needs-triage",
+    "color": "e4e669",
+    "description": "Awaiting maintainer classification, priority or actionable scope."
+  },
+  {
+    "name": "needs-verification",
+    "color": "5319e7",
+    "description": "Acceptance still needs live, platform or owner verification."
+  },
+  {
+    "name": "security",
+    "color": "b60205",
+    "description": "Credential, trust, privacy or command-execution risk."
+  },
+  {
+    "name": "dependencies",
+    "color": "0366d6",
+    "description": "Dependency update pull requests, including Dependabot."
+  },
+  {
+    "name": "github_actions",
+    "color": "2088ff",
+    "description": "GitHub Actions dependency update pull requests."
+  },
+  {
+    "name": "rust",
+    "color": "dea584",
+    "description": "Rust dependency update pull requests."
+  },
+  {
+    "name": "area:git",
+    "color": "c5def5",
+    "description": "Repository operations, refs, diffs and working trees."
+  },
+  {
+    "name": "area:ui",
+    "color": "c5def5",
+    "description": "Views, shared widgets, visual design and responsive layout."
+  },
+  {
+    "name": "area:accessibility",
+    "color": "c5def5",
+    "description": "Keyboard access, focus, AccessKit and screen readers."
+  },
+  {
+    "name": "area:hosting",
+    "color": "c5def5",
+    "description": "GitHub/GitLab APIs, accounts, requests and host metadata."
+  },
+  {
+    "name": "area:settings",
+    "color": "c5def5",
+    "description": "Preferences, configuration controls and keybindings."
+  },
+  {
+    "name": "area:platform",
+    "color": "c5def5",
+    "description": "Operating-system integration, installers and native updates."
+  },
+  {
+    "name": "area:security",
+    "color": "c5def5",
+    "description": "Credential storage, trust boundaries, privacy and execution safety."
+  },
+  {
+    "name": "area:performance",
+    "color": "c5def5",
+    "description": "Responsiveness, resource use, caching and benchmarks."
+  },
+  {
+    "name": "area:tests",
+    "color": "c5def5",
+    "description": "Automated tests, quality guards and verification infrastructure."
+  },
+  {
+    "name": "area:docs",
+    "color": "c5def5",
+    "description": "Repository documentation, contributor guidance and site content."
+  },
+  {
+    "name": "area:release",
+    "color": "c5def5",
+    "description": "Build targets, packages, signing and release distribution."
+  },
+  {
+    "name": "area:planning",
+    "color": "c5def5",
+    "description": "Project workflow, research decisions and backlog organisation."
+  },
+  {
+    "name": "area:legal",
+    "color": "c5def5",
+    "description": "Terms, privacy notices, licensing and legal identity."
+  },
+  {
+    "name": "area:app",
+    "color": "c5def5",
+    "description": "Application startup, session state and cross-cutting app behaviour."
+  },
+  {
+    "name": "priority:p0-critical",
+    "color": "b60205",
+    "description": "Confirmed critical incident or release blocker; address immediately."
+  },
+  {
+    "name": "priority:p1-high",
+    "color": "d93f0b",
+    "description": "High-priority work; address before normal backlog."
+  },
+  {
+    "name": "priority:p2-normal",
+    "color": "fbca04",
+    "description": "Normal planned work and default priority pending triage."
+  },
+  {
+    "name": "priority:p3-low",
+    "color": "c5def5",
+    "description": "Deferred or low-impact work after higher priorities."
+  },
+  {
+    "name": "size:small",
+    "color": "c2e0c6",
+    "description": "One bounded correction or focused verification; little coordination."
+  },
+  {
+    "name": "size:medium",
+    "color": "fef2c0",
+    "description": "Several related changes or checks within one workflow."
+  },
+  {
+    "name": "size:large",
+    "color": "f9d0c4",
+    "description": "Cross-module/platform work, a broad audit or a compound feature."
+  },
+  {
+    "name": "size:needs-estimate",
+    "color": "e4e669",
+    "description": "Scope or external dependencies are too unclear to estimate remaining work."
+  },
+  {
+    "name": "duplicate",
+    "color": "cfd3d7",
+    "description": "Same deliverable as a linked canonical issue; close and track work there."
+  }
+]

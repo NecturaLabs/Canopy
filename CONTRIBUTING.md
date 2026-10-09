@@ -47,7 +47,91 @@ integer and float types through the helpers in `ui/mod.rs` (`points_i8`, `count_
 
 ## Issues and pull requests
 
-Use [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues) for all backlog work, defects and follow-ups. Before starting, check for an existing issue and record partial progress there; close it only when its acceptance criteria are met. Do not add tasks to `docs/backlog.md`, which is a historical pointer. Follow the issue types, area and priority labels in [AGENTS.md](AGENTS.md).
+Use [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues) for all backlog work, defects and follow-ups. Before starting, check for an existing issue and record partial progress there; close it only when its acceptance criteria are met. Do not add tasks to `docs/backlog.md`, which is a historical pointer. Use the issue forms and triage conventions below; [AGENTS.md](AGENTS.md) gives the project workflow rules.
+
+### Issue content
+
+Use a specific, action-oriented title without type or priority prefixes. State the problem or
+deliverable, relevant files and constraints, and checkable acceptance criteria. Bugs need observed
+and expected behaviour, reproduction steps and environment details. Say when facts are unknown.
+
+Write direct statements. Remove vague praise, canned summaries, repeated instructions and stale
+status text. Keep evidence links and unresolved requirements. Progress notes should name the
+commit/build, checks actually run and remaining gaps. Close compound issues only when every
+criterion is verified; put independent follow-ups in linked issues. For an exact duplicate, link
+the canonical issue, add `duplicate`, and close it as a duplicate. Closed duplicates may use
+only `duplicate`; schedule work on the canonical issue. Related or parent/child scope is not a duplicate.
+
+### Labels and triage
+
+[`.github/labels.json`](.github/labels.json) records label names, colours and descriptions. Keep it
+and the live catalogue in sync. Label text carries the meaning; colours help scanning.
+
+Every triaged issue except a closed duplicate has exactly one type:
+
+| Type | Use |
+|---|---|
+| `bug` | Incorrect existing behaviour or a failure |
+| `enhancement` | A new or expanded user-facing capability |
+| `maintenance` | Internal upkeep, refactoring, tooling or process work |
+| `documentation` | Documentation changes without product behaviour changes |
+| `verification` | Checks of implemented behaviour, with recorded evidence |
+| `owner-action` | Owner decisions, legal information or external-account tasks |
+
+Apply one `area:*` label for the main affected area. The form's Area answer maps to these labels:
+
+| Form area | Label |
+|---|---|
+| Git operations | `area:git` |
+| Interface and themes | `area:ui` |
+| Accessibility | `area:accessibility` |
+| GitHub and GitLab | `area:hosting` |
+| Settings | `area:settings` |
+| Platform and installers | `area:platform` |
+| Security and privacy | `area:security` |
+| Performance | `area:performance` |
+| Tests and quality checks | `area:tests` |
+| Documentation | `area:docs` |
+| Builds and releases | `area:release` |
+| Planning and project workflow | `area:planning` |
+| Legal | `area:legal` |
+| Application lifecycle | `area:app` |
+
+Every open issue has one priority. Maintainers review the default P2 during triage:
+
+| Priority | Meaning |
+|---|---|
+| `priority:p0-critical` | Confirmed critical incident or release blocker; address immediately |
+| `priority:p1-high` | High-priority work before the normal backlog |
+| `priority:p2-normal` | Normal planned work; default pending triage |
+| `priority:p3-low` | Deferred or low-impact work |
+
+Apply one size label to open issues, estimating the remaining work:
+
+| Size | Meaning |
+|---|---|
+| `size:small` | One bounded correction or focused verification |
+| `size:medium` | Several related changes or checks within one workflow |
+| `size:large` | Cross-module/platform work, a broad audit or a compound feature |
+| `size:needs-estimate` | Scope or external dependencies are unclear; record what is missing |
+
+Priority is urgency; size is remaining work, not a delivery date. Reassess size when scope changes.
+
+Forms apply the type, P2 priority, `size:needs-estimate` and `needs-triage`; the verification
+form also applies `needs-verification`. Dropdown answers do not apply labels automatically.
+During triage, check for duplicates, confirm actionable scope and acceptance criteria, apply the
+matching area, review priority and estimate size, then remove `needs-triage`. Resolve "Not sure"
+area answers before removing the flag. API/CLI issues follow the same conventions.
+
+Use `needs-verification` when live, platform or owner acceptance checks remain, and `security`
+for credential, trust, privacy or execution risks. These flags supplement the type and area;
+they do not replace them. GitHub's open/closed state tracks completion. `dependencies`,
+`github_actions` and `rust` are automation labels for dependency PRs, not issue types.
+
+Blank web issues are disabled. Forms activate on the default branch; live label and issue edits
+take effect immediately. See GitHub's
+[issue-form syntax](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms)
+and [template configuration](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository).
 
 Keep independently reviewable work in atomic commits. Contribute to the existing feature branch or pull request for the work; do not open a duplicate PR. A PR needs an accurate summary, testing status, remaining risks and links to its issues. Wait for the owner's approval before merging.
 
