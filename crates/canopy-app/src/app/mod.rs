@@ -246,6 +246,11 @@ impl CanopyApp {
                 accepted_privacy: crate::ui::legal::PRIVACY_VERSION.to_owned(),
                 crash_reports: Some(false),
                 crash_reports_version: crate::crash_reports::DATA_VERSION,
+                // A picture of what a trusted folder shows (a signature, say) names the folder.
+                trusted_folders: std::env::var_os("CANOPY_SCREENSHOT_TRUSTED")
+                    .map(PathBuf::from)
+                    .into_iter()
+                    .collect(),
                 ..Settings::default()
             };
         }

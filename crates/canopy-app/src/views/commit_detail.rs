@@ -7,17 +7,17 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, Signer, short_id};
+use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, short_id};
 
 use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::{DetailsError, FileSelection, RepoTab};
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
-use crate::ui::kit::chip::{ChangeBadge, DiffStat};
+use crate::ui::kit::chip::{Badge, ChangeBadge, DiffStat};
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowKind};
-use crate::ui::kit::{Button, IconButton, Size, paint};
+use crate::ui::kit::{Button, IconButton, Size, Tone, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
 use crate::views::diff;
@@ -415,32 +415,18 @@ fn author(
     });
 }
 
-/// The mark after the author's name for a signed commit: a seal in the success colour only for a
-/// signature git trusts, a warning for any other. Unsigned commits show nothing.
+/// The badge after the author's name for a commit whose signature git trusts: "Verified" in the
+/// success tone, with the signer and key in its tooltip. Every other state (unsigned, untrusted,
+/// expired, invalid, cannot be checked) shows nothing: only a verified signature is a claim worth
+/// a mark.
 fn signature_mark(ui: &mut Ui, status: &SignatureStatus) {
-    let p = palette(ui.ctx());
-    let (glyph, color, title) = match status {
-        SignatureStatus::Unsigned => return,
-        SignatureStatus::Verified(_) => (icon::SEAL_CHECK, p.success, "Verified signature"),
-        SignatureStatus::Untrusted(_) => {
-            (icon::SEAL_WARNING, p.warning, "Signed by an untrusted key")
-        }
-        SignatureStatus::Expired(_) => (icon::SEAL_WARNING, p.warning, "Signature or key expired"),
-        SignatureStatus::Invalid(_) => (icon::SEAL_WARNING, p.danger, "Signature does not match"),
-        SignatureStatus::Unavailable => {
-            (icon::SEAL_QUESTION, p.text_dim, "Signed, cannot be checked")
-        }
+    let SignatureStatus::Verified(signer) = status else {
+        return;
     };
-    let signer = match status {
-        SignatureStatus::Verified(s)
-        | SignatureStatus::Untrusted(s)
-        | SignatureStatus::Expired(s)
-        | SignatureStatus::Invalid(s) => s,
-        SignatureStatus::Unsigned | SignatureStatus::Unavailable => &Signer::default(),
-    };
-    let tip = ui
-        .add(egui::Label::new(RichText::new(glyph).color(color)).sense(egui::Sense::hover()))
-        .kit_tooltip(title);
+    let tip = Badge::new("Verified")
+        .tone(Tone::Success)
+        .show(ui)
+        .kit_tooltip("Signature verified");
     let detail = [signer.name.as_str(), signer.key.as_str()]
         .into_iter()
         .filter(|t| !t.is_empty())
