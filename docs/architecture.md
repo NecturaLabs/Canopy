@@ -320,7 +320,7 @@ puts `-c core.fsmonitor=false` first and sets `GIT_TERMINAL_PROMPT`, `GIT_EDITOR
 | `diff.external`, `diff.*.textconv` | Canopy runs no `git diff` that prints a patch (diffs are libgit2); the one `git diff --quiet` passes `--no-ext-diff`. |
 | `alias.lfs` | The LFS probe on opening a repository empties it (`tools::LFS_PROBE`). |
 | `core.sshCommand`, `credential.helper`, `remote.*.uploadpack`, `core.gitProxy`, `core.hooksPath` and its fetch hooks, `protocol.ext.allow` | Run only when the user starts a network command, as in a terminal. The one fetch nobody asked for, auto-fetch, refuses outside a trusted folder when they name a program (`partial::fetch_programs`) and neutralises the rest on its command line (`Repo::fetch_unattended`). |
-| `gpg.program`, `gpg.ssh.program` | `Repo::commit_signature` is the only verifier; the app does not call it yet, and it must only run in a trusted folder (`signature.rs`). Signing a commit the user makes runs them as in a terminal. |
+| `gpg.program`, `gpg.ssh.program` | `Repo::commit_signature` is the only verifier; the worker calls it only in a trusted folder (`Job::Signature`, gated by `allowed()`). Signing a commit the user makes runs them as in a terminal. |
 | `filter.*.clean/smudge`, merge drivers, hooks (`pre-commit`, `post-checkout`, ...), `submodule.*.update=!cmd` | Run when the user stages, commits, checks out, merges or updates submodules, as in a terminal. Not neutralised: doing so would break Git LFS and the user's own hooks. A repository from an untrusted source can still make these run once the user acts on it. |
 
 Runtime requirement: `git` 2.30 or newer on `PATH`.
