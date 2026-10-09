@@ -10,6 +10,8 @@ commits since the previous build.
 
 ### Fixed
 
+- In a small window the Changes view keeps room for the file lists: the staged files are no longer
+  pushed out of sight by the commit form, which scrolls its fields instead.
 - A download of a commit's files that runs past ten minutes now stops with a message naming the
   limit and a Retry button, and the failure is remembered, instead of leaving the commit
   without a way to ask again.

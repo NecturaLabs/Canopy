@@ -126,7 +126,6 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
                     });
                 return;
             }
-            let composer_height = (ui.available_height() * 0.60).max(60.0);
             // Short windows show a two-row description (`composer_fields`), so the composer
             // needs less room and the file lists keep it.
             let cap = if ui.ctx().content_rect().height() < 600.0 {
@@ -134,10 +133,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
             } else {
                 300.0
             };
+            let (default, min, max) =
+                pinned_composer_sizes(ui.available_height(), lists_height(&snap.status), cap);
             egui::Panel::bottom("composer")
-                .default_size(composer_height.min(cap))
-                .min_size(composer_height.min(cap.min(250.0)))
-                .max_size(composer_height.min(cap))
+                .default_size(default)
+                .min_size(min)
+                .max_size(max)
                 .frame(
                     egui::Frame::new()
                         .fill(s.pane)
@@ -184,6 +185,23 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
         ui.ctx().request_repaint();
     }
     Some((rect, handle.id))
+}
+
+/// The smallest a pinned composer gets: the commit button, its hint and a little of the fields,
+/// which scroll.
+const PINNED_COMPOSER_MIN: f32 = 150.0;
+/// The share of the column the file lists keep, at most, when the composer is pinned below them.
+const LISTS_SHARE: f32 = 0.6;
+
+/// The default, smallest and largest height of the composer pinned below the lists, in a column
+/// `available` points tall whose lists would take `lists` to show whole: the lists keep what
+/// they need up to [`LISTS_SHARE`] of the column, so every section shows its first files, and
+/// the composer takes the rest up to `cap`, its fields scrolling when it is squeezed.
+fn pinned_composer_sizes(available: f32, lists: f32, cap: f32) -> (f32, f32, f32) {
+    let kept = lists.min(available * LISTS_SHARE);
+    let max = (available - kept).clamp(PINNED_COMPOSER_MIN, cap);
+    let default = (available * 0.60).clamp(PINNED_COMPOSER_MIN, max);
+    (default, max.min(250.0), max)
 }
 
 /// Gap between the last list and the composer when the composer follows the lists.
@@ -1762,6 +1780,21 @@ mod tests {
                 .any(|a| matches!(a, Action::Op(Op::Stage(_)))),
             "Stage selected is disabled for a staged file: {actions:?}"
         );
+    }
+
+    #[test]
+    fn a_short_column_leaves_the_lists_room_for_every_section() {
+        // 960x600: about 470 points of column, lists of 250 for three unstaged and one staged file.
+        let (default, min, max) = pinned_composer_sizes(470.0, 250.0, 260.0);
+        assert!(max <= 470.0 - 250.0, "the lists keep 250: {max}");
+        assert!(min <= default && default <= max, "{min} {default} {max}");
+        // Very many files: the lists keep their share and the composer stays usable.
+        let (_, _, max) = pinned_composer_sizes(470.0, 5000.0, 260.0);
+        assert!((PINNED_COMPOSER_MIN..=260.0).contains(&max), "{max}");
+        // A tall window is unchanged: the composer takes its cap.
+        let (default, min, max) = pinned_composer_sizes(970.0, 5000.0, 300.0);
+        assert_eq!((min, max), (250.0, 300.0));
+        assert!(default <= max);
     }
 
     #[test]
