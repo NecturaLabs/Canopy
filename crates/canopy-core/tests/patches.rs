@@ -66,6 +66,67 @@ fn history(p: &Path) -> String {
 }
 
 #[test]
+fn exporting_patches_preserves_preexisting_staging_content() {
+    let source = tempfile::tempdir().expect("tempdir");
+    init(source.path());
+    let out = tempfile::tempdir().expect("tempdir");
+    let staging = out
+        .path()
+        .join(format!(".canopy-patches-{}", std::process::id()));
+    fs::create_dir(&staging).expect("preexisting folder");
+    fs::write(staging.join("keep.txt"), "user data").expect("existing data");
+    let repo = Repo::open(source.path()).expect("repo");
+    repo.export_patches(&[oid(source.path(), "HEAD")], out.path())
+        .expect("export");
+    assert_eq!(
+        fs::read_to_string(staging.join("keep.txt")).expect("data remains"),
+        "user data"
+    );
+}
+
+#[test]
+fn concurrent_patch_exports_never_replace_each_others_files() {
+    let source = tempfile::tempdir().expect("tempdir");
+    init(source.path());
+    let out = tempfile::tempdir().expect("tempdir");
+    let id = oid(source.path(), "HEAD");
+    let barrier = std::sync::Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let export = || {
+            let repo = Repo::open(source.path()).expect("repo");
+            barrier.wait();
+            repo.export_patches(&[id], out.path())
+        };
+        let first = scope.spawn(export);
+        let second = scope.spawn(export);
+        [
+            first.join().expect("first exporter"),
+            second.join().expect("second exporter"),
+        ]
+    });
+    assert_eq!(
+        results.iter().filter(|r| r.is_ok()).count(),
+        1,
+        "{results:?}"
+    );
+    let files = results
+        .into_iter()
+        .find_map(Result::ok)
+        .expect("exported files");
+    assert_eq!(files.len(), 1);
+    assert!(
+        fs::read_to_string(&files[0])
+            .expect("patch")
+            .contains("Subject: [PATCH] feat: first")
+    );
+    assert_eq!(
+        fs::read_dir(out.path()).expect("folder").count(),
+        1,
+        "staging folders cleaned"
+    );
+}
+
+#[test]
 fn exported_commits_apply_in_order_and_keep_their_authors() {
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());

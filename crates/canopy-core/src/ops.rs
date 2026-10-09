@@ -3,6 +3,7 @@
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use git2::Oid;
 
@@ -16,6 +17,9 @@ const COMMIT_TEMPLATE_LIMIT: u64 = 256 * 1024;
 
 /// The most commits one patch export covers.
 pub const MAX_PATCH_SERIES: usize = 50;
+
+/// Distinguishes concurrent exports in this process; exclusive creation also handles leftovers.
+static PATCH_EXPORT_NEXT: AtomicU64 = AtomicU64::new(0);
 
 /// The commits an export writes patches for, and the merge commits it skips.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -770,7 +774,15 @@ impl Repo {
         let io = |e: std::io::Error| Error::invalid(format!("{}: {e}", dir.display()));
         std::fs::create_dir_all(dir).map_err(io)?;
         // Written beside the target and moved in only once no file there would be replaced.
-        let staging = dir.join(format!(".canopy-patches-{}", std::process::id()));
+        let staging = loop {
+            let next = PATCH_EXPORT_NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = dir.join(format!(".canopy-patches-{}-{next}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => break path,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(io(error)),
+            }
+        };
         let staging_arg = staging.to_string_lossy();
         let mut staged = Vec::new();
         let made = ordered.iter().enumerate().try_for_each(|(n, id)| {
@@ -800,11 +812,17 @@ impl Repo {
                 )));
             }
             for (file, target) in staged.iter().zip(&targets) {
-                std::fs::rename(file, target).map_err(io)?;
+                let mut source = std::fs::File::open(file).map_err(io)?;
+                let mut destination = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(target)
+                    .map_err(io)?;
+                std::io::copy(&mut source, &mut destination).map_err(io)?;
             }
             Ok(())
         });
-        // Only the staging folder this call made, which is empty after a successful move.
+        // Only the staging folder this call exclusively created.
         let _ = std::fs::remove_dir_all(&staging);
         result?;
         let written = targets;
