@@ -436,6 +436,30 @@ impl Repo {
         cli::run_with_input(self.workdir(), &action.apply_args(context), &patch).map(drop)
     }
 
+    /// The text of the file `commit.template` names, for the message field of a new commit, with
+    /// the `#` comment lines `git commit` would strip from it left out. `None` when no template
+    /// is configured. A relative path is taken from the top of the working tree, as git does.
+    pub fn commit_template(&self) -> Result<Option<String>> {
+        let out = cli::run_unchecked(
+            self.workdir(),
+            &["config", "--path", "--get", "--", "commit.template"],
+        )?;
+        let path = String::from_utf8_lossy(&out.stdout).trim_end().to_owned();
+        if out.code != Some(0) || path.is_empty() {
+            return Ok(None);
+        }
+        let path = self.workdir().join(path);
+        let text = std::fs::read(&path).map_err(|e| {
+            Error::invalid(format!(
+                "Could not read the commit template {}: {e}",
+                path.display()
+            ))
+        })?;
+        let text = String::from_utf8_lossy(&text);
+        let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+        Ok(Some(kept.join("\n").trim_end().to_owned()))
+    }
+
     /// Commits the index with `message`, running hooks and signing as configured. `amend`
     /// replaces `HEAD`; `signoff` adds a `Signed-off-by:` trailer for the committer
     /// (`git commit --signoff`). The message is cleaned up as [`crate::GitOptions::cleanup`]
