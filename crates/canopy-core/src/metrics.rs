@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{BranchType, Oid};
 
-use crate::{Error, MergedReason, Repo, Result, Signature, cli, partial};
+use crate::{Error, MergedReason, Repo, Result, Signature, cli};
 
 const DAY_SECONDS: i64 = 86_400;
 const WEEK_SECONDS: i64 = 7 * DAY_SECONDS;
@@ -121,7 +121,11 @@ impl Repo {
             })
             .collect();
         let mut walk = self.git().revwalk()?;
-        walk.push_glob("refs/*")?;
+        // Stashes, notes and Canopy's own request refs are not activity.
+        for glob in ["refs/heads/*", "refs/tags/*", "refs/remotes/*"] {
+            walk.push_glob(glob)?;
+        }
+        walk.set_sorting(git2::Sort::TIME)?;
         if let Ok(head) = self.git().head() {
             walk.push(head.peel_to_commit()?.id())?;
         }
@@ -142,13 +146,24 @@ impl Repo {
             {
                 last_commit = Some(commit_data(&commit));
             }
+            // Newest first: a week of slack covers commits whose clocks run behind their parents'.
+            if time < start - WEEK_SECONDS {
+                break;
+            }
         }
 
-        // Unborn HEAD is not a revision; shortlog with --all still handles an empty repo.
+        // Unborn HEAD is not a revision; shortlog still handles an empty repo.
         let authors = if self.git().head().is_ok() {
-            self.local_metrics_command(&["shortlog", "-sne", "--all", "HEAD"])?
+            self.local_metrics_command(&[
+                "shortlog",
+                "-sne",
+                "--branches",
+                "--tags",
+                "--remotes",
+                "HEAD",
+            ])?
         } else {
-            self.local_metrics_command(&["shortlog", "-sne", "--all"])?
+            self.local_metrics_command(&["shortlog", "-sne", "--branches", "--tags", "--remotes"])?
         };
         let authors = authors.lines().map(parse_author).collect::<Result<_>>()?;
         let storage = self.local_metrics_command(&["count-objects", "-v"])?;
@@ -175,8 +190,8 @@ impl Repo {
 
     /// Every local branch compared with the cached default branch and its upstream.
     /// Uses remote HEAD (origin first), then main/master; an unknown default stays absent.
-    /// Squash detection is skipped for partial clones and custom merge/filter drivers, so this read
-    /// cannot fetch missing objects or execute repository-defined programs.
+    /// Squash detection is never run: `git merge-tree` writes objects and would execute merge and
+    /// filter drivers, and this read must change nothing and run no repository-defined program.
     pub fn branch_metrics(&self) -> Result<Vec<BranchMetrics>> {
         self.branch_metrics_at(now()?)
     }
@@ -224,10 +239,9 @@ impl Repo {
 
     fn branch_metrics_at(&self, now: i64) -> Result<Vec<BranchMetrics>> {
         let base = self.metrics_default()?;
-        let squash = !partial::is_partial_clone(self.git()) && self.metrics_squash_is_safe()?;
         let merged = base
             .as_ref()
-            .map(|(_, id)| self.merged_branches(&id.to_string(), squash))
+            .map(|(_, id)| self.merged_branches(&id.to_string(), false))
             .transpose()?
             .unwrap_or_default();
         let branches: Vec<_> = self
@@ -303,21 +317,6 @@ impl Repo {
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
-    }
-
-    fn metrics_squash_is_safe(&self) -> Result<bool> {
-        // Git also sees environment configuration overrides that libgit2 does not read.
-        let keys = self.local_metrics_command(&["config", "--name-only", "--list"])?;
-        Ok(!keys.lines().any(|key| {
-            let key = key.to_ascii_lowercase();
-            (key.starts_with("merge.") && key.ends_with(".driver"))
-                || (key.starts_with("filter.")
-                    && [".clean", ".smudge", ".process"]
-                        .iter()
-                        .any(|suffix| key.ends_with(suffix)))
-                || (key.starts_with("remote.") && key.ends_with(".promisor"))
-                || key == "extensions.partialclone"
-        }))
     }
 
     fn metrics_divergence(&self, tip: Oid, base: Oid) -> Result<Divergence> {
@@ -428,7 +427,18 @@ mod tests {
         assert_eq!(metrics.authors[0].name, "Countess");
         assert_eq!(metrics.authors[0].email, "countess@example.test");
         assert_eq!(metrics.authors[0].commits, 4);
-        let oracle = git(p, &["shortlog", "-sne", "--all", "HEAD"], MONDAY);
+        let oracle = git(
+            p,
+            &[
+                "shortlog",
+                "-sne",
+                "--branches",
+                "--tags",
+                "--remotes",
+                "HEAD",
+            ],
+            MONDAY,
+        );
         assert_eq!(
             metrics.authors,
             oracle
@@ -572,16 +582,15 @@ mod tests {
         let metrics = repo
             .branch_metrics_at(MONDAY + 93 * DAY_SECONDS)
             .expect("squashed metrics");
-        if cli::has_merge_tree_write_tree() {
-            assert_eq!(
-                metrics
-                    .iter()
-                    .find(|b| b.name == "topic")
-                    .expect("topic")
-                    .merged,
-                Some(MergedReason::SquashMerged)
-            );
-        }
+        // Squash detection would write objects, so this read leaves it out.
+        assert_eq!(
+            metrics
+                .iter()
+                .find(|b| b.name == "topic")
+                .expect("topic")
+                .merged,
+            None
+        );
         // Without any known default, comparisons stay absent rather than comparing to HEAD.
         git(p, &["branch", "-m", "main", "trunk"], MONDAY);
         assert!(
