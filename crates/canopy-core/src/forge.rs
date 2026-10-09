@@ -51,6 +51,15 @@ impl ForgeKind {
     }
 }
 
+/// A web page about a commit's author on the forge: see [`Forge::author_page`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorPage {
+    /// The address to open.
+    pub url: String,
+    /// The author's own profile (from a no-reply address) rather than a search for them.
+    pub profile: bool,
+}
+
 /// A project on a forge, as recognised from a remote URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Forge {
@@ -314,6 +323,52 @@ impl Forge {
         self.page(&format!("commit/{}", query_value(sha)))
     }
 
+    /// The web page of the author behind `email`: their profile when it is the forge's no-reply
+    /// address (`ID+login@users.noreply.github.com`, `ID-login@users.noreply.<gitlab host>`),
+    /// else the forge's user search for the address. Building the link sends nothing; the
+    /// address leaves the machine only when the user opens it.
+    pub fn author_page(&self, email: &str) -> AuthorPage {
+        let noreply = format!("@users.noreply.{}", self.host);
+        let separator = match self.kind {
+            ForgeKind::GitHub => '+',
+            ForgeKind::GitLab => '-',
+        };
+        let login = email
+            .strip_suffix(noreply.as_str())
+            .map(|local| match local.split_once(separator) {
+                Some((id, login)) if id.bytes().all(|b| b.is_ascii_digit()) => login,
+                _ => local,
+            })
+            .filter(|login| {
+                !login.is_empty()
+                    && login
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+            });
+        if let Some(login) = login {
+            return AuthorPage {
+                url: format!("https://{}/{login}", self.authority()),
+                profile: true,
+            };
+        }
+        let query = query_value(email);
+        let url = match self.kind {
+            ForgeKind::GitHub => {
+                format!("https://{}/search?q={query}&type=users", self.authority())
+            }
+            ForgeKind::GitLab => {
+                format!(
+                    "https://{}/search?search={query}&scope=users",
+                    self.authority()
+                )
+            }
+        };
+        AuthorPage {
+            url,
+            profile: false,
+        }
+    }
+
     /// The file tree of a branch.
     pub fn branch_url(&self, branch: &str) -> String {
         self.page(&format!("tree/{}", path_part(branch)))
@@ -402,6 +457,50 @@ mod tests {
     use super::*;
 
     use ForgeKind::{GitHub, GitLab};
+
+    fn forge(url: &str) -> Forge {
+        Forge::parse(url, &[]).expect("a forge")
+    }
+
+    #[test]
+    fn a_no_reply_address_names_the_profile_and_any_other_a_search() {
+        let github = forge("https://github.com/o/r.git");
+        let page = |email| github.author_page(email);
+        for email in [
+            "583231+octocat@users.noreply.github.com",
+            "octocat@users.noreply.github.com",
+        ] {
+            assert_eq!(
+                page(email),
+                AuthorPage {
+                    url: "https://github.com/octocat".into(),
+                    profile: true
+                }
+            );
+        }
+        assert_eq!(
+            page("ada@example.com"),
+            AuthorPage {
+                url: "https://github.com/search?q=ada%40example.com&type=users".into(),
+                profile: false
+            }
+        );
+        // Not a login: a path or query smuggled into the local part is never put in the address.
+        for email in ["a/b@users.noreply.github.com", "@users.noreply.github.com"] {
+            assert!(!page(email).profile, "{email}");
+        }
+        let gitlab = forge("https://gitlab.com/g/p.git");
+        assert_eq!(
+            gitlab.author_page("42-ada@users.noreply.gitlab.com").url,
+            "https://gitlab.com/ada"
+        );
+        assert_eq!(
+            gitlab.author_page("ada@example.com").url,
+            "https://gitlab.com/search?search=ada%40example.com&scope=users"
+        );
+        // Another forge's no-reply address proves nothing here.
+        assert!(!github.author_page("ada@users.noreply.gitlab.com").profile);
+    }
 
     fn hosts(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()

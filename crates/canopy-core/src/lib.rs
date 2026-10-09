@@ -44,7 +44,7 @@ pub use conflict::{
 pub use diff::{DiffLine, DiffSource, FileDiff, Hunk, HunkKey, LineKind, Whitespace};
 pub use error::{Error, Result};
 pub use flow::{FlowConfig, FlowFinish, FlowKind};
-pub use forge::{Forge, ForgeKind};
+pub use forge::{AuthorPage, Forge, ForgeKind};
 pub use git2::Oid;
 // `Segment` at the crate root is the conflict-file segment; the graph's is `GraphSegment`.
 pub use graph::{GraphRow, LineEnd, Segment as GraphSegment};
