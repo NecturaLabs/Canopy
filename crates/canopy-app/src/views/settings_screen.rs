@@ -3822,7 +3822,7 @@ fn override_select<T: PartialEq + Copy>(
 }
 
 /// Whether git signs this repository's commits, and where that is set: shown, not changed
-/// (overriding signing is the owner's call, docs/backlog.md "Git settings").
+/// (overriding signing is the owner's call, GitHub issue #42).
 fn signing_row(ui: &mut Ui, facts: &GitFacts) {
     let with = facts
         .gpg_format
