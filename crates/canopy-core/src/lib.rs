@@ -22,6 +22,7 @@ pub mod ignore;
 pub mod lfs;
 mod lines;
 mod merged;
+pub mod message;
 mod metrics;
 pub mod model;
 pub mod ops;
