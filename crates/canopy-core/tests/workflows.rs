@@ -852,6 +852,27 @@ fn following_submodules_checks_out_the_recorded_commit_unless_told_not_to() {
 }
 
 #[test]
+fn following_submodules_leaves_a_deinitialised_one_alone() {
+    let (dir, repo, _sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    git(&sup, &["submodule", "deinit", "-q", "-f", "deps/lib"]);
+    // A leading "-" in `git submodule status` marks a submodule that is not initialised.
+    assert!(git(&sup, &["submodule", "status"]).starts_with('-'));
+
+    repo.follow_submodules(|_| {}).expect("follow");
+
+    assert!(
+        git(&sup, &["submodule", "status"]).starts_with('-'),
+        "following a pull or checkout must not initialise it again"
+    );
+    assert_eq!(
+        fs::read_dir(sup.join("deps/lib")).expect("folder").count(),
+        0,
+        "and must not clone it"
+    );
+}
+
+#[test]
 fn a_checkout_moves_submodules_only_as_canopy_or_a_followed_configuration_says() {
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");

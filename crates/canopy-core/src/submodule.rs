@@ -351,7 +351,9 @@ impl Repo {
         if self.submodules(false)?.is_empty() {
             return Ok(());
         }
-        self.submodule_update(None, true, true, progress)
+        // Without `--init`, as git's own recursion: a submodule the user deinitialised, or never
+        // initialised, stays so rather than being cloned from whatever `.gitmodules` now says.
+        self.submodule_update(None, false, true, progress)
             .map(drop)
             .map_err(|e| {
                 Error::invalid(format!(

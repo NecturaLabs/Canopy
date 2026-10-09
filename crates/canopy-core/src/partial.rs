@@ -209,6 +209,9 @@ fn runs_a_program(name: &str) -> bool {
         name.as_str(),
         "core.sshcommand" | "core.gitproxy" | "core.hookspath" | "core.askpass"
     ) || (name.starts_with("credential.") && name.ends_with(".helper"))
+        // libgit2 does not evaluate `hasconfig:` conditions but git does: what such an include
+        // brings in (`core.sshCommand`, a credential helper) would never be seen here.
+        || name.starts_with("includeif.hasconfig:")
         || (name.starts_with("remote.")
             && [".uploadpack", ".receivepack", ".vcs"]
                 .iter()
@@ -641,6 +644,22 @@ mod tests {
         ] {
             assert!(listed.iter().any(|k| k == key), "{key} in {listed:?}");
         }
+
+        // An include that only git evaluates can bring any of the above in unseen.
+        let plain = tempfile::tempdir().expect("tempdir");
+        let hostile = Repository::init(plain.path()).expect("init");
+        let config_file = hostile.path().join("config");
+        let mut text = std::fs::read_to_string(&config_file).expect("config");
+        text.push_str("[includeIf \"hasconfig:remote.*.url:ssh://**\"]\n\tpath = evil.inc\n");
+        std::fs::write(&config_file, text).expect("write config");
+        let hostile = Repository::open(plain.path()).expect("open");
+        assert!(
+            fetch_programs(&hostile)
+                .iter()
+                .any(|k| k.starts_with("includeif.hasconfig:")),
+            "{:?}",
+            fetch_programs(&hostile)
+        );
 
         let hooks = repo.path().join("hooks");
         std::fs::create_dir_all(&hooks).expect("hooks");
