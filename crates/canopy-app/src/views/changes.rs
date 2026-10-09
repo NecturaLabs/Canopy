@@ -1350,7 +1350,7 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .tooltip("Replace the last commit with the staged changes and this message")
         .disabled_reason("Finish or abort the operation in progress first")
         .show(ui);
-    if tab.amend && !was && tab.commit_summary.is_empty() {
+    if tab.amend && !was && tab.message_is_unwritten() {
         actions.push(Action::PrefillAmend);
     }
     ui.add_space(theme::SM);

@@ -752,6 +752,9 @@ pub struct RepoTab {
     /// The merge message put into the commit boxes when a merge began, to drop it again if the
     /// merge ends without a commit and nobody edited it.
     merge_prefill: Option<(String, String)>,
+    /// The summary and description the commit template filled in, while they stay as filled:
+    /// such a message still counts as unwritten for the amend, merge and squash prefills.
+    template_prefill: Option<(String, String)>,
     pub amend: bool,
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,
@@ -881,6 +884,7 @@ impl RepoTab {
             commit_summary: String::new(),
             commit_body: String::new(),
             merge_prefill: None,
+            template_prefill: None,
             amend: false,
             focus_summary: false,
             running: None,
@@ -914,6 +918,18 @@ impl RepoTab {
             avatars: crate::avatars::Avatars::default(),
             last_fetch: Instant::now(),
         }
+    }
+
+    /// Whether the message boxes hold nothing the user wrote: empty, or still exactly what the
+    /// commit template filled in. The amend, merge and squash prefills may replace such a message.
+    pub fn message_is_unwritten(&self) -> bool {
+        (self.commit_summary.trim().is_empty() && self.commit_body.trim().is_empty())
+            || self
+                .template_prefill
+                .as_ref()
+                .is_some_and(|(summary, body)| {
+                    *summary == self.commit_summary && *body == self.commit_body
+                })
     }
 
     /// Whether the composer can submit a commit through any input path.
@@ -1616,10 +1632,7 @@ impl RepoTab {
                         self.commit_summary.clear();
                         self.commit_body.clear();
                     }
-                    if entering_merge
-                        && self.commit_summary.trim().is_empty()
-                        && self.commit_body.trim().is_empty()
-                    {
+                    if entering_merge && self.message_is_unwritten() {
                         self.worker.send(Job::MergeMessage);
                     }
                     // The pull settings depend on the current branch: read them again when it
@@ -1795,8 +1808,7 @@ impl RepoTab {
                         .as_ref()
                         .is_some_and(|snap| snap.state == canopy_core::RepoState::Merge)
                         && !self.amend
-                        && self.commit_summary.trim().is_empty()
-                        && self.commit_body.trim().is_empty()
+                        && self.message_is_unwritten()
                     {
                         let mut parts = message.splitn(2, '\n');
                         parts
@@ -1837,6 +1849,8 @@ impl RepoTab {
                                 .unwrap_or_default()
                                 .trim()
                                 .clone_into(&mut self.commit_body);
+                            self.template_prefill =
+                                Some((self.commit_summary.clone(), self.commit_body.clone()));
                         }
                         Ok(_) => {}
                         Err(body) => notices.push(Notice {
@@ -1889,8 +1903,7 @@ impl RepoTab {
                             .snap
                             .as_ref()
                             .is_none_or(|snap| snap.state != canopy_core::RepoState::Clean)
-                        || !self.commit_summary.trim().is_empty()
-                        || !self.commit_body.trim().is_empty()
+                        || !self.message_is_unwritten()
                     {
                         continue;
                     }
@@ -1912,8 +1925,7 @@ impl RepoTab {
                             .snap
                             .as_ref()
                             .is_some_and(|snap| snap.state == canopy_core::RepoState::Clean)
-                        && self.commit_summary.trim().is_empty()
-                        && self.commit_body.trim().is_empty()
+                        && self.message_is_unwritten()
                     {
                         let mut parts = message.splitn(2, '\n');
                         parts
@@ -2838,6 +2850,77 @@ mod tests {
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].title, "Could not read the commit template");
         assert!(notices[0].body.contains("bad config"));
+    }
+
+    /// A template sitting untouched in the boxes must not stop git's own messages from filling
+    /// them: HEAD's for an amend, `MERGE_MSG` for a merge, `SQUASH_MSG` for a squash.
+    #[test]
+    fn an_untouched_template_yields_to_the_amend_merge_and_squash_messages() {
+        let state = |state| {
+            Event::Snapshot(Arc::new(RepoSnapshot {
+                state,
+                ..Default::default()
+            }))
+        };
+        let template = || Event::CommitTemplate(Ok(Some("\nfeat: \n\nWhy:\n".into())));
+        let fresh = |first| {
+            let (worker, events, _jobs) = Worker::detached();
+            let mut tab =
+                RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+            events.send(state(first)).expect("snapshot");
+            tab.poll(&[]);
+            (tab, events)
+        };
+
+        let (mut tab, events) = fresh(canopy_core::RepoState::Clean);
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat:");
+        assert!(tab.message_is_unwritten());
+        tab.amend = true;
+        events
+            .send(Event::HeadMessage("fix: the last one\n\nbecause".into()))
+            .expect("head message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "fix: the last one");
+        assert_eq!(tab.commit_body, "because");
+
+        let (mut tab, events) = fresh(canopy_core::RepoState::Clean);
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        events
+            .send(Event::SquashMessage(
+                "Squashed commit of the following:".into(),
+            ))
+            .expect("squash message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "Squashed commit of the following:");
+
+        let (mut tab, events) = fresh(canopy_core::RepoState::Clean);
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        events
+            .send(state(canopy_core::RepoState::Merge))
+            .expect("merge snapshot");
+        tab.poll(&[]);
+        events
+            .send(Event::MergeMessage("Merge branch 'topic'".into()))
+            .expect("merge message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "Merge branch 'topic'");
+
+        // Text the user changed is theirs: none of the three replaces it.
+        let (mut tab, events) = fresh(canopy_core::RepoState::Clean);
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        tab.commit_summary.push_str(" mine");
+        assert!(!tab.message_is_unwritten());
+        tab.amend = true;
+        events
+            .send(Event::HeadMessage("fix: the last one".into()))
+            .expect("head message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat: mine");
     }
 
     #[test]
