@@ -196,11 +196,34 @@ fn card_text<'a>(kind: ToastKind, body: &'a str, help: Option<&'static str>) -> 
         };
     }
     // No hint: git's own words say why, and the details hold the rest. Git opens some commands
-    // with a progress line ("Cloning into ..."), so its first `fatal:` or `error:` line, when it
-    // wrote one, is the reason; else the first line.
+    // with progress. A remote hook's explanation is more useful than git's generic push error.
     let lines = || body.lines().map(str::trim);
     let first = lines()
-        .find(|l| l.starts_with("fatal:") || l.starts_with("error:"))
+        .find(|l| {
+            l.starts_with("fatal:")
+                || l.starts_with("remote: fatal:")
+                || l.starts_with("remote: error:")
+        })
+        .or_else(|| {
+            lines().find(|l| {
+                l.strip_prefix("remote:").is_some_and(|text| {
+                    let text = text.trim();
+                    !text.is_empty()
+                        && ![
+                            "Enumerating objects:",
+                            "Counting objects:",
+                            "Compressing objects:",
+                            "Total ",
+                            "Resolving deltas:",
+                            "Receiving objects:",
+                            "Writing objects:",
+                        ]
+                        .iter()
+                        .any(|prefix| text.starts_with(prefix))
+                })
+            })
+        })
+        .or_else(|| lines().find(|l| l.starts_with("error:")))
         .or_else(|| lines().find(|l| !l.is_empty()));
     let more = first.is_some_and(|f| body.trim() != f);
     CardText {
@@ -274,6 +297,7 @@ struct Entry {
     /// What an error means, before git's own words.
     help: Option<&'static str>,
     offer: Option<Offer>,
+    unread: bool,
 }
 
 /// The stack of live toasts, and the notification center's history.
@@ -339,6 +363,8 @@ struct Saved {
     at: i64,
     source: Option<String>,
     offer: Option<SavedOffer>,
+    #[serde(default)]
+    unread: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -373,6 +399,11 @@ impl Toasts {
                 body: e.body.clone(),
                 at: e.at,
                 source: e.source.clone(),
+                unread: e.unread
+                    || (matches!(
+                        e.offer,
+                        Some(Offer::Pull(_) | Offer::Accounts | Offer::GitSettings)
+                    ) && self.items.iter().any(|t| t.id == e.id)),
                 offer: match &e.offer {
                     Some(Offer::Pull(path)) => Some(SavedOffer::Pull(path.clone())),
                     Some(Offer::Accounts) => Some(SavedOffer::Accounts),
@@ -384,12 +415,13 @@ impl Toasts {
         serde_json::to_string(&saved).unwrap_or_default()
     }
 
-    /// Puts back what [`Self::to_json`] kept, newest first and already read; text that does not
-    /// parse is ignored.
+    /// Puts back the center and its unread state. Legacy entries without that state are read;
+    /// text that does not parse is ignored.
     pub fn restore_json(&mut self, json: &str) {
         let Ok(saved) = serde_json::from_str::<Vec<Saved>>(json) else {
             return;
         };
+        self.history.clear();
         for s in saved.into_iter().take(HISTORY) {
             self.next += 1;
             self.history.push_back(Entry {
@@ -403,6 +435,7 @@ impl Toasts {
                 body: s.body,
                 at: s.at,
                 source: s.source,
+                unread: s.unread,
                 help: None,
                 offer: s.offer.map(|o| match o {
                     SavedOffer::Pull(path) => Offer::Pull(path),
@@ -411,6 +444,23 @@ impl Toasts {
                 }),
             });
         }
+        self.count_unread();
+    }
+
+    fn count_unread(&mut self) {
+        self.unread = self.history.iter().filter(|e| e.unread).count();
+        self.unread_errors = self
+            .history
+            .iter()
+            .filter(|e| e.unread && e.kind == ToastKind::Error)
+            .count();
+    }
+
+    fn mark_unread(&mut self, id: u64) {
+        if let Some(entry) = self.history.iter_mut().find(|e| e.id == id) {
+            entry.unread = true;
+        }
+        self.count_unread();
     }
 
     /// Applies new card filters immediately; hidden cards remain in the notification center.
@@ -535,6 +585,7 @@ impl Toasts {
             card_text(kind, &body, help).body,
         );
         self.next += 1;
+        let card = self.prefs.shows(topic) && !self.center_open;
         self.history.push_front(Entry {
             id: self.next,
             kind,
@@ -544,14 +595,11 @@ impl Toasts {
             source,
             help,
             offer: offer.clone(),
+            unread: !card && topic.counts() && !self.center_open,
         });
         self.history.truncate(HISTORY);
-        let card = self.prefs.shows(topic) && !self.center_open;
+        self.count_unread();
         if !card {
-            if topic.counts() && !self.center_open {
-                self.unread += 1;
-                self.unread_errors += usize::from(kind == ToastKind::Error);
-            }
             tracing::debug!(title = %title, ?topic, "notification kept for the center");
             ctx.request_repaint();
             return;
@@ -580,8 +628,7 @@ impl Toasts {
             if gone.offer.is_some() {
                 // Not made: it waits in the center, counted on the bell as when it runs out.
                 tracing::warn!(title = %gone.title, "a sixth decision pushed out the oldest card");
-                self.unread += 1;
-                self.unread_errors += usize::from(gone.kind == ToastKind::Error);
+                self.mark_unread(gone.id);
             }
         }
         ctx.request_repaint();
@@ -613,17 +660,15 @@ impl Toasts {
             }
         }
         // A decision nobody made waits in the center, counted on the bell.
-        let undecided = || {
-            self.items
-                .iter()
-                .filter(|t| t.left <= 0.0 && t.offer.is_some())
-        };
-        let (count, errors) = (
-            undecided().count(),
-            undecided().filter(|t| t.kind == ToastKind::Error).count(),
-        );
-        self.unread += count;
-        self.unread_errors += errors;
+        let undecided: Vec<_> = self
+            .items
+            .iter()
+            .filter(|t| t.left <= 0.0 && t.offer.is_some())
+            .map(|t| t.id)
+            .collect();
+        for id in undecided {
+            self.mark_unread(id);
+        }
         self.items.retain(|t| t.left > 0.0);
         self.focus_held = false;
         if self.items.is_empty() {
@@ -835,8 +880,10 @@ impl Toasts {
         }
         self.center_open = shown.is_some() && !leave;
         if self.center_open {
-            self.unread = 0;
-            self.unread_errors = 0;
+            for entry in &mut self.history {
+                entry.unread = false;
+            }
+            self.count_unread();
             // What is open in the center needs no card as well.
             self.items.clear();
         }
@@ -959,21 +1006,8 @@ impl Toasts {
                                 // as on a card.
                                 ui.spacing_mut().interact_size.y = 0.0;
                                 ui.horizontal(|ui| {
-                                    let title = ui.label(
-                                        RichText::new(&e.title)
-                                            .size(m.body_size)
-                                            .family(theme::semibold())
-                                            .color(p.text),
-                                    );
-                                    painter.text(
-                                        egui::pos2(slot.center().x, title.rect.center().y),
-                                        Align2::CENTER_CENTER,
-                                        glyph,
-                                        egui::FontId::proportional(m.icon_toast),
-                                        color,
-                                    );
                                     ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        egui::Layout::right_to_left(egui::Align::TOP),
                                         |ui| {
                                             if IconButton::new(icon::X, "Dismiss notification")
                                                 .size(Size::Xs)
@@ -983,24 +1017,52 @@ impl Toasts {
                                             {
                                                 gone = Some(e.id);
                                             }
-                                            let when = super::widgets::relative_time(e.at, now);
-                                            let when = match &e.source {
-                                                Some(source) => format!("{source}  \u{b7}  {when}"),
-                                                None => when,
-                                            };
-                                            ui.label(
-                                                RichText::new(when)
-                                                    .size(m.meta_size)
-                                                    .color(p.text_faint),
-                                            )
-                                            .kit_tooltip(super::widgets::full_date(
-                                                e.at,
-                                                local_offset_minutes(e.at),
-                                            ))
-                                            .show();
+                                            let title = ui
+                                                .allocate_ui_with_layout(
+                                                    vec2(ui.available_width(), 0.0),
+                                                    egui::Layout::top_down(egui::Align::Min),
+                                                    |ui| {
+                                                        ui.add(
+                                                            egui::Label::new(
+                                                                RichText::new(&e.title)
+                                                                    .size(m.body_size)
+                                                                    .family(theme::semibold())
+                                                                    .color(p.text),
+                                                            )
+                                                            .wrap(),
+                                                        )
+                                                    },
+                                                )
+                                                .inner;
+                                            painter.text(
+                                                egui::pos2(
+                                                    slot.center().x,
+                                                    title.rect.top() + m.body_size * 0.5,
+                                                ),
+                                                Align2::CENTER_CENTER,
+                                                glyph,
+                                                egui::FontId::proportional(m.icon_toast),
+                                                color,
+                                            );
                                         },
                                     );
                                 });
+                                let when = super::widgets::relative_time(e.at, now);
+                                let when = match &e.source {
+                                    Some(source) => format!("{source}  ·  {when}"),
+                                    None => when,
+                                };
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(when).size(m.meta_size).color(p.text_faint),
+                                    )
+                                    .wrap(),
+                                )
+                                .kit_tooltip(super::widgets::full_date(
+                                    e.at,
+                                    local_offset_minutes(e.at),
+                                ))
+                                .show();
                                 let body = e.body.trim();
                                 // What the card says (a hint before git's own words), the full
                                 // output in the tooltip.
@@ -2155,9 +2217,34 @@ mod tests {
             ],
             "the update to review is gone, the rest is back, newest first"
         );
-        assert_eq!(after.unread, 0, "restored notifications are read");
+        assert_eq!(
+            after.unread, 1,
+            "the unanswered Git settings offer still needs attention"
+        );
         after.restore_json("not json");
         assert_eq!(after.history.len(), 3, "unreadable text is ignored");
+    }
+
+    #[test]
+    fn unread_notifications_and_error_severity_survive_restart() {
+        let ctx = egui::Context::default();
+        let mut before = Toasts::default();
+        before.set_prefs(NotificationPrefs {
+            cards: false,
+            ..Default::default()
+        });
+        before.push(&ctx, ToastKind::Error, Topic::Error, "failure", "why");
+        before.push(&ctx, ToastKind::Info, Topic::Attention, "attention", "why");
+        before.push(&ctx, ToastKind::Success, Topic::Finished, "finished", "");
+        let mut after = Toasts::default();
+        after.restore_json(&before.to_json());
+        assert_eq!(after.unread, 2);
+        assert_eq!(after.unread_errors, 1);
+        assert!(after.items.is_empty(), "a restart does not replay cards");
+        let read = Toasts::default();
+        let mut empty = Toasts::default();
+        empty.restore_json(&read.to_json());
+        assert_eq!(empty.unread, 0);
     }
 
     #[test]
@@ -2258,6 +2345,65 @@ mod tests {
     }
 
     /// Git opens a clone with a progress line; the card must say why it failed, not that.
+    #[test]
+    fn a_long_notification_title_leaves_room_for_its_source_and_time() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut toasts = Toasts::default();
+        let title = "Push failed for the feature branch with a long descriptive name";
+        toasts.push_for(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            title,
+            "denied",
+            Some(Path::new("/work/repository")),
+        );
+        let mut rects = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_max_width(CENTER_WIDTH);
+                let _ = toasts.center(ui);
+            });
+            out.textures_delta.clear();
+            rects = out
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t)
+                        if t.galley.text() == title
+                            || t.galley.text().starts_with("repository  ") =>
+                    {
+                        Some((t.galley.text().to_owned(), t.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        assert_eq!(rects.len(), 2, "{rects:?}");
+        assert!(!rects[0].1.intersects(rects[1].1), "{rects:?}");
+        assert!(
+            rects.iter().all(|(_, r)| r.right() <= CENTER_WIDTH),
+            "{rects:?}"
+        );
+    }
+
+    #[test]
+    fn a_failure_card_gives_the_remote_hook_reason_before_generic_push_errors() {
+        let raw = "Enumerating objects: 27, done.\nremote: Counting objects: 100% (27/27), done.\nremote: error: Changes must be made through a pull request.\n! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs";
+        let said = card_text(ToastKind::Error, raw, None);
+        assert_eq!(
+            said.body,
+            Some("remote: error: Changes must be made through a pull request.")
+        );
+        assert_eq!(said.details, Some(raw));
+        let raw = "Enumerating objects: 27, done.\nremote: Push denied by policy\nerror: failed to push some refs";
+        assert_eq!(
+            card_text(ToastKind::Error, raw, None).body,
+            Some("remote: Push denied by policy")
+        );
+    }
+
     #[test]
     fn a_failure_card_gives_gits_fatal_line_not_its_progress_line() {
         let raw = "git submodule failed: Cloning into 'libs/three'...\n\

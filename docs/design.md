@@ -730,15 +730,17 @@ Finished operations, Confirmations); Settings → Notifications chooses which sh
 cards, and by default only the first three do. Every notification, card or not, goes to the
 notification center: the bell at the right end of the status bar (`BELL`, `BELL_SLASH` while
 cards are off) opens a 360-point popover listing the last 100, newest first. Each row is laid out
-like its card (the same glyph, title, body and gaps), with its relative time at the right of the
-title (exact in the tooltip), up to four lines of text (all of it in the tooltip), and buttons
+like its card (the same glyph, title, body and gaps), with its dismiss button at the right of the
+wrapping title and its source and relative time on their own line (exact time in the tooltip),
+up to four lines of text (all of it in the tooltip), and buttons
 only for what can be done: a decision's own two as Xs (tonal Primary and Ghost), and Copy (Ghost)
 on a failure, whose output is worth keeping; their labels line up with the text. Rows part by
 `SM` space and a hairline at 8% of the text colour over the surface, the same in every theme. A
 header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors,
 attention, updates) that showed no card, and decisions whose card ran out, raise a strong count
 badge on the bell, solid `danger_solid` with `on_danger` text when an unread one is an error, else
-`accent`, kept inside the status bar; opening the center clears it,
+`accent`, kept inside the status bar. Read state is saved per entry, preserving unread counts and
+error severity across restarts; legacy entries without a read-state field load as read. Opening the center clears it,
 and while it is open new notifications go to its list instead of a card.
 
 ### Command palette
