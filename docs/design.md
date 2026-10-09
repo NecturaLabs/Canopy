@@ -509,6 +509,34 @@ opening with the mouse as well as from the keyboard, and the highlighted option 
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
 
+### Popover and the smaller components
+
+`Popover` is a small panel anchored to a control (diff options, the author card, the theme
+quick-pick): the overlay surface with `card_pad` inside, 6 pt from the anchor and at least as wide.
+Clicking the anchor toggles it; a click outside or Esc closes it and gives focus back to the
+anchor. One popover is open at a time. The author card in the commit details is one: the name is a
+link button, the card holds the email with a copy button, who committed, the signature, a profile
+or user-search link and the picture settings; a verified signature also gets a green check beside
+the name, and nothing for any other state.
+
+The rest of the kit, each with the states `--overlay gallery` shows:
+
+- `Badge` is a small rounded count or status label, neutral unless a `Tone` tints it;
+  `CountBadge` shows mono digits capped at `99+`.
+- `StatusDot` is a small circle with a ring of the surface behind it; `.pulse()` breathes while
+  something runs (still with reduced motion).
+- `Progress` is a bar with a label and value text; `Skeleton::rows(n)` stands in for a list that
+  loads for the first time (never on refreshes), after `LOADING_DELAY` so a quick load never
+  flashes it (at once with reduced motion).
+- `EmptyState` is a pane with nothing to show: art (an icon in a compact pane), a title, at most
+  two lines of body, a primary action, an optional link and keycap hints, centred a little above
+  the middle; the art grows in once.
+- `SearchField` is a filter input: magnifier, the shortcut's `Keycap` while empty, a clear button
+  once filled; Esc clears, then lets go of focus. `Keycap` draws one key.
+- `Slider` picks a value along a range by dragging, clicking or the arrow keys.
+- `TreeRow` is a `ListRow` with an indent per level and a disclosure chevron (space is kept for it
+  on leaves); Left collapses or asks for the parent, Right expands or asks for the first child.
+
 ### Text field
 
 `kit::field` draws every text input (single-line, search, secret, numeric and the commit composer);
