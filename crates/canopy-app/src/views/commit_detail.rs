@@ -8,7 +8,7 @@ use egui::{
 use egui_phosphor::regular as icon;
 
 use canopy_core::forge::Forge;
-use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, Signer, short_id};
+use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, short_id};
 
 use crate::action::Action;
 use crate::tab::{DetailsError, FileSelection, RepoTab};
@@ -415,20 +415,17 @@ fn author(
                 format!("{} (author card)", d.author.name),
             )
         });
-        let verified = tab
+        let status = tab
             .signature
             .as_ref()
             .filter(|(oid, _)| *oid == d.oid)
-            .and_then(|(_, status)| match status {
-                SignatureStatus::Verified(signer) => Some(signer.clone()),
-                _ => None,
-            });
-        if let Some(signer) = &verified {
-            verified_mark(ui, signer);
+            .map(|(_, status)| status.clone());
+        if let Some(status) = &status {
+            signature_mark(ui, status, false);
         }
         Popover::new("commit-author", &name)
             .width(AUTHOR_CARD_WIDTH)
-            .show(|ui| author_card(ui, d, forge.as_ref(), verified.as_ref(), note, actions));
+            .show(|ui| author_card(ui, d, forge.as_ref(), status.as_ref(), note, actions));
     });
 }
 
@@ -438,7 +435,7 @@ fn author_card(
     ui: &mut Ui,
     d: &CommitDetails,
     forge: Option<&Forge>,
-    verified: Option<&Signer>,
+    status: Option<&SignatureStatus>,
     note: Option<&PictureNote>,
     actions: &mut Vec<Action>,
 ) {
@@ -469,18 +466,8 @@ fn author_card(
     if let Some(by) = committed_by(d) {
         ui.label(RichText::new(by).size(m.meta_size).color(p.text_dim));
     }
-    if let Some(signer) = verified {
-        ui.label(
-            RichText::new(format!("{} Signature verified", icon::SEAL_CHECK))
-                .size(m.meta_size)
-                .color(p.success),
-        );
-        for line in [signer.name.as_str(), signer.key.as_str()]
-            .into_iter()
-            .filter(|t| !t.is_empty())
-        {
-            ui.label(RichText::new(line).size(m.meta_size).color(p.text_dim));
-        }
+    if let Some(status) = status {
+        signature_mark(ui, status, true);
     }
     if let Some(forge) = forge {
         let page = forge.author_page(&d.author.email);
@@ -514,28 +501,67 @@ fn author_card(
     }
 }
 
-/// The check after the author's name for a commit whose signature git trusts. Nothing is drawn for
-/// any other signature: only a verified one is a claim worth a mark. The tooltip names the signer.
-fn verified_mark(ui: &mut Ui, signer: &Signer) {
+/// Signature results use different glyphs, tones and spoken names; only Verified is trusted.
+fn signature_mark(ui: &mut Ui, status: &SignatureStatus, text: bool) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
+    let (glyph, label, color, signer) = match status {
+        SignatureStatus::Unsigned => return,
+        SignatureStatus::Verified(signer) => (
+            icon::SEAL_CHECK,
+            "Signature verified",
+            p.success,
+            Some(signer),
+        ),
+        SignatureStatus::Invalid(signer) => {
+            (icon::X_CIRCLE, "Signature invalid", p.danger, Some(signer))
+        }
+        SignatureStatus::Unavailable => (
+            icon::QUESTION,
+            "Signature verification unavailable",
+            p.text_dim,
+            None,
+        ),
+        SignatureStatus::Untrusted(signer) => (
+            icon::WARNING_CIRCLE,
+            "Signature signer not trusted",
+            p.warning,
+            Some(signer),
+        ),
+        SignatureStatus::Expired(signer) => (
+            icon::WARNING_CIRCLE,
+            "Signature expired or revoked",
+            p.warning,
+            Some(signer),
+        ),
+    };
+    let content = if text {
+        format!("{glyph} {label}")
+    } else {
+        glyph.to_owned()
+    };
     let response = ui.add(
         egui::Label::new(
-            RichText::new(icon::SEAL_CHECK)
-                .size(m.icon_md)
-                .color(p.success),
+            RichText::new(content)
+                .size(if text { m.meta_size } else { m.icon_md })
+                .color(color),
         )
         .sense(egui::Sense::hover()),
     );
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Signature verified")
-    });
-    let detail = [signer.name.as_str(), signer.key.as_str()]
-        .into_iter()
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let tip = response.kit_tooltip("Signature verified");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    let detail = signer
+        .map(|s| {
+            [s.name.as_str(), s.key.as_str()]
+                .into_iter()
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    if text && !detail.is_empty() {
+        ui.label(RichText::new(&detail).size(m.meta_size).color(p.text_dim));
+    }
+    let tip = response.kit_tooltip(label);
     if detail.is_empty() {
         tip.show();
     } else {
@@ -1034,6 +1060,7 @@ mod tests {
     fn author_line(
         note: Option<&super::PictureNote>,
         keys: &[egui::Key],
+        status: Option<canopy_core::SignatureStatus>,
     ) -> (Vec<crate::action::Action>, Vec<String>) {
         let ctx = ctx(Density::Comfortable);
         ctx.enable_accesskit();
@@ -1059,6 +1086,7 @@ mod tests {
             files: Vec::new(),
             stats_known: true,
         };
+        tab.signature = status.map(|status| (d.oid, status));
         let mut actions = Vec::new();
         let mut labels = Vec::new();
         let frames = std::iter::once(None).chain(keys.iter().copied().map(Some));
@@ -1088,12 +1116,47 @@ mod tests {
                 .map(|u| {
                     u.nodes
                         .iter()
-                        .filter_map(|(_, n)| n.label().map(str::to_owned))
+                        .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
                         .collect()
                 })
                 .unwrap_or_default();
         }
         (actions, labels)
+    }
+
+    #[test]
+    fn signature_badges_distinguish_verification_outcomes() {
+        use canopy_core::{SignatureStatus, Signer};
+        for (status, expected) in [
+            (
+                SignatureStatus::Verified(Signer::default()),
+                "Signature verified",
+            ),
+            (
+                SignatureStatus::Invalid(Signer::default()),
+                "Signature invalid",
+            ),
+            (
+                SignatureStatus::Unavailable,
+                "Signature verification unavailable",
+            ),
+            (
+                SignatureStatus::Untrusted(Signer::default()),
+                "Signature signer not trusted",
+            ),
+            (
+                SignatureStatus::Expired(Signer::default()),
+                "Signature expired or revoked",
+            ),
+        ] {
+            let (_, labels) = author_line(None, &[], Some(status));
+            assert!(
+                labels.iter().any(|label| label == expected),
+                "{expected}: {labels:?}"
+            );
+        }
+        let (_, labels) = author_line(None, &[], Some(SignatureStatus::Unsigned));
+        assert!(!labels.iter().any(|label| label.starts_with("Signature")));
     }
 
     fn note(fix: Option<crate::action::Action>) -> super::PictureNote {
@@ -1138,7 +1201,7 @@ mod tests {
     #[test]
     fn the_author_card_opens_the_fix_for_missing_pictures() {
         let fix = Some(crate::action::Action::Settings);
-        let (_, labels) = author_line(Some(&note(fix.clone())), &[]);
+        let (_, labels) = author_line(Some(&note(fix.clone())), &[], None);
         assert!(
             labels.iter().any(|l| l == "Author (author card)"),
             "{labels:?}"
@@ -1148,13 +1211,13 @@ mod tests {
 
         // Tab to the name, Enter opens the card, a frame later it is drawn.
         let open = [egui::Key::Tab, egui::Key::Enter, egui::Key::F13];
-        let (_, labels) = author_line(Some(&note(fix)), &open);
+        let (_, labels) = author_line(Some(&note(fix)), &open, None);
         assert!(labels.iter().any(|l| l == "Copy email"), "{labels:?}");
         assert!(labels.iter().any(|l| l == "Open settings"), "{labels:?}");
 
-        let (_, labels) = author_line(Some(&note(None)), &open);
+        let (_, labels) = author_line(Some(&note(None)), &open, None);
         assert!(!labels.iter().any(|l| l == "Open settings"), "{labels:?}");
-        let (_, labels) = author_line(None, &open);
+        let (_, labels) = author_line(None, &open, None);
         assert!(!labels.iter().any(|l| l == "Open settings"), "{labels:?}");
     }
 

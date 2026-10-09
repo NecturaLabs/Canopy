@@ -101,8 +101,8 @@ commits since the previous build.
   profile (from a GitHub or GitLab no-reply address) or to the forge's user search for them, and,
   when pictures are kept away, why and where to turn them on; this replaces the info button. The
   commit's parents follow its id as links that select them. A green check after the name marks a
-  signature Git trusts (GPG, SSH or X.509), checked in trusted folders only; nothing is shown for
-  any other signature.
+  signature Git trusts (GPG, SSH or X.509), checked in trusted folders only; invalid, unavailable,
+  untrusted and expired signatures have distinct marks and names in the author card.
 - The commit message field starts with your Git `commit.template` when it is empty (once per
   open repository, never over a draft or an amend); a template that cannot be read is reported.
 - The commit fields now say when the summary or a description line is longer than 72 characters

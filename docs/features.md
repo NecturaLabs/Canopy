@@ -89,7 +89,7 @@ git would run on every `git status`.
 | Reflog view | Planned | ? | ? | ? |
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |
-| Signature verification badges | In progress: a green check after the author in commit details when git trusts the signature, nothing otherwise; checked by git in trusted folders only; checked live with a GPG key | ? | Yes | ? |
+| Signature verification badges | Done: distinct verified, invalid, unavailable, untrusted and expired/revoked marks in commit details and the author card; only verified signatures use the trusted mark; checked by git in trusted folders only | ? | Yes | ? |
 | Author card and parent links in commit details | Done: the name opens a card (email, committer, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
 
 Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.

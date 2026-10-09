@@ -516,8 +516,10 @@ quick-pick): the overlay surface with `card_pad` inside, 6 pt from the anchor an
 Clicking the anchor toggles it; a click outside or Esc closes it and gives focus back to the
 anchor. One popover is open at a time. The author card in the commit details is one: the name is a
 link button, the card holds the email with a copy button, who committed, the signature, a profile
-or user-search link and the picture settings; a verified signature also gets a green check beside
-the name, and nothing for any other state.
+or user-search link and the picture settings; signature results get distinct glyphs and spoken
+names (verified: green seal, invalid: danger X, unavailable: muted question, untrusted or expired:
+warning). The author card names the result and signer. The same result mark appears beside
+the name; unsigned commits have no mark.
 
 The rest of the kit, each with the states `--overlay gallery` shows:
 
