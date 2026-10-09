@@ -74,11 +74,6 @@ pub fn command(workdir: Option<&Path>) -> Command {
     cmd
 }
 
-/// The variables that point git at a repository or reshape its object store
-/// (`git rev-parse --local-env-vars`, less the configuration ones, which belong to the user).
-/// Canopy picks the repository by the working directory it gives a command, and libgit2 reads
-/// none of these. One inherited from the environment (a git alias or hook that starts Canopy sets
-/// `GIT_DIR`) would send a command to another repository than the one Canopy checked and shows.
 /// The git versions, as `(major, minor)`, that brought what Canopy asks of them.
 pub(crate) const ZDIFF3_SINCE: (u32, u32) = (2, 35);
 pub(crate) const MERGE_AUTOSTASH_SINCE: (u32, u32) = (2, 27);
@@ -99,6 +94,11 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// The size of the buffer a git's stderr is read through.
 const STDERR_CHUNK: usize = 4096;
 
+/// The variables that point git at a repository or reshape its object store
+/// (`git rev-parse --local-env-vars`, less the configuration ones, which belong to the user).
+/// Canopy picks the repository by the working directory it gives a command, and libgit2 reads
+/// none of these. One inherited from the environment (a git alias or hook that starts Canopy sets
+/// `GIT_DIR`) would send a command to another repository than the one Canopy checked and shows.
 const REPOSITORY_ENV: [&str; 12] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
