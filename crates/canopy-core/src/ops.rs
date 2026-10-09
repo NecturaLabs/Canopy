@@ -588,6 +588,59 @@ impl Repo {
         self.conflicting_cmd(&args)
     }
 
+    /// Writes one `git format-patch` file per commit of `oids` into `dir`, parents first, and
+    /// returns their paths. `dir` must be absolute and is created when missing.
+    pub fn export_patches(&self, oids: &[Oid], dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+        if oids.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !dir.is_absolute() {
+            return Err(Error::invalid("Choose a full folder path for the patches."));
+        }
+        let ids: Vec<String> = oids.iter().map(Oid::to_string).collect();
+        let mut order = vec!["rev-list", "--topo-order", "--reverse", "--no-walk"];
+        order.extend(ids.iter().map(String::as_str));
+        let ordered = self.git_cmd(&order)?;
+        let dir_arg = dir.to_string_lossy();
+        let mut written = Vec::new();
+        for (n, id) in ordered.lines().enumerate() {
+            let start = (n + 1).to_string();
+            let out = self.git_cmd(&[
+                "format-patch",
+                "-1",
+                "--start-number",
+                &start,
+                "-o",
+                &dir_arg,
+                id,
+            ])?;
+            written.extend(out.lines().map(std::path::PathBuf::from));
+        }
+        Ok(written)
+    }
+
+    /// Checks that `patch` applies to the working tree without changing anything.
+    pub fn check_patch(&self, patch: &Path) -> Result<()> {
+        let patch = patch.to_string_lossy();
+        self.git_cmd(&["apply", "--check", "--", &patch]).map(drop)
+    }
+
+    /// Applies mailbox patch files as commits (`git am --3way`), keeping their authors. A
+    /// patch that does not apply cleanly stops with the repository in the "Applying patches"
+    /// state, which [`Self::continue_or_abort`] resolves.
+    pub fn apply_patches(&self, patches: &[std::path::PathBuf]) -> Result<String> {
+        if patches.is_empty() {
+            return Ok(String::new());
+        }
+        let files: Vec<String> = patches
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let mut args = vec!["am", "--3way", "--"];
+        args.extend(files.iter().map(String::as_str));
+        self.conflicting_cmd(&args)
+    }
+
     /// Moves the current branch to `oid`.
     pub fn reset(&self, oid: Oid, mode: ResetMode) -> Result<()> {
         self.git_cmd(&["reset", "-q", mode.flag(), &oid.to_string()])
