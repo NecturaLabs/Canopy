@@ -251,10 +251,19 @@ fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<Option<Vec<u8>>
     if !meta.is_file() || meta.len() > TYPECHANGE_READ_LIMIT {
         return Ok(None);
     }
+    let file = std::fs::File::open(&full)?;
+    // The path may have been swapped for a link since it was checked: read only the very file
+    // that was checked.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file.metadata()?;
+        if !opened.is_file() || (opened.dev(), opened.ino()) != (meta.dev(), meta.ino()) {
+            return Ok(None);
+        }
+    }
     let mut bytes = Vec::new();
-    std::fs::File::open(&full)?
-        .take(TYPECHANGE_READ_LIMIT)
-        .read_to_end(&mut bytes)?;
+    file.take(TYPECHANGE_READ_LIMIT).read_to_end(&mut bytes)?;
     Ok(Some(bytes))
 }
 

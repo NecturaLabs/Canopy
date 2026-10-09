@@ -710,6 +710,7 @@ fn an_orphaned_scalable_icon_is_removed_only_when_its_content_was_shipped() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn an_unregistered_symlinked_legacy_svg_is_left_alone() {
     use std::os::unix::fs::symlink;

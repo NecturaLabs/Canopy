@@ -96,7 +96,9 @@ def scan(text: str) -> list[tuple[int, str, bool]]:
 
 def unnamed(text: str) -> list[tuple[int, str]]:
     """The literals of `text` outside tests that need a name or a comment."""
-    if re.search(r"^#!\[cfg\(test\)\]", text, re.MULTILINE):
+    head = [line.strip() for line in text.split("\n")]
+    head = [line for line in head if line and not line.startswith("//")]
+    if head and head[0] == "#![cfg(test)]":
         return []
     cut = text.find("#[cfg(test)]")
     if cut >= 0:
