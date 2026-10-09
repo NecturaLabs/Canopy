@@ -374,6 +374,15 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
         ui.add_space(theme::SM);
     }
+    if d.too_large {
+        empty(
+            ui,
+            icon::FILE_DASHED,
+            "Diff too large",
+            "One side exceeds the preview limit.",
+        );
+        return;
+    }
     if d.binary {
         empty(
             ui,
@@ -618,7 +627,9 @@ fn header(
                             .is_some_and(|d| gutters(d) != (true, true));
                         layout_toggle(ui, tab.split_diff, one_column, single_row, actions);
                     }
-                    if let Some(d) = &tab.diff {
+                    if let Some(d) = &tab.diff
+                        && !d.too_large
+                    {
                         DiffStat::new(d.additions, d.deletions).show(ui);
                     }
                 }
@@ -1300,7 +1311,8 @@ fn metadata_note(diff: &FileDiff) -> Option<&'static str> {
     // The empty state already explains mode-only changes. With content changes the mode needs
     // saying too, so an executable-bit change is not hidden by its hunks.
     if let Some((old, new)) = diff.mode_change() {
-        return (diff.binary || !diff.hunks.is_empty()).then(|| mode_note(old, new));
+        return (diff.binary || diff.too_large || !diff.hunks.is_empty())
+            .then(|| mode_note(old, new));
     }
     let old = diff.old_mode == Some(LINK);
     let new = diff.new_mode == Some(LINK);
@@ -1580,6 +1592,62 @@ mod tests {
                 "gitlinks have no text columns: {nodes:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_omitted_typechange_preview_keeps_metadata_without_fake_counts() {
+        use crate::ui::kit::testkit::{ctx, spoken};
+        let ctx = ctx();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let d = Arc::new(FileDiff {
+            path: "large.txt".into(),
+            kind: Some(ChangeKind::Typechange),
+            too_large: true,
+            old_mode: Some(0o100_644),
+            new_mode: Some(0o120_000),
+            ..FileDiff::default()
+        });
+        assert!(
+            metadata_note(&d).is_some(),
+            "the mode is not omitted with the preview"
+        );
+        tab.file = Some(crate::tab::FileSelection {
+            source: DiffSource::Staged,
+            entry: canopy_core::FileEntry {
+                path: d.path.clone(),
+                kind: ChangeKind::Typechange,
+                old_path: None,
+                additions: 1,
+                deletions: 20_000,
+                lfs: false,
+                old_mode: d.old_mode,
+                new_mode: d.new_mode,
+            },
+            conflicted: false,
+        });
+        tab.diff = Some(d);
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = spoken(&ctx, |ui| show(ui, &mut tab, &mut Vec::new()));
+        }
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref() == Some("Unstage file"))
+        );
+        assert!(
+            nodes.iter().all(|n| n
+                .value
+                .as_deref()
+                .is_none_or(|value| { value != "0 additions, 0 deletions" })),
+            "omitted lines do not mean zero changes: {nodes:?}"
+        );
     }
 
     #[test]

@@ -23,6 +23,9 @@ commits since the previous build.
 
 ### Fixed
 
+- Oversized file-type changes say the diff exceeds the preview limit, not that the file is
+  binary. Their type change and whole-file actions remain visible without false zero counts.
+
 - File-to-submodule diffs and their reverse show the removed and added text, instead of
   hiding it behind a submodule card. Whole-file staging and unstaging remain available.
 

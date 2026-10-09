@@ -81,6 +81,8 @@ pub struct FileDiff {
     pub kind: Option<ChangeKind>,
     /// Git considers the file binary; no hunks.
     pub binary: bool,
+    /// A side exceeds the type-change preview limit; no hunks are loaded.
+    pub too_large: bool,
     /// Hunks, top to bottom.
     pub hunks: Vec<Hunk>,
     /// Lines added.
@@ -96,9 +98,9 @@ pub struct FileDiff {
 }
 
 impl FileDiff {
-    /// No hunks and not binary. A mode-only change is empty but has a [`Self::mode_change`].
+    /// No hunks and no omitted content. A mode-only change has a [`Self::mode_change`].
     pub fn is_empty(&self) -> bool {
-        self.hunks.is_empty() && !self.binary
+        self.hunks.is_empty() && !self.binary && !self.too_large
     }
 
     /// The old and new mode when both sides exist and differ: an executable-bit change, or a
@@ -217,13 +219,19 @@ pub(crate) fn path_of(file: &git2::DiffFile<'_>) -> Option<String> {
 /// The most bytes of a replaced or replacing file a type change reads to show.
 const TYPECHANGE_READ_LIMIT: u64 = 256 * 1024;
 
-/// What one side of a type change holds, as lines: a symbolic link's target text, or a file's
-/// text. `None` for a binary file or one too large to show. A link is read, never followed.
-fn side_lines(bytes: &[u8]) -> Option<Vec<String>> {
+/// Content of one side, keeping a bounded preview distinct from binary data.
+enum TypechangeSide {
+    Text(Vec<String>),
+    Binary,
+    TooLarge,
+}
+
+/// A symbolic link's target text or a file's text. Links are read, never followed.
+fn side_lines(bytes: &[u8]) -> TypechangeSide {
     if bytes.contains(&0) {
-        return None;
+        return TypechangeSide::Binary;
     }
-    Some(
+    TypechangeSide::Text(
         String::from_utf8_lossy(bytes)
             .lines()
             .map(str::to_owned)
@@ -234,7 +242,7 @@ fn side_lines(bytes: &[u8]) -> Option<Vec<String>> {
 /// The new side of a working-tree type change: the link's target text, or the file's text. The
 /// path goes through [`crate::paths::safe_join`] for its folders, and its last component is read
 /// as a link when it is one, so no link is ever followed.
-fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<Option<Vec<u8>>> {
+fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<TypechangeSide> {
     use std::io::Read;
     let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
     let base = if dir.is_empty() {
@@ -246,10 +254,13 @@ fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<Option<Vec<u8>>
     let meta = std::fs::symlink_metadata(&full)?;
     if meta.file_type().is_symlink() {
         let target = std::fs::read_link(&full)?;
-        return Ok(Some(target.to_string_lossy().into_owned().into_bytes()));
+        return Ok(side_lines(target.to_string_lossy().as_bytes()));
     }
-    if !meta.is_file() || meta.len() > TYPECHANGE_READ_LIMIT {
-        return Ok(None);
+    if !meta.is_file() {
+        return Err(crate::Error::invalid("This file type cannot be previewed."));
+    }
+    if meta.len() > TYPECHANGE_READ_LIMIT {
+        return Ok(TypechangeSide::TooLarge);
     }
     let file = std::fs::File::open(&full)?;
     // The path may have been swapped for a link since it was checked: read only the very file
@@ -259,12 +270,19 @@ fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<Option<Vec<u8>>
         use std::os::unix::fs::MetadataExt;
         let opened = file.metadata()?;
         if !opened.is_file() || (opened.dev(), opened.ino()) != (meta.dev(), meta.ino()) {
-            return Ok(None);
+            return Err(crate::Error::invalid(
+                "The file changed while opening its preview. Refresh and try again.",
+            ));
         }
     }
     let mut bytes = Vec::new();
-    file.take(TYPECHANGE_READ_LIMIT).read_to_end(&mut bytes)?;
-    Ok(Some(bytes))
+    file.take(TYPECHANGE_READ_LIMIT + 1)
+        .read_to_end(&mut bytes)?;
+    Ok(if bytes.len() as u64 > TYPECHANGE_READ_LIMIT {
+        TypechangeSide::TooLarge
+    } else {
+        side_lines(&bytes)
+    })
 }
 
 /// Counts a committed type change without building display lines or applying the display cap.
@@ -295,44 +313,41 @@ pub(crate) fn typechange_stats(
     )
 }
 
-/// The two sides of a type change as lines (old, new): `Ok(None)` when a side is binary or too
-/// large to show.
-pub(crate) fn typechange_sides(
+/// The two sides of a type change, preserving why a preview is omitted.
+fn typechange_sides(
     repo: &crate::Repo,
     source: &DiffSource,
     delta: &git2::DiffDelta<'_>,
-) -> Result<Option<(Vec<String>, Vec<String>)>> {
-    let blob = |file: &git2::DiffFile<'_>| -> Result<Option<Vec<u8>>> {
+) -> Result<(TypechangeSide, TypechangeSide)> {
+    let blob = |file: &git2::DiffFile<'_>| -> Result<TypechangeSide> {
         let id = file.id();
         if id.is_zero() {
-            return Ok(None);
+            return Err(crate::Error::invalid(
+                "The preview has no object for this file.",
+            ));
         }
         // A submodule's side holds a commit, which `git diff` prints as one line.
         if file.mode() == git2::FileMode::Commit {
-            return Ok(Some(format!("Subproject commit {id}\n").into_bytes()));
+            return Ok(side_lines(format!("Subproject commit {id}\n").as_bytes()));
         }
         let blob = repo.git().find_blob(id)?;
-        Ok((blob.size() as u64 <= TYPECHANGE_READ_LIMIT).then(|| blob.content().to_vec()))
+        Ok(if blob.size() as u64 > TYPECHANGE_READ_LIMIT {
+            TypechangeSide::TooLarge
+        } else {
+            side_lines(blob.content())
+        })
     };
     let old = blob(&delta.old_file())?;
     let new = match (source, path_of(&delta.new_file())) {
         (DiffSource::Unstaged, Some(path)) => workdir_side(repo.workdir(), &path)?,
         _ => blob(&delta.new_file())?,
     };
-    Ok(
-        match (
-            old.as_deref().and_then(side_lines),
-            new.as_deref().and_then(side_lines),
-        ) {
-            (Some(old), Some(new)) => Some((old, new)),
-            _ => None,
-        },
-    )
+    Ok((old, new))
 }
 
 /// A file turned into a symbolic link (or back) has no hunks of its own in libgit2: the lines
 /// `git diff` prints, the old side removed and then the new side added, built from the two blobs
-/// or the working tree. Sets `out.binary` when a side is binary.
+/// or the working tree. Sets `out.binary` for binary data or `out.too_large` for capped content.
 pub(crate) fn typechange_hunks(
     repo: &crate::Repo,
     source: &DiffSource,
@@ -345,9 +360,16 @@ pub(crate) fn typechange_hunks(
     else {
         return Ok(());
     };
-    let Some((old, new)) = typechange_sides(repo, source, &delta)? else {
-        out.binary = true;
-        return Ok(());
+    let (old, new) = match typechange_sides(repo, source, &delta)? {
+        (TypechangeSide::Text(old), TypechangeSide::Text(new)) => (old, new),
+        (TypechangeSide::Binary, _) | (_, TypechangeSide::Binary) => {
+            out.binary = true;
+            return Ok(());
+        }
+        (TypechangeSide::TooLarge, _) | (_, TypechangeSide::TooLarge) => {
+            out.too_large = true;
+            return Ok(());
+        }
     };
     let count = |lines: &[String]| u32::try_from(lines.len()).unwrap_or(u32::MAX);
     let range = |start: u32, n: u32| match n {
@@ -590,6 +612,13 @@ pub(crate) fn quoted(prefix: &[u8], path: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_workdir_types_fail_instead_of_claiming_binary() {
+        let dir = tempfile::tempdir().expect("fixture");
+        std::fs::create_dir(dir.path().join("directory")).expect("directory");
+        assert!(workdir_side(dir.path(), "directory").is_err());
+    }
 
     #[test]
     fn quotes_paths_like_git() {

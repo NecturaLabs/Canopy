@@ -231,6 +231,51 @@ fn a_binary_file_replaced_by_a_link_is_not_shown_as_text() {
     never_the_secret(&d);
 }
 
+#[test]
+fn oversized_text_typechanges_are_not_binary() {
+    let (_root, p, repo) = fixture();
+    fs::write(p.join("file.txt"), "a long line of text\n".repeat(20_000)).unwrap();
+    git(&p, &["add", "file.txt"]);
+    git(&p, &["commit", "-q", "-m", "large text"]);
+    fs::remove_file(p.join("file.txt")).unwrap();
+    symlink("dir/x.txt", p.join("file.txt")).unwrap();
+    let unstaged = diff(&repo, &DiffSource::Unstaged, "file.txt");
+    assert!(
+        !unstaged.binary,
+        "text beyond the preview cap is not binary"
+    );
+    assert!(unstaged.too_large);
+    assert!(!unstaged.is_empty());
+    assert_eq!(unstaged.hunks, []);
+    git(&p, &["add", "file.txt"]);
+    let staged = diff(&repo, &DiffSource::Staged, "file.txt");
+    assert!(!staged.binary);
+    assert!(staged.too_large);
+    let oid = repo.commit("replace large text", false, false).unwrap();
+    let committed = diff(&repo, &DiffSource::Commit(oid), "file.txt");
+    assert!(!committed.binary);
+    assert!(committed.too_large);
+}
+
+#[test]
+fn typechange_preview_limit_checks_the_replacement_file() {
+    const LIMIT: usize = 256 * 1024;
+    for size in [LIMIT, LIMIT + 1] {
+        let (_root, p, repo) = fixture();
+        fs::remove_file(p.join("link")).unwrap();
+        fs::write(p.join("link"), vec![b'a'; size]).unwrap();
+        let d = diff(&repo, &DiffSource::Unstaged, "link");
+        assert!(!d.binary);
+        assert_eq!(d.too_large, size > LIMIT);
+        assert!(!d.is_empty());
+        if size == LIMIT {
+            assert_eq!(d.hunks[1].lines[0].text.len(), LIMIT);
+        } else {
+            assert_eq!(d.hunks, []);
+        }
+    }
+}
+
 /// A file turned into a submodule has a commit, not a blob, on its new side: the diff must still
 /// be readable, not an error about a missing blob.
 #[test]

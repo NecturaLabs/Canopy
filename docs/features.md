@@ -141,6 +141,9 @@ to, and its hunks offer no actions (stage or discard the whole file); mode
 changes remain visible alongside content changes. A file or link replaced by a submodule (or
 back) shows both text sides, including the recorded submodule commit, in the usual unified or
 side-by-side diff. Changes between two submodule pointers retain the commit-list card.
+Type-change previews omit content when either side exceeds 256 KiB, with an explicit size
+notice instead of a binary label or zero-change counts. Commit file counts are independent
+of that preview limit.
 
 ## Branches and merging
 
