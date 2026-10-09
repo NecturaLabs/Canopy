@@ -1008,9 +1008,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         ))),
                     }
                 }
-                Job::CommitTemplate => emit(Event::CommitTemplate(
-                    repo.commit_template().map_err(|e| e.to_string()),
-                )),
+                Job::CommitTemplate => emit(Event::CommitTemplate(if allowed() {
+                    repo.commit_template().map_err(|e| e.to_string())
+                } else {
+                    Ok(None)
+                })),
                 Job::SquashMessage(target) => {
                     let path = repo.git().path().join("SQUASH_MSG");
                     let body = std::fs::read_to_string(path).unwrap_or_default();
@@ -2788,6 +2790,7 @@ mod read_tests {
                 other => panic!("{other:?}"),
             }
         };
+        crate::trust::add_for_tests(copy.clone());
         assert_eq!(ask(&copy), Ok(None));
         std::fs::write(copy.join("msg.txt"), "feat: \n# comment\nWhy:\n").expect("write");
         git(&copy, &["config", "commit.template", "msg.txt"]);
@@ -2795,6 +2798,23 @@ mod read_tests {
         git(&copy, &["config", "commit.template", "gone.txt"]);
         let error = ask(&copy).expect_err("no such file");
         assert!(error.contains("gone.txt"), "{error}");
+    }
+
+    /// A repository outside every trusted folder names the template file itself, so its
+    /// configuration is not followed there: no file is read.
+    #[test]
+    fn an_untrusted_repository_reads_no_commit_template() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        std::fs::write(copy.join("msg.txt"), "feat: \n").expect("write");
+        git(&copy, &["config", "commit.template", "msg.txt"]);
+        let worker = worker_with_canopys_choices(copy);
+        worker.send(Job::CommitTemplate);
+        let events = events_until(&worker, |e| matches!(e, Event::CommitTemplate(_)));
+        assert!(
+            matches!(events.last(), Some(Event::CommitTemplate(Ok(None)))),
+            "{events:?}"
+        );
     }
 
     /// PS-F1: the Pull menu's default comes from the repository thread, never the UI thread.
