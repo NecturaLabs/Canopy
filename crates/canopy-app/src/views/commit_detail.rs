@@ -484,7 +484,11 @@ fn author_card(
     }
     if let Some(forge) = forge {
         let page = forge.author_page(&d.author.email);
-        let name = forge.kind.name();
+        let name = if matches!(forge.host.as_str(), "github.com" | "gitlab.com") {
+            forge.kind.name().to_owned()
+        } else {
+            forge.host.clone()
+        };
         let label = if page.profile {
             format!("View profile on {name}")
         } else {
