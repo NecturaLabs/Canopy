@@ -10,6 +10,10 @@ commits since the previous build.
 
 ### Added
 
+- A file replaced by a symbolic link (or the other way round) now shows its lines in the diff: the old
+  content or target removed and the new one added, as `git diff` prints them. A link is read, never
+  followed, so what it points to is not shown; its hunks offer no actions, since only the whole file
+  can be staged or discarded.
 - Preview and safely clean up stale linked worktrees and local branches from the command palette
   or Branches header menu. Settings → Git controls the inactivity period (90 days by default);
   uncommitted work and unmerged commits are protected, with safety checked again before removal.

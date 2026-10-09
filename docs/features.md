@@ -135,7 +135,9 @@ change when current settings change; Canopy never rewrites existing commits to f
 
 Unstaged diffs refuse actual symbolic links when `core.symlinks=false`, because libgit2 would
 otherwise read their targets as regular files. Git's ordinary-file link emulation still works.
-Link diffs label their target paths; type changes still show their mode transition, and mode
+Link diffs label their target paths; a file turned into a link (or back) shows the old side removed
+and the new side added, as `git diff` does, with the link's target text and never the file it points
+to, and its hunks offer no actions (stage or discard the whole file); mode
 changes remain visible alongside content changes.
 
 ## Branches and merging

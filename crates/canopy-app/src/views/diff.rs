@@ -258,6 +258,9 @@ struct Ctx<'a> {
     one_sided: bool,
     /// Hunk and line actions are possible (working copy, whitespace shown).
     editable: bool,
+    /// The file changed type: only the whole file can be staged or discarded, so the hunks
+    /// offer no actions.
+    whole_file: bool,
     context: u32,
     highlights: Option<&'a Highlights>,
     mono: FontId,
@@ -426,7 +429,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         // A whitespace-insensitive diff cannot be applied as a patch.
         editable: !sel.conflicted
             && !matches!(sel.source, DiffSource::Commit(_))
+            && d.kind != Some(ChangeKind::Typechange)
             && tab.diff_prefs.whitespace == WhitespaceMode::Show,
+        whole_file: d.kind == Some(ChangeKind::Typechange),
         context: tab.diff_prefs.context,
         highlights: highlights.as_deref(),
         mono,
@@ -966,7 +971,16 @@ fn hunk_header(
         return;
     }
     if !cx.editable {
-        let note = "Actions are off while whitespace is ignored";
+        let note = if cx.whole_file {
+            // Said once, on the first hunk.
+            if h == 0 {
+                "Stage or discard the whole file"
+            } else {
+                ""
+            }
+        } else {
+            "Actions are off while whitespace is ignored"
+        };
         let note_width = ui
             .painter()
             .layout_no_wrap(note.into(), note_font.clone(), p.text_faint)
@@ -1607,6 +1621,7 @@ mod tests {
                     conflicted: false,
                     one_sided: false,
                     editable: true,
+                    whole_file: false,
                     context: 3,
                     highlights: None,
                     mono: FontId::monospace(theme::metrics().mono_size),
@@ -1751,6 +1766,66 @@ mod tests {
         assert!(unnamed.is_empty(), "unnamed operable nodes: {unnamed:?}");
     }
 
+    /// #44: a type change shows its lines, but its hunks offer no actions, and say why.
+    #[test]
+    fn a_type_changes_hunks_offer_no_actions_and_name_the_whole_file() {
+        let ctx = themed();
+        let d = FileDiff {
+            hunks: vec![Hunk {
+                header: "@@ -1 +0,0 @@".into(),
+                ..hunk("-")
+            }],
+            kind: Some(ChangeKind::Typechange),
+            old_mode: Some(0o100_644),
+            new_mode: Some(0o120_000),
+            ..Default::default()
+        };
+        assert_eq!(
+            metadata_note(&d),
+            Some("Was a regular file, now a symbolic link.")
+        );
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let cx = Ctx {
+                p: palette(ui.ctx()),
+                source: &DiffSource::Unstaged,
+                path: "file.rs",
+                conflicted: false,
+                one_sided: false,
+                editable: false,
+                whole_file: true,
+                context: 3,
+                highlights: None,
+                mono: FontId::monospace(theme::metrics().mono_size),
+            };
+            let rect = Rect::from_min_size(pos2(0.0, 40.0), vec2(900.0, row_heights().1));
+            hunk_header(
+                ui,
+                &cx,
+                &d,
+                0,
+                rect,
+                egui::Pos2::ZERO,
+                rect,
+                &mut None,
+                &mut Vec::new(),
+            );
+        });
+        output.textures_delta.clear();
+        let texts: Vec<String> = output
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            texts.iter().any(|t| t == "Stage or discard the whole file"),
+            "{texts:?}"
+        );
+        assert!(!texts.iter().any(|t| t.contains("Stage hunk")), "{texts:?}");
+    }
+
     /// QVIS-1: the "Click lines" hint never paints over a long hunk title; it shows only where
     /// the whole title leaves room for it.
     #[test]
@@ -1778,6 +1853,7 @@ mod tests {
                     conflicted: false,
                     one_sided: false,
                     editable: true,
+                    whole_file: false,
                     context: 3,
                     highlights: None,
                     mono: FontId::monospace(theme::metrics().mono_size),
@@ -1931,6 +2007,7 @@ mod tests {
                 conflicted: false,
                 one_sided: false,
                 editable: false,
+                whole_file: false,
                 context: 3,
                 highlights: None,
                 mono: FontId::monospace(theme::metrics().mono_size),
