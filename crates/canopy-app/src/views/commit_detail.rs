@@ -11,7 +11,6 @@ use canopy_core::forge::Forge;
 use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, Signer, short_id};
 
 use crate::action::Action;
-use crate::keymap::Command;
 use crate::tab::{DetailsError, FileSelection, RepoTab};
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::LinkButton;
@@ -81,31 +80,6 @@ pub fn show(
             let note = crate::avatars::explain_tab(settings, tab).map(PictureNote::from);
             author(ui, &d, tab, note.as_ref(), actions);
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(short_id(d.oid))
-                        .font(FontId::new(m.sha_size, egui::FontFamily::Monospace))
-                        .color(p.accent),
-                )
-                .kit_tooltip(d.oid.to_string())
-                .show();
-                if IconButton::new(icon::COPY, "Copy SHA")
-                    .size(Size::Xs)
-                    .shortcut(Command::CopySha)
-                    .show(ui)
-                    .clicked()
-                {
-                    actions.push(Action::Copy(d.oid.to_string()));
-                }
-                ui.label(
-                    RichText::new(widgets::absolute_date_format(
-                        d.author.time,
-                        settings.iso_dates,
-                    ))
-                    .size(m.meta_size)
-                    .color(p.text_dim),
-                )
-                .kit_tooltip(widgets::full_date(d.author.time, d.author.offset_minutes))
-                .show();
                 if !d.parents.is_empty() {
                     ui.label(
                         RichText::new(if d.parents.len() == 1 {
@@ -120,7 +94,8 @@ pub fn show(
                         let link = LinkButton::new(short_id(*parent))
                             .text_size(m.sha_size)
                             .show(ui)
-                            .kit_tooltip(parent.to_string())
+                            .kit_tooltip("Show this commit")
+                            .detail(parent.to_string())
                             .show();
                         if link.clicked() {
                             tab.select_commit(*parent);
@@ -128,6 +103,25 @@ pub fn show(
                         }
                     }
                 }
+                let id = LinkButton::new(short_id(d.oid))
+                    .text_size(m.sha_size)
+                    .show(ui)
+                    .kit_tooltip("Copy the commit id")
+                    .detail(d.oid.to_string())
+                    .show();
+                if id.clicked() {
+                    actions.push(Action::Copy(d.oid.to_string()));
+                }
+                ui.label(
+                    RichText::new(widgets::absolute_date_format(
+                        d.author.time,
+                        settings.iso_dates,
+                    ))
+                    .size(m.meta_size)
+                    .color(p.text_dim),
+                )
+                .kit_tooltip(widgets::full_date(d.author.time, d.author.offset_minutes))
+                .show();
             });
             // Up to two whole file rows, the "N files changed" line above them (as tall as it
             // was last frame, at first one line of its text) and the gaps between them.
