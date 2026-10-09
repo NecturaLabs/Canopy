@@ -405,6 +405,8 @@ pub struct Settings {
     pub prune_on_fetch: bool,
     /// Fetch in the background every N minutes (0 = off).
     pub auto_fetch_minutes: u32,
+    /// Last-commit age used by the manual stale worktree and branch cleanup preview.
+    pub stale_inactivity_days: u32,
     /// `git commit --signoff`.
     pub signoff: bool,
     /// Pull and rebase over uncommitted changes, stashing them around it (`--autostash`).
@@ -529,6 +531,7 @@ impl Default for Settings {
             pull_mode: PullMode::FastForwardOnly,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
+            stale_inactivity_days: 90,
             signoff: false,
             autostash: true,
             follow_tags: true,

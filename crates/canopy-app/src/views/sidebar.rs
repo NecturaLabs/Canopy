@@ -231,7 +231,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         let unborn = snap.head.branch.as_ref().filter(|name| {
             snap.head.oid.is_none() && !snap.branches.iter().any(|branch| &branch.name == *name)
         });
-        if section(
+        let (branches_open, branches_header) = section_with_action(
             ui,
             tab,
             "branches",
@@ -239,7 +239,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             icon::GIT_BRANCH,
             snap.branches.len() + usize::from(unborn.is_some()),
             true,
-        ) {
+            None,
+        );
+        menu::context(&branches_header.response, |m| {
+            if m.item(icon::TRASH, "Clean up stale…").show(m.ui).clicked() {
+                actions.push(Action::CleanStale);
+            }
+        });
+        if branches_open {
             // One Tab stop for the branches: the checked-out one until the user moves.
             let first = usize::from(unborn.is_some());
             let head = snap.branches.iter().position(|b| b.is_head).map(|i| i + first);

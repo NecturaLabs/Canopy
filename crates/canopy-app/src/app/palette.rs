@@ -332,6 +332,10 @@ impl CanopyApp {
                     Action::AddRemoteDialog,
                 ),
                 (
+                    e(icon::TRASH, "Clean up stale…", "Repository", None),
+                    Action::CleanStale,
+                ),
+                (
                     e(icon::FILE_ARROW_DOWN, "Apply patch…", "Repository", None),
                     Action::OpenDialog(Dialog::ApplyPatches { path: "~/".into() }),
                 ),
@@ -581,6 +585,7 @@ mod tests {
     fn the_palette_offers_repository_commands_only_with_a_tab() {
         let mut app = test_app();
         let alone = app.palette_entries();
+        assert!(!labels(&alone).contains(&"Clean up stale…"));
         assert!(labels(&alone).contains(&"Open repository…"));
         assert!(
             !labels(&alone).contains(&"Pop latest stash"),
@@ -596,6 +601,12 @@ mod tests {
             "a new tab rebuilds the entries"
         );
         let with_tab = app.palette_entries();
+        assert!(
+            with_tab
+                .iter()
+                .any(|(entry, action)| entry.label == "Clean up stale…"
+                    && matches!(action, Action::CleanStale))
+        );
         let pop = with_tab
             .iter()
             .find(|(e, _)| e.label == "Pop latest stash")

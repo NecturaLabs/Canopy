@@ -35,6 +35,7 @@ mod credential;
 mod ignore;
 mod reader;
 mod stack;
+mod stale;
 mod start;
 mod update;
 mod url;
@@ -47,12 +48,14 @@ use common::{
 use credential::credential;
 pub use ignore::IgnoreForm;
 pub use stack::DialogStack;
+pub use stale::StaleForm;
 pub use start::Start;
 pub use url::{UrlBuilder, UrlSource};
 
 /// Every dialog Canopy shows.
 #[derive(Debug, Clone)]
 pub enum Dialog {
+    CleanStale(Box<StaleForm>),
     Ignore(Box<IgnoreForm>),
     Open {
         path: String,
@@ -377,6 +380,7 @@ pub fn show(
     // footer.
     let mut extra: Option<Outcome> = None;
     let outcome = match dialog {
+        Dialog::CleanStale(form) => return stale::show(ctx, salt, form, tab),
         Dialog::Ignore(form) => return ignore::show(ctx, salt, form, tab),
         Dialog::Identity {
             name,

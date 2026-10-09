@@ -33,7 +33,8 @@ Update this table in the same change that adds or alters a feature.
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
 | Auto refresh (file watcher, window focus) | Done | Yes | Yes | Yes |
 | Submodules: a sidebar section with state, open in a tab, initialize/update, sync, add and confirmed remove; a submodule's diff lists the commits between its two pointers; pull, checkout and clone bring submodules along (Settings → Git → Update submodules) | In progress (#60) | Yes | Yes | Yes |
-| Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and switches to one in the current tab; creating and removing them is planned | Done | Yes | Yes | ? |
+| Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and switches to one in the current tab; creating them is planned; stale linked worktrees can be removed through cleanup | Done | Yes | Yes | ? |
+| Stale cleanup: configurable commit-age period (Settings → Git, default 90 days), preview and confirmed removal of linked worktrees and local branches, protecting dirty worktrees and unmerged commits | Implemented (#91); live verification pending | ? | ? | ? |
 | Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
 | Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Done | Yes | ? | ? |
 | Very large repositories | Planned | ? | ? | ? |

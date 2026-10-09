@@ -8,6 +8,12 @@ commits since the previous build.
 
 ## [Unreleased]
 
+### Added
+
+- Preview and safely clean up stale linked worktrees and local branches from the command palette
+  or Branches header menu. Settings → Git controls the inactivity period (90 days by default);
+  uncommitted work and unmerged commits are protected, with safety checked again before removal.
+
 ### Fixed
 
 - In a small window the Changes view keeps room for the file lists: the staged files are no longer

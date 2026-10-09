@@ -8,6 +8,14 @@ impl CanopyApp {
     pub(super) fn apply(&mut self, ctx: &egui::Context, actions: Vec<Action>) {
         for action in actions {
             match action {
+                Action::CleanStale => {
+                    let days = self.settings.stale_inactivity_days;
+                    if let Some(tab) = self.tab() {
+                        let serial = tab.read_stale(days);
+                        let form = dialogs::StaleForm::new(tab.path.clone(), days, serial);
+                        self.dialogs.open(Dialog::CleanStale(Box::new(form)));
+                    }
+                }
                 Action::ReadIgnore { repo, query } => {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.path == repo) {
                         t.read_ignore(query);
@@ -659,6 +667,53 @@ mod tests {
             (here.mode, here.follow_config),
             (everywhere.mode, everywhere.follow_config)
         );
+    }
+
+    #[test]
+    fn stale_cleanup_uses_the_setting_and_a_fresh_repository_bound_preview() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let (worker, events, jobs) = crate::worker::Worker::detached();
+        let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+        let path = tab.path.clone();
+        tab.worker = worker;
+        app.tabs.push(tab);
+        assert_eq!(app.settings.stale_inactivity_days, 90);
+        app.settings.stale_inactivity_days = 12;
+        app.apply(&ctx, vec![Action::CleanStale]);
+        let Job::StaleCandidates {
+            serial: first,
+            older_than_days,
+        } = jobs.recv().expect("preview")
+        else {
+            panic!("a preview must run on the repository worker")
+        };
+        assert_eq!(older_than_days, 12);
+        assert!(
+            matches!(app.dialogs.current(), Some(Dialog::CleanStale(form)) if form.repo == path)
+        );
+        app.apply(&ctx, vec![Action::CleanStale]);
+        let Job::StaleCandidates { serial: second, .. } = jobs.recv().expect("fresh preview")
+        else {
+            panic!("fresh preview")
+        };
+        assert_ne!(first, second);
+        events
+            .send(crate::worker::Event::StaleCandidates {
+                serial: first,
+                result: Err("old preview".into()),
+            })
+            .expect("old reply");
+        app.tabs[0].poll(&[]);
+        assert!(app.tabs[0].stale_result.is_none());
+        events
+            .send(crate::worker::Event::StaleCandidates {
+                serial: second,
+                result: Ok(std::sync::Arc::from(Vec::new())),
+            })
+            .expect("new reply");
+        app.tabs[0].poll(&[]);
+        assert!(matches!(&app.tabs[0].stale_result, Some(Ok(rows)) if rows.is_empty()));
     }
 
     /// The force push question names the branch and where it goes, which the repository thread

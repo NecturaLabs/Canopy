@@ -29,6 +29,7 @@ pub enum AppearanceChoice {
 /// Something the user asked for, collected during a frame and applied after it.
 #[derive(Debug, Clone)]
 pub enum Action {
+    CleanStale,
     ReadIgnore {
         repo: PathBuf,
         query: crate::worker::IgnoreQuery,

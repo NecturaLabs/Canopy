@@ -674,6 +674,8 @@ pub fn folder_name(path: &std::path::Path) -> String {
 /// a frame clones the pointer, never the data, so its cost does not grow with the repository.
 #[derive(Debug)]
 pub struct RepoTab {
+    pub stale_serial: u64,
+    pub stale_result: Option<Result<Arc<[canopy_core::StaleCandidate]>, String>>,
     pub ignore_query: Option<crate::worker::IgnoreQuery>,
     pub ignore_result: Option<Result<Arc<crate::worker::IgnoreData>, String>>,
     ignore_serial: u64,
@@ -825,6 +827,8 @@ impl RepoTab {
         Self {
             path,
             ignore_query: None,
+            stale_serial: 0,
+            stale_result: None,
             ignore_result: None,
             ignore_serial: 0,
             identity: None,
@@ -927,6 +931,17 @@ impl RepoTab {
             serial: self.ignore_serial,
             query,
         });
+    }
+
+    /// A new cleanup form always gets a fresh preview; replies for older forms are discarded.
+    pub fn read_stale(&mut self, older_than_days: u32) -> u64 {
+        self.stale_serial = self.stale_serial.wrapping_add(1);
+        self.stale_result = None;
+        self.worker.send(Job::StaleCandidates {
+            serial: self.stale_serial,
+            older_than_days,
+        });
+        self.stale_serial
     }
 
     /// Requests a full refresh.
@@ -1549,6 +1564,11 @@ impl RepoTab {
         let mut notices = Vec::new();
         while let Ok(ev) = self.worker.events.try_recv() {
             match ev {
+                Event::StaleCandidates { serial, result } => {
+                    if serial == self.stale_serial {
+                        self.stale_result = Some(result);
+                    }
+                }
                 Event::Ignore { serial, result } => {
                     if serial == self.ignore_serial {
                         self.ignore_result = Some(result);

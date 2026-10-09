@@ -17,6 +17,10 @@ use canopy_core::{
 /// A request to change the repository. Each one is followed by a refresh.
 #[derive(Debug, Clone)]
 pub enum Op {
+    CleanStale {
+        candidates: Vec<canopy_core::StaleCandidate>,
+        older_than_days: u32,
+    },
     AddIgnore {
         rule: canopy_core::IgnoreRule,
         target: canopy_core::IgnoreTarget,
@@ -221,6 +225,7 @@ impl Op {
     /// Present-tense label shown while the operation runs.
     pub fn label(&self) -> String {
         match self {
+            Self::CleanStale { .. } => "Cleaning up stale worktrees and branches".into(),
             Self::Stage(_) | Self::StageAll => "Staging".into(),
             Self::AddIgnore { .. } => "Adding ignore rule".into(),
             Self::StopTracking(path) => format!("Untracking {path}"),
@@ -330,8 +335,15 @@ impl Op {
 /// Work for the repository thread.
 #[derive(Debug, Clone)]
 pub enum Job {
+    StaleCandidates {
+        serial: u64,
+        older_than_days: u32,
+    },
     /// Ignore management reads; the serial ties the reply to the newest form request.
-    Ignore { serial: u64, query: IgnoreQuery },
+    Ignore {
+        serial: u64,
+        query: IgnoreQuery,
+    },
     /// Full snapshot with up to this many commits (0 keeps the current limit).
     Refresh(usize),
     /// The user's Retry after a download failed: forget the failure and read again, downloading.
@@ -411,6 +423,10 @@ pub struct DiffKey {
 /// hold them across a frame without copying.
 #[derive(Debug)]
 pub enum Event {
+    StaleCandidates {
+        serial: u64,
+        result: Result<Arc<[canopy_core::StaleCandidate]>, String>,
+    },
     Ignore {
         serial: u64,
         result: Result<Arc<IgnoreData>, String>,
@@ -732,6 +748,7 @@ impl Job {
             Self::Refresh(_) => "refresh",
             Self::RetryDownloads => "retry-downloads",
             Self::Ignore { .. } => "ignore",
+            Self::StaleCandidates { .. } => "stale_candidates",
             Self::RefreshStatus => "status",
             Self::Details(_) => "details",
             Self::Signature(_) => "signature",
@@ -821,6 +838,18 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             let kind = job.kind();
             let started = Instant::now();
             match job {
+                Job::StaleCandidates {
+                    serial,
+                    older_than_days,
+                } => {
+                    emit(Event::StaleCandidates {
+                        serial,
+                        result: repo
+                            .stale_candidates(older_than_days, chrono::Utc::now().timestamp())
+                            .map(Arc::from)
+                            .map_err(|error| error.to_string()),
+                    });
+                }
                 Job::Ignore { serial, query } => {
                     emit(Event::Ignore {
                         serial,
@@ -1388,6 +1417,20 @@ fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::
 fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Result<String> {
     let done = |r: canopy_core::Result<()>| r.map(|()| String::new());
     match op {
+        Op::CleanStale {
+            candidates,
+            older_than_days,
+        } => {
+            repo.remove_stale_candidates(
+                &candidates,
+                older_than_days,
+                chrono::Utc::now().timestamp(),
+            )?;
+            Ok(format!(
+                "Removed {} stale worktrees and branches",
+                candidates.len()
+            ))
+        }
         Op::AddIgnore { rule, target } => repo.add_ignore_rule(&rule, target).map(|out| {
             format!(
                 "{} {} in {}.",

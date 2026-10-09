@@ -2088,6 +2088,8 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
 /// The fewest and most commits a history page loads, and the stepper's step.
 const COMMIT_PAGE: RangeInclusive<f64> = 200.0..=50_000.0;
 const COMMIT_PAGE_STEP: f64 = 100.0;
+/// Maximum inactivity period offered by the cleanup setting (ten years).
+const STALE_DAYS: RangeInclusive<f64> = 1.0..=3650.0;
 
 fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
@@ -3112,6 +3114,21 @@ fn git(
                 .show(ui);
         },
     );
+    heading(ui, "Cleanup");
+    row(
+        ui,
+        "Stale cleanup after (days)",
+        "Clean up stale… previews worktrees and branches whose last commit is older than this period. Recommended: 90 days. Removal always asks first.",
+        |ui| {
+            revert(
+                ui,
+                &mut s.stale_inactivity_days,
+                &DEFAULTS.stale_inactivity_days,
+                "Stale cleanup after (days)",
+            );
+            stale_days(ui, s);
+        },
+    );
     heading(ui, "Conflicts");
     row_with_note(
         ui,
@@ -4080,6 +4097,29 @@ fn repo_identity(
             }
         },
     );
+}
+
+/// The inactivity period for manual cleanup, entered as a whole number of days.
+fn stale_days(ui: &mut Ui, s: &mut Settings) {
+    let mut days = f64::from(s.stale_inactivity_days);
+    if fixed_width(ui, COUNT_FIELD_WIDTH, |ui| {
+        KitNumber::new(&mut days, STALE_DAYS)
+            .step(1.0)
+            .name("Stale cleanup after (days)")
+            .width(COUNT_FIELD_WIDTH)
+            .id_salt("stale-inactivity-days")
+            .show(ui)
+    })
+    .changed()
+    {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the number field clamps to a positive whole-day range within u32"
+        )]
+        let days = days.round() as u32;
+        s.stale_inactivity_days = days;
+    }
 }
 
 /// Commits per page: the kit's number field, with − and + steppers of [`COMMIT_PAGE_STEP`].
