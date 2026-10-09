@@ -110,7 +110,7 @@ fn body(ui: &mut Ui, data: &Insights) {
     }
     branch_table(ui, &data.branches);
     ui.add_space(m.dialog_gap);
-    ui.label(RichText::new("Local history only. Shallow clones omit older commits; partial clones and custom merge or filter drivers skip squash checks.").color(p.text_dim));
+    ui.label(RichText::new("Local history only. Shallow clones omit older commits; squash-merged branches are not detected.").color(p.text_dim));
 }
 
 fn divergence(value: Option<canopy_core::Divergence>) -> String {
