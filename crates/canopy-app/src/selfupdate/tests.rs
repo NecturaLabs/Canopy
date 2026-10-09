@@ -686,6 +686,47 @@ fn an_unregistered_svg_is_preserved_even_for_a_registered_png() {
     assert_eq!(read(&svg), "not ours");
 }
 
+#[test]
+fn an_orphaned_svg_that_is_a_shipped_icon_is_removed_and_anything_else_stays() {
+    const SHIPPED: [&[u8]; 2] = [
+        include_bytes!("../../../../packaging/fixtures/legacy-icon-1.svg"),
+        include_bytes!("../../../../packaging/fixtures/legacy-icon-2.svg"),
+    ];
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    let png = tmp
+        .path()
+        .join("data/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = tmp
+        .path()
+        .join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    folder(
+        &root,
+        &[(
+            "share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png",
+            "new png",
+        )],
+    );
+    write(&png, "old png");
+    let old = parse_receipt(&format!(
+        "icon={}|{}\n",
+        png.display(),
+        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png")
+            .display(),
+    ));
+    for shipped in SHIPPED {
+        fs::create_dir_all(svg.parent().expect("parent")).expect("dirs");
+        fs::write(&svg, shipped).expect("write");
+        integrate(&root, 413, &old, &mut Vec::new());
+        assert!(!exists(&svg), "an icon Canopy shipped is ours to remove");
+    }
+    let mut edited = SHIPPED[0].to_vec();
+    edited.extend_from_slice(b"<!-- edited -->");
+    fs::write(&svg, edited).expect("write");
+    integrate(&root, 414, &old, &mut Vec::new());
+    assert!(exists(&svg), "an edited copy is the user's");
+}
+
 #[cfg(unix)]
 #[test]
 fn an_unregistered_symlinked_legacy_svg_is_left_alone() {

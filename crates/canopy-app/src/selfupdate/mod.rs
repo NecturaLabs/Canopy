@@ -681,6 +681,9 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
             notes.push(format!("could not write {}", dst.display()));
         }
     }
+    for (dst, _) in &old.icons {
+        remove_shipped_svg_beside(dst);
+    }
     for link in &old.links {
         if fs::read_link(link).is_ok_and(|t| t == root.join("bin/canopy")) {
             lines.push(format!("link={}", link.display()));
@@ -694,6 +697,28 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
         notes.push(format!("could not update {}: {e}", receipt.display()));
     }
     refresh_desktop_caches(old);
+}
+
+/// SHA-256 of the scalable icons earlier builds shipped (`assets/icon.svg`, two revisions); the
+/// installer carries the same list.
+const SHIPPED_SVG_SHA256: [&str; 2] = [
+    "e17268f7dde4d77560dbb8d70dec4b06516fb66b56aedc6d0efab3c8c5ed7988",
+    "200c6e1098e502edb8563c10bf90d47289cd677bb123b6014909fe33cf911d7e",
+];
+
+/// Removes the scalable icon beside a registered PNG when no receipt lists it but its content is
+/// byte for byte an icon Canopy shipped. A custom, edited or linked file stays.
+fn remove_shipped_svg_beside(png: &Path) {
+    let Some(apps) = png.parent().and_then(Path::parent).and_then(Path::parent) else {
+        return;
+    };
+    let svg = apps.join(format!("scalable/apps/{APP_ID}.svg"));
+    if svg.symlink_metadata().is_ok_and(|m| m.is_file())
+        && fs::read(&svg)
+            .is_ok_and(|bytes| SHIPPED_SVG_SHA256.contains(&updates::sha256_hex(&bytes).as_str()))
+    {
+        let _ = fs::remove_file(&svg);
+    }
 }
 
 /// Refreshes the desktop and icon caches that already exist, the way the installer does; the

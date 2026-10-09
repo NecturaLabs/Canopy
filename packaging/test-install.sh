@@ -317,6 +317,25 @@ linux_flow() {
     check "unregistered symlink is preserved" [ -L "$svg" ]
     check "symlink target is preserved" [ "$(cat "$tmp/untouched.svg")" = "another user's svg" ]
     rm "$svg" "$tmp/untouched.svg"
+
+    echo "== an orphaned SVG that is byte for byte an icon Canopy shipped"
+    # The receipt no longer lists it (a build that rewrote the receipt dropped the line), but
+    # the content proves where it came from.
+    for shipped in "$root"/packaging/fixtures/legacy-icon-*.svg; do
+        cp "$shipped" "$svg"
+        run_status
+        check "install exits 0 with an orphaned shipped SVG ($(basename "$shipped"))" [ "$status" = 0 ]
+        check "orphaned shipped SVG removed ($(basename "$shipped"))" [ ! -e "$svg" ]
+    done
+    cp "$root/packaging/fixtures/legacy-icon-1.svg" "$svg"
+    echo "<!-- edited -->" >>"$svg"
+    run_status
+    check "an edited copy of the shipped SVG is preserved" [ -f "$svg" ]
+    rm "$svg"
+    ln -s "$root/packaging/fixtures/legacy-icon-1.svg" "$svg"
+    run_status
+    check "a symlink to the shipped SVG is preserved" [ -L "$svg" ]
+    rm "$svg"
     rmdir "$(dirname "$svg")" "$(dirname "$(dirname "$svg")")"
     rm -rf "$home/data-a"
 
