@@ -58,7 +58,13 @@ impl Repo {
                 "--",
             ],
         )?;
-        Ok(parse(out.trim_end_matches('\n')))
+        let status = parse(out.trim_end_matches('\n'));
+        // Git prints `N` for a signed commit it has no way to check (no allowed-signers file),
+        // so a signature in the commit itself means "cannot be checked", not "unsigned".
+        if status == SignatureStatus::Unsigned && self.git().extract_signature(&oid, None).is_ok() {
+            return Ok(SignatureStatus::Unavailable);
+        }
+        Ok(status)
     }
 }
 

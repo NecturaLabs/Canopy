@@ -125,3 +125,19 @@ fn a_signature_from_an_unlisted_key_is_never_shown_as_trusted() {
     assert!(!status.is_trusted(), "{status:?} for git's {expected}");
     assert_ne!(status, SignatureStatus::Unsigned, "git's {expected}");
 }
+
+#[test]
+fn a_signed_commit_git_cannot_check_is_not_shown_as_unsigned() {
+    let (dir, repo) = repository(true);
+    commit(dir.path(), "a", true);
+    git(
+        dir.path(),
+        &["config", "--unset", "gpg.ssh.allowedSignersFile"],
+    );
+    assert_eq!(letter(dir.path(), "HEAD"), "N", "git cannot check it");
+    assert_eq!(
+        repo.commit_signature(oid(dir.path(), "HEAD"))
+            .expect("status"),
+        SignatureStatus::Unavailable
+    );
+}
