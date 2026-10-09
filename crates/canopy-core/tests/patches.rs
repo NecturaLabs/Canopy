@@ -436,3 +436,23 @@ fn a_merge_is_never_exported_as_the_commit_before_it() {
     assert!(refused_among.to_string().contains("A merge commit"));
     assert!(!out.exists(), "nothing is written");
 }
+
+#[test]
+fn a_configured_cover_letter_is_not_exported_with_the_patches() {
+    let source = tempfile::tempdir().expect("tempdir");
+    init(source.path());
+    commit_file(source.path(), "b.txt", "b\n", "feat: add b");
+    git(source.path(), &["config", "format.coverLetter", "true"]);
+    let repo = Repo::open(source.path()).expect("open");
+    let out = tempfile::tempdir().expect("tempdir");
+    let files = repo
+        .export_patches(&[oid(source.path(), "HEAD")], out.path())
+        .expect("export");
+    assert_eq!(files.len(), 1, "{files:?}");
+
+    let twin = tempfile::tempdir().expect("tempdir");
+    init(twin.path());
+    let target = Repo::open(twin.path()).expect("open");
+    target.apply_patches(&files).expect("applies");
+    assert_eq!(history(twin.path()), history(source.path()));
+}

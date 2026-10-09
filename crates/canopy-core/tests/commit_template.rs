@@ -122,3 +122,18 @@ fn a_huge_template_is_refused() {
     let error = repo.commit_template().expect_err("too large");
     assert!(error.to_string().contains("too large"), "{error}");
 }
+
+#[test]
+fn the_configured_comment_character_decides_what_the_template_drops() {
+    let (dir, repo) = repository();
+    fs::write(
+        dir.path().join("TEMPLATE"),
+        "# Ticket: ABC-123\n\nDescribe the change\n; template guidance\n",
+    )
+    .expect("write");
+    git(dir.path(), &["config", "commit.template", "TEMPLATE"], None);
+    git(dir.path(), &["config", "core.commentChar", ";"], None);
+
+    let got = repo.commit_template().expect("template").expect("some");
+    assert_eq!(got, "# Ticket: ABC-123\n\nDescribe the change");
+}

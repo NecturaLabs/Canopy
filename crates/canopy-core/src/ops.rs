@@ -482,8 +482,18 @@ impl Repo {
         if u64::try_from(text.len()).is_ok_and(|len| len > COMMIT_TEMPLATE_LIMIT) {
             return Err(unreadable(&"it is too large"));
         }
+        // The comment character git would strip: `core.commentChar` when it is one character
+        // (`auto` and anything else mean `#`). Trailing spaces stay: "feat: " is a prefix.
+        let configured =
+            cli::run_unchecked(self.workdir(), &["config", "--get", "core.commentChar"])?;
+        let configured = String::from_utf8_lossy(&configured.stdout);
+        let mut chars = configured.trim_end().chars();
+        let comment = match (chars.next(), chars.next()) {
+            (Some(c), None) if !c.is_whitespace() => c,
+            _ => '#',
+        };
         let text = String::from_utf8_lossy(&text);
-        let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+        let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with(comment)).collect();
         Ok(Some(kept.join("\n").trim_end().to_owned()))
     }
 
@@ -767,6 +777,7 @@ impl Repo {
             let start = (n + 1).to_string();
             let out = self.git_cmd(&[
                 "format-patch",
+                "--no-cover-letter",
                 "-1",
                 "--start-number",
                 &start,
