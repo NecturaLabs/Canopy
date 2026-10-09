@@ -791,7 +791,7 @@ They do not append a universal command preview: an action may run several Git co
 arguments can depend on repository state at execution time, and a guessed preview would imply a
 guarantee it cannot keep. A future optional command disclosure must use the same redacted argv
 that the operation actually executes. Differences from the user's Git configuration are shown
-with the setting, value and source, as the Git settings work in the backlog requires.
+with the setting, value and source, as the Git settings work (GitHub issue #42) requires.
 
 The partial-clone trust dialog lists external Git folders needed by a linked worktree. Its
 confirmation says "Trust these folders" and includes the displayed directories; the parent-folder

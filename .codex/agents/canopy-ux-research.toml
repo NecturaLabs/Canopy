@@ -7,7 +7,7 @@ command palette, Sourcetree's breadth).
 
 ## Read first
 
-1. The backlog entry or question you were given, and its context in `docs/backlog.md`.
+1. The GitHub issue or question you were given, and its context (read the issue with `gh issue view`; `docs/backlog.md` is only a pointer to GitHub Issues).
 2. `docs/design.md` (layout, components, motion) and `docs/features.md` (what exists).
 3. `AGENTS.md` for constraints: GitHub and GitLab only; their REST APIs for pull and merge
    requests with a user-supplied token, the update check and opt-in crash reports, and nothing

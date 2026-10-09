@@ -255,6 +255,11 @@ def main() -> int:
         if not (names(tools_readme, rel) or names(tools_readme, posixpath.basename(f)) or ("/" in rel and names(tools_readme, top + "/"))):
             problem("tools/README.md", 1, f"{f} is not mentioned")
 
+    # 6. GitHub Issues is the sole backlog: docs/backlog.md stays a pointer, never a task list.
+    for n, text in enumerate(read("docs/backlog.md").splitlines(), 1):
+        if re.match(r"\s*([-*+]|\d+\.|\|)\s", text) or text.startswith("## "):
+            problem("docs/backlog.md", n, "tasks belong in GitHub Issues, not in this pointer file")
+
     for line in problems:
         print(line)
     if problems:

@@ -269,8 +269,8 @@ convention and pull request checklist, and [GitHub Issues](https://github.com/Ne
 │   └── canopy-app/         GUI binary `canopy`
 │       ├── assets/         bundled fonts (OFL) and window icon
 │       └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/
-├── assets/                 application icon (SVG and PNG)
-├── docs/                   architecture, design system, feature matrix, keybindings, backlog,
+├── assets/                 application icon (PNG)
+├── docs/                   architecture, design system, feature matrix, keybindings,
 │                           ADRs, specs, legal texts, screenshots
 ├── packaging/              one-line installers and their test; Linux desktop entry, macOS bundle
 ├── tools/                  check, fixture, screenshot, install, release and stress scripts

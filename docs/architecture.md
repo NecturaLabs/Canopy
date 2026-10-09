@@ -63,8 +63,8 @@ The app calls `delete_merged_branch` and `force_delete_branch` (the old `delete_
 force)` wrapper is gone), `stage_all_except_repositories` (its `stage_all` wrapper is gone; it
 returns the folders it left out) and `publish_branch` (the branch menu's Publish). It does not
 yet use `flow.rs`, `merged.rs`, `lfs.rs`, `paths::safe_join` or `untracked_children` (the Changes list shows
-the collapsed folders, not their contents) outside the core's own code and tests; the backlog
-entries for those features are the UI work.
+the collapsed folders, not their contents) outside the core's own code and tests; their GitHub
+Issues are the UI work.
 
 
 ## canopy-hosting
@@ -344,7 +344,7 @@ and open repositories) are serialised with serde through eframe's storage under 
 (`~/.local/share/canopy/` on Linux). Saved hosting tokens are in `tokens.json` beside it (mode 0600
 on Unix, not the operating system's keychain), and `logs/` and `crashes/` hold the per-run logs
 and local crash reports. Repository state is never cached on disk; it is always read from the
-repository. The backlog's "Persistent, secured storage" entry moves all of this into
+repository. GitHub issue #40 (secure persistent storage) moves all of this into
 Canopy-specific folders.
 
 ## Error handling
