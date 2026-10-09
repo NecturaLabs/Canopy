@@ -148,6 +148,67 @@ fn a_patch_that_does_not_apply_can_be_checked_and_the_apply_aborted() {
 }
 
 #[test]
+fn a_series_stopped_by_a_conflict_continues_with_the_rest_after_it_is_resolved() {
+    let source = tempfile::tempdir().expect("tempdir");
+    init(source.path());
+    commit_file(source.path(), "b.txt", "b\n", "feat: add b");
+    commit_file(
+        source.path(),
+        "a.txt",
+        "one\nTWO\nthree\n",
+        "fix: shout two",
+    );
+    commit_file(source.path(), "c.txt", "c\n", "feat: add c");
+    let repo = Repo::open(source.path()).expect("open");
+    let out = tempfile::tempdir().expect("tempdir");
+    let files = repo
+        .export_patches(
+            &[
+                oid(source.path(), "HEAD~2"),
+                oid(source.path(), "HEAD~1"),
+                oid(source.path(), "HEAD"),
+            ],
+            out.path(),
+        )
+        .expect("export");
+    assert_eq!(files.len(), 3);
+
+    let twin = tempfile::tempdir().expect("tempdir");
+    init(twin.path());
+    commit_file(twin.path(), "a.txt", "one\n2\nthree\n", "fix: number two");
+    let target = Repo::open(twin.path()).expect("open");
+
+    let stopped = target.apply_patches(&files).expect_err("second conflicts");
+    assert!(stopped.to_string().contains("a.txt"), "{stopped}");
+    assert_eq!(
+        target.snapshot(10).expect("snapshot").state,
+        RepoState::ApplyMailbox
+    );
+    assert_eq!(
+        git(twin.path(), &["log", "-1", "--format=%s"]).trim(),
+        "feat: add b"
+    );
+
+    // Resolve the conflict, stage it and continue: the third patch must follow.
+    fs::write(twin.path().join("a.txt"), "one\nTWO\nthree\n").expect("write");
+    git(twin.path(), &["add", "--", "a.txt"]);
+    target
+        .continue_or_abort(RepoState::ApplyMailbox, false)
+        .expect("continue");
+
+    assert_eq!(
+        target.snapshot(10).expect("snapshot").state,
+        RepoState::Clean
+    );
+    assert_eq!(git(twin.path(), &["status", "--porcelain"]), "");
+    assert_eq!(
+        git(twin.path(), &["log", "--format=%s|%an", "-3"]),
+        "feat: add c|Ada Lovelace\nfix: shout two|Ada Lovelace\nfeat: add b|Ada Lovelace\n"
+    );
+    assert!(twin.path().join("c.txt").is_file());
+}
+
+#[test]
 fn a_patch_folder_must_be_a_full_path() {
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());

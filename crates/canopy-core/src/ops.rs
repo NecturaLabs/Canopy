@@ -671,6 +671,29 @@ impl Repo {
         self.conflicting_cmd(&args)
     }
 
+    /// `oids` without repeats, ancestors before their descendants whatever their dates (a
+    /// date sort would swap commits made in the same second or rebased out of order).
+    fn parents_first(&self, oids: &[Oid]) -> Result<Vec<Oid>> {
+        let wanted: std::collections::HashSet<Oid> = oids.iter().copied().collect();
+        let mut walk = self.git().revwalk()?;
+        walk.set_sorting(git2::Sort::TOPOLOGICAL)?;
+        for oid in &wanted {
+            walk.push(*oid)?;
+        }
+        let mut found = Vec::with_capacity(wanted.len());
+        for id in walk {
+            let id = id?;
+            if wanted.contains(&id) {
+                found.push(id);
+                if found.len() == wanted.len() {
+                    break;
+                }
+            }
+        }
+        found.reverse();
+        Ok(found)
+    }
+
     /// Writes one `git format-patch` file per commit of `oids` into `dir`, parents first, and
     /// returns their paths. `dir` must be absolute and is created when missing.
     pub fn export_patches(&self, oids: &[Oid], dir: &Path) -> Result<Vec<std::path::PathBuf>> {
@@ -680,17 +703,14 @@ impl Repo {
         if !dir.is_absolute() {
             return Err(Error::invalid("Choose a full folder path for the patches."));
         }
-        let ids: Vec<String> = oids.iter().map(Oid::to_string).collect();
-        let mut order = vec!["rev-list", "--topo-order", "--reverse", "--no-walk"];
-        order.extend(ids.iter().map(String::as_str));
-        let ordered = self.git_cmd(&order)?;
+        let ordered = self.parents_first(oids)?;
         let io = |e: std::io::Error| Error::invalid(format!("{}: {e}", dir.display()));
         std::fs::create_dir_all(dir).map_err(io)?;
         // Written beside the target and moved in only once no file there would be replaced.
         let staging = dir.join(format!(".canopy-patches-{}", std::process::id()));
         let staging_arg = staging.to_string_lossy();
         let mut staged = Vec::new();
-        let made = ordered.lines().enumerate().try_for_each(|(n, id)| {
+        let made = ordered.iter().enumerate().try_for_each(|(n, id)| {
             let start = (n + 1).to_string();
             let out = self.git_cmd(&[
                 "format-patch",
@@ -699,7 +719,7 @@ impl Repo {
                 &start,
                 "-o",
                 &staging_arg,
-                id,
+                &id.to_string(),
             ])?;
             staged.extend(out.lines().map(std::path::PathBuf::from));
             Ok::<(), Error>(())
