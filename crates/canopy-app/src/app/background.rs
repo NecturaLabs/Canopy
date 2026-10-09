@@ -275,6 +275,7 @@ impl CanopyApp {
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
         self.toasts.set_prefs(self.settings.notifications);
         crate::ui::kit::overlay::set_tooltip_level(self.settings.tooltips);
+        keymap::apply_saved(&self.settings.keybindings);
         let delay = self.settings.tooltip_delay.seconds();
         if (ctx.global_style().interaction.tooltip_delay - delay).abs() > f32::EPSILON {
             ctx.all_styles_mut(|s| s.interaction.tooltip_delay = delay);

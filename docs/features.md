@@ -220,7 +220,7 @@ with the wrong JSON shape reports its failure location without quoting the retur
 | Shared raised controls, larger input targets and visible keyboard focus | Done | ? | ? | ? |
 | Keyboard-only use: one Tab stop per list with the arrows inside, Shift+F10 context menus, modal palette, cheatsheet and dialogs that give focus back | Done | ? | ? | ? |
 | Native folder chooser without blocking the app | Done | ? | ? | ? |
-| Configurable keybindings | Planned | ? | ? | ? |
+| Configurable keybindings: Settings → Keyboard changes any row's key (a key another row uses is refused, naming it), resets one or all, and keeps them in settings export and import | Done | ? | ? | ? |
 | Dark and light themes (Midnight and Daylight) | Done | Yes | Yes | ? |
 | Observatory theme (the previous Midnight) | Done | ? | ? | ? |
 | High contrast switch for every theme (keeps the theme's backgrounds and colours, raises text, outlines and focus) | Done | ? | ? | ? |

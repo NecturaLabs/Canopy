@@ -5,7 +5,7 @@
 //! is ignored; the first save after launch (eframe saves every 30 seconds) writes the file again
 //! without either.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -364,6 +364,9 @@ pub struct Settings {
     pub translucent: bool,
     /// Which notifications show as cards in the bottom-right corner.
     pub notifications: NotificationPrefs,
+    /// The keys the user changed in Settings → Keyboard: a row of the keymap
+    /// (`keymap::binding_id`) to its chord's text. Anything not here keeps the table's keys.
+    pub keybindings: BTreeMap<String, String>,
     /// Which tooltips show, and after how long a rest.
     #[serde(deserialize_with = "known")]
     pub tooltips: TooltipLevel,
@@ -512,6 +515,7 @@ impl Default for Settings {
             style: Style::Standard,
             translucent: false,
             notifications: NotificationPrefs::default(),
+            keybindings: BTreeMap::new(),
             tooltips: TooltipLevel::Helpful,
             tooltip_delay: TooltipDelay::Normal,
             high_contrast: false,

@@ -23,6 +23,8 @@ impl CanopyApp {
         // Enter and the arrows.
         let typing = ctx.text_edit_focused() || crate::ui::kit::select::takes_text(ctx);
         let widget_focused = !typing && ctx.memory(|m| m.focused().is_some());
+        // Settings → Keyboard may be waiting for a row's new key: it takes the press first.
+        keymap::capture_key(ctx);
         let fired = keymap::dispatch(ctx, |b, chord| {
             if b.command == Command::ContextMenu {
                 // Listed for the cheatsheet; the focused row consumes the key itself.

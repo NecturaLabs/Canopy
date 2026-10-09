@@ -31,6 +31,7 @@ use crate::ui::custom_theme::{self, CustomTheme};
 use crate::ui::kit::a11y;
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
+use crate::ui::kit::chip::Keycap;
 use crate::ui::kit::choice::{Segmented, Swatches};
 use crate::ui::kit::field::{NumberField as KitNumber, SearchField, TextField};
 use crate::ui::kit::overlay;
@@ -159,6 +160,10 @@ pub struct SettingsScreen {
     /// Where clones go when no folder is chosen (~/src when it exists, else home), looked up
     /// once while the screen is open rather than every frame.
     default_clone_parent: Option<String>,
+    /// The keyboard row waiting for its new key (`keymap::binding_id`).
+    rebinding: Option<String>,
+    /// Why the last key was refused, with the row it was for.
+    key_note: Option<(String, String)>,
 }
 
 /// Why the active repository's authors show initials instead of pictures
@@ -695,7 +700,7 @@ impl Page<'_, '_> {
                     screen.section = Section::Accounts;
                 }
             }
-            Section::Keyboard => keyboard(ui),
+            Section::Keyboard => keyboard(ui, screen, settings),
             Section::Data => backup(ui, screen, settings, actions),
             Section::Repository => repository(ui, screen, settings, tokens, data, actions),
         }
@@ -895,15 +900,6 @@ fn reveal(ui: &mut Ui, title: &str, text: &[&str]) -> bool {
     }
     Filter::set(ui.ctx(), f);
     shown
-}
-
-/// Counts `n` matches found by other means (the shortcut list) and draws what they sit under.
-fn reveal_rows(ui: &mut Ui, n: usize) {
-    let mut f = Filter::get(ui.ctx());
-    f.count += n;
-    f.shown = true;
-    let f = open_group(ui, f);
-    Filter::set(ui.ctx(), f);
 }
 
 /// Draws the section header and group heading a match sits under, the first time.
@@ -4957,21 +4953,6 @@ fn update_status(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &
     }
 }
 
-/// How many rows the cheatsheet's list shows for `section` filtered by `query` (the same test
-/// `ui::cheatsheet` applies: the description or one of the keys contains the query).
-fn shortcut_matches(section: KeySection, query: &str) -> usize {
-    crate::keymap::BINDINGS
-        .iter()
-        .filter(|b| b.section == section && crate::keymap::listed_here(b))
-        .filter(|b| {
-            b.description.to_lowercase().contains(query)
-                || crate::keymap::all_keys(b.command)
-                    .iter()
-                    .any(|k| k.to_lowercase().contains(query))
-        })
-        .count()
-}
-
 /// Takes an export's or import's result once its file chooser and file access are done.
 fn poll_file_task(screen: &mut SettingsScreen, s: &mut Settings, actions: &mut Vec<Action>) {
     use crate::settings_file::Outcome;
@@ -5074,28 +5055,135 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     );
 }
 
-fn keyboard(ui: &mut Ui) {
-    let words = Filter::get(ui.ctx()).words;
-    if !words.is_empty() {
-        // The shortcuts the cheatsheet's own filter finds for the whole query.
-        let query = words.join(" ");
-        for section in KeySection::ALL {
-            let found = shortcut_matches(section, &query);
-            if found > 0 {
-                reveal_rows(ui, found);
-                crate::ui::cheatsheet::rows(ui, section, &query);
+/// Settings → Keyboard: every key of the keymap by where it applies, each with a button that
+/// listens for its new key, and Reset where the user changed it.
+fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
+    use crate::keymap::{self, Binding};
+    // The key a waiting row was given, or that Esc cancelled.
+    keymap::keep_capturing(ui.ctx());
+    if let Some(taken) = keymap::take_capture()
+        && let Some(id) = screen.rebinding.take()
+        && let keymap::Captured::Key(chord) = taken
+        && let Some(binding) = keymap::binding_by_id(&id)
+    {
+        if let Some(why) = keymap::rebind_problem(binding, chord) {
+            screen.key_note = Some((id, why));
+        } else {
+            screen.key_note = None;
+            if binding.chords == [chord] {
+                s.keybindings.remove(&id);
+            } else {
+                s.keybindings.insert(id, chord.to_text());
             }
         }
-        return;
     }
-    ui.scope(|ui| {
-        // Clear of the scrollbar, which floats over the list's right edge.
-        ui.set_max_width(ui.available_width() - theme::MD);
-        help_label(ui, "Single keys work when no text field has focus.");
-    });
-    ui.add_space(theme::MD);
+    if screen.rebinding.is_some() && !keymap::is_capturing() {
+        screen.rebinding = None;
+    }
+    let p = palette(ui.ctx());
+    if !Filter::searching(ui.ctx()) {
+        ui.scope(|ui| {
+            // Clear of the scrollbar, which floats over the list's right edge.
+            ui.set_max_width(ui.available_width() - theme::MD);
+            help_label(
+                ui,
+                concat!(
+                    "Anywhere keys also work while typing; single keys only outside text fields. ",
+                    "Change replaces a row's keys with the one you press; Esc cancels."
+                ),
+            );
+        });
+        ui.add_space(theme::MD);
+    }
     for section in KeySection::ALL {
-        crate::ui::cheatsheet::rows(ui, section, "");
+        let rows: Vec<&Binding> = keymap::BINDINGS
+            .iter()
+            .filter(|b| b.section == section)
+            .collect();
+        ui.push_id(("keyboard", section.title()), |ui| {
+            heading(ui, section.title());
+            for b in rows {
+                let id = keymap::binding_id(b);
+                let waiting = screen.rebinding.as_deref() == Some(id.as_str());
+                let note =
+                    screen
+                        .key_note
+                        .as_ref()
+                        .filter(|(row, _)| *row == id)
+                        .map(|(_, why)| Note {
+                            text: why.clone(),
+                            warn: true,
+                        });
+                let keys = b.keys();
+                let help_text = |ui: &mut Ui| {
+                    if let Some(note) = &note {
+                        note.show(ui);
+                    }
+                };
+                row_layout(ui, b.description, None, &keys, &help_text, "", |ui| {
+                    if !keymap::is_remappable(b) {
+                        Keycap::new(keys.clone()).show(ui);
+                        return;
+                    }
+                    // Right to left: Change is rightmost.
+                    if waiting {
+                        if Button::new("Cancel")
+                            .ghost()
+                            .id_salt(("keys-cancel", &id))
+                            .show(ui)
+                            .clicked()
+                        {
+                            keymap::cancel_capture();
+                            screen.rebinding = None;
+                        }
+                        ui.label(
+                            RichText::new("Press the new key")
+                                .size(theme::metrics().meta_size)
+                                .color(p.accent),
+                        );
+                        return;
+                    }
+                    if Button::new("Change")
+                        .icon(icon::KEYBOARD)
+                        .id_salt(("keys-change", &id))
+                        .show(ui)
+                        .clicked()
+                    {
+                        keymap::start_capture(ui.ctx());
+                        screen.rebinding = Some(id.clone());
+                        screen.key_note = None;
+                    }
+                    if keymap::is_customised(b)
+                        && Button::new("Reset")
+                            .ghost()
+                            .id_salt(("keys-reset", &id))
+                            .show(ui)
+                            .clicked()
+                    {
+                        s.keybindings.remove(&id);
+                        screen.key_note = None;
+                    }
+                    for key in keys.rsplit("  ·  ") {
+                        Keycap::new(key.to_owned()).show(ui);
+                    }
+                });
+                row_end(ui);
+            }
+        });
+    }
+    if !s.keybindings.is_empty() {
+        heading(ui, "Start over");
+        row(
+            ui,
+            "Reset all shortcuts",
+            "Every key back to the one Canopy ships with.",
+            |ui| {
+                if confirm_button(ui, "reset-keys", "Reset all", "Reset every shortcut") {
+                    s.keybindings.clear();
+                    screen.key_note = None;
+                }
+            },
+        );
     }
 }
 
@@ -6725,6 +6813,83 @@ mod tests {
             against_recommendation(&GitFacts::default(), &follow, repo).is_empty(),
             "a configuration that sets nothing is not listed"
         );
+    }
+
+    /// #55: Change listens for the next key, a free key is saved under the row and moves the
+    /// command, a taken key is refused with the row that has it, and Reset removes it.
+    #[test]
+    fn the_keyboard_page_changes_and_resets_a_key() {
+        use crate::keymap;
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::default();
+        let frame =
+            |screen: &mut SettingsScreen, settings: &mut Settings, key: Option<egui::Key>| {
+                let events = key
+                    .map(|key| egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    })
+                    .into_iter()
+                    .collect();
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        keymap::capture_key(ui.ctx());
+                        egui::CentralPanel::default().show(ui, |ui| keyboard(ui, screen, settings));
+                        keymap::apply_saved(&settings.keybindings);
+                    },
+                );
+                out.textures_delta.clear();
+            };
+        let id = "Fetch.Repository".to_owned();
+        let fetch = keymap::binding_by_id(&id).expect("a row");
+        // Change on that row.
+        keymap::start_capture(&ctx);
+        screen.rebinding = Some(id.clone());
+        frame(&mut screen, &mut settings, Some(egui::Key::J));
+        assert!(settings.keybindings.is_empty(), "j is taken");
+        let note = screen
+            .key_note
+            .as_ref()
+            .map(|(row, why)| (row.as_str(), why.as_str()));
+        assert!(
+            note.is_some_and(|(row, why)| row == id && why.ends_with("already uses j.")),
+            "{note:?}"
+        );
+        keymap::start_capture(&ctx);
+        screen.rebinding = Some(id.clone());
+        frame(&mut screen, &mut settings, Some(egui::Key::V));
+        assert_eq!(
+            settings.keybindings.get(&id).map(String::as_str),
+            Some("V"),
+            "saved as text"
+        );
+        assert_eq!(screen.key_note, None);
+        assert_eq!(fetch.current_chords().len(), 1);
+        assert!(keymap::is_customised(fetch));
+        // Esc cancels and keeps what is there.
+        keymap::start_capture(&ctx);
+        screen.rebinding = Some(id.clone());
+        frame(&mut screen, &mut settings, Some(egui::Key::Escape));
+        assert_eq!(settings.keybindings.len(), 1);
+        assert_eq!(screen.rebinding, None);
+        // Giving the row its own table key again leaves no entry.
+        keymap::start_capture(&ctx);
+        screen.rebinding = Some(id.clone());
+        frame(&mut screen, &mut settings, Some(egui::Key::F));
+        assert!(settings.keybindings.is_empty());
+        assert!(!keymap::is_customised(fetch));
+        keymap::apply_saved(&std::collections::BTreeMap::new());
     }
 
     /// Selecting another predefined theme leaves the appearance controls at the same position.

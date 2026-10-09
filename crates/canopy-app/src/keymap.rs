@@ -8,6 +8,9 @@
 //! Ctrl layer, so Super, Alt and those keys are never bound, and bare keys never fire while a
 //! text field has focus. In a family Shift turns the action around (`p` pull, `P` push).
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
 use egui::{Key, Modifiers};
 
 /// Something a key can do. The app turns commands into actions.
@@ -651,17 +654,21 @@ impl Chord {
 }
 
 impl Binding {
+    /// The chords that fire this binding: the ones the user chose in Settings, else the table's.
+    pub fn current_chords(&self) -> Vec<Chord> {
+        custom(self).unwrap_or_else(|| self.chords.to_vec())
+    }
+
     /// Keys as the cheatsheet and menus show them, e.g. `Ctrl+K  ·  Ctrl+Shift+P`.
     pub fn keys(&self) -> String {
-        if !self.keys_label.is_empty() {
+        if !self.keys_label.is_empty() && custom(self).is_none() {
             // Written with "Ctrl"; macOS says Cmd.
             return self
                 .keys_label
                 .replace("Ctrl+", &format!("{}+", mod_label()));
         }
-        self.chords
-            .iter()
-            .copied()
+        self.current_chords()
+            .into_iter()
             .map(Chord::label)
             .collect::<Vec<_>>()
             .join("  ·  ")
@@ -676,8 +683,8 @@ pub fn hint(command: Command) -> String {
             .iter()
             .find(|b| b.command == command && b.section.is_bare() == bare)
             .and_then(|b| {
-                if b.keys_label.is_empty() {
-                    b.chords.first().copied().map(Chord::label)
+                if b.keys_label.is_empty() || custom(b).is_some() {
+                    b.current_chords().first().copied().map(Chord::label)
                 } else {
                     Some(
                         b.keys_label
@@ -746,12 +753,320 @@ pub fn consume(input: &mut egui::InputState, command: Command) -> bool {
             && BINDINGS
                 .iter()
                 .filter(|b| b.command == command)
-                .flat_map(|b| b.chords)
+                .flat_map(Binding::current_chords)
                 .any(|c| c.matches(*key, *modifiers));
         found |= owned;
         !owned
     });
     found
+}
+
+/// What the user changed in Settings → Keyboard, for the UI thread (the only one that draws or
+/// dispatches keys): the saved text as the settings hold it, and the chords it came to.
+#[derive(Debug, Default)]
+struct Custom {
+    saved: BTreeMap<String, String>,
+    chords: Vec<(Command, Section, Chord)>,
+}
+
+thread_local! {
+    static CUSTOM: RefCell<Custom> = RefCell::new(Custom::default());
+}
+
+/// The chord the user gave `binding`, if any.
+fn custom(binding: &Binding) -> Option<Vec<Chord>> {
+    CUSTOM.with_borrow(|c| {
+        c.chords
+            .iter()
+            .find(|(command, section, _)| {
+                *command == binding.command && *section == binding.section
+            })
+            .map(|(_, _, chord)| vec![*chord])
+    })
+}
+
+/// Whether the user changed `binding`'s key.
+pub fn is_customised(binding: &Binding) -> bool {
+    custom(binding).is_some()
+}
+
+/// What `Settings::keybindings` calls a row: its command and where it applies.
+pub fn binding_id(binding: &Binding) -> String {
+    format!("{:?}.{:?}", binding.command, binding.section)
+}
+
+/// The row [`binding_id`] names.
+pub fn binding_by_id(id: &str) -> Option<&'static Binding> {
+    BINDINGS.iter().find(|b| binding_id(b) == id)
+}
+
+/// Whether the key of `binding` can be changed: every row but the tab jumps, whose digits
+/// are positions.
+pub fn is_remappable(binding: &Binding) -> bool {
+    binding.command != Command::JumpTab
+}
+
+/// Takes the keys the settings hold: `saved` maps a row ([`binding_id`]) to a chord's text.
+/// An entry that is not a row, does not read as a chord, breaks a rule of
+/// [`shape_problem`] or would share its key with another row is ignored, so a saved or
+/// imported file can never leave a key doing two things.
+pub fn apply_saved(saved: &BTreeMap<String, String>) {
+    if CUSTOM.with_borrow(|c| &c.saved == saved) {
+        return;
+    }
+    let mut chords: Vec<(Command, Section, Chord)> = BINDINGS
+        .iter()
+        .filter(|b| is_remappable(b))
+        .filter_map(|b| {
+            let chord = Chord::from_text(saved.get(&binding_id(b))?)?;
+            shape_problem(b.section, chord)
+                .is_none()
+                .then_some((b.command, b.section, chord))
+        })
+        .collect();
+    // Drop the changes that collide until none do; a swap of two keys is not a collision.
+    while let Some(clash) = (0..chords.len()).find(|i| {
+        let (command, section, chord) = chords[*i];
+        BINDINGS.iter().any(|other| {
+            (other.command, other.section) != (command, section)
+                && effective(other, &chords)
+                    .iter()
+                    .any(|c| c.same_key_as(chord))
+        })
+    }) {
+        chords.remove(clash);
+    }
+    CUSTOM.set(Custom {
+        saved: saved.clone(),
+        chords,
+    });
+}
+
+/// `binding`'s chords given `chords` as the user's changes.
+fn effective(binding: &Binding, chords: &[(Command, Section, Chord)]) -> Vec<Chord> {
+    chords
+        .iter()
+        .find(|(command, section, _)| *command == binding.command && *section == binding.section)
+        .map_or_else(|| binding.chords.to_vec(), |(_, _, chord)| vec![*chord])
+}
+
+/// Why `chord` cannot be a key of a row in `section`, in words for the user.
+pub fn shape_problem(section: Section, chord: Chord) -> Option<&'static str> {
+    if matches!(chord.key, Key::SuperLeft | Key::SuperRight) {
+        return Some("Super belongs to the window manager.");
+    }
+    if chord.key == Key::F9 {
+        return Some("F9 belongs to the system.");
+    }
+    if chord.key == Key::Tab && !chord.ctrl {
+        return Some("Tab moves between controls.");
+    }
+    if section.is_bare() && chord.ctrl {
+        return Some(
+            "A single key works without Ctrl; Ctrl keys are for the shortcuts that also work while typing.",
+        );
+    }
+    if !section.is_bare() && !chord.ctrl && !matches!(chord.key, Key::F5 | Key::Escape) {
+        return Some("This shortcut also works while typing, so it needs Ctrl.");
+    }
+    None
+}
+
+/// Whether `binding` could take `chord` as its key: the rows other than itself must not
+/// already use it. The error says what does.
+pub fn rebind_problem(binding: &Binding, chord: Chord) -> Option<String> {
+    if let Some(why) = shape_problem(binding.section, chord) {
+        return Some(why.to_owned());
+    }
+    BINDINGS
+        .iter()
+        .filter(|other| (other.command, other.section) != (binding.command, binding.section))
+        .find(|other| other.current_chords().iter().any(|c| c.same_key_as(chord)))
+        .map(|other| format!("{} already uses {}.", other.description, chord.label()))
+}
+
+/// The text a chord is saved as: `ctrl+shift+symbol+Slash` (the modifiers that apply, then the
+/// key's name).
+impl Chord {
+    pub fn to_text(self) -> String {
+        let mut text = String::new();
+        for (on, word) in [
+            (self.ctrl, "ctrl+"),
+            (self.shift, "shift+"),
+            (self.symbol, "symbol+"),
+        ] {
+            if on {
+                text.push_str(word);
+            }
+        }
+        text.push_str(self.key.name());
+        text
+    }
+
+    /// The chord a text from [`Self::to_text`] says; `None` when it is anything else.
+    pub fn from_text(text: &str) -> Option<Self> {
+        let mut chord = Self {
+            key: Key::A,
+            ctrl: false,
+            shift: false,
+            symbol: false,
+        };
+        let mut rest = text;
+        loop {
+            if let Some(after) = rest.strip_prefix("ctrl+").filter(|_| !chord.ctrl) {
+                chord.ctrl = true;
+                rest = after;
+            } else if let Some(after) = rest.strip_prefix("shift+").filter(|_| !chord.shift) {
+                chord.shift = true;
+                rest = after;
+            } else if let Some(after) = rest.strip_prefix("symbol+").filter(|_| !chord.symbol) {
+                chord.symbol = true;
+                rest = after;
+            } else {
+                break;
+            }
+        }
+        chord.key = Key::from_name(rest).filter(|key| key.name() == rest)?;
+        Some(chord)
+    }
+
+    /// Both chords are the same key press: a symbol is typed with whatever Shift its layout
+    /// needs, so Shift does not tell it apart.
+    fn same_key_as(self, other: Self) -> bool {
+        self.key == other.key
+            && self.ctrl == other.ctrl
+            && (self.symbol || other.symbol || self.shift == other.shift)
+    }
+
+    /// The chord of a key press: a punctuation key is a symbol, whose Shift is dropped.
+    pub fn from_press(key: Key, modifiers: Modifiers) -> Self {
+        let symbol = {
+            let mut chars = key.symbol_or_name().chars();
+            chars
+                .next()
+                .is_some_and(|c| chars.next().is_none() && !c.is_alphanumeric())
+        };
+        Self {
+            key,
+            ctrl: modifiers.command || modifiers.ctrl,
+            shift: modifiers.shift && !symbol,
+            symbol,
+        }
+    }
+}
+
+/// Where Settings → Keyboard listens for the new key of a row.
+#[derive(Debug, Default)]
+enum Capture {
+    #[default]
+    Off,
+    /// Waiting for a key; `seen` is the last frame Settings asked for it, so it stops by
+    /// itself when the page goes away.
+    Waiting {
+        seen: u64,
+    },
+    Cancelled,
+    Got(Chord),
+}
+
+thread_local! {
+    static CAPTURE: RefCell<Capture> = const { RefCell::new(Capture::Off) };
+}
+
+/// Settings asks for the next key press to be taken as a row's new key, instead of acting.
+pub fn start_capture(ctx: &egui::Context) {
+    CAPTURE.set(Capture::Waiting {
+        seen: ctx.cumulative_pass_nr(),
+    });
+}
+
+/// Called every frame the page that started a capture is drawn.
+pub fn keep_capturing(ctx: &egui::Context) {
+    CAPTURE.with_borrow_mut(|c| {
+        if let Capture::Waiting { seen } = c {
+            *seen = ctx.cumulative_pass_nr();
+        }
+    });
+}
+
+/// Whether the next key press goes to Settings.
+pub fn is_capturing() -> bool {
+    CAPTURE.with_borrow(|c| matches!(c, Capture::Waiting { .. }))
+}
+
+/// Stops a capture.
+pub fn cancel_capture() {
+    CAPTURE.set(Capture::Off);
+}
+
+/// How a capture ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Captured {
+    /// Esc.
+    Cancelled,
+    /// The key that was pressed.
+    Key(Chord),
+}
+
+/// What a finished capture came to; `None` while it is still waiting or off. Reading it ends
+/// the capture.
+pub fn take_capture() -> Option<Captured> {
+    CAPTURE.with_borrow_mut(|c| match std::mem::take(c) {
+        Capture::Cancelled => Some(Captured::Cancelled),
+        Capture::Got(chord) => Some(Captured::Key(chord)),
+        waiting => {
+            *c = waiting;
+            None
+        }
+    })
+}
+
+/// Takes this frame's first key press for a waiting capture, before any binding sees it: Esc
+/// cancels, a modifier alone is skipped, and Alt chords are refused (the window manager's).
+pub fn capture_key(ctx: &egui::Context) {
+    let waiting = CAPTURE.with_borrow_mut(|c| {
+        match c {
+            // The page was not drawn last frame: it is gone.
+            Capture::Waiting { seen } if ctx.cumulative_pass_nr() > *seen + 1 => {
+                *c = Capture::Off;
+                false
+            }
+            Capture::Waiting { .. } => true,
+            _ => false,
+        }
+    });
+    if !waiting {
+        return;
+    }
+    let mut result = None;
+    ctx.input_mut(|i| {
+        i.events.retain(|e| {
+            if result.is_some() {
+                return true;
+            }
+            let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = e
+            else {
+                return !matches!(e, egui::Event::Text(_));
+            };
+            if *key == Key::Escape {
+                result = Some(Capture::Cancelled);
+            } else {
+                let chord = Chord::from_press(*key, *modifiers);
+                if !modifiers.alt || chord.symbol {
+                    result = Some(Capture::Got(chord));
+                }
+            }
+            false
+        });
+    });
+    if let Some(done) = result {
+        CAPTURE.set(done);
+    }
 }
 
 /// How long the second key of a double press (`gg`) may take.
@@ -790,17 +1105,14 @@ pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding, &Chord) -> bool) 
                 if *repeat && !binding.repeat {
                     continue;
                 }
-                let Some(index) = binding
-                    .chords
-                    .iter()
-                    .position(|c| c.matches(*key, *modifiers))
-                else {
+                let chords = binding.current_chords();
+                let Some(index) = chords.iter().position(|c| c.matches(*key, *modifiers)) else {
                     continue;
                 };
-                if !active(binding, &binding.chords[index]) {
+                if !active(binding, &chords[index]) {
                     continue;
                 }
-                if binding.double && index == 0 {
+                if binding.double && index == 0 && custom(binding).is_none() {
                     let second =
                         waiting.is_some_and(|(k, t)| k == *key && now - t <= DOUBLE_PRESS_SECONDS);
                     if !second {
@@ -1138,5 +1450,137 @@ mod tests {
             all_keys(Command::Fetch),
             vec![format!("{}+Shift+F", mod_label()), "f".to_owned()]
         );
+    }
+
+    /// Settings → Keyboard: a row's key saved as text moves the command to it, the old key stops
+    /// working, hints and the cheatsheet follow, and clearing the entry restores the table.
+    #[test]
+    fn a_changed_key_fires_the_command_and_the_old_one_does_not() {
+        let fetch = binding_by_id("Fetch.Repository").expect("a row");
+        assert_eq!(fetch.chords, [bare(Key::F)]);
+        let saved = BTreeMap::from([("Fetch.Repository".to_owned(), bare(Key::V).to_text())]);
+        apply_saved(&saved);
+        let fired = |key| {
+            fire(vec![press(key)])
+                .iter()
+                .any(|f| f.command == Command::Fetch)
+        };
+        assert!(fired(Key::V), "the new key fires it");
+        assert!(!fired(Key::F), "the old key does not");
+        assert_eq!(hint(Command::Fetch), format!("{}+Shift+F · v", mod_label()));
+        assert_eq!(
+            all_keys(Command::Fetch),
+            vec![format!("{}+Shift+F", mod_label()), "v".to_owned()],
+            "the cheatsheet shows it"
+        );
+        apply_saved(&BTreeMap::new());
+        assert!(
+            fired(Key::F) && !fired(Key::V),
+            "cleared, the table is back"
+        );
+    }
+
+    /// A saved or imported file cannot leave a key doing two things or take one that is not
+    /// ours to give; swapping two keys is fine.
+    #[test]
+    fn saved_keys_that_break_a_rule_are_ignored() {
+        let text = |c: Chord| c.to_text();
+        let fetch = |c: Chord| ("Fetch.Repository".to_owned(), text(c));
+        let key_of = |id: &str| binding_by_id(id).map(Binding::current_chords);
+        let ours = || key_of("Fetch.Repository").expect("a row");
+        for (why, saved) in [
+            ("another row's key", BTreeMap::from([fetch(bare(Key::J))])),
+            ("Super", BTreeMap::from([fetch(bare(Key::SuperLeft))])),
+            (
+                "Ctrl in a single-key row",
+                BTreeMap::from([fetch(ctrl(Key::V))]),
+            ),
+            (
+                "not a chord",
+                BTreeMap::from([("Fetch.Repository".into(), "nonsense".into())]),
+            ),
+            (
+                "no such row",
+                BTreeMap::from([("Nothing.Anywhere".into(), text(bare(Key::V)))]),
+            ),
+            (
+                "bare key that works while typing",
+                BTreeMap::from([("Palette.Anywhere".into(), text(bare(Key::V)))]),
+            ),
+        ] {
+            apply_saved(&saved);
+            assert_eq!(ours(), [bare(Key::F)], "{why}");
+        }
+        let pull = ("Pull.Repository".to_owned(), text(bare(Key::F)));
+        apply_saved(&BTreeMap::from([fetch(bare(Key::P)), pull]));
+        assert_eq!(ours(), [bare(Key::P)], "a swap holds");
+        assert_eq!(key_of("Pull.Repository"), Some(vec![bare(Key::F)]));
+        // Two rows asking for the same free key: neither gets it.
+        apply_saved(&BTreeMap::from([
+            fetch(bare(Key::V)),
+            ("Pull.Repository".to_owned(), text(bare(Key::V))),
+        ]));
+        assert_eq!(ours(), [bare(Key::F)]);
+        apply_saved(&BTreeMap::new());
+    }
+
+    #[test]
+    fn rebinding_names_the_row_that_has_the_key() {
+        let fetch = binding_by_id("Fetch.Repository").expect("a row");
+        let why = rebind_problem(fetch, bare(Key::J)).expect("taken");
+        assert!(why.ends_with("already uses j."), "{why}");
+        assert_eq!(rebind_problem(fetch, bare(Key::V)), None);
+        assert_eq!(rebind_problem(fetch, bare(Key::F)), None, "its own key");
+        assert!(rebind_problem(fetch, bare(Key::Tab)).is_some());
+    }
+
+    #[test]
+    fn every_chord_of_the_table_reads_back_from_its_text() {
+        for b in BINDINGS {
+            for c in b.chords {
+                assert_eq!(Chord::from_text(&c.to_text()), Some(*c), "{}", c.label());
+            }
+        }
+        assert_eq!(Chord::from_text("ctrl+ctrl+K"), None);
+        assert_eq!(Chord::from_text("ctrl+"), None);
+    }
+
+    /// Settings waits for the next press: it takes it before any binding does, Esc cancels,
+    /// and a capture the page stopped asking for ends.
+    #[test]
+    fn a_waiting_capture_takes_the_next_key_before_the_keymap() {
+        let run = |ctx: &egui::Context, events: Vec<egui::Event>| {
+            let mut fired = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    capture_key(ui.ctx());
+                    fired = dispatch(ui.ctx(), |_, _| true);
+                },
+            );
+            output.textures_delta.clear();
+            fired
+        };
+        let ctx = egui::Context::default();
+        start_capture(&ctx);
+        assert!(is_capturing());
+        let fired = run(&ctx, vec![press(Key::J)]);
+        assert!(fired.is_empty(), "j went to Settings: {fired:?}");
+        assert_eq!(take_capture(), Some(Captured::Key(bare(Key::J))));
+        assert!(!is_capturing());
+
+        start_capture(&ctx);
+        run(&ctx, vec![press(Key::Escape)]);
+        assert_eq!(take_capture(), Some(Captured::Cancelled), "Esc cancels");
+
+        start_capture(&ctx);
+        for _ in 0..3 {
+            run(&ctx, Vec::new());
+        }
+        assert!(!is_capturing(), "nobody kept it alive");
+        assert_eq!(take_capture(), None);
     }
 }

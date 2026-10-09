@@ -60,6 +60,19 @@ Rules, each guarded by a test in `keymap.rs`:
 
 Chords marked "also" are alternatives for the same command.
 
+## Changing a key
+
+Settings → Keyboard lists every row of the table with its keys. **Change** listens for the next key
+press and gives the row that one key, replacing the row's others (Esc cancels); **Reset** returns
+the row to the table, and **Reset all** every row. The tab jumps (Ctrl+1…9) are positions and stay.
+A change is saved in the settings (`keybindings`: the row, written `Command.Section`, to the chord's
+text, `ctrl+shift+symbol+Key`), travels with Settings export and import, and applies on the next
+frame. The rules above hold for what you choose: a key another row uses is refused, naming that row
+(nothing is rebound silently), and so are Super, F9, Tab without Ctrl, a Ctrl key in a single-key
+row and a key without Ctrl in an "Anywhere" row (it would fire while typing). Alt is never read. A
+saved file that breaks a rule, or gives two rows one key, has those entries ignored. A row with a
+double press (`gg`) fires on one press of its new key.
+
 ## Anywhere
 
 Works also while typing.

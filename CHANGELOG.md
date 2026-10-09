@@ -51,6 +51,10 @@ commits since the previous build.
 
 ### Added
 
+- Keyboard shortcuts can be changed in Settings → Keyboard: Change takes the next key you press
+  for a row, a key another row uses is refused (naming that row), Reset returns a row or all of
+  them to the default, and the choices are kept in a settings export.
+
 - The notification center is kept across restarts (the last 100, shown as read; the decisions
   that need the running session are dropped), each row names the repository it is about and can
   be dismissed on its own, and a repository whose git configuration decides against Canopy's
