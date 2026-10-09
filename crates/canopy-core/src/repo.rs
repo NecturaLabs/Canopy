@@ -675,7 +675,11 @@ impl Repo {
             let old_path = (kind == ChangeKind::Renamed)
                 .then(|| diff::path_of(&delta.old_file()))
                 .flatten();
-            let (additions, deletions) = if full {
+            let (additions, deletions) = if full && kind == ChangeKind::Typechange {
+                // libgit2 counts no lines for a type change; git counts both sides.
+                diff::typechange_sides(self, &DiffSource::Commit(oid), &delta)?
+                    .map_or((0, 0), |(old, new)| (new.len(), old.len()))
+            } else if full {
                 match git2::Patch::from_diff(&d, idx)? {
                     Some(p) => p.line_stats().map_or((0, 0), |(_, a, r)| (a, r)),
                     None => (0, 0),

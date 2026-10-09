@@ -258,6 +258,37 @@ fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<Option<Vec<u8>>
     Ok(Some(bytes))
 }
 
+/// The two sides of a type change as lines (old, new): `Ok(None)` when a side is binary or too
+/// large to show.
+pub(crate) fn typechange_sides(
+    repo: &crate::Repo,
+    source: &DiffSource,
+    delta: &git2::DiffDelta<'_>,
+) -> Result<Option<(Vec<String>, Vec<String>)>> {
+    let blob = |file: &git2::DiffFile<'_>| -> Result<Option<Vec<u8>>> {
+        let id = file.id();
+        if id.is_zero() {
+            return Ok(None);
+        }
+        let blob = repo.git().find_blob(id)?;
+        Ok((blob.size() as u64 <= TYPECHANGE_READ_LIMIT).then(|| blob.content().to_vec()))
+    };
+    let old = blob(&delta.old_file())?;
+    let new = match (source, path_of(&delta.new_file())) {
+        (DiffSource::Unstaged, Some(path)) => workdir_side(repo.workdir(), &path)?,
+        _ => blob(&delta.new_file())?,
+    };
+    Ok(
+        match (
+            old.as_deref().and_then(side_lines),
+            new.as_deref().and_then(side_lines),
+        ) {
+            (Some(old), Some(new)) => Some((old, new)),
+            _ => None,
+        },
+    )
+}
+
 /// A file turned into a symbolic link (or back) has no hunks of its own in libgit2: the lines
 /// `git diff` prints, the old side removed and then the new side added, built from the two blobs
 /// or the working tree. Sets `out.binary` when a side is binary.
@@ -273,27 +304,7 @@ pub(crate) fn typechange_hunks(
     else {
         return Ok(());
     };
-    let blob = |file: &git2::DiffFile<'_>| -> Result<Option<Vec<u8>>> {
-        let id = file.id();
-        if id.is_zero() {
-            return Ok(None);
-        }
-        let blob = repo.git().find_blob(id)?;
-        Ok((blob.size() as u64 <= TYPECHANGE_READ_LIMIT).then(|| blob.content().to_vec()))
-    };
-    let old = blob(&delta.old_file())?;
-    let new = match (source, path_of(&delta.new_file())) {
-        (DiffSource::Unstaged, Some(path)) => workdir_side(repo.workdir(), &path)?,
-        _ => blob(&delta.new_file())?,
-    };
-    let (Some(old), Some(new)) = (
-        old.as_deref().map(side_lines),
-        new.as_deref().map(side_lines),
-    ) else {
-        out.binary = true;
-        return Ok(());
-    };
-    let (Some(old), Some(new)) = (old, new) else {
+    let Some((old, new)) = typechange_sides(repo, source, &delta)? else {
         out.binary = true;
         return Ok(());
     };

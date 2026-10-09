@@ -155,6 +155,15 @@ fn a_file_replaced_by_a_link_outside_the_repository_shows_its_target_not_the_sec
         changed_lines(&git(&p, &["show", "--format=", "--", "file.txt"]))
     );
     never_the_secret(&d);
+
+    // The commit's file list counts both sides, as `git show --numstat` does.
+    let details = repo.commit_details(oid, MissingObjects::Fail).unwrap();
+    let file = &details.files[0];
+    assert_eq!(
+        git(&p, &["show", "--numstat", "--format=", "--", "file.txt"]).trim(),
+        format!("{}\t{}\tfile.txt", file.additions, file.deletions)
+    );
+    assert_eq!((file.additions, file.deletions), (1, 1));
 }
 
 #[test]
