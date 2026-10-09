@@ -247,12 +247,23 @@ impl Repo {
 /// Whether `git lfs` works: the `git-lfs` program is a git subcommand, found on the `PATH` or in
 /// git's exec path.
 pub fn git_lfs_available(workdir: &Path) -> bool {
-    cli::run_unchecked(workdir, &["lfs", "version"]).is_ok_and(|out| out.code == Some(0))
+    cli::run_unchecked(workdir, &LFS_PROBE).is_ok_and(|out| out.code == Some(0))
 }
+
+/// `git lfs version`, with `alias.lfs` emptied on the command line: without a `git-lfs` program
+/// git falls back to a repository's own `alias.lfs`, which may be a shell command, and the probe
+/// runs on opening a repository, before it is trusted.
+const LFS_PROBE: [&str; 4] = ["-c", "alias.lfs=", "lfs", "version"];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lfs_probe_never_reaches_a_repositorys_alias() {
+        assert_eq!(&LFS_PROBE[..2], ["-c", "alias.lfs="]);
+        assert_eq!(&LFS_PROBE[2..], ["lfs", "version"]);
+    }
 
     #[test]
     fn ssh_remotes_are_told_from_local_paths() {
