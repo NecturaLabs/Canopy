@@ -6,7 +6,6 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 /// What the server does with one request.
 pub(crate) enum Reply {
@@ -87,14 +86,23 @@ fn serve(stream: TcpStream, log: &Mutex<Vec<String>>, reply: &dyn Fn(&str) -> Re
     }
 }
 
-/// An address on 127.0.0.1 that refuses connections and that no server of this process can be
-/// handed: a port below every operating system's ephemeral range that nothing listens on.
-pub(crate) fn refused() -> SocketAddr {
-    (1..=16u16)
-        .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
-        .find(|address| {
-            TcpStream::connect_timeout(address, Duration::from_secs(2))
-                .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
-        })
-        .expect("a port below 17 on 127.0.0.1 that refuses connections")
+/// A reserved TCP address with no listener. The established connection keeps the port owned
+/// until the fixture drops, so another test's server cannot be assigned it.
+pub(crate) struct Refused {
+    pub address: SocketAddr,
+    _client: TcpStream,
+    _server: TcpStream,
+}
+
+pub(crate) fn refused() -> Refused {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("addr");
+    let client = TcpStream::connect(address).expect("connect");
+    let (server, _) = listener.accept().expect("accept");
+    drop(listener);
+    Refused {
+        address,
+        _client: client,
+        _server: server,
+    }
 }

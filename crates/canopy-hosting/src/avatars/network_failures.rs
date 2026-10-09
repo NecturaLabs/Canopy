@@ -71,7 +71,8 @@ fn lookup(kind: ForgeKind, base: &str) -> Error {
 
 #[test]
 fn a_profile_lookup_on_a_closed_port_says_it_was_refused() {
-    let base = format!("http://{}", refused());
+    let closed = refused();
+    let base = format!("http://{}", closed.address);
     for kind in both_providers() {
         let error = lookup(kind, &base);
         let message = error.to_string();
@@ -177,7 +178,8 @@ fn picture(base: &str) -> (Avatar, String) {
 
 #[test]
 fn a_picture_on_a_closed_port_says_it_was_refused() {
-    let (avatar, url) = picture(&format!("http://{}", refused()));
+    let closed = refused();
+    let (avatar, url) = picture(&format!("http://{}", closed.address));
     let message = avatar.download().expect_err("refused").to_string();
     assert!(says(&message, &["refused"]), "{message}");
     assert_private_data_hidden(&message, &[&url]);

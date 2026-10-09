@@ -3246,6 +3246,8 @@ mod read_tests {
     fn exported_patches_apply_again_and_a_misfit_stops_naming_its_file() {
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
+        // The fixture helper ignores system configuration; Canopy's git calls respect it.
+        git(&copy, &["config", "core.autocrlf", "false"]);
         let repo = Repo::open(&copy).expect("open");
         let local = repo.snapshot(5).expect("snapshot").head.oid.expect("head");
         let out = root.path().join("out");

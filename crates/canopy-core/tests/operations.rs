@@ -3783,6 +3783,7 @@ fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
     stale_commit(&unique, STALE_OLD_DATE);
     let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
     assert_eq!(candidates.len(), 3);
+    let canonical = |path: &Path| fs::canonicalize(path).expect("canonical");
     assert!(
         candidates
             .iter()
@@ -3790,17 +3791,17 @@ fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
     );
     let clean_row = candidates
         .iter()
-        .find(|c| c.path.as_ref() == Some(&clean))
+        .find(|c| c.path.as_deref().map(canonical) == Some(canonical(&clean)))
         .expect("clean row");
     assert!(clean_row.protected.is_none());
     let dirty_row = candidates
         .iter()
-        .find(|c| c.path.as_ref() == Some(&dirty))
+        .find(|c| c.path.as_deref().map(canonical) == Some(canonical(&dirty)))
         .expect("dirty row");
     assert!(dirty_row.dirty && dirty_row.protected.is_some());
     let unique_row = candidates
         .iter()
-        .find(|c| c.path.as_ref() == Some(&unique))
+        .find(|c| c.path.as_deref().map(canonical) == Some(canonical(&unique)))
         .expect("unique row");
     assert_eq!(unique_row.unmerged, 1);
     assert!(unique_row.protected.is_some());
@@ -3810,7 +3811,7 @@ fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
             .stale_candidates(STALE_DAYS, STALE_NOW)
             .expect("linked scan")
             .iter()
-            .any(|c| c.path.as_ref() == Some(&clean))
+            .any(|c| c.path.as_deref().map(canonical) == Some(canonical(&clean)))
     );
     repo.remove_stale_candidates(std::slice::from_ref(clean_row), STALE_DAYS, STALE_NOW)
         .expect("remove worktree");

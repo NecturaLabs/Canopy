@@ -16,7 +16,7 @@ use canopy_core::Repo;
     clippy::disallowed_methods,
     reason = "tests drive git directly to build and check repositories"
 )]
-fn run(dir: &Path, args: &[&str], editor: Option<&Path>) -> std::process::Output {
+fn run(dir: &Path, args: &[&str], editor: Option<&str>) -> std::process::Output {
     let mut command = Command::new("git");
     command
         .current_dir(dir)
@@ -29,7 +29,7 @@ fn run(dir: &Path, args: &[&str], editor: Option<&Path>) -> std::process::Output
     command.output().expect("git runs")
 }
 
-fn git(dir: &Path, args: &[&str], editor: Option<&Path>) -> String {
+fn git(dir: &Path, args: &[&str], editor: Option<&str>) -> String {
     let out = run(dir, args, editor);
     assert!(
         out.status.success(),
@@ -61,23 +61,25 @@ fn a_relative_template_matches_what_the_editor_gets_without_its_comments() {
     fs::write(dir.path().join("TEMPLATE"), template).expect("write");
     git(dir.path(), &["config", "commit.template", "TEMPLATE"], None);
 
-    // The oracle: the text `git commit` hands its editor, from a subdirectory too.
+    // The oracle: the text `git commit` hands its editor.
     let capture = dir.path().join("capture.sh");
     let seen = dir.path().join("seen.txt");
     fs::write(
         &capture,
-        format!("#!/bin/sh\ncp \"$1\" '{}'\nexit 1\n", seen.display()),
+        "#!/bin/sh\ncp \"$1\" \"$(dirname \"$0\")/seen.txt\"\nexit 1\n",
     )
     .expect("write");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&capture, fs::Permissions::from_mode(0o755)).expect("chmod");
-    }
+    // Git for Windows also runs editors through sh; native backslashes are shell escapes.
+    let script = capture.to_str().expect("UTF8").replace('\\', "/");
+    let editor = format!("sh '{}'", script.replace('\'', "'\\''"));
     fs::write(dir.path().join("f"), "x").expect("write");
     git(dir.path(), &["add", "f"], None);
     // The editor exits non-zero on purpose: only the text it was given matters.
-    run(dir.path(), &["commit"], Some(&capture));
+    let output = run(dir.path(), &["commit"], Some(&editor));
+    assert!(
+        !output.status.success(),
+        "the capture editor aborts the commit"
+    );
     let editor_text = fs::read_to_string(&seen).expect("the editor ran");
     assert!(editor_text.starts_with(template), "{editor_text}");
 
