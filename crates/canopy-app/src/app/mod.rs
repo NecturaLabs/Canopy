@@ -1207,7 +1207,10 @@ impl eframe::App for CanopyApp {
         }
         self.settings.open_tabs = self.tabs.iter().map(|t| t.path.clone()).collect();
         eframe::set_value(storage, settings::KEY, &self.settings);
-        storage.set_string(crate::ui::toast::STORAGE_KEY, self.toasts.to_json());
+        storage.set_string(
+            crate::ui::toast::STORAGE_KEY,
+            saved_notifications(&self.toasts),
+        );
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -1519,9 +1522,36 @@ pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
     tab
 }
 
+/// The notification center as it is written to disk: with no user name or password left in a
+/// URL in a title or in Git's error text.
+fn saved_notifications(toasts: &Toasts) -> String {
+    canopy_core::cli::redact_url(&toasts.to_json())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the center keeps on disk carries no password, and keeps the rest.
+    #[test]
+    fn the_saved_center_has_no_passwords() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.push_for(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Fetch from https://ada:hunter2@example.com/r.git failed",
+            "fatal: unable to access 'https://ada:hunter2@example.com/r.git/': timed out",
+            Some(std::path::Path::new("/work/canopy")),
+        );
+        let saved = saved_notifications(&toasts);
+        assert!(!saved.contains("hunter2"), "{saved}");
+        assert!(saved.contains("example.com/r.git"), "{saved}");
+        let mut again = Toasts::default();
+        again.restore_json(&saved);
+        assert!(format!("{again:?}").contains("timed out"));
+    }
 
     /// A11Y-13: the window has an accessible name, with the repository it shows.
     #[test]

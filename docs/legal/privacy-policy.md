@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 8 October 2026
+Last updated: 9 October 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -120,7 +120,7 @@ In a partial clone (a repository cloned with a filter such as --filter=blob:none
 
 Canopy keeps its data in one folder: ~/.local/share/canopy on Linux (or canopy inside XDG_DATA_HOME, if you set it), ~/Library/Application Support/canopy on macOS and %APPDATA%\canopy\data on Windows. It contains:
 
-- app.ron: your settings and window layout, the repositories you opened recently or left open, the GitLab servers you listed, the versions of these documents you accepted and your answer about crash reports
+- app.ron: your settings and window layout, the repositories you opened recently or left open, the GitLab servers you listed, the versions of these documents you accepted and your answer about crash reports, and the last 100 notifications Canopy showed you (their titles, the folder name of the repository and Git's error messages, with any user name and password in a URL removed)
 - tokens.json: the access tokens you saved in Canopy
 - logs: one log file for each time Canopy runs. A log records what Canopy did and when, and can contain file paths, branch names, server names, the Git commands Canopy ran (without passwords, tokens or commit messages) and Git's error messages. The ten newest are kept, and each stops growing at 20 MB. Log detail in the Privacy section of Settings controls how much is recorded.
 - crashes: a text file for each crash, written whether or not you send crash reports. The ten newest are kept.

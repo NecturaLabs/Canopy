@@ -10,6 +10,10 @@ commits since the previous build.
 
 ### Fixed
 
+- The notification center saved between runs no longer keeps a user name or password that sat in
+  a URL in a title or in Git's error text, and the Privacy Policy now lists those saved
+  notifications among the data that stays on your computer (updated 9 October 2026).
+
 - An automatic fetch in a folder you have not trusted now also switches off, on its command line,
   the `ext::` transport, the command that advertises an alternate's tips and the fetch of
   submodules, which a repository's own files could use to run a program; a setting the guard
