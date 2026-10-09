@@ -700,6 +700,8 @@ pub struct RepoTab {
     /// Focus the history filter when the list next renders.
     pub focus_history_filter: bool,
     pub details: Option<Arc<CommitDetails>>,
+    /// How the selected commit's signature verified, once the worker has said.
+    pub signature: Option<(Oid, canopy_core::SignatureStatus)>,
     /// Set when loading the details of `selected_commit` failed.
     pub details_error: Option<DetailsError>,
     pub file: Option<FileSelection>,
@@ -840,6 +842,7 @@ impl RepoTab {
             history_filter_open: false,
             focus_history_filter: false,
             details: None,
+            signature: None,
             details_error: None,
             file: None,
             diff: None,
@@ -1220,9 +1223,11 @@ impl RepoTab {
         }
         self.selected_commit = Some(oid);
         self.details = None;
+        self.signature = None;
         self.details_error = None;
         self.deselect_file();
         self.worker.send(Job::Details(oid));
+        self.worker.send(Job::Signature(oid));
     }
 
     /// Closes the open file and its diff, with any error that was shown on it. A diff still on its
@@ -1670,6 +1675,11 @@ impl RepoTab {
                     }
                 }
                 Event::TrustFolders(folders) => self.trust_folders = folders,
+                Event::Signature { oid, status } => {
+                    if Some(oid) == self.selected_commit {
+                        self.signature = status.map(|s| (oid, s));
+                    }
+                }
                 Event::Details(d) => {
                     if Some(d.oid) == self.selected_commit {
                         let first = d.files.first().cloned();
@@ -3276,6 +3286,40 @@ mod tests {
         })?;
         tab.poll(&[]);
         assert!(tab.downloads_refused.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn a_signature_belongs_to_the_selected_commit_only() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, jobs) = Worker::detached();
+        tab.worker = worker;
+        let (a, b) = (
+            Oid::from_str("1111111111111111111111111111111111111111")?,
+            Oid::from_str("2222222222222222222222222222222222222222")?,
+        );
+        let status = canopy_core::SignatureStatus::Unavailable;
+        tab.select_commit(a);
+        assert!(
+            jobs.try_iter()
+                .any(|j| matches!(j, Job::Signature(o) if o == a))
+        );
+        events.send(Event::Signature {
+            oid: b,
+            status: Some(status.clone()),
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.signature, None, "another commit's reply is ignored");
+        events.send(Event::Signature {
+            oid: a,
+            status: Some(status.clone()),
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.signature, Some((a, status)));
+        tab.select_commit(b);
+        assert_eq!(tab.signature, None, "a new selection forgets the old one");
         Ok(())
     }
 

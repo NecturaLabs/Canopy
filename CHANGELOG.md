@@ -69,6 +69,9 @@ commits since the previous build.
 
 ### Added
 
+- A signed commit shows a seal after its author's name in the commit details: green only for
+  a signature Git trusts, a warning for an untrusted, expired, invalid or unverifiable one. Git
+  does the checking, in trusted folders only.
 - The commit message field starts with your Git `commit.template` when it is empty (once per
   open repository, never over a draft or an amend); a template that cannot be read is reported.
 - Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick,

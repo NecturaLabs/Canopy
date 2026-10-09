@@ -7,7 +7,7 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use canopy_core::{CommitDetails, DiffSource, FileEntry, short_id};
+use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, Signer, short_id};
 
 use crate::action::Action;
 use crate::keymap::Command;
@@ -404,10 +404,53 @@ fn author(
             Some(by) => tip.detail(by).show(),
             None => tip.show(),
         };
+        if let Some((oid, status)) = &tab.signature
+            && *oid == d.oid
+        {
+            signature_mark(ui, status);
+        }
         if let Some(note) = note {
             picture_note(ui, note, actions);
         }
     });
+}
+
+/// The mark after the author's name for a signed commit: a seal in the success colour only for a
+/// signature git trusts, a warning for any other. Unsigned commits show nothing.
+fn signature_mark(ui: &mut Ui, status: &SignatureStatus) {
+    let p = palette(ui.ctx());
+    let (glyph, color, title) = match status {
+        SignatureStatus::Unsigned => return,
+        SignatureStatus::Verified(_) => (icon::SEAL_CHECK, p.success, "Verified signature"),
+        SignatureStatus::Untrusted(_) => {
+            (icon::SEAL_WARNING, p.warning, "Signed by an untrusted key")
+        }
+        SignatureStatus::Expired(_) => (icon::SEAL_WARNING, p.warning, "Signature or key expired"),
+        SignatureStatus::Invalid(_) => (icon::SEAL_WARNING, p.danger, "Signature does not match"),
+        SignatureStatus::Unavailable => {
+            (icon::SEAL_QUESTION, p.text_dim, "Signed, cannot be checked")
+        }
+    };
+    let signer = match status {
+        SignatureStatus::Verified(s)
+        | SignatureStatus::Untrusted(s)
+        | SignatureStatus::Expired(s)
+        | SignatureStatus::Invalid(s) => s,
+        SignatureStatus::Unsigned | SignatureStatus::Unavailable => &Signer::default(),
+    };
+    let tip = ui
+        .add(egui::Label::new(RichText::new(glyph).color(color)).sense(egui::Sense::hover()))
+        .kit_tooltip(title);
+    let detail = [signer.name.as_str(), signer.key.as_str()]
+        .into_iter()
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if detail.is_empty() {
+        tip.show();
+    } else {
+        tip.detail(detail).show();
+    }
 }
 
 /// The info mark after the author's name when pictures are kept away: faint at rest, dim on hover,

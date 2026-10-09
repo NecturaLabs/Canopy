@@ -87,7 +87,7 @@ git would run on every `git status`.
 | Reflog view | Planned | ? | ? | ? |
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |
-| Signature verification badges | Planned | ? | Yes | ? |
+| Signature verification badges | In progress: a seal after the author in commit details (verified, untrusted, expired, invalid, cannot be checked), checked by git in trusted folders only | ? | Yes | ? |
 
 Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.
 The merge composer names the conclusion and prefills Git's merge message without replacing a draft.

@@ -340,6 +340,8 @@ pub enum Job {
     RefreshStatus,
     /// Details of one commit.
     Details(Oid),
+    /// Whether one commit's signature verifies (runs gpg or ssh-keygen: trusted folders only).
+    Signature(Oid),
     /// Diff of one file.
     Diff(DiffKey),
     /// `HEAD`'s message (to prefill an amend).
@@ -416,6 +418,12 @@ pub enum Event {
     Snapshot(Arc<RepoSnapshot>),
     Status(WorkingStatus),
     Details(Arc<CommitDetails>),
+    /// How verifying the signature of this commit went; `None` when it was not tried (the
+    /// repository is outside every trusted folder) or git could not run.
+    Signature {
+        oid: Oid,
+        status: Option<canopy_core::SignatureStatus>,
+    },
     /// The details of this commit could not be read. `can_download` says that it is a partial
     /// clone that has not downloaded them, which trying again can fix.
     DetailsFailed {
@@ -726,6 +734,7 @@ impl Job {
             Self::Ignore { .. } => "ignore",
             Self::RefreshStatus => "status",
             Self::Details(_) => "details",
+            Self::Signature(_) => "signature",
             Self::Diff(_) => "diff",
             Self::HeadMessage => "head-message",
             Self::MergeMessage => "merge-message",
@@ -819,6 +828,16 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             .map(Arc::new)
                             .map_err(|e| e.to_string()),
                     });
+                }
+                Job::Signature(oid) => {
+                    let status = if allowed() {
+                        repo.commit_signature(oid)
+                            .map_err(|e| tracing::warn!("signature check failed: {}", redacted(&e)))
+                            .ok()
+                    } else {
+                        None
+                    };
+                    emit(Event::Signature { oid, status });
                 }
                 Job::Details(oid) => {
                     // The file list needs no file contents, so it is shown first, offline. A
@@ -1154,12 +1173,14 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
 fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
     let mut keep = vec![true; jobs.len()];
     let mut details_seen = false;
+    let mut signature_seen = false;
     let mut ignore_seen = false;
     let mut diff_sources = Vec::new();
     for (i, job) in jobs.iter().enumerate().rev() {
         match job {
             Job::Ignore { .. } => keep[i] = !std::mem::replace(&mut ignore_seen, true),
             Job::Details(_) => keep[i] = !std::mem::replace(&mut details_seen, true),
+            Job::Signature(_) => keep[i] = !std::mem::replace(&mut signature_seen, true),
             Job::Diff(key) => {
                 let source = std::mem::discriminant(&key.source);
                 if diff_sources.contains(&source) {
@@ -1924,6 +1945,7 @@ mod read_tests {
         jobs.iter()
             .map(|j| match j {
                 Job::Details(o) => format!("details {}", canopy_core::short_id(*o)),
+                Job::Signature(o) => format!("signature {}", canopy_core::short_id(*o)),
                 Job::Diff(k) => format!("diff {:?} {}", k.source, k.path),
                 Job::Op(op) => format!("op {}", op.label()),
                 other => other.kind().to_owned(),
