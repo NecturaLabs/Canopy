@@ -294,8 +294,13 @@ fn head_commit(repo: &Repository) -> Result<Option<git2::Commit<'_>>> {
 
 fn stale_protection(unmerged: usize, unknown_default: bool) -> Option<String> {
     if unmerged > 0 {
+        let phrase = if unmerged == 1 {
+            "commit is"
+        } else {
+            "commits are"
+        };
         Some(format!(
-            "{unmerged} commits are not reachable from another branch"
+            "{unmerged} {phrase} not reachable from another branch"
         ))
     } else if unknown_default {
         Some("Cannot determine the default branch".to_owned())
