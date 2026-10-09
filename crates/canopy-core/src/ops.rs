@@ -662,7 +662,22 @@ impl Repo {
             .collect();
         let mut args = vec!["am", "--3way", "--"];
         args.extend(files.iter().map(String::as_str));
-        self.conflicting_cmd(&args)
+        self.conflicting_cmd(&args).map_err(|e| match e {
+            // git prints the conflicting files on stdout, not in its error: name them.
+            Error::Cli { command, stderr } => {
+                let paths = self
+                    .git_cmd(&["diff", "--name-only", "--diff-filter=U"])
+                    .unwrap_or_default();
+                let named = paths.lines().collect::<Vec<_>>().join(", ");
+                let stderr = if named.is_empty() {
+                    stderr
+                } else {
+                    format!("conflicts in {named}\n{stderr}")
+                };
+                Error::Cli { command, stderr }
+            }
+            other => other,
+        })
     }
 
     /// Moves the current branch to `oid`.
