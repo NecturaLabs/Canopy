@@ -101,7 +101,7 @@ or how flows feel end to end.
 2. Lay out a fake feed folder like `packaging/test-install.sh` does: `canopy/latest.json` (`version`
    `1001`, the platform URL and its SHA-256), `releases/download/canopy-build-N/` holding
    `canopy-build-N-x86_64-unknown-linux-gnu.tar.gz` (a folder of that name with `canopy`, README,
-   LICENSE, `legal/`, the desktop entry, metainfo, icon svg and png), `install.sh` and `SHA256SUMS`.
+   LICENSE, `legal/`, the desktop entry, metainfo, icon png), `install.sh` and `SHA256SUMS`.
    Serve it with `python3 -m http.server 8765 --bind 127.0.0.1`.
 3. Install build 1000 with the real installer: `CANOPY_INSTALL_BASE_URL=http://127.0.0.1:8765 HOME=...
    XDG_DATA_HOME=... sh packaging/install.sh --version 1000`. Run it on a private Xvfb (see

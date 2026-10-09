@@ -318,24 +318,29 @@ linux_flow() {
     check "symlink target is preserved" [ "$(cat "$tmp/untouched.svg")" = "another user's svg" ]
     rm "$svg" "$tmp/untouched.svg"
 
-    echo "== an orphaned SVG that is byte for byte an icon Canopy shipped"
+    echo "== an orphaned scalable icon whose content Canopy shipped"
     # The receipt no longer lists it (a build that rewrote the receipt dropped the line), but
-    # the content proves where it came from.
-    for shipped in "$root"/packaging/fixtures/legacy-icon-*.svg; do
-        cp "$shipped" "$svg"
-        run_status
-        check "install exits 0 with an orphaned shipped SVG ($(basename "$shipped"))" [ "$status" = 0 ]
-        check "orphaned shipped SVG removed ($(basename "$shipped"))" [ ! -e "$svg" ]
-    done
-    cp "$root/packaging/fixtures/legacy-icon-1.svg" "$svg"
-    echo "<!-- edited -->" >>"$svg"
+    # the content proves where it came from. The test's installer carries the digest of a stand-in.
+    shipped_text="an icon Canopy shipped"
+    shipped_sha=$(printf '%s\n' "$shipped_text" | sha256sum | awk '{print $1}')
+    sed "s/^LEGACY_SVG_SHA256=.*/LEGACY_SVG_SHA256=\"$shipped_sha\"/" "$installer" >"$tmp/install-shipped.sh"
+    real_installer=$installer
+    installer=$tmp/install-shipped.sh
+    printf '%s\n' "$shipped_text" >"$svg"
     run_status
-    check "an edited copy of the shipped SVG is preserved" [ -f "$svg" ]
-    rm "$svg"
-    ln -s "$root/packaging/fixtures/legacy-icon-1.svg" "$svg"
+    check "install exits 0 with an orphaned shipped icon" [ "$status" = 0 ]
+    check "orphaned shipped icon removed" [ ! -e "$svg" ]
+    printf '%s\n' "$shipped_text" >"$svg"
+    echo "edited" >>"$svg"
     run_status
-    check "a symlink to the shipped SVG is preserved" [ -L "$svg" ]
+    check "an edited copy of the shipped icon is preserved" [ -f "$svg" ]
     rm "$svg"
+    printf '%s\n' "$shipped_text" >"$tmp/shipped-target"
+    ln -s "$tmp/shipped-target" "$svg"
+    run_status
+    check "a symlink to the shipped icon is preserved" [ -L "$svg" ]
+    rm "$svg" "$tmp/shipped-target"
+    installer=$real_installer
     rmdir "$(dirname "$svg")" "$(dirname "$(dirname "$svg")")"
     rm -rf "$home/data-a"
 

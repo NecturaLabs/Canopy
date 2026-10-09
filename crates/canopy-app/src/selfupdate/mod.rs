@@ -682,7 +682,7 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
         }
     }
     for (dst, _) in &old.icons {
-        remove_shipped_svg_beside(dst);
+        remove_shipped_svg_beside(dst, &SHIPPED_SVG_SHA256);
     }
     for link in &old.links {
         if fs::read_link(link).is_ok_and(|t| t == root.join("bin/canopy")) {
@@ -708,14 +708,13 @@ const SHIPPED_SVG_SHA256: [&str; 2] = [
 
 /// Removes the scalable icon beside a registered PNG when no receipt lists it but its content is
 /// byte for byte an icon Canopy shipped. A custom, edited or linked file stays.
-fn remove_shipped_svg_beside(png: &Path) {
+fn remove_shipped_svg_beside(png: &Path, shipped: &[&str]) {
     let Some(apps) = png.parent().and_then(Path::parent).and_then(Path::parent) else {
         return;
     };
     let svg = apps.join(format!("scalable/apps/{APP_ID}.svg"));
     if svg.symlink_metadata().is_ok_and(|m| m.is_file())
-        && fs::read(&svg)
-            .is_ok_and(|bytes| SHIPPED_SVG_SHA256.contains(&updates::sha256_hex(&bytes).as_str()))
+        && fs::read(&svg).is_ok_and(|bytes| shipped.contains(&updates::sha256_hex(&bytes).as_str()))
     {
         let _ = fs::remove_file(&svg);
     }
