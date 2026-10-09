@@ -531,6 +531,24 @@ fn merged_branches_name_the_check_that_matched() {
     );
 }
 
+#[test]
+fn merged_branches_keep_the_cause_of_a_base_that_is_no_commit() {
+    let (_dir, repo) = fixture();
+    // A tree is found but is no commit: libgit2's own reason follows the base's name.
+    let error = repo
+        .merged_branches("HEAD^{tree}", false)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("Could not resolve the base 'HEAD^{tree}': "),
+        "{error}"
+    );
+    assert!(
+        error.contains("can not be successfully peeled into a commit"),
+        "libgit2's reason is preserved: {error}"
+    );
+}
+
 const POINTER_OID: &str = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
 
 fn pointer_text(size: u64) -> String {
