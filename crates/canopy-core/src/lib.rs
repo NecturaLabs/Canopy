@@ -30,6 +30,7 @@ pub mod paths;
 mod pull;
 mod pull_preview;
 pub mod repo;
+pub mod signature;
 pub mod status;
 pub mod submodule;
 pub mod tools;
@@ -58,6 +59,7 @@ pub use partial::{MissingObjects, convert_legacy_partial_clone};
 pub use pull::{ConfigScope, ConfigSource, PullConfig, global_pull_config};
 pub use pull_preview::PullPreview;
 pub use repo::Repo;
+pub use signature::{SignatureStatus, Signer};
 pub use submodule::{
     SUBMODULE_LOG_LIMIT, SubmoduleChange, SubmoduleCommit, SubmoduleInfo, SubmoduleLog,
     SubmoduleState, submodule_add_problem,
