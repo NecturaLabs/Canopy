@@ -10,6 +10,11 @@ use crate::{Error, MergedReason, Repo, Result, Signature, cli, partial};
 const DAY_SECONDS: i64 = 86_400;
 const WEEK_SECONDS: i64 = 7 * DAY_SECONDS;
 const WEEK_COUNT: usize = 52;
+/// Weeks shown before the current one.
+const WEEKS_BEFORE_CURRENT: i64 = 51;
+/// Days from a Monday to the Thursday of the Unix epoch.
+const EPOCH_MONDAY_OFFSET_DAYS: i64 = 3;
+const BYTES_PER_KIB: u64 = 1024;
 const STALE_SECONDS: i64 = 90 * DAY_SECONDS;
 
 /// One UTC Monday-based week; the final bucket is the current, incomplete week.
@@ -106,9 +111,9 @@ impl Repo {
 
     fn repository_metrics_at(&self, now: i64) -> Result<RepositoryMetrics> {
         // 1970-01-01 was Thursday: Monday is three days before the Unix epoch.
-        let monday =
-            (now + 3 * DAY_SECONDS).div_euclid(WEEK_SECONDS) * WEEK_SECONDS - 3 * DAY_SECONDS;
-        let start = monday - 51 * WEEK_SECONDS;
+        let offset = EPOCH_MONDAY_OFFSET_DAYS * DAY_SECONDS;
+        let monday = (now + offset).div_euclid(WEEK_SECONDS) * WEEK_SECONDS - offset;
+        let start = monday - WEEKS_BEFORE_CURRENT * WEEK_SECONDS;
         let mut weeks: Vec<_> = (0..WEEK_COUNT)
             .map(|i| WeekActivity {
                 start: start + i64::try_from(i).unwrap_or_default() * WEEK_SECONDS,
@@ -163,7 +168,7 @@ impl Repo {
             weeks,
             authors,
             last_commit,
-            size_bytes: (value("size") + value("size-pack")) * 1024,
+            size_bytes: (value("size") + value("size-pack")) * BYTES_PER_KIB,
             objects: value("count") + value("in-pack"),
         })
     }
