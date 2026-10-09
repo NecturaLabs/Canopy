@@ -114,9 +114,11 @@ pub enum Op {
         name: String,
         remote: String,
     },
-    /// Writes each commit as a patch file in `dir`, oldest first.
+    /// Writes `oid` and the commits before it along first parents, `count` in all, as patch
+    /// files in `dir`, oldest first; merge commits have no patch and are skipped.
     ExportPatches {
-        oids: Vec<Oid>,
+        oid: Oid,
+        count: usize,
         dir: PathBuf,
     },
     /// Applies a patch file, or the `.patch` files of a folder in name order, as commits.
@@ -1548,9 +1550,18 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         Op::DeleteTag(t) => done(repo.delete_tag(&t)),
         Op::PushTag { remote, tag } => repo.push_tag(&remote, &tag, progress),
         Op::PublishBranch { name, remote } => repo.publish_branch(&name, &remote, progress),
-        Op::ExportPatches { oids, dir } => repo
-            .export_patches(&oids, &dir)
-            .map(|files| exported_message(&files, &dir)),
+        Op::ExportPatches { oid, count, dir } => {
+            let series = repo.patch_series(oid, count)?;
+            if series.commits.is_empty() {
+                return Err(canopy_core::Error::Invalid(format!(
+                    "A merge commit cannot be exported as a patch: {}. Include the commits \
+                     before it, or export one of them.",
+                    canopy_core::short_id(oid)
+                )));
+            }
+            repo.export_patches(&series.commits, &dir)
+                .map(|files| exported_message(&files, &dir, series.merges.len()))
+        }
         Op::ApplyPatches { path } => {
             let files = patch_files(&path)?;
             repo.apply_patches(&files)
@@ -1613,13 +1624,26 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
 /// What Stage all says when it left out folders that hold a repository of their own (staging
 /// them would record bare gitlinks nobody can clone); empty when it left out nothing.
 /// What an export tells: the files written, by name.
-fn exported_message(files: &[PathBuf], dir: &Path) -> String {
+fn exported_message(files: &[PathBuf], dir: &Path, merges: usize) -> String {
     let names: Vec<String> = files
         .iter()
         .filter_map(|f| f.file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .collect();
-    format!("Wrote {} to {}.", names.join(", "), dir.display())
+    let skipped = match merges {
+        0 => String::new(),
+        1 => " Skipped 1 merge commit: git writes no patch for a merge.".into(),
+        n => format!(" Skipped {n} merge commits: git writes no patch for a merge."),
+    };
+    match names.as_slice() {
+        [only] => format!("Wrote {only} to {}.{skipped}", dir.display()),
+        [first, .., last] => format!(
+            "Wrote {} patches ({first} to {last}) to {}.{skipped}",
+            names.len(),
+            dir.display()
+        ),
+        [] => format!("Wrote no patches to {}.{skipped}", dir.display()),
+    }
 }
 
 /// The patch files `path` names: itself, or a folder's `.patch` files in name order.
@@ -3252,7 +3276,8 @@ mod read_tests {
         let local = repo.snapshot(5).expect("snapshot").head.oid.expect("head");
         let out = root.path().join("out");
         let exported = Op::ExportPatches {
-            oids: vec![local],
+            oid: local,
+            count: 1,
             dir: out.clone(),
         };
         assert_eq!(exported.kind(), OpKind::Other);
@@ -3290,6 +3315,104 @@ mod read_tests {
             repo.snapshot(5).expect("snapshot").state,
             RepoState::ApplyMailbox
         );
+    }
+
+    /// #99: several commits are exported in one go, oldest first, counting back along first
+    /// parents (and no further than the root); they apply again in order, and a merge commit is
+    /// skipped with a word about it instead of writing its parent's patch.
+    #[test]
+    fn several_commits_export_oldest_first_and_apply_again() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        git(&copy, &["config", "core.autocrlf", "false"]);
+        for name in ["second", "third"] {
+            std::fs::write(copy.join(format!("{name}.txt")), format!("{name}\n")).expect("write");
+            git(&copy, &["add", "."]);
+            git(&copy, &["commit", "-q", "-m", name]);
+        }
+        let repo = Repo::open(&copy).expect("open");
+        let head = repo.snapshot(5).expect("snapshot").head.oid.expect("head");
+        let out = root.path().join("out");
+        let message = perform(
+            &repo,
+            Op::ExportPatches {
+                oid: head,
+                count: 3,
+                dir: out.clone(),
+            },
+            |_| {},
+        )
+        .expect("exports three");
+        assert!(
+            message.starts_with("Wrote 3 patches (0001-local.patch to 0003-third.patch) to "),
+            "{message}"
+        );
+        let mut files: Vec<_> = std::fs::read_dir(&out)
+            .expect("list")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        files.sort();
+        assert_eq!(
+            files,
+            ["0001-local.patch", "0002-second.patch", "0003-third.patch"]
+        );
+
+        git(&copy, &["checkout", "-q", "-B", "fresh", "origin/main"]);
+        let applied = perform(&repo, Op::ApplyPatches { path: out }, |_| {}).expect("applies");
+        assert_eq!(applied, "Applied 3 commits: local; second; third.");
+        assert_eq!(
+            git(&copy, &["log", "--format=%s", "-3"]),
+            "third\nsecond\nlocal"
+        );
+
+        // More than the history holds stops at the root commit (no patch for "base" is lost).
+        let all = perform(
+            &repo,
+            Op::ExportPatches {
+                oid: head,
+                count: 50,
+                dir: root.path().join("all"),
+            },
+            |_| {},
+        )
+        .expect("exports the whole line");
+        assert!(
+            all.starts_with("Wrote 4 patches (0001-base.patch to 0004-third.patch)"),
+            "{all}"
+        );
+
+        // A merge in the line is skipped and named; a merge alone is refused.
+        git(&copy, &["checkout", "-q", "main"]);
+        git(&copy, &["merge", "-q", "--no-ff", "-m", "join", "fresh"]);
+        let merge = repo.snapshot(5).expect("snapshot").head.oid.expect("head");
+        let skipped = perform(
+            &repo,
+            Op::ExportPatches {
+                oid: merge,
+                count: 2,
+                dir: root.path().join("merge"),
+            },
+            |_| {},
+        )
+        .expect("exports the commit before the merge");
+        assert!(skipped.contains("Skipped 1 merge commit"), "{skipped}");
+        let refused = perform(
+            &repo,
+            Op::ExportPatches {
+                oid: merge,
+                count: 1,
+                dir: root.path().join("alone"),
+            },
+            |_| {},
+        )
+        .expect_err("a merge alone has no patch");
+        assert!(
+            refused
+                .to_string()
+                .contains("A merge commit cannot be exported as a patch"),
+            "{refused}"
+        );
+        assert!(!root.path().join("alone").exists());
     }
 
     #[test]

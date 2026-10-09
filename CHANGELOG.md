@@ -109,8 +109,11 @@ commits since the previous build.
   ("Summary is 80 characters; 72 is the most tools show."). The hint only warns: it never stops
   the commit or changes what you wrote, and URLs, indented and quoted lines are not counted.
   Settings → Git → Commits → Check commit messages turns it off.
-- Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick,
-  and Apply patch… in the palette applies a patch file, or the `.patch` files of a folder, as
+- Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick;
+  How many commits (1 to 50) adds the commits before it along first parents, oldest first as
+  `0001-…patch`, `0002-…patch`, and the dialog says what it will write. A merge commit has no
+  patch in git, so merges in the range are skipped and named, and a merge alone is refused.
+  Apply patch… in the palette applies a patch file, or the `.patch` files of a folder, as
   commits that keep their authors; a patch that does not fit stops in "Applying patches" with
   Continue and Abort, and the message names the conflicting files.
 - Any local branch without an upstream can be published to a remote from its context menu in the

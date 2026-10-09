@@ -59,7 +59,9 @@ pub use metrics::{
     AuthorActivity, BranchMetrics, Divergence, MetricCommit, RepositoryMetrics, WeekActivity,
 };
 pub use model::*;
-pub use ops::{HunkAction, MergeMode, PullStrategy, PushTarget, ResetMode};
+pub use ops::{
+    HunkAction, MAX_PATCH_SERIES, MergeMode, PatchSeries, PullStrategy, PushTarget, ResetMode,
+};
 pub use options::{Cleanup, ConflictStyle, GitOptions, PushDefault};
 pub use partial::{MissingObjects, convert_legacy_partial_clone};
 pub use pull::{ConfigScope, ConfigSource, PullConfig, global_pull_config};

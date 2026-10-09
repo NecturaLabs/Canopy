@@ -392,6 +392,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         "export-patch" => Dialog::ExportPatches {
             oid: commit,
             folder: "~/patches".into(),
+            count: 3,
         },
         "apply-patch" => Dialog::ApplyPatches {
             path: "~/patches/0001-fix-shout-two.patch".into(),

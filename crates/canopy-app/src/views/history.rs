@@ -698,8 +698,9 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 }
                 let oid = c.oid;
                 let summary = c.summary.clone();
+                let merge = c.parents.len() > 1;
                 menu::context(&response, |m| {
-                    commit_menu(m, oid, &summary, forge.as_ref(), actions);
+                    commit_menu(m, oid, &summary, merge, forge.as_ref(), actions);
                 });
             });
         }
@@ -786,6 +787,7 @@ pub fn commit_menu(
     m: &mut Menu<'_>,
     oid: Oid,
     summary: &str,
+    merge: bool,
     forge: Option<&Forge>,
     actions: &mut Vec<Action>,
 ) {
@@ -874,13 +876,18 @@ pub fn commit_menu(
         },
     );
     m.separator();
+    // git writes no patch for a merge commit, so a context menu leaves the item out for one.
     if m.item(icon::FILE_ARROW_UP, "Export as patch…")
+        .description("This commit, or several")
+        .enabled(!merge)
+        .disabled_reason("A merge commit cannot be exported as a patch")
         .show(m.ui)
         .clicked()
     {
         actions.push(Action::OpenDialog(Dialog::ExportPatches {
             oid,
             folder: "~".into(),
+            count: 1,
         }));
     }
     if m.item(icon::COPY, "Copy SHA")

@@ -14,6 +14,18 @@ use crate::{Error, MissingObjects, PushDefault, Repo, Result};
 /// The most of a commit template Canopy reads, in bytes.
 const COMMIT_TEMPLATE_LIMIT: u64 = 256 * 1024;
 
+/// The most commits one patch export covers.
+pub const MAX_PATCH_SERIES: usize = 50;
+
+/// The commits an export writes patches for, and the merge commits it skips.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PatchSeries {
+    /// Newest first.
+    pub commits: Vec<Oid>,
+    /// Merge commits of the chain, newest first: `git format-patch` writes no patch for them.
+    pub merges: Vec<Oid>,
+}
+
 /// How far `git reset` goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetMode {
@@ -694,14 +706,55 @@ impl Repo {
         Ok(found)
     }
 
+    /// `oid` and the commits before it along first parents, newest first: at most `count`
+    /// (clamped to 1 to [`MAX_PATCH_SERIES`]), fewer when the history starts sooner. Merge
+    /// commits stay in the chain; the walk goes on through their first parent.
+    pub fn first_parent_chain(&self, oid: Oid, count: usize) -> Result<Vec<Oid>> {
+        let count = count.clamp(1, MAX_PATCH_SERIES);
+        let repo = self.git();
+        let mut chain = Vec::with_capacity(count);
+        let mut next = Some(oid);
+        while let Some(id) = next.filter(|_| chain.len() < count) {
+            chain.push(id);
+            next = repo.find_commit(id)?.parent_ids().next();
+        }
+        Ok(chain)
+    }
+
+    /// What exporting `oid` and up to `count - 1` commits before it along first parents writes:
+    /// the chain of [`Self::first_parent_chain`] without its merge commits, which are listed
+    /// apart because `git format-patch` writes no patch for a merge (given a merge, it writes
+    /// the nearest commit before it instead).
+    pub fn patch_series(&self, oid: Oid, count: usize) -> Result<PatchSeries> {
+        let mut series = PatchSeries::default();
+        for id in self.first_parent_chain(oid, count)? {
+            if self.git().find_commit(id)?.parent_count() > 1 {
+                series.merges.push(id);
+            } else {
+                series.commits.push(id);
+            }
+        }
+        Ok(series)
+    }
+
     /// Writes one `git format-patch` file per commit of `oids` into `dir`, parents first, and
-    /// returns their paths. `dir` must be absolute and is created when missing.
+    /// returns their paths. `dir` must be absolute and is created when missing. A merge commit
+    /// is refused: `git format-patch` has no patch for it ([`Self::patch_series`] sets merges
+    /// apart).
     pub fn export_patches(&self, oids: &[Oid], dir: &Path) -> Result<Vec<std::path::PathBuf>> {
         if oids.is_empty() {
             return Ok(Vec::new());
         }
         if !dir.is_absolute() {
             return Err(Error::invalid("Choose a full folder path for the patches."));
+        }
+        for id in oids {
+            if self.git().find_commit(*id)?.parent_count() > 1 {
+                return Err(Error::invalid(format!(
+                    "A merge commit cannot be exported as a patch: {}",
+                    crate::short_id(*id)
+                )));
+            }
         }
         let ordered = self.parents_first(oids)?;
         let io = |e: std::io::Error| Error::invalid(format!("{}: {e}", dir.display()));

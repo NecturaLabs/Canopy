@@ -242,3 +242,197 @@ fn export_never_replaces_a_patch_file_already_in_the_folder() {
         "no staging folder is left behind"
     );
 }
+
+/// `main` with `feat: add c` after a merge of `side` (`feat: add s`) into the line of
+/// `feat: add b`, returning the merge commit.
+fn history_with_a_merge(p: &Path) -> git2::Oid {
+    init(p);
+    git(p, &["checkout", "-q", "-b", "side"]);
+    commit_file(p, "s.txt", "s\n", "feat: add s");
+    git(p, &["checkout", "-q", "main"]);
+    commit_file(p, "b.txt", "b\n", "feat: add b");
+    git(p, &["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+    let merge = oid(p, "HEAD");
+    commit_file(p, "c.txt", "c\n", "feat: add c");
+    merge
+}
+
+#[test]
+fn the_first_parent_chain_is_newest_first_and_stops_at_the_root() {
+    let source = tempfile::tempdir().expect("tempdir");
+    init(source.path());
+    commit_file(source.path(), "b.txt", "b\n", "feat: add b");
+    commit_file(source.path(), "c.txt", "c\n", "feat: add c");
+    let repo = Repo::open(source.path()).expect("open");
+    let head = oid(source.path(), "HEAD");
+    let expected: Vec<_> = ["HEAD", "HEAD~1", "HEAD~2"]
+        .iter()
+        .map(|rev| oid(source.path(), rev))
+        .collect();
+
+    assert_eq!(
+        repo.first_parent_chain(head, 1).expect("one"),
+        &expected[..1]
+    );
+    assert_eq!(
+        repo.first_parent_chain(head, 2).expect("two"),
+        &expected[..2]
+    );
+    // Past the root, and the cap, the chain is just the whole history; zero still selects the commit.
+    assert_eq!(repo.first_parent_chain(head, 3).expect("all"), expected);
+    assert_eq!(
+        repo.first_parent_chain(head, 50).expect("past the root"),
+        expected
+    );
+    assert_eq!(
+        repo.first_parent_chain(head, 0).expect("zero"),
+        &expected[..1]
+    );
+    // Starting in the middle walks only what is before it.
+    assert_eq!(
+        repo.first_parent_chain(expected[1], 9).expect("middle"),
+        &expected[1..]
+    );
+}
+
+#[test]
+fn the_chain_is_capped_and_follows_the_first_parent_through_a_merge() {
+    let source = tempfile::tempdir().expect("tempdir");
+    let merge = history_with_a_merge(source.path());
+    let repo = Repo::open(source.path()).expect("open");
+    let head = oid(source.path(), "HEAD");
+
+    // Oracle: `git rev-list --first-parent` skips `side`'s commit and keeps the merge.
+    let listed = git(source.path(), &["rev-list", "--first-parent", "HEAD"]);
+    let expected: Vec<git2::Oid> = listed
+        .lines()
+        .map(|id| git2::Oid::from_str(id).expect("an id"))
+        .collect();
+    assert_eq!(expected.len(), 4);
+    assert!(expected.contains(&merge));
+    assert_eq!(repo.first_parent_chain(head, 50).expect("chain"), expected);
+    assert_eq!(
+        repo.first_parent_chain(head, 3).expect("three"),
+        &expected[..3]
+    );
+
+    // The cap: a long history is cut at MAX_PATCH_SERIES whatever is asked.
+    let long = tempfile::tempdir().expect("tempdir");
+    init(long.path());
+    for n in 0..canopy_core::MAX_PATCH_SERIES + 5 {
+        commit_file(
+            long.path(),
+            "n.txt",
+            &format!("{n}\n"),
+            &format!("step {n}"),
+        );
+    }
+    let long_repo = Repo::open(long.path()).expect("open");
+    let chain = long_repo
+        .first_parent_chain(oid(long.path(), "HEAD"), usize::MAX)
+        .expect("capped");
+    assert_eq!(chain.len(), canopy_core::MAX_PATCH_SERIES);
+}
+
+#[test]
+fn a_merge_in_the_series_is_set_apart_and_exporting_it_is_refused() {
+    let source = tempfile::tempdir().expect("tempdir");
+    let merge = history_with_a_merge(source.path());
+    let repo = Repo::open(source.path()).expect("open");
+    let head = oid(source.path(), "HEAD");
+    let out = tempfile::tempdir().expect("tempdir");
+
+    let series = repo.patch_series(head, 4).expect("series");
+    assert_eq!(series.merges, [merge]);
+    assert_eq!(
+        series.commits,
+        [
+            oid(source.path(), "HEAD"),
+            oid(source.path(), "HEAD~2"),
+            oid(source.path(), "HEAD~3"),
+        ]
+    );
+    let files = repo
+        .export_patches(&series.commits, out.path())
+        .expect("export");
+    let names: Vec<_> = files
+        .iter()
+        .map(|f| f.file_name().expect("name").to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "0001-feat-first.patch",
+            "0002-feat-add-b.patch",
+            "0003-feat-add-c.patch"
+        ]
+    );
+
+    // The merge alone has no patch: git would write its parent's instead.
+    let alone = repo.patch_series(merge, 1).expect("alone");
+    assert_eq!(alone.commits, Vec::<git2::Oid>::new());
+    assert_eq!(alone.merges, [merge]);
+    let git_wrote = git(
+        source.path(),
+        &[
+            "format-patch",
+            "-1",
+            "-o",
+            &out.path().join("oracle").to_string_lossy(),
+            &merge.to_string(),
+        ],
+    );
+    assert!(git_wrote.contains("feat-add-b"), "{git_wrote}");
+    let refused = repo
+        .export_patches(&[merge], &out.path().join("none"))
+        .expect_err("a merge");
+    assert!(
+        refused
+            .to_string()
+            .contains("A merge commit cannot be exported as a patch"),
+        "{refused}"
+    );
+    assert!(!out.path().join("none").exists(), "nothing is written");
+}
+
+/// The case that went wrong: `git format-patch -1` of a merge writes the patch of its nearest
+/// non-merge ancestor, so a merge selected on its own must be refused, not exported as another
+/// commit.
+#[test]
+fn a_merge_is_never_exported_as_the_commit_before_it() {
+    let p = tempfile::tempdir().expect("tempdir");
+    init(p.path());
+    git(p.path(), &["checkout", "-q", "-b", "f"]);
+    commit_file(p.path(), "b.txt", "b\n", "feat: b");
+    git(p.path(), &["checkout", "-q", "main"]);
+    commit_file(p.path(), "c.txt", "c\n", "feat: c");
+    git(p.path(), &["merge", "-q", "--no-ff", "-m", "merge f", "f"]);
+    let merge = oid(p.path(), "HEAD");
+    let out = p.path().join("out");
+
+    // git itself writes the patch of "c" for the merge.
+    let wrote = git(
+        p.path(),
+        &["format-patch", "-1", "-o", &out.to_string_lossy(), "HEAD"],
+    );
+    assert!(wrote.contains("0001-feat-c.patch"), "{wrote}");
+    fs::remove_dir_all(&out).expect("clean");
+
+    let repo = Repo::open(p.path()).expect("open");
+    let refused = repo
+        .export_patches(&[merge], &out)
+        .expect_err("a merge cannot be a patch");
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "A merge commit cannot be exported as a patch: {}",
+            canopy_core::short_id(merge)
+        )
+    );
+    // Among others it refuses too, and nothing at all is written.
+    let refused_among = repo
+        .export_patches(&[oid(p.path(), "HEAD~1"), merge], &out)
+        .expect_err("a merge among others");
+    assert!(refused_among.to_string().contains("A merge commit"));
+    assert!(!out.exists(), "nothing is written");
+}
