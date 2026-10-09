@@ -60,6 +60,8 @@ commits since the previous build.
   be dismissed on its own, and a repository whose git configuration decides against Canopy's
   recommendation is listed there once, with a button to Git settings.
 
+- A test fails when `src/views` or `src/ui` code names a filesystem, process, network, libgit2 or
+  git-CLI API, keeping repository and disk reads in worker jobs.
 - Canopy names the programs a repository needs and the system lacks (`git-lfs`, `ssh`, the signing
   program) when it is opened, with install steps for the system.
 

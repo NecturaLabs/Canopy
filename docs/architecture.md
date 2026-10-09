@@ -332,6 +332,10 @@ Canopy-specific folders.
   `expect_used`, `panic`, `print_stdout` and `print_stderr`; `clippy.toml` exempts tests), and
   `unsafe` is denied everywhere except the backdrop blur's OpenGL calls in `ui/kit/glass/gl.rs`
   (ADR 0010; `crates/canopy-app/tests/unsafe_policy.rs` enforces it).
+- The drawing code (`src/views`, `src/ui`) names no filesystem, process, network, libgit2 or git-CLI
+  API in its production code: `crates/canopy-app/tests/ui_thread.rs` fails when it does, so repository
+  and disk reads stay in worker jobs. `tools/check-ui-colors.py` does the same for colour constructors
+  outside `ui/theme.rs`.
 
 ## Testing strategy
 
