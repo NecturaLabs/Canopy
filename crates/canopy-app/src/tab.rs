@@ -676,6 +676,8 @@ pub fn folder_name(path: &std::path::Path) -> String {
 pub struct RepoTab {
     pub stale_serial: u64,
     pub stale_result: Option<Result<Arc<[canopy_core::StaleCandidate]>, String>>,
+    insights_serial: u64,
+    pub insights: Option<Result<Arc<crate::worker::Insights>, String>>,
     pub ignore_query: Option<crate::worker::IgnoreQuery>,
     pub ignore_result: Option<Result<Arc<crate::worker::IgnoreData>, String>>,
     ignore_serial: u64,
@@ -826,6 +828,8 @@ impl RepoTab {
         let name = folder_name(&path);
         Self {
             path,
+            insights_serial: 0,
+            insights: None,
             ignore_query: None,
             stale_serial: 0,
             stale_result: None,
@@ -921,6 +925,12 @@ impl RepoTab {
     /// Queues a mutation.
     pub fn op(&self, op: Op) {
         self.worker.send(Job::Op(op));
+    }
+
+    pub fn read_insights(&mut self) {
+        self.insights_serial = self.insights_serial.wrapping_add(1);
+        self.insights = None;
+        self.worker.send(Job::Insights(self.insights_serial));
     }
 
     pub fn read_ignore(&mut self, query: crate::worker::IgnoreQuery) {
@@ -1826,6 +1836,19 @@ impl RepoTab {
                         self.pull_config = None;
                     }
                 },
+                Event::Insights { serial, result } => {
+                    if serial != self.insights_serial {
+                        continue;
+                    }
+                    if let Err(error) = &result {
+                        notices.push(Notice {
+                            ok: false,
+                            title: "Could not load insights".into(),
+                            body: error.clone(),
+                        });
+                    }
+                    self.insights = Some(result);
+                }
                 Event::ToolsMissing(tools) => {
                     for tool in tools.into_iter().filter(|t| first_report(&t.program)) {
                         notices.push(Notice {
@@ -3712,6 +3735,59 @@ mod tests {
         assert_eq!(tab.view, View::Changes);
         assert_eq!(notices.len(), 1);
         assert!(!notices[0].ok, "it needs the user");
+        Ok(())
+    }
+
+    #[test]
+    fn insights_rejects_superseded_replies_and_surfaces_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.read_insights();
+        let Job::Insights(old) = jobs.recv()? else {
+            panic!("insights job");
+        };
+        tab.read_insights();
+        let Job::Insights(current) = jobs.recv()? else {
+            panic!("insights job");
+        };
+        assert_ne!(old, current);
+        events.send(Event::Insights {
+            serial: old,
+            result: Err("old read".into()),
+        })?;
+        assert_eq!(tab.poll(&[]).len(), 0);
+        assert!(tab.insights.is_none());
+        events.send(Event::Insights {
+            serial: current,
+            result: Err("missing objects".into()),
+        })?;
+        let notices = tab.poll(&[]);
+        assert_eq!(notices.len(), 1);
+        assert!(!notices[0].ok);
+        assert!(matches!(tab.insights, Some(Err(ref error)) if error == "missing objects"));
+        tab.read_insights();
+        let Job::Insights(next) = jobs.recv()? else {
+            panic!("insights job");
+        };
+        assert!(tab.insights.is_none());
+        let data = Arc::new(crate::worker::Insights {
+            repository: canopy_core::RepositoryMetrics {
+                weeks: Vec::new(),
+                authors: Vec::new(),
+                last_commit: None,
+                size_bytes: 0,
+                objects: 0,
+            },
+            branches: Vec::new(),
+        });
+        events.send(Event::Insights {
+            serial: next,
+            result: Ok(Arc::clone(&data)),
+        })?;
+        assert_eq!(tab.poll(&[]).len(), 0);
+        assert!(matches!(tab.insights, Some(Ok(ref result)) if Arc::ptr_eq(result, &data)));
         Ok(())
     }
 

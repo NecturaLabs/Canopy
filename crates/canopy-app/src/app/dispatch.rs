@@ -59,6 +59,18 @@ impl CanopyApp {
                         convert_legacy: true,
                     },
                 ),
+                Action::RepositoryInsights(repo) => {
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.path == repo) {
+                        tab.read_insights();
+                        let repo = tab.path.clone();
+                        if !self
+                            .dialogs
+                            .any(|d| matches!(d, Dialog::Insights { repo: path } if *path == repo))
+                        {
+                            self.dialogs.open(Dialog::Insights { repo });
+                        }
+                    }
+                }
                 Action::OpenDialog(mut d) => {
                     self.folder_picker.cancel();
                     if let Dialog::Open { recent, .. } = &mut d {
@@ -967,5 +979,26 @@ mod tests {
         );
         assert!(!theme::high_contrast());
         assert!(!palette(&ctx).strict);
+    }
+    #[test]
+    fn insights_refresh_targets_its_repository_and_keeps_one_dialog() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_tab();
+        let mut other = test_tab(canopy_core::RepoSnapshot::default());
+        other.path = PathBuf::from("other");
+        let (worker, _, jobs) = crate::worker::Worker::detached();
+        other.worker = worker;
+        app.tabs.push(other);
+        let action = Action::RepositoryInsights(PathBuf::from("other"));
+        app.apply(&ctx, vec![action.clone()]);
+        assert!(matches!(jobs.try_recv(), Ok(Job::Insights(_))));
+        assert!(
+            matches!(app.dialogs.current(), Some(Dialog::Insights { repo }) if repo == &PathBuf::from("other"))
+        );
+        app.apply(&ctx, vec![action]);
+        assert!(matches!(jobs.try_recv(), Ok(Job::Insights(_))));
+        app.dialogs.close();
+        assert!(app.dialogs.current().is_none());
+        assert_eq!(app.active, 0);
     }
 }

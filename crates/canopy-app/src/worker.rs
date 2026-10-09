@@ -339,6 +339,8 @@ pub enum Job {
         serial: u64,
         older_than_days: u32,
     },
+    /// Local repository and branch metrics, loaded only when requested.
+    Insights(u64),
     /// Ignore management reads; the serial ties the reply to the newest form request.
     Ignore {
         serial: u64,
@@ -406,6 +408,13 @@ pub enum IgnoreData {
     },
 }
 
+/// Repository activity and branch comparisons from one worker read.
+#[derive(Debug, Clone)]
+pub struct Insights {
+    pub repository: canopy_core::RepositoryMetrics,
+    pub branches: Vec<canopy_core::BranchMetrics>,
+}
+
 /// Identifies a file diff request; the response carries it back so stale replies can be dropped.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DiffKey {
@@ -426,6 +435,10 @@ pub enum Event {
     StaleCandidates {
         serial: u64,
         result: Result<Arc<[canopy_core::StaleCandidate]>, String>,
+    },
+    Insights {
+        serial: u64,
+        result: Result<Arc<Insights>, String>,
     },
     Ignore {
         serial: u64,
@@ -759,6 +772,7 @@ impl Job {
             Self::SquashMessage(_) => "squash-message",
             Self::Conflict(_) => "conflict",
             Self::PullConfig => "pull-config",
+            Self::Insights(_) => "repository insights",
             Self::Tools => "tools",
             Self::PushTarget => "push-target",
             Self::Options(_) => "options",
@@ -1016,6 +1030,21 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     emit(Event::PullConfig(
                         repo.pull_config().map_err(|e| e.to_string()),
                     ));
+                }
+                Job::Insights(serial) => {
+                    let result = repo.repository_metrics().and_then(|repository| {
+                        Ok(Arc::new(Insights {
+                            repository,
+                            branches: repo.branch_metrics()?,
+                        }))
+                    });
+                    if let Err(error) = &result {
+                        tracing::warn!(%error, "repository insights failed");
+                    }
+                    emit(Event::Insights {
+                        serial,
+                        result: result.map_err(|e| e.to_string()),
+                    });
                 }
                 Job::Tools => emit(Event::ToolsMissing(repo.missing_tools())),
                 Job::PushTarget => {

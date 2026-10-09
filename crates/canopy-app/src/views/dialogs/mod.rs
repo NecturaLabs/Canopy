@@ -33,6 +33,7 @@ mod common;
 pub(crate) use common::{tilde_in, valid_ref_name};
 mod credential;
 mod ignore;
+mod insights;
 mod reader;
 mod stack;
 mod stale;
@@ -56,6 +57,9 @@ pub use url::{UrlBuilder, UrlSource};
 #[derive(Debug, Clone)]
 pub enum Dialog {
     CleanStale(Box<StaleForm>),
+    Insights {
+        repo: std::path::PathBuf,
+    },
     Ignore(Box<IgnoreForm>),
     Open {
         path: String,
@@ -381,6 +385,7 @@ pub fn show(
     let mut extra: Option<Outcome> = None;
     let outcome = match dialog {
         Dialog::CleanStale(form) => return stale::show(ctx, salt, form, tab),
+        Dialog::Insights { .. } => return insights::show(ctx, dialog, tab),
         Dialog::Ignore(form) => return ignore::show(ctx, salt, form, tab),
         Dialog::Identity {
             name,

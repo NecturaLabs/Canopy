@@ -30,6 +30,7 @@ pub enum AppearanceChoice {
 #[derive(Debug, Clone)]
 pub enum Action {
     CleanStale,
+    RepositoryInsights(PathBuf),
     ReadIgnore {
         repo: PathBuf,
         query: crate::worker::IgnoreQuery,

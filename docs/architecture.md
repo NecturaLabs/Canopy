@@ -49,6 +49,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `ignore.rs` | Ignore rules: add a rule to `.gitignore`, `info/exclude` or the global file, preview what it would ignore, ask git why a path is ignored (`check-ignore -v`), stop tracking a path. Bounded ignored-path reads with collapsed ignored folders and atomic, optional starter templates. |
 | `stale.rs` | Stale linked worktree and local branch candidates, commit-age filtering and protection reasons; fresh identity, tip, working-tree and reachability checks before batch removal through safe branch deletion and non-force worktree removal. |
 | `flow.rs` | git-flow without the `git flow` binary: the AVH config keys, start and finish for feature, bugfix, release and hotfix, with a `merge-tree` pre-flight that refuses on conflicts; a single-commit feature or bugfix fast-forwards when possible, matching AVH. |
+| `metrics.rs` | Local repository activity across refs and HEAD: 52 UTC weeks, mailmap-aware shortlog authors, last commit and object storage. Local branch comparisons against the cached remote default (then main/master) and upstream, unique commits, age and stale/merged hints. Partial clones and repositories with custom merge/filter drivers skip squash checks; effective configuration is read through Git; CLI reads disable lazy fetching. |
 | `merged.rs` | Which local branches are merged into a base (reachable, upstream gone, squash-merged) and which check proved it. |
 | `signature.rs` | `Repo::commit_signature`: what `git log --format=%G?` says of a commit's signature (unsigned, verified, untrusted, expired, invalid, cannot be checked). Verifying can start the program `gpg.program`/`gpg.ssh.program` names, which a repository's configuration can set, so the worker runs it (`Job::Signature`, `Event::Signature`) only in a trusted folder. |
 | `tools.rs` | The programs a repository needs besides `git` (`git-lfs` for LFS attributes, `ssh` for an SSH remote, the signing program for `commit.gpgsign`/`tag.gpgsign`) and the installation steps per system; `Repo::missing_tools` reads configuration and two small files, so the worker runs it once per tab (`Job::Tools`, `Event::ToolsMissing`). |
@@ -64,6 +65,7 @@ returns the folders it left out) and `publish_branch` (the branch menu's Publish
 yet use `flow.rs`, `merged.rs`, `lfs.rs`, `paths::safe_join` or `untracked_children` (the Changes list shows
 the collapsed folders, not their contents) outside the core's own code and tests; the backlog
 entries for those features are the UI work.
+
 
 ## canopy-hosting
 
@@ -168,6 +170,7 @@ thread.
 | `views/dialogs/mod.rs` | `Dialog` and `show`: the modal dialogs (clone, new branch, confirmations, consent, ...). |
 | `views/dialogs/stack.rs` | `DialogStack`: credentials in front, the consent never replaced, a closed prompt always answered. |
 | `views/dialogs/stale.rs` | Repository-bound stale cleanup preview, disabled protected rows and destructive confirmation. The repository worker reads candidates and revalidates the selected identities, commits and safety before removal. |
+| `views/dialogs/insights.rs` | Repository insights: the weekly activity painter, top authors and branch table, rendering only worker-loaded tab data, with loading/error states and an explicit refresh. |
 | `views/dialogs/ignore.rs` | Repository-bound ignore form: rule destinations and previews, ignored paths and deciding-rule explanations. Reads and mutations go through the repository worker; serials discard superseded reads and status changes invalidate cached results. |
 | `views/dialogs/reader.rs` | The full-size reading modal for the Terms of Service and Privacy Policy, used by the consent too: a measured column with headings, lists and kit links, scrolling with fades; each document starts at the top when the reader opens. |
 | `views/dialogs/{url,start,credential,update,common}.rs` | The remote URL builder, where a new branch starts, credential prompts, the update dialog (what is new, installing, restarting), shared fields and buttons. |

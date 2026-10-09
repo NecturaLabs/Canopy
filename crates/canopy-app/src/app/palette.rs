@@ -203,6 +203,10 @@ impl CanopyApp {
         let app_entries = v;
         let mut v = Vec::new();
         if let Some(tab) = self.tabs.get(self.active) {
+            v.push((
+                e(icon::CHART_BAR, "Repository insights", "Repository", None),
+                Action::RepositoryInsights(tab.path.clone()),
+            ));
             let local_only = tab.is_local_only();
             match tab.view {
                 View::Changes => v.push((
@@ -635,5 +639,17 @@ mod tests {
         for label in ["High contrast: On", "High contrast: Off"] {
             assert!(all.contains(&label), "{all:?}");
         }
+    }
+    #[test]
+    fn insights_is_offered_only_for_the_open_repository() {
+        let mut app = test_app();
+        assert!(
+            !app.palette_entries()
+                .iter()
+                .any(|(_, action)| matches!(action, Action::RepositoryInsights(_)))
+        );
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        assert!(app.palette_entries().iter().any(|(_, action)| matches!(action, Action::RepositoryInsights(path) if path == &app.tabs[0].path)));
     }
 }

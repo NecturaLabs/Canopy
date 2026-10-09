@@ -124,6 +124,13 @@ impl CanopyApp {
         // `--demo-requests`: the active tab shows invented requests instead of loading them.
         let demo = demo_requests::chosen();
         let demo_shown = demo.is_none_or(|scenario| self.show_demo_requests(ctx, scenario));
+        if let Some(Dialog::Insights { repo }) = self.dialogs.current_mut()
+            && let Some(tab) = self.tabs.get_mut(self.active)
+            && repo.as_os_str().is_empty()
+        {
+            repo.clone_from(&tab.path);
+            tab.read_insights();
+        }
         let Some(shot) = &mut self.screenshot else {
             return;
         };
@@ -131,7 +138,13 @@ impl CanopyApp {
         if shot.started == 0.0 {
             shot.started = now;
         }
-        let ready = demo_shown
+        let insights_ready = !self.dialogs.any(|d| matches!(d, Dialog::Insights { .. }))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.insights.is_some());
+        let ready = insights_ready
+            && demo_shown
             && self.pending_opens == 0
             && !crate::ui::art::growing(ctx)
             && self.tabs.iter().all(|t| {
@@ -237,6 +250,12 @@ impl CanopyApp {
     /// Opens the dialog `--overlay name` names (the names of `DIALOG_OVERLAYS`), with the state
     /// it shows.
     pub(super) fn open_dialog_overlay(&mut self, name: &str) {
+        if name == "repository-insights" {
+            self.dialogs.open(Dialog::Insights {
+                repo: PathBuf::new(),
+            });
+            return;
+        }
         if name == "update-failed" {
             self.updater.install = updater::InstallState::Failed {
                 build: 1001,

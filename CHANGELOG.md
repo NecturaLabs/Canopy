@@ -105,6 +105,10 @@ commits since the previous build.
 
 - A test fails when `src/views` or `src/ui` code names a filesystem, process, network, libgit2 or
   git-CLI API, keeping repository and disk reads in worker jobs.
+
+- Repository insights from the command palette: weekly commits, top authors, Git object storage
+  and local branch activity, comparisons and stale/merged hints, without network access.
+
 - Canopy names the programs a repository needs and the system lacks (`git-lfs`, `ssh`, the signing
   program) when it is opened, with install steps for the system.
 
