@@ -62,8 +62,11 @@ impl Repo {
     }
 }
 
+/// The fields of the format string: status letter, signer, key.
+const FIELDS: usize = 3;
+
 fn parse(line: &str) -> SignatureStatus {
-    let mut parts = line.splitn(3, '\u{1f}');
+    let mut parts = line.splitn(FIELDS, '\u{1f}');
     let code = parts.next().unwrap_or("N");
     let signer = Signer {
         name: parts.next().unwrap_or_default().to_owned(),
