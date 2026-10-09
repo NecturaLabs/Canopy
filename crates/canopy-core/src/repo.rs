@@ -837,6 +837,9 @@ impl Repo {
         self.read_diff(source, path, old_path, missing, || {
             let d = self.raw_diff(source, path, old_path, context, whitespace)?;
             let mut out = diff::to_file_diff(&d, path)?;
+            if out.kind == Some(ChangeKind::Typechange) && out.hunks.is_empty() {
+                diff::typechange_hunks(self, source, &d, &mut out)?;
+            }
             out.submodule = crate::submodule::change_in(self, &d);
             Ok(out)
         })

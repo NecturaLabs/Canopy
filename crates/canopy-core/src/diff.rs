@@ -214,6 +214,140 @@ pub(crate) fn path_of(file: &git2::DiffFile<'_>) -> Option<String> {
     file.path().map(|p| p.to_string_lossy().replace('\\', "/"))
 }
 
+/// The most bytes of a replaced or replacing file a type change reads to show.
+const TYPECHANGE_READ_LIMIT: u64 = 256 * 1024;
+
+/// What one side of a type change holds, as lines: a symbolic link's target text, or a file's
+/// text. `None` for a binary file or one too large to show. A link is read, never followed.
+fn side_lines(bytes: &[u8]) -> Option<Vec<String>> {
+    if bytes.contains(&0) {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// The new side of a working-tree type change: the link's target text, or the file's text. The
+/// path goes through [`crate::paths::safe_join`] for its folders, and its last component is read
+/// as a link when it is one, so no link is ever followed.
+fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let base = if dir.is_empty() {
+        workdir.to_path_buf()
+    } else {
+        crate::paths::safe_join(workdir, dir)?
+    };
+    let full = base.join(name);
+    let meta = std::fs::symlink_metadata(&full)?;
+    if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(&full)?;
+        return Ok(Some(target.to_string_lossy().into_owned().into_bytes()));
+    }
+    if !meta.is_file() || meta.len() > TYPECHANGE_READ_LIMIT {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(&full)?
+        .take(TYPECHANGE_READ_LIMIT)
+        .read_to_end(&mut bytes)?;
+    Ok(Some(bytes))
+}
+
+/// A file turned into a symbolic link (or back) has no hunks of its own in libgit2: the lines
+/// `git diff` prints, the old side removed and then the new side added, built from the two blobs
+/// or the working tree. Sets `out.binary` when a side is binary.
+pub(crate) fn typechange_hunks(
+    repo: &crate::Repo,
+    source: &DiffSource,
+    diff: &Diff<'_>,
+    out: &mut FileDiff,
+) -> Result<()> {
+    let Some(delta) = (0..diff.deltas().len())
+        .filter_map(|i| diff.get_delta(i))
+        .find(|d| d.status() == git2::Delta::Typechange)
+    else {
+        return Ok(());
+    };
+    let blob = |file: &git2::DiffFile<'_>| -> Result<Option<Vec<u8>>> {
+        let id = file.id();
+        if id.is_zero() {
+            return Ok(None);
+        }
+        let blob = repo.git().find_blob(id)?;
+        Ok((blob.size() as u64 <= TYPECHANGE_READ_LIMIT).then(|| blob.content().to_vec()))
+    };
+    let old = blob(&delta.old_file())?;
+    let new = match (source, path_of(&delta.new_file())) {
+        (DiffSource::Unstaged, Some(path)) => workdir_side(repo.workdir(), &path)?,
+        _ => blob(&delta.new_file())?,
+    };
+    let (Some(old), Some(new)) = (
+        old.as_deref().map(side_lines),
+        new.as_deref().map(side_lines),
+    ) else {
+        out.binary = true;
+        return Ok(());
+    };
+    let (Some(old), Some(new)) = (old, new) else {
+        out.binary = true;
+        return Ok(());
+    };
+    let count = |lines: &[String]| u32::try_from(lines.len()).unwrap_or(u32::MAX);
+    let range = |start: u32, n: u32| match n {
+        1 => start.to_string(),
+        _ => format!("{start},{n}"),
+    };
+    let (old_len, new_len) = (old.len(), new.len());
+    if !old.is_empty() {
+        let n = count(&old);
+        out.deletions += old_len;
+        out.hunks.push(Hunk {
+            header: format!("@@ -{} +0,0 @@", range(1, n)),
+            old_start: 1,
+            old_lines: n,
+            new_start: 0,
+            new_lines: 0,
+            lines: old
+                .into_iter()
+                .zip(1..)
+                .map(|(text, no)| DiffLine {
+                    kind: LineKind::Removed,
+                    old_no: Some(no),
+                    new_no: None,
+                    text,
+                })
+                .collect(),
+        });
+    }
+    if !new.is_empty() {
+        let n = count(&new);
+        out.additions += new_len;
+        out.hunks.push(Hunk {
+            header: format!("@@ -0,0 +{} @@", range(1, n)),
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: n,
+            lines: new
+                .into_iter()
+                .zip(1..)
+                .map(|(text, no)| DiffLine {
+                    kind: LineKind::Added,
+                    old_no: None,
+                    new_no: Some(no),
+                    text,
+                })
+                .collect(),
+        });
+    }
+    Ok(())
+}
+
 /// Converts every delta of `diff` into one [`FileDiff`] (deltas are merged; callers pass a
 /// diff restricted to one file).
 pub(crate) fn to_file_diff(diff: &Diff<'_>, path: &str) -> Result<FileDiff> {
