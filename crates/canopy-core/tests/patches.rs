@@ -157,3 +157,27 @@ fn a_patch_folder_must_be_a_full_path() {
         .expect_err("relative");
     assert!(error.to_string().contains("full folder path"));
 }
+
+#[test]
+fn export_never_replaces_a_patch_file_already_in_the_folder() {
+    let source = tempfile::tempdir().expect("tempdir");
+    init(source.path());
+    commit_file(source.path(), "b.txt", "b\n", "feat: add b");
+    let repo = Repo::open(source.path()).expect("open");
+    let head = oid(source.path(), "HEAD");
+    let out = tempfile::tempdir().expect("tempdir");
+    let first = repo
+        .export_patches(&[head], out.path())
+        .expect("first export");
+    fs::write(&first[0], "mine").expect("edit");
+    let error = repo
+        .export_patches(&[head], out.path())
+        .expect_err("a second export must refuse");
+    assert!(error.to_string().contains("already exists"), "{error}");
+    assert_eq!(fs::read_to_string(&first[0]).expect("read"), "mine");
+    assert_eq!(
+        fs::read_dir(out.path()).expect("list").count(),
+        1,
+        "no staging folder is left behind"
+    );
+}

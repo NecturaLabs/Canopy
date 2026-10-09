@@ -680,9 +680,13 @@ impl Repo {
         let mut order = vec!["rev-list", "--topo-order", "--reverse", "--no-walk"];
         order.extend(ids.iter().map(String::as_str));
         let ordered = self.git_cmd(&order)?;
-        let dir_arg = dir.to_string_lossy();
-        let mut written = Vec::new();
-        for (n, id) in ordered.lines().enumerate() {
+        let io = |e: std::io::Error| Error::invalid(format!("{}: {e}", dir.display()));
+        std::fs::create_dir_all(dir).map_err(io)?;
+        // Written beside the target and moved in only once no file there would be replaced.
+        let staging = dir.join(format!(".canopy-patches-{}", std::process::id()));
+        let staging_arg = staging.to_string_lossy();
+        let mut staged = Vec::new();
+        let made = ordered.lines().enumerate().try_for_each(|(n, id)| {
             let start = (n + 1).to_string();
             let out = self.git_cmd(&[
                 "format-patch",
@@ -690,11 +694,32 @@ impl Repo {
                 "--start-number",
                 &start,
                 "-o",
-                &dir_arg,
+                &staging_arg,
                 id,
             ])?;
-            written.extend(out.lines().map(std::path::PathBuf::from));
-        }
+            staged.extend(out.lines().map(std::path::PathBuf::from));
+            Ok::<(), Error>(())
+        });
+        let targets: Vec<std::path::PathBuf> = staged
+            .iter()
+            .filter_map(|file| file.file_name().map(|name| dir.join(name)))
+            .collect();
+        let result = made.and_then(|()| {
+            if let Some(existing) = targets.iter().find(|target| target.exists()) {
+                return Err(Error::invalid(format!(
+                    "{} already exists; pick another folder or move it away.",
+                    existing.display()
+                )));
+            }
+            for (file, target) in staged.iter().zip(&targets) {
+                std::fs::rename(file, target).map_err(io)?;
+            }
+            Ok(())
+        });
+        // Only the staging folder this call made, which is empty after a successful move.
+        let _ = std::fs::remove_dir_all(&staging);
+        result?;
+        let written = targets;
         Ok(written)
     }
 
