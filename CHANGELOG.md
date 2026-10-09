@@ -16,6 +16,8 @@ commits since the previous build.
 
 ### Fixed
 
+- A repository's own `sequence.editor` setting can no longer start a program through Canopy's git
+  commands; the security audit of the other configuration keys is in the architecture notes.
 - In a small window the Changes view keeps room for the file lists: the staged files are no longer
   pushed out of sight by the commit form, which scrolls its fields instead.
 - A download of a commit's files that runs past ten minutes now stops with a message naming the
