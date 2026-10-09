@@ -131,6 +131,12 @@ impl CanopyApp {
             repo.clone_from(&tab.path);
             tab.read_insights();
         }
+        if matches!(self.dialogs.current(), Some(Dialog::CleanStale(form)) if form.repo.as_os_str().is_empty())
+            && !self.tabs.is_empty()
+        {
+            self.dialogs.close();
+            self.apply(ctx, vec![Action::CleanStale]);
+        }
         let Some(shot) = &mut self.screenshot else {
             return;
         };
@@ -143,7 +149,13 @@ impl CanopyApp {
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.insights.is_some());
+        let stale_ready = !self.dialogs.any(|d| matches!(d, Dialog::CleanStale(_)))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.stale_result.is_some());
         let ready = insights_ready
+            && stale_ready
             && demo_shown
             && self.pending_opens == 0
             && !crate::ui::art::growing(ctx)
@@ -254,6 +266,15 @@ impl CanopyApp {
             self.dialogs.open(Dialog::Insights {
                 repo: PathBuf::new(),
             });
+            return;
+        }
+        if name == "clean-stale" {
+            self.dialogs
+                .open(Dialog::CleanStale(Box::new(dialogs::StaleForm::new(
+                    PathBuf::new(),
+                    self.settings.stale_inactivity_days,
+                    0,
+                ))));
             return;
         }
         if name == "update-failed" {
