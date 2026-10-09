@@ -330,9 +330,23 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     };
     header(ui, tab, &sel, actions);
 
-    if let Some(e) = &tab.diff_error {
+    if let Some(e) = tab.diff_error.clone() {
         ui.add_space(20.0);
-        ui.vertical_centered(|ui| ui.label(RichText::new(e).color(p.danger)));
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new(e).color(p.danger));
+            // A partial clone that could not download the file: asked again only on request.
+            if tab.failed_diff.is_some() {
+                ui.add_space(theme::SM);
+                if Button::new("Retry")
+                    .secondary()
+                    .icon(icon::ARROWS_CLOCKWISE)
+                    .show(ui)
+                    .clicked()
+                {
+                    tab.retry_diff();
+                }
+            }
+        });
         return;
     }
     let Some(d) = tab.diff.clone() else {

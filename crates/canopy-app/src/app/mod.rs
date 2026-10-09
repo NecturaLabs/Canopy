@@ -97,6 +97,7 @@ pub const OVERLAYS: &[&str] = &[
     "confirm",
     "confirm-danger",
     "confirm-host",
+    "convert-partial-clone",
     "confirm-merge-risky",
     "diverged",
     "pull-conflicts",
@@ -350,6 +351,7 @@ impl CanopyApp {
                 create: None,
                 focus: i == 0,
                 replace: None,
+                convert_legacy: false,
             };
             app.request_open(&cc.egui_ctx, request);
         }

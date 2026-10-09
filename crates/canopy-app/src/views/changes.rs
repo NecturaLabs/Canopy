@@ -719,8 +719,16 @@ fn list(
             tip,
             labelled: conflicted,
         };
+        let missing = tab.not_downloaded.contains(&(source, f.path.clone()));
         let (resp, acted) = flip.item(ui, row_key(which, &f.path), Some(path_key(&f.path)), |ui| {
-            file_row(ui, f, selected, ("change", which as u8, &f.path), action)
+            file_row(
+                ui,
+                f,
+                selected,
+                missing,
+                ("change", which as u8, &f.path),
+                action,
+            )
         });
         let toggle = || {
             if which == List::Staged {
@@ -880,6 +888,7 @@ fn file_row(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
+    not_downloaded: bool,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     action: RowAction,
 ) -> (Response, bool) {
@@ -890,7 +899,7 @@ fn file_row(
         commit_detail::icon_actions_width()
     };
     let mut acted = false;
-    let row = commit_detail::file_list_row_with(ui, f, selected, id, width, |ui| {
+    let row = commit_detail::file_list_row_with(ui, f, selected, not_downloaded, id, width, |ui| {
         let salt = ("file-row-action", &f.path);
         let r = if action.labelled {
             Button::new(action.tip)

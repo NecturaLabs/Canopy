@@ -862,6 +862,34 @@ fn legacy_partial_clone_extension_is_reported_and_conversion_works() {
 }
 
 #[test]
+fn a_legacy_partial_clone_is_converted_by_canopy_and_only_when_it_is_one() {
+    let fx = Fixture::new();
+    let dir = fx.clone("converted", &["--filter=blob:none"]);
+    let err = canopy_core::convert_legacy_partial_clone(&dir).expect_err("not a legacy clone");
+    assert!(err.to_string().contains("does not use the old"), "{err}");
+
+    git(&dir, &["config", "--unset", "remote.origin.promisor"]);
+    git(&dir, &["config", "extensions.partialClone", "origin"]);
+    assert!(matches!(
+        Repo::open(&dir),
+        Err(Error::LegacyPartialClone { .. })
+    ));
+    let remote = canopy_core::convert_legacy_partial_clone(&dir).expect("converts");
+    assert_eq!(remote, "origin");
+    assert_eq!(
+        git(&dir, &["config", "remote.origin.promisor"]).trim(),
+        "true"
+    );
+    let repo = Repo::open(&dir).expect("opens after the conversion");
+    assert!(repo.is_partial_clone());
+    assert_history_matches_cli(&fx, &repo, Download);
+    assert!(
+        canopy_core::convert_legacy_partial_clone(&dir).is_err(),
+        "nothing left to convert"
+    );
+}
+
+#[test]
 fn snapshot_after_a_soft_reset_in_a_treeless_clone_recovers_its_status() {
     let fx = Fixture::new();
     let dir = fx.clone("treeless", &["--filter=tree:0"]);

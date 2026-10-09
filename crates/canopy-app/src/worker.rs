@@ -403,6 +403,9 @@ pub enum Event {
         can_download: bool,
     },
     Diff(DiffKey, Result<Arc<FileDiff>, String>),
+    /// The diff failed only because a partial clone has not downloaded what it needs, and a
+    /// retry could fetch it: the tab remembers that until the user asks again.
+    DiffNotDownloaded(DiffKey),
     /// A read needed a download from this promisor remote, which Canopy did not run because the
     /// repository is outside every trusted folder (`trust.rs`). `trust` is the version of the
     /// trusted list that said so (`trust::changes()`): a tab that has seen a newer one knows the
@@ -866,6 +869,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         emit(Event::Diff(key, Ok(same)));
                         continue;
                     }
+                    let retryable = result
+                        .as_ref()
+                        .err()
+                        .is_some_and(canopy_core::Error::can_download);
                     let result = result.map(Arc::new).map_err(|e| e.to_string());
                     last_diff = result.as_ref().ok().map(|d| (key.clone(), Arc::clone(d)));
                     let generation = diff_generation.fetch_add(1, Ordering::Relaxed) + 1;
@@ -874,6 +881,9 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         _ => None,
                     };
                     emit(Event::Diff(key.clone(), result));
+                    if retryable {
+                        emit(Event::DiffNotDownloaded(key.clone()));
+                    }
                     // After the diff, so it shows at once as plain text; the highlighter threads
                     // colour it later (cached per file revision).
                     if let Some(diff) = highlighted {
@@ -2762,6 +2772,42 @@ mod read_tests {
         crate::trust::add_for_tests(root.path().to_path_buf());
         perform(&repo, fetch(true), |_| {}).expect("trusted");
         assert!(marker.exists());
+    }
+
+    /// #36: a diff that failed because a partial clone could not download its blobs is reported
+    /// with the retryable marker, so the tab offers Retry rather than asking on every refresh.
+    #[test]
+    fn a_failed_diff_download_is_reported_as_retryable() {
+        let (root, src, copy, _, middle) = trusted_partial_clone("--filter=blob:none");
+        let worker = worker_with_canopys_choices(copy);
+        let moved = root.path().join("src-moved");
+        std::fs::rename(&src, &moved).expect("hide the remote");
+        let key = DiffKey {
+            source: DiffSource::Commit(middle),
+            path: "a.txt".into(),
+            old_path: None,
+            conflicted: false,
+            context: 3,
+            whitespace: Whitespace::Show,
+            highlight: false,
+        };
+        worker.send(Job::Diff(key.clone()));
+        let events = events_until(&worker, |e| matches!(e, Event::DiffNotDownloaded(_)));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Diff(k, Err(m)) if *k == key && m.contains("origin"))),
+            "{events:?}"
+        );
+        assert!(matches!(events.last(), Some(Event::DiffNotDownloaded(k)) if *k == key));
+
+        std::fs::rename(&moved, &src).expect("restore the remote");
+        worker.send(Job::Diff(key));
+        let events = events_until(&worker, |e| matches!(e, Event::Diff(..)));
+        assert!(
+            matches!(events.last(), Some(Event::Diff(_, Ok(_)))),
+            "{events:?}"
+        );
     }
 
     #[test]

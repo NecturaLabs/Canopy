@@ -24,6 +24,8 @@ pub(super) struct OpenRequest {
     pub(super) focus: bool,
     /// Tab path to replace after the target worktree opens successfully.
     pub(super) replace: Option<PathBuf>,
+    /// Convert an old-style partial clone first (the user confirmed it).
+    pub(super) convert_legacy: bool,
 }
 
 /// What the opener thread found.
@@ -44,11 +46,18 @@ pub(super) fn start(ctx: &egui::Context) -> Option<(Sender<OpenRequest>, Receive
         .name("opener".into())
         .spawn(move || {
             for request in req_rx {
-                let result = open(&request.path, request.create.as_ref()).map_err(|e| {
-                    dialogs::OpenFailure {
-                        not_a_repository: matches!(e, canopy_core::Error::NotARepository(_)),
-                        message: e.to_string(),
-                    }
+                let result = open(
+                    &request.path,
+                    request.create.as_ref(),
+                    request.convert_legacy,
+                )
+                .map_err(|e| dialogs::OpenFailure {
+                    not_a_repository: matches!(e, canopy_core::Error::NotARepository(_)),
+                    legacy_partial_clone: match &e {
+                        canopy_core::Error::LegacyPartialClone { remote } => Some(remote.clone()),
+                        _ => None,
+                    },
+                    message: e.to_string(),
                 });
                 if done_tx.send(Opened { request, result }).is_err() {
                     break;
@@ -65,11 +74,18 @@ pub(super) fn start(ctx: &egui::Context) -> Option<(Sender<OpenRequest>, Receive
     }
 }
 
-fn open(path: &std::path::Path, create: Option<&NewRepo>) -> canopy_core::Result<PathBuf> {
+fn open(
+    path: &std::path::Path,
+    create: Option<&NewRepo>,
+    convert_legacy: bool,
+) -> canopy_core::Result<PathBuf> {
     let path = match path.to_str() {
         Some(typed) if typed.trim_start().starts_with('~') => settings::expand_home(typed),
         _ => path.to_path_buf(),
     };
+    if convert_legacy {
+        canopy_core::convert_legacy_partial_clone(&path)?;
+    }
     if let Some(new) = create {
         Repo::init(&path, &new.branch, new.follow_config)?;
         Repo::open(&path)?.add_ignore_template(new.ignore_template)?;
@@ -147,6 +163,7 @@ impl CanopyApp {
                 create: None,
                 focus: true,
                 replace: None,
+                convert_legacy: false,
             },
         );
     }
@@ -163,6 +180,7 @@ impl CanopyApp {
                 create: None,
                 focus: true,
                 replace: Some(from),
+                convert_legacy: false,
             },
         );
     }
@@ -185,6 +203,7 @@ impl CanopyApp {
                 }),
                 focus: true,
                 replace: None,
+                convert_legacy: false,
             },
         );
     }
@@ -203,6 +222,7 @@ impl CanopyApp {
         let failure = dialogs::OpenFailure {
             not_a_repository: false,
             message: "Canopy could not start the thread that opens repositories.".to_owned(),
+            legacy_partial_clone: None,
         };
         if !self.dialogs.finish_open(&path, create, Err(&failure)) {
             self.toasts.push(
@@ -250,6 +270,16 @@ impl CanopyApp {
                     } else {
                         self.add_tab(ctx, root, request.focus);
                     }
+                }
+                Err(dialogs::OpenFailure {
+                    legacy_partial_clone: Some(remote),
+                    ..
+                }) if request.create.is_none() => {
+                    // The Open form (if it asked) keeps the message; this asks to convert.
+                    self.dialogs.open(Dialog::ConvertPartialClone {
+                        remote,
+                        path: request.path.clone(),
+                    });
                 }
                 Err(_) if asked => {}
                 Err(e) => self.toasts.push(
@@ -404,6 +434,64 @@ mod tests {
         let mut alone = test_app();
         alone.open_repo(&ctx, PathBuf::from("/home/ada/src/other"));
         assert!(format!("{:?}", alone.toasts).contains("Could not open repository"));
+    }
+
+    /// #36: a partial clone from Git before 2.24 does not open; Canopy asks before it converts
+    /// the configuration, and only the confirmed request does, then opens the repository.
+    #[test]
+    fn a_legacy_partial_clone_is_converted_only_after_the_confirmation() {
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            canopy_core::cli::run(dir, args).expect("git runs");
+        };
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let repo = dir.path().join("legacy");
+        std::fs::create_dir(&repo).expect("folder");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "core.repositoryformatversion", "1"]);
+        git(&repo, &["config", "extensions.partialClone", "origin"]);
+        let mut app = test_app();
+        app.opener = start(&ctx);
+        app.open_repo(&ctx, repo.clone());
+        let wait = |app: &mut CanopyApp| {
+            for _ in 0..500 {
+                app.poll_opened(&ctx);
+                if app.pending_opens == 0 {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            panic!("the opener never answered");
+        };
+        wait(&mut app);
+        assert!(app.tabs.is_empty(), "nothing opened before the answer");
+        assert!(
+            matches!(
+                app.dialogs.current(),
+                Some(Dialog::ConvertPartialClone { remote, .. }) if remote == "origin"
+            ),
+            "{:?}",
+            app.dialogs.current()
+        );
+        let config = |key: &str| canopy_core::cli::run(&repo, &["config", "--get", key]).ok();
+        assert_eq!(
+            config("extensions.partialClone").as_deref().map(str::trim),
+            Some("origin"),
+            "asking changed nothing"
+        );
+        // The confirmed answer converts and opens.
+        app.dialogs.close();
+        app.apply(
+            &ctx,
+            vec![Action::ConvertPartialClone { path: repo.clone() }],
+        );
+        wait(&mut app);
+        assert_eq!(app.tabs.len(), 1, "{:?}", app.dialogs.current());
+        assert_eq!(
+            config("remote.origin.promisor").as_deref().map(str::trim),
+            Some("true")
+        );
+        assert_eq!(config("extensions.partialClone"), None);
     }
 
     /// Switching a worktree replaces the source tab, preserves its current view and draft,

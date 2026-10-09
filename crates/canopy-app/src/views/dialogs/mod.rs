@@ -192,6 +192,13 @@ pub enum Dialog {
     },
     /// The Terms of Service or the Privacy Policy.
     Legal(Document),
+    /// Convert a partial clone that uses the old `extensions.partialClone` setting, which
+    /// libgit2 cannot open, to `remote.<name>.promisor` (it rewrites the repository's
+    /// configuration, so it asks first).
+    ConvertPartialClone {
+        path: std::path::PathBuf,
+        remote: String,
+    },
     /// Confirm a pull/merge request action (merge, close).
     ConfirmHost {
         title: String,
@@ -216,6 +223,8 @@ pub enum Dialog {
 pub struct OpenFailure {
     pub message: String,
     pub not_a_repository: bool,
+    /// The folder is a partial clone made by Git before 2.24, which Canopy offers to convert.
+    pub legacy_partial_clone: Option<String>,
 }
 
 /// What a dialog wants after this frame.
@@ -1275,6 +1284,25 @@ pub fn show(
                 .show(ctx);
             answer(result, || Outcome::Run(actions_for(repo)))
         }
+        Dialog::ConvertPartialClone { path, remote } => {
+            let result = confirmation(
+                salt,
+                "Convert this partial clone?",
+                &format!(
+                    "Git before 2.24 recorded this partial clone in extensions.partialClone, \
+                     which Canopy cannot open. Converting sets remote.{remote}.promisor to true \
+                     and removes that setting from the repository's configuration."
+                ),
+                "Convert and open",
+                false,
+                icon::GIT_BRANCH,
+                |_| {},
+            )
+            .show(ctx);
+            answer(result, || {
+                Outcome::Run(vec![Action::ConvertPartialClone { path: path.clone() }])
+            })
+        }
         Dialog::ConfirmHost {
             title,
             body,
@@ -2312,6 +2340,7 @@ mod tests {
         let failure = OpenFailure {
             message: "/tmp/x is not a Git repository".into(),
             not_a_repository: true,
+            legacy_partial_clone: None,
         };
         let mut s = DialogStack::default();
         let mut open = Dialog::open();

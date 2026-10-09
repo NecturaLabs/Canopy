@@ -710,6 +710,12 @@ pub struct RepoTab {
     /// Row layout of `diff` for the diff view, rebuilt only when the diff or layout changes.
     pub diff_layout: Option<crate::views::diff::DiffLayout>,
     pub diff_error: Option<String>,
+    /// The diff whose download failed in a partial clone: it is not asked for again (the file
+    /// watcher refreshes the status often) until the user chooses Retry or the file again.
+    pub failed_diff: Option<DiffKey>,
+    /// Files whose diff a partial clone could not download, for the "not downloaded" marker on
+    /// their rows.
+    pub not_downloaded: HashSet<(DiffSource, String)>,
     pub pending_diff: Option<DiffKey>,
     /// A requested diff has not answered yet, including refreshes that keep the old diff visible.
     awaiting_diff: bool,
@@ -834,6 +840,8 @@ impl RepoTab {
             diff: None,
             diff_layout: None,
             diff_error: None,
+            failed_diff: None,
+            not_downloaded: HashSet::new(),
             pending_diff: None,
             awaiting_diff: false,
             diff_prefs,
@@ -1240,6 +1248,8 @@ impl RepoTab {
     }
 
     fn reread(&mut self) {
+        self.failed_diff = None;
+        self.not_downloaded.clear();
         self.refresh();
         self.details_error = None;
         if let Some(oid) = self.selected_commit {
@@ -1355,6 +1365,7 @@ impl RepoTab {
         }
         self.file = Some(sel);
         self.diff_error = None;
+        self.failed_diff = None;
         self.pending_diff = Some(key.clone());
         self.awaiting_diff = true;
         self.worker.send(Job::Diff(key));
@@ -1367,11 +1378,20 @@ impl RepoTab {
                 self.worker.send(Job::Conflict(sel.entry.path.clone()));
             }
             let key = self.diff_key(&sel);
+            if self.failed_diff.as_ref() == Some(&key) {
+                return;
+            }
             self.diff_error = None;
             self.pending_diff = Some(key.clone());
             self.awaiting_diff = true;
             self.worker.send(Job::Diff(key));
         }
+    }
+
+    /// Asks again for the diff that could not be downloaded (the Retry button of the diff pane).
+    pub fn retry_diff(&mut self) {
+        self.failed_diff = None;
+        self.reload_diff();
     }
 
     /// Commits in display order (filtered or all).
@@ -1664,6 +1684,7 @@ impl RepoTab {
                         self.awaiting_diff = false;
                         match result {
                             Ok(d) => {
+                                self.not_downloaded.remove(&(key.source, key.path.clone()));
                                 // The worker resends the same `Arc` when nothing changed.
                                 if !self.diff.as_ref().is_some_and(|old| Arc::ptr_eq(old, &d)) {
                                     self.line_sel = None;
@@ -1683,6 +1704,12 @@ impl RepoTab {
                     // The refusal that came with this result, if any, explains it only while it
                     // is on screen.
                     self.clear_obsolete_refusal();
+                }
+                Event::DiffNotDownloaded(key) => {
+                    self.not_downloaded.insert((key.source, key.path.clone()));
+                    if self.pending_diff.as_ref() == Some(&key) {
+                        self.failed_diff = Some(key);
+                    }
                 }
                 Event::Highlight(key, diff, h) => {
                     // Only for the diff on screen: a highlight of an older version of the same
@@ -2980,6 +3007,53 @@ mod tests {
                 assert_eq!(tab.selected_commit, Some(oid));
             }
         }
+        Ok(())
+    }
+
+    /// #36: a diff a partial clone could not download is not asked for again by the refreshes
+    /// the file watcher makes; Retry (or choosing the file again) asks, its file row is marked
+    /// until a read succeeds.
+    #[test]
+    fn a_diff_that_could_not_be_downloaded_waits_for_retry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.view = View::Changes;
+        let selection = open_unstaged_file();
+        let key = tab.diff_key(&selection);
+        let marker = (key.source, key.path.clone());
+        tab.select_file(selection);
+        let diff_jobs = || {
+            jobs.try_iter()
+                .filter(|j| matches!(j, Job::Diff(_)))
+                .count()
+        };
+        assert_eq!(diff_jobs(), 1, "selecting asks once");
+
+        events.send(Event::Diff(key.clone(), Err("not downloaded".into())))?;
+        events.send(Event::DiffNotDownloaded(key.clone()))?;
+        tab.poll(&[]);
+        assert!(tab.diff_error.is_some() && tab.failed_diff.is_some());
+        assert!(tab.not_downloaded.contains(&marker), "the row is marked");
+
+        // What the watcher does after every change: no new download attempt.
+        for _ in 0..3 {
+            tab.reload_diff();
+        }
+        assert_eq!(diff_jobs(), 0, "a refresh does not ask again");
+        assert!(tab.diff_error.is_some(), "the failure stays on screen");
+
+        tab.retry_diff();
+        assert_eq!(diff_jobs(), 1, "Retry asks");
+        assert!(tab.failed_diff.is_none());
+        events.send(Event::Diff(key, Ok(Arc::new(FileDiff::default()))))?;
+        tab.poll(&[]);
+        assert!(tab.diff_error.is_none());
+        assert!(!tab.not_downloaded.contains(&marker), "the mark goes");
         Ok(())
     }
 

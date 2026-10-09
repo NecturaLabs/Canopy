@@ -213,6 +213,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "confirm",
     "confirm-danger",
     "confirm-host",
+    "convert-partial-clone",
     "confirm-merge-risky",
     "diverged",
     "pull-conflicts",
@@ -280,6 +281,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             error: (name == "open-error").then(|| dialogs::OpenFailure {
                 message: "/home/ada/Downloads is not a Git repository".into(),
                 not_a_repository: true,
+                legacy_partial_clone: None,
             }),
         },
         "clone" | "clone-running" | "clone-error" => {
@@ -415,6 +417,10 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
                 name: "feature/dark-mode".into(),
                 force: false,
             },
+        },
+        "convert-partial-clone" => Dialog::ConvertPartialClone {
+            path: "/home/ada/src/tidepool".into(),
+            remote: "origin".into(),
         },
         "confirm-host" => Dialog::ConfirmHost {
             title: "Approve pull request #428?".into(),

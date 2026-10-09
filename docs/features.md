@@ -46,7 +46,11 @@ that is not an exact copy shows as a deletion plus an addition, in commit detail
 staged list of the Changes view, where `git status` would download the blobs to pair them. A
 treeless clone after `git reset --soft` downloads the tree of `HEAD` before the Changes view can
 list anything, and says why when it cannot. Repositories made by Git before 2.24
-(`extensions.partialClone`) are refused with the commands that convert them.
+(`extensions.partialClone`) do not open; Canopy offers to convert them (it sets
+`remote.<name>.promisor` and removes the old setting) after a confirmation, and the commands stay
+in the error text. A diff that could not be downloaded keeps its message with a Retry button and
+is not asked for again by the status refreshes; its file row carries a "not downloaded" mark
+until a read succeeds.
 
 Downloads run on their own only for repositories inside a folder trusted in Settings (Privacy,
 Trusted folders), because git then follows the repository's own configuration, which can run

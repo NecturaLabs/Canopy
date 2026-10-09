@@ -51,6 +51,11 @@ commits since the previous build.
 
 ### Added
 
+- A partial clone made by Git before 2.24 can be converted from the Open error: Canopy asks, sets
+  `remote.<name>.promisor` and removes `extensions.partialClone`, then opens it. A diff a partial
+  clone could not download shows a Retry button, is not asked for again on every refresh, and its
+  file row carries a "not downloaded" mark until it loads.
+
 - Keyboard shortcuts can be changed in Settings → Keyboard: Change takes the next key you press
   for a row, a key another row uses is refused (naming that row), Reset returns a row or all of
   them to the default, and the choices are kept in a settings export.

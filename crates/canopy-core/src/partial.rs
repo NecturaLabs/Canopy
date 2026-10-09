@@ -261,6 +261,30 @@ pub(crate) fn legacy_extension(path: &Path) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// Converts a partial clone made by Git before 2.24 to the current form and returns its remote.
+///
+/// The remote that `extensions.partialClone` names gets `promisor = true` and the old setting is
+/// removed, the two commands [`Error::LegacyPartialClone`] suggests, run through `git` in the
+/// repository at `path` (so for a linked worktree they change the shared configuration). Refuses a repository that does not use the old setting, and a remote name no key can hold.
+pub fn convert_legacy_partial_clone(path: &Path) -> Result<String> {
+    let remote = legacy_extension(path).ok_or_else(|| {
+        Error::Invalid(
+            "This repository does not use the old extensions.partialClone setting.".into(),
+        )
+    })?;
+    if remote.chars().any(char::is_control) {
+        return Err(Error::Invalid(
+            "The remote that extensions.partialClone names has a name Canopy will not write; edit the repository's .git/config by hand.".into(),
+        ));
+    }
+    cli::run(
+        path,
+        &["config", &format!("remote.{remote}.promisor"), "true"],
+    )?;
+    cli::run(path, &["config", "--unset", "extensions.partialClone"])?;
+    Ok(remote)
+}
+
 /// Whether the object database has `oid`, without rescanning the pack directory: for checking
 /// many objects after one [`refresh`].
 pub(crate) fn has_object(repo: &Repository, oid: Oid) -> bool {

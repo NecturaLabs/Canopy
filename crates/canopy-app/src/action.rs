@@ -49,6 +49,10 @@ pub enum Action {
     },
     OpenDialog(Dialog),
     OpenRepo(PathBuf),
+    /// Convert the old-style partial clone at the path, then open it.
+    ConvertPartialClone {
+        path: PathBuf,
+    },
     /// Navigate to another linked worktree in the current tab rather than opening a second tab.
     SwitchWorktree(PathBuf),
     Clone {

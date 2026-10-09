@@ -41,6 +41,16 @@ impl CanopyApp {
                         });
                     }
                 }
+                Action::ConvertPartialClone { path } => self.request_open(
+                    ctx,
+                    open::OpenRequest {
+                        path,
+                        create: None,
+                        focus: true,
+                        replace: None,
+                        convert_legacy: true,
+                    },
+                ),
                 Action::OpenDialog(mut d) => {
                     self.folder_picker.cancel();
                     if let Dialog::Open { recent, .. } = &mut d {

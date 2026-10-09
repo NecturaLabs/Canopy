@@ -54,7 +54,7 @@ pub use merged::{MergedBranch, MergedReason};
 pub use model::*;
 pub use ops::{HunkAction, MergeMode, PullStrategy, PushTarget, ResetMode};
 pub use options::{Cleanup, ConflictStyle, GitOptions, PushDefault};
-pub use partial::MissingObjects;
+pub use partial::{MissingObjects, convert_legacy_partial_clone};
 pub use pull::{ConfigScope, ConfigSource, PullConfig, global_pull_config};
 pub use pull_preview::PullPreview;
 pub use repo::Repo;

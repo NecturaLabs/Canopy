@@ -518,7 +518,10 @@ fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
         let f = &d.files[i];
         let selected = tab.file.as_ref().is_some_and(|s| s.entry.path == f.path);
         let id = ui.id().with(("commit-file", &f.path, &f.old_path, f.kind));
-        if file_list_row(ui, f, selected, id).clicked() {
+        let missing = tab
+            .not_downloaded
+            .contains(&(DiffSource::Commit(d.oid), f.path.clone()));
+        if file_list_row(ui, f, selected, missing, id).clicked() {
             tab.select_file(FileSelection {
                 source: DiffSource::Commit(d.oid),
                 entry: f.clone(),
@@ -657,8 +660,16 @@ pub fn file_row_height() -> f32 {
 /// A changed-file row: the status letter, the name, its folder and the line counts, as a kit
 /// [`ListRow`] (selection is the wash, with no side bar). `id` identifies the row across frames
 /// (for hover and its context menu). Lists of these are [`file_row_height`] apart.
-pub fn file_list_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egui::Response {
-    file_list_row_inner(ui, f, selected, id, 0.0, None)
+///
+/// `not_downloaded` marks a file a partial clone could not download.
+pub fn file_list_row(
+    ui: &mut Ui,
+    f: &FileEntry,
+    selected: bool,
+    not_downloaded: bool,
+    id: egui::Id,
+) -> egui::Response {
+    file_list_row_inner(ui, f, selected, not_downloaded, id, 0.0, None)
 }
 
 /// [`file_list_row`] with actions revealed at its right end while it is hovered, selected or
@@ -669,11 +680,20 @@ pub fn file_list_row_with<'a>(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
+    not_downloaded: bool,
     id: egui::Id,
     actions_width: f32,
     actions: impl FnOnce(&mut Ui) + 'a,
 ) -> egui::Response {
-    file_list_row_inner(ui, f, selected, id, actions_width, Some(Box::new(actions)))
+    file_list_row_inner(
+        ui,
+        f,
+        selected,
+        not_downloaded,
+        id,
+        actions_width,
+        Some(Box::new(actions)),
+    )
 }
 
 /// Room a file row keeps at its right end for two small icon buttons, as `ListRow::actions`
@@ -689,6 +709,7 @@ fn file_list_row_inner(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
+    not_downloaded: bool,
     id: egui::Id,
     actions_width: f32,
     actions: Option<RowActions<'_>>,
@@ -705,10 +726,13 @@ fn file_list_row_inner(
     } else {
         0.0
     };
-    let tip = match &f.old_path {
+    let mut tip = match &f.old_path {
         Some(old) => format!("{} → {}", old, f.path),
         None => f.path.clone(),
     };
+    if not_downloaded {
+        tip.push_str(" (not downloaded; open it to retry)");
+    }
     let mut row = ListRow::new(id)
         .kind(RowKind::File)
         .selected(selected)
@@ -731,6 +755,16 @@ fn file_list_row_inner(
             badge_ink,
         );
         let mut right = rc.content.right() - reserve;
+        if not_downloaded {
+            let glyph = painter.layout_no_wrap(
+                icon::CLOUD_SLASH.to_owned(),
+                FontId::proportional(m.body_size),
+                p.warning,
+            );
+            right -= glyph.size().x;
+            painter.galley(pos2(right, cy - glyph.size().y / 2.0), glyph, p.warning);
+            right -= ROW_GAP;
+        }
         if let Some(g) = stats {
             right -= g.size().x;
             painter.galley(pos2(right, cy - g.size().y / 2.0), g, p.text);
@@ -751,8 +785,13 @@ fn file_list_row_inner(
         }
     });
     // The row paints its own columns; screen readers get the file's path.
+    let spoken = if not_downloaded {
+        format!("{}, not downloaded", f.path)
+    } else {
+        f.path.clone()
+    };
     ui.ctx()
-        .accesskit_node_builder(response.id, |n| n.set_label(f.path.clone()));
+        .accesskit_node_builder(response.id, |n| n.set_label(spoken));
     response
 }
 
@@ -861,7 +900,7 @@ mod tests {
             let mut drawn = 0.0;
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 assert_eq!(file_row_height(), height, "{density:?}");
-                drawn = file_list_row(ui, &entry(), false, egui::Id::new("row"))
+                drawn = file_list_row(ui, &entry(), false, false, egui::Id::new("row"))
                     .rect
                     .height();
             });
@@ -875,7 +914,7 @@ mod tests {
         let ctx = ctx(Density::Comfortable);
         let f = entry();
         let nodes = spoken(&ctx, |ui| {
-            file_list_row(ui, &f, true, egui::Id::new("row"));
+            file_list_row(ui, &f, true, false, egui::Id::new("row"));
         });
         assert!(
             nodes.contains(&("src/views/history.rs".to_owned(), true)),
@@ -891,7 +930,7 @@ mod tests {
         for _ in 0..2 {
             nodes = spoken(&ctx, |ui| {
                 let width = super::icon_actions_width();
-                file_list_row_with(ui, &f, true, egui::Id::new("row"), width, |ui| {
+                file_list_row_with(ui, &f, true, false, egui::Id::new("row"), width, |ui| {
                     IconButton::new(icon::PLUS, "Stage file")
                         .size(Size::Sm)
                         .show(ui);
