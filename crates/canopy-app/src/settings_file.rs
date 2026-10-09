@@ -383,6 +383,7 @@ mod tests {
             pull_mode: PullMode::Rebase,
             clone_protocol: CloneProtocol::Ssh,
             editor: "zed --wait %f".to_owned(),
+            check_message: false,
             accepted_terms: "2026-10-03".to_owned(),
             accepted_privacy: "2026-10-03".to_owned(),
             crash_reports: Some(false),
@@ -410,6 +411,7 @@ mod tests {
         let back = import(&fresh, &text).unwrap().settings;
         assert_eq!(back.theme, ThemeId::Daylight);
         assert_eq!(back.pull_mode, PullMode::Rebase);
+        assert!(!back.check_message, "the message checks setting travels");
         assert_eq!(
             back.editor, "",
             "the programs Canopy runs stay this computer's"

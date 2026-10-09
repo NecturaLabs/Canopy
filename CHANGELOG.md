@@ -105,6 +105,10 @@ commits since the previous build.
   any other signature.
 - The commit message field starts with your Git `commit.template` when it is empty (once per
   open repository, never over a draft or an amend); a template that cannot be read is reported.
+- The commit fields now say when the summary or a description line is longer than 72 characters
+  ("Summary is 80 characters; 72 is the most tools show."). The hint only warns: it never stops
+  the commit or changes what you wrote, and URLs, indented and quoted lines are not counted.
+  Settings → Git → Commits → Check commit messages turns it off.
 - Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick,
   and Apply patch… in the palette applies a patch file, or the `.patch` files of a folder, as
   commits that keep their authors; a patch that does not fit stops in "Applying patches" with

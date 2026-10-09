@@ -409,6 +409,9 @@ pub struct Settings {
     pub stale_inactivity_days: u32,
     /// `git commit --signoff`.
     pub signoff: bool,
+    /// Hint, under the commit message fields, when a summary or description line is longer
+    /// than most tools show. Never blocks a commit or changes the draft.
+    pub check_message: bool,
     /// Pull and rebase over uncommitted changes, stashing them around it (`--autostash`).
     pub autostash: bool,
     /// A push also sends the annotated tags on the commits it pushes (`--follow-tags`).
@@ -533,6 +536,7 @@ impl Default for Settings {
             auto_fetch_minutes: 0,
             stale_inactivity_days: 90,
             signoff: false,
+            check_message: true,
             autostash: true,
             follow_tags: true,
             recurse_submodules: true,
@@ -984,6 +988,23 @@ mod tests {
                 MotionPref::System
             )
         );
+    }
+
+    #[test]
+    fn message_checks_are_on_by_default_and_survive_a_round_trip() {
+        assert!(Settings::default().check_message);
+        let old: Settings = serde_json::from_str("{}").expect("parse");
+        assert!(
+            old.check_message,
+            "a file without the key keeps the default"
+        );
+        let off = Settings {
+            check_message: false,
+            ..Settings::default()
+        };
+        let text = serde_json::to_string(&off).expect("serialize");
+        let back: Settings = serde_json::from_str(&text).expect("parse");
+        assert!(!back.check_message);
     }
 
     #[test]

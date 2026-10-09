@@ -75,6 +75,7 @@ pub const OVERLAYS: &[&str] = &[
     "toasts",
     "notifications",
     "branch-selected",
+    "long-message",
     "gallery",
     "menu-remotes",
     "menu-branch",
@@ -395,6 +396,9 @@ impl CanopyApp {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates));
             }
             Some("about") => app.dialogs.open(Dialog::About),
+            Some("long-message") => {
+                app.initial_view.get_or_insert(View::Changes);
+            }
             Some("notifications") => {
                 // A notification of each kind, for the center the overlay opens.
                 let ctx = &cc.egui_ctx;
@@ -1028,8 +1032,11 @@ impl eframe::App for CanopyApp {
                     let handle = history::show(ui, tab, &self.settings, &mut actions);
                     history_split(ui.ctx(), tab, handle)
                 }
-                View::Changes => changes::show(ui, tab, &mut actions)
-                    .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
+                View::Changes => {
+                    tab.check_message = self.settings.check_message;
+                    changes::show(ui, tab, &mut actions)
+                        .and_then(|(list, handle)| PaneSplit::beside(list, handle))
+                }
                 View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions)
                     .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
             });

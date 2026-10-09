@@ -52,6 +52,7 @@ OPTIONS:
                               settings-integrations, settings-accounts, settings-updates,
                               settings-keyboard, settings-backup, settings-repository,
                               settings-search, about, repository-insights, clean-stale, author-card, toasts, notifications, branch-selected,
+                              long-message,
                               gallery, menu-remotes, menu-branch, menu-commit, menu-file, open,
                               open-error, clone,
                               clone-running, clone-error, init, new-branch, rename, add-submodule,

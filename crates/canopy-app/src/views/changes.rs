@@ -253,7 +253,27 @@ fn composer_height(ui: &Ui, tab: &RepoTab, snap: &canopy_core::RepoSnapshot) -> 
     if identity_notice(tab.identity.as_ref(), tab.identity_error.is_some()).is_some() {
         h += 56.0;
     }
+    h += message_hints(tab)
+        .iter()
+        .map(|_| MESSAGE_HINT_HEIGHT)
+        .sum::<f32>();
     h + 24.0
+}
+
+/// What one message hint takes in the composer: a small line and the gap under it. A hint
+/// that wraps in a narrow column takes more; the composer scrolls, so none is cut off.
+const MESSAGE_HINT_HEIGHT: f32 = 20.0;
+
+/// The hints for the draft in the composer: none when the check is off. They only warn; the
+/// commit button and the draft are never touched.
+fn message_hints(tab: &RepoTab) -> Vec<String> {
+    if !tab.check_message {
+        return Vec::new();
+    }
+    canopy_core::message::check(&tab.commit_summary, &tab.commit_body)
+        .iter()
+        .map(canopy_core::message::Problem::describe)
+        .collect()
 }
 
 /// A list's header: the uppercase title, its count in a badge beside it, and `trailing`
@@ -1301,6 +1321,24 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .guide(72)
         .id_salt("commit-body")
         .show(ui);
+    let hints = message_hints(tab);
+    if !hints.is_empty() {
+        let p = palette(ui.ctx());
+        let m = theme::metrics();
+        ui.add_space(theme::XS);
+        for hint in &hints {
+            commit_detail::without_icons(
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!("{}  {hint}", icon::WARNING))
+                            .color(p.warning)
+                            .size(m.small_size),
+                    )
+                    .wrap(),
+                ),
+            );
+        }
+    }
     ui.add_space(theme::SM);
     let was = tab.amend;
     let clean = tab
@@ -2228,6 +2266,136 @@ mod tests {
             assert!(
                 !summary.is_positive() || !warning_rect.intersects(summary),
                 "identity notice {warning_rect:?} overlaps painted summary {summary:?}",
+            );
+        }
+    }
+
+    /// Every text the Changes view paints for `tab` in a window of `size`, after a few frames.
+    fn composer_texts(ctx: &egui::Context, tab: &mut RepoTab, size: egui::Vec2) -> Vec<String> {
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::Panel::top("test-actions")
+                        .exact_size(84.0)
+                        .show(ui, |_| {});
+                    show(ui, tab, &mut Vec::new());
+                },
+            );
+            output.textures_delta.clear();
+            texts = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    /// Issue 92: a summary or description line that is too wide is reported under the fields
+    /// while the setting is on, and the draft and the commit button are never touched.
+    #[test]
+    fn message_hints_follow_the_setting_and_leave_the_draft_alone() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let summary = "Rework the commit composer so that it reports every long line it finds";
+        let summary = format!("{summary} before the commit");
+        let body = format!("Short.\n{}", "word ".repeat(20));
+        tab.commit_summary.clone_from(&summary);
+        tab.commit_body.clone_from(&body);
+        let mut snap = unstaged_snapshot();
+        snap.status.staged = vec![entry("src/lib.rs")];
+        tab.snap = Some(std::sync::Arc::new(snap));
+        let can = tab.can_commit();
+        let size = vec2(562.5, 700.0);
+        let hinted = |texts: &[String], needle: &str| texts.iter().any(|t| t.contains(needle));
+
+        tab.check_message = true;
+        let texts = composer_texts(&ctx, &mut tab, size);
+        assert!(
+            hinted(
+                &texts,
+                &format!("Summary is {} characters", summary.chars().count())
+            ),
+            "summary hint missing in {texts:?}"
+        );
+        assert!(
+            hinted(&texts, "Description line 2 is 99 characters"),
+            "description hint missing in {texts:?}"
+        );
+        assert_eq!((&tab.commit_summary, &tab.commit_body), (&summary, &body));
+        assert_eq!(tab.can_commit(), can, "a hint never blocks the commit");
+
+        tab.check_message = false;
+        let texts = composer_texts(&ctx, &mut tab, size);
+        assert!(
+            !hinted(&texts, "characters;"),
+            "no hints when off: {texts:?}"
+        );
+        assert!(!hinted(&texts, "description line"), "{texts:?}");
+        assert_eq!((&tab.commit_summary, &tab.commit_body), (&summary, &body));
+
+        // A message that fits is never hinted.
+        tab.check_message = true;
+        tab.commit_summary = "Add metrics".into();
+        tab.commit_body = "Explains why.".into();
+        let texts = composer_texts(&ctx, &mut tab, size);
+        assert!(!hinted(&texts, "characters;"), "{texts:?}");
+    }
+
+    /// The composer reserves room for the hints, in a short window as in a tall one.
+    #[test]
+    fn message_hints_make_the_composer_taller() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let mut snap = unstaged_snapshot();
+        snap.status.staged = vec![entry("src/lib.rs")];
+        let snap = std::sync::Arc::new(snap);
+        tab.snap = Some(std::sync::Arc::clone(&snap));
+        tab.commit_summary = "x".repeat(80);
+        tab.commit_body = "word ".repeat(20);
+        for height in [400.0, 900.0] {
+            let mut heights = Vec::new();
+            for on in [false, true] {
+                tab.check_message = on;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(562.5, height),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| heights.push(composer_height(ui, &tab, &snap)),
+                );
+                output.textures_delta.clear();
+            }
+            assert!(
+                (heights[1] - heights[0] - 2.0 * MESSAGE_HINT_HEIGHT).abs() < f32::EPSILON,
+                "{heights:?} at {height}"
             );
         }
     }

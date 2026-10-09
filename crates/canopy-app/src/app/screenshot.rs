@@ -15,6 +15,9 @@ pub(super) struct Screenshot {
     pub(super) popup: Option<egui::Id>,
     /// The context menu `--overlay menu-*` opens for the picture.
     pub(super) menu: Option<MenuShot>,
+    /// `--overlay long-message`: a commit draft with a too-long summary and description line
+    /// is typed into the first tab, once.
+    pub(super) long_message: bool,
 }
 
 impl Screenshot {
@@ -29,6 +32,7 @@ impl Screenshot {
             popup: (overlay == Some("diff-options"))
                 .then(|| egui::Id::new(crate::views::diff::OPTIONS_POPUP)),
             menu: overlay.and_then(MenuShot::of),
+            long_message: overlay == Some("long-message"),
         }
     }
 }
@@ -141,6 +145,17 @@ impl CanopyApp {
         {
             self.dialogs.close();
             self.apply(ctx, vec![Action::CleanStale]);
+        }
+        if self.screenshot.as_ref().is_some_and(|s| s.long_message)
+            && let Some(tab) = self.tabs.get_mut(self.active)
+        {
+            tab.commit_summary =
+                "Rework the commit composer so that it reports every long line before the commit"
+                    .into();
+            tab.commit_body = "Warn while typing, never block the commit.\n\nThis description line is far too long for most tools, which cut it off or wrap it in the middle of a sentence.".into();
+            if let Some(shot) = &mut self.screenshot {
+                shot.long_message = false;
+            }
         }
         let Some(shot) = &mut self.screenshot else {
             return;

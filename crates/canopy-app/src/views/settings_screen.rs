@@ -851,6 +851,9 @@ fn synonyms(title: &str) -> &'static str {
         "Update submodules" => "submodule recurse pull checkout clone recursive",
         "Fetch in the background" => "auto fetch automatic interval minutes",
         "Add Signed-off-by" => "signoff sign-off dco trailer",
+        "Check commit messages" => {
+            "message lint linting summary subject length 72 wrap description"
+        }
         "Commits per page" => "history load more limit",
         "Layout" => "diff side by side unified split",
         "Syntax highlighting" => "colour color code language",
@@ -3238,6 +3241,20 @@ fn git(
         |ui| {
             revert(ui, &mut s.signoff, &DEFAULTS.signoff, "Add Signed-off-by");
             switch(ui, &mut s.signoff, "Add Signed-off-by");
+        },
+    );
+    row(
+        ui,
+        "Check commit messages",
+        "Hints under the commit fields when the summary or a description line is longer than 72 characters, which most tools cut off or wrap. A hint never stops a commit or changes what you wrote. Recommended: on.",
+        |ui| {
+            revert(
+                ui,
+                &mut s.check_message,
+                &DEFAULTS.check_message,
+                "Check commit messages",
+            );
+            switch(ui, &mut s.check_message, "Check commit messages");
         },
     );
     row(

@@ -741,6 +741,9 @@ pub struct RepoTab {
     /// Side-by-side diff and syntax highlighting (from the settings).
     pub split_diff: bool,
     pub highlight_diff: bool,
+    /// Hint at a commit message that is too wide (from the settings; set each frame the
+    /// Changes view is drawn).
+    pub check_message: bool,
     pub filter: String,
     pub filtered: Option<Vec<usize>>,
     pub filter_for: String,
@@ -871,6 +874,7 @@ impl RepoTab {
             resolver: None,
             split_diff: false,
             highlight_diff: true,
+            check_message: true,
             filter: String::new(),
             filtered: None,
             filter_for: String::new(),

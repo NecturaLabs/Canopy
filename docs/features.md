@@ -131,7 +131,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Amend | Done | Yes | Yes | Yes |
 | The commit template (`commit.template`) fills an empty message field once per tab in trusted folders, including after trusting an open tab; a draft or an amend keeps its text | Unreleased | Yes | ? | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
-| Commit message templates and linting | Planned | ? | Yes | ? |
+| Commit message checks: a summary or description line longer than 72 characters is reported under the fields (Settings → Git → Commits → Check commit messages, on by default); long URLs, indented and quoted lines are left alone, and a hint never blocks the commit or changes the draft | Unreleased | ? | Yes | ? |
 
 Unstaged diffs refuse actual symbolic links when `core.symlinks=false`, because libgit2 would
 otherwise read their targets as regular files. Git's ordinary-file link emulation still works.
