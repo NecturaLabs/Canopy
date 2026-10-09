@@ -871,6 +871,8 @@ fn list(
             if which == List::Unstaged && (modifiers.command || modifiers.shift) {
                 pick(tab, files, i, modifiers);
             } else {
+                // A plain click is one file again, also when it is the one already open.
+                tab.marked.clear();
                 tab.select_file(FileSelection {
                     source,
                     entry: f.clone(),
@@ -1698,6 +1700,12 @@ mod tests {
         assert!(tab.marked.is_empty());
         let actions = click_at(&ctx, &mut tab, stage_selected);
         assert_eq!(staged(&actions), Some(vec!["b.rs".into()]));
+
+        // ...also when it is the file that is already open.
+        click_with(&ctx, &mut tab, row("d.rs"), egui::Modifiers::COMMAND);
+        assert_eq!(tab.marked.iter().collect::<Vec<_>>(), ["d.rs"]);
+        click_at(&ctx, &mut tab, row("b.rs"));
+        assert!(tab.marked.is_empty(), "{:?}", tab.marked);
     }
 
     #[test]
