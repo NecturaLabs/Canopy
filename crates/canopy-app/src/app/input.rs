@@ -76,7 +76,7 @@ impl CanopyApp {
                     self.palette.open = false;
                 } else if self.dialogs.current().is_some() {
                     // The consent stays (it must be answered); a credential prompt is declined.
-                    self.dialogs.dismiss();
+                    self.dialogs.dismiss_with_focus(ctx);
                 } else if let Some(screen) = self.settings_screen.as_mut() {
                     // Settings covers the history search: a search in Settings is cleared
                     // first, and the next Escape closes Settings.
@@ -470,6 +470,56 @@ mod tests {
                 .is_some_and(SettingsScreen::search_focus_pending),
             "the search field takes the caret"
         );
+    }
+
+    #[test]
+    fn app_escape_returns_focus_to_the_dialog_trigger_each_time() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut app = test_app();
+        let mut trigger = egui::Id::NULL;
+        let mut draw = |events| {
+            frame(&ctx, events, |ui| {
+                app.keyboard(ui.ctx(), &mut Vec::new());
+                let button = crate::ui::kit::Button::new("Stash").show(ui);
+                trigger = button.id;
+                if button.clicked() {
+                    app.dialogs.open(Dialog::Stash {
+                        message: String::new(),
+                        untracked: true,
+                    });
+                }
+                if let Some(dialog) = app.dialogs.current() {
+                    let _ = crate::ui::kit::overlay::Dialog::new(dialogs::salt(dialog))
+                        .title("Stash changes")
+                        .initial_focus(crate::ui::kit::overlay::InitialFocus::Body)
+                        .body(|ui| {
+                            ui.text_edit_singleline(&mut String::new());
+                        })
+                        .footer(|f| {
+                            f.cancel().confirm("Stash");
+                        })
+                        .show(ui.ctx());
+                }
+            });
+            (trigger, app.dialogs.current().is_some())
+        };
+        draw(Vec::new());
+        let (trigger, _) = draw(crate::ui::kit::testkit::key(egui::Key::Tab));
+        for _ in 0..2 {
+            assert!(
+                draw(crate::ui::kit::testkit::key(egui::Key::Enter)).1,
+                "trigger opens the dialog"
+            );
+            draw(Vec::new());
+            assert!(
+                !draw(crate::ui::kit::testkit::key(egui::Key::Escape)).1,
+                "app handler closes it"
+            );
+            draw(Vec::new());
+            draw(Vec::new());
+            assert_eq!(ctx.memory(egui::Memory::focused), Some(trigger));
+        }
     }
 
     /// Escape closes the topmost thing first: the cheatsheet, the palette, a dialog, then a

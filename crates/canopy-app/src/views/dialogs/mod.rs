@@ -1664,7 +1664,7 @@ pub fn show(
 const NOTES_HEIGHT: f32 = 360.0;
 
 /// The id every dialog of `dialog`'s kind shares, so switching to another kind animates it in.
-fn salt(dialog: &Dialog) -> (&'static str, std::mem::Discriminant<Dialog>) {
+pub(crate) fn salt(dialog: &Dialog) -> (&'static str, std::mem::Discriminant<Dialog>) {
     ("dialog", std::mem::discriminant(dialog))
 }
 

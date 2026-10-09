@@ -1415,8 +1415,9 @@ impl<'a> Dialog<'a> {
         let screen = ctx.content_rect();
         let (_, fresh) = presence(ctx, id);
         if fresh {
-            let trigger = ctx.memory(egui::Memory::focused);
-            ctx.data_mut(|d| d.insert_temp(id.with("kit-trigger"), trigger));
+            let mut back = super::a11y::FocusReturn::default();
+            back.remember(ctx);
+            ctx.data_mut(|d| d.insert_temp(id.with("kit-trigger"), back));
         }
         let e = Entrance::of(ctx, id, motion::SLOW, motion::SLOW, false, None);
         let fade = e.fade;
@@ -1463,15 +1464,36 @@ impl<'a> Dialog<'a> {
             result = DialogResult::Cancel;
         }
         if result != DialogResult::Open {
-            let trigger: Option<Id> = ctx
-                .data(|d| d.get_temp::<Option<Id>>(id.with("kit-trigger")))
-                .flatten();
-            ctx.data_mut(|d| d.remove::<Option<Id>>(id.with("kit-trigger")));
-            if let Some(t) = trigger {
-                ctx.memory_mut(|m| m.request_focus(t));
-            }
+            Self::restore_focus_id(ctx, id);
         }
         result
+    }
+
+    /// Returns focus when an app-level handler closes the dialog without drawing its result.
+    pub(crate) fn restore_focus(ctx: &Context, id_salt: impl std::hash::Hash + std::fmt::Debug) {
+        Self::restore_focus_id(ctx, Id::new(("kit-dialog", Id::new(id_salt))));
+    }
+
+    fn restore_focus_id(ctx: &Context, id: Id) {
+        let back =
+            ctx.data_mut(|d| d.remove_temp::<super::a11y::FocusReturn>(id.with("kit-trigger")));
+        if let Some(back) = back {
+            // Escape and the closing modal clear focus at the end of this pass.
+            let pending = DialogFocusReturn {
+                back,
+                layer: LayerId::new(Order::Foreground, id.with("modal")),
+                closed: ctx.cumulative_pass_nr(),
+            };
+            if ctx
+                .with_plugin::<DialogFocusReturn, _>(|plugin| {
+                    *plugin = pending.clone();
+                })
+                .is_none()
+            {
+                ctx.add_plugin(pending);
+            }
+            ctx.request_repaint();
+        }
     }
 
     /// The card at the cursor, at most `max_h` tall. Returns the result and the card's rect.
@@ -1816,6 +1838,29 @@ impl<'a> Dialog<'a> {
             },
         );
         (result, r.response.rect)
+    }
+}
+
+/// Gives focus back after the closed modal has left egui's focus filter.
+#[derive(Clone)]
+struct DialogFocusReturn {
+    back: super::a11y::FocusReturn,
+    layer: LayerId,
+    closed: u64,
+}
+
+impl egui::Plugin for DialogFocusReturn {
+    fn debug_name(&self) -> &'static str {
+        "canopy-dialog-focus-return"
+    }
+
+    fn on_begin_pass(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx();
+        if ctx.cumulative_pass_nr() > self.closed + 1 {
+            self.back.restore(ctx, self.layer);
+        } else {
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -2393,6 +2438,54 @@ mod tests {
             }
         }
         motion::set_reduced(true);
+    }
+
+    #[test]
+    fn escape_from_a_dialog_returns_focus_to_its_keyboard_trigger() {
+        let ctx = context();
+        let mut open = false;
+        let mut frame = |events| {
+            let mut trigger = Id::NULL;
+            let _ = run(&ctx, events, |ui| {
+                let button = Button::new("Stash").show(ui);
+                trigger = button.id;
+                if button.clicked() {
+                    open = true;
+                }
+                if open
+                    && Dialog::new("stash-focus-test")
+                        .title("Stash changes")
+                        .initial_focus(InitialFocus::Body)
+                        .body(|ui| {
+                            ui.text_edit_singleline(&mut String::new());
+                        })
+                        .footer(|f| {
+                            f.cancel().confirm("Stash");
+                        })
+                        .show(ui.ctx())
+                        != DialogResult::Open
+                {
+                    open = false;
+                }
+            });
+            trigger
+        };
+        frame(Vec::new());
+        let trigger = frame(key(Key::Tab));
+        assert_eq!(ctx.memory(egui::Memory::focused), Some(trigger));
+        frame(key(Key::Enter));
+        frame(Vec::new());
+        frame(key(Key::Escape));
+        frame(Vec::new());
+        frame(Vec::new());
+        assert_eq!(ctx.memory(egui::Memory::focused), Some(trigger));
+        // The plugin must rearm for every dialog closure, not just the first.
+        frame(key(Key::Enter));
+        frame(Vec::new());
+        frame(key(Key::Escape));
+        frame(Vec::new());
+        frame(Vec::new());
+        assert_eq!(ctx.memory(egui::Memory::focused), Some(trigger));
     }
 
     #[test]
