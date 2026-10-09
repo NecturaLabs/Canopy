@@ -556,6 +556,46 @@ impl Repo {
         self.git_cmd(&["branch", "-d", "--", name]).map(drop)
     }
 
+    /// Removes selected stale items after repeating every safety check. All selections are
+    /// checked before the first mutation, then each is checked again immediately before git
+    /// runs. A CLI failure can leave earlier removals completed; no removal is forced.
+    pub fn remove_stale_candidates(
+        &self,
+        candidates: &[crate::StaleCandidate],
+        older_than_days: u32,
+        now: i64,
+    ) -> Result<()> {
+        let removed_refs: Vec<_> = candidates
+            .iter()
+            .filter(|c| c.kind == crate::StaleKind::Branch)
+            .map(|c| format!("refs/heads/{}", c.name))
+            .collect();
+        for candidate in candidates {
+            self.validate_stale_candidate(candidate, older_than_days, now)?;
+            if self.stale_unique_commits(candidate.tip, &removed_refs)? > 0 {
+                return Err(Error::invalid(format!(
+                    "Cannot remove {}: the selection would leave commits without a branch",
+                    candidate.name
+                )));
+            }
+        }
+        for candidate in candidates {
+            self.validate_stale_candidate(candidate, older_than_days, now)?;
+            match candidate.kind {
+                crate::StaleKind::Branch => self.delete_merged_branch(&candidate.name)?,
+                crate::StaleKind::Worktree => {
+                    let path = candidate
+                        .path
+                        .as_ref()
+                        .and_then(|p| p.to_str())
+                        .ok_or_else(|| Error::invalid("Invalid worktree path"))?;
+                    self.git_cmd(&["worktree", "remove", "--", path])?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Deletes a local branch with `git branch -D`, even when its commits are merged nowhere.
     /// Call it only after the user confirmed losing those commits (they stay in the reflog).
     pub fn force_delete_branch(&self, name: &str) -> Result<()> {

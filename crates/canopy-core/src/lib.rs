@@ -31,6 +31,7 @@ mod pull;
 mod pull_preview;
 pub mod repo;
 pub mod signature;
+mod stale;
 pub mod status;
 pub mod submodule;
 pub mod tools;

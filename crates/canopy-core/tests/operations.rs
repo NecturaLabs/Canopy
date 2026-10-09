@@ -3649,3 +3649,512 @@ fn a_pull_preview_finds_conflicts_before_the_pull() {
     let (_dir, repo) = fixture();
     assert_eq!(repo.pull_preview(false, |_| {}).expect("preview"), None);
 }
+
+/// Commits with a deterministic committer and author date for the stale-cleanup tests.
+fn stale_commit(p: &Path, date: &str) {
+    let out = canopy_core::cli::command(Some(p))
+        .args(["commit", "-q", "--allow-empty", "-m", "dated"])
+        .env("GIT_AUTHOR_NAME", "Ada Lovelace")
+        .env("GIT_AUTHOR_EMAIL", "ada@example.com")
+        .env("GIT_COMMITTER_NAME", "Ada Lovelace")
+        .env("GIT_COMMITTER_EMAIL", "ada@example.com")
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
+        .output()
+        .expect("dated commit runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+const STALE_NOW: i64 = 1_767_225_600; // 2026-01-01 UTC.
+const STALE_OLD_DATE: &str = "2020-01-01T00:00:00Z";
+const STALE_DAYS: u32 = 90;
+
+fn stale_fixture() -> (tempfile::TempDir, Repo) {
+    let (dir, repo) = fixture();
+    let hooks = dir.path().join("disabled-hooks");
+    fs::create_dir(&hooks).expect("hooks folder");
+    git(
+        dir.path(),
+        &["config", "core.hooksPath", hooks.to_str().expect("UTF8")],
+    );
+    stale_commit(dir.path(), STALE_OLD_DATE);
+    (dir, repo)
+}
+
+#[test]
+fn stale_candidates_preview_age_and_unique_commit_protection() {
+    let (dir, repo) = stale_fixture();
+    let p = dir.path();
+    git(p, &["branch", "old-merged"]);
+    git(p, &["switch", "-q", "-c", "unique"]);
+    stale_commit(p, STALE_OLD_DATE);
+    git(p, &["switch", "-q", "main"]);
+    git(p, &["switch", "-q", "-c", "recent"]);
+    stale_commit(p, "2025-12-31T00:00:00Z");
+    git(p, &["switch", "-q", "main"]);
+    let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
+    assert_eq!(candidates.len(), 2);
+    let merged = candidates
+        .iter()
+        .find(|c| c.name == "old-merged")
+        .expect("merged");
+    assert!(merged.protected.is_none());
+    assert!(!merged.dirty);
+    assert_eq!(merged.author.name, "Ada Lovelace");
+    assert_eq!(
+        merged.last_commit_time.to_string(),
+        git(p, &["show", "-s", "--format=%ct", "old-merged"]).trim()
+    );
+    let unique = candidates
+        .iter()
+        .find(|c| c.name == "unique")
+        .expect("unique");
+    assert_eq!(
+        unique.unmerged.to_string(),
+        git(
+            p,
+            &[
+                "rev-list",
+                "--count",
+                "unique",
+                "--not",
+                "main",
+                "old-merged",
+                "recent"
+            ]
+        )
+        .trim()
+    );
+    assert_eq!(unique.unmerged, 1);
+    assert!(unique.protected.is_some());
+    assert!(
+        repo.remove_stale_candidates(std::slice::from_ref(unique), STALE_DAYS, STALE_NOW)
+            .is_err()
+    );
+    repo.remove_stale_candidates(std::slice::from_ref(merged), STALE_DAYS, STALE_NOW)
+        .expect("remove merged");
+    assert!(
+        repo.git()
+            .find_branch("old-merged", git2::BranchType::Local)
+            .is_err()
+    );
+    repo.git()
+        .find_branch("unique", git2::BranchType::Local)
+        .expect("branch retained");
+    assert_eq!(
+        repo.stale_candidates(u32::MAX, STALE_NOW)
+            .expect("long period"),
+        []
+    );
+}
+
+#[test]
+fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
+    let (dir, repo) = stale_fixture();
+    let p = dir.path();
+    let clean = p.join("clean folder");
+    let dirty = p.join("dirty");
+    let locked = p.join("locked");
+    let unique = p.join("unique-folder");
+    for (path, branch) in [
+        (&clean, "clean"),
+        (&dirty, "dirty"),
+        (&locked, "locked"),
+        (&unique, "unique-wt"),
+    ] {
+        git(
+            p,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch,
+                path.to_str().expect("UTF8"),
+            ],
+        );
+    }
+    fs::write(dirty.join("untracked"), "keep me").expect("untracked");
+    git(p, &["worktree", "lock", locked.to_str().expect("UTF8")]);
+    stale_commit(&unique, STALE_OLD_DATE);
+    let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
+    assert_eq!(candidates.len(), 3);
+    assert!(
+        candidates
+            .iter()
+            .all(|c| c.kind == canopy_core::StaleKind::Worktree)
+    );
+    let clean_row = candidates
+        .iter()
+        .find(|c| c.path.as_ref() == Some(&clean))
+        .expect("clean row");
+    assert!(clean_row.protected.is_none());
+    let dirty_row = candidates
+        .iter()
+        .find(|c| c.path.as_ref() == Some(&dirty))
+        .expect("dirty row");
+    assert!(dirty_row.dirty && dirty_row.protected.is_some());
+    let unique_row = candidates
+        .iter()
+        .find(|c| c.path.as_ref() == Some(&unique))
+        .expect("unique row");
+    assert_eq!(unique_row.unmerged, 1);
+    assert!(unique_row.protected.is_some());
+    let linked_repo = Repo::open(&clean).expect("linked open");
+    assert!(
+        !linked_repo
+            .stale_candidates(STALE_DAYS, STALE_NOW)
+            .expect("linked scan")
+            .iter()
+            .any(|c| c.path.as_ref() == Some(&clean))
+    );
+    repo.remove_stale_candidates(std::slice::from_ref(clean_row), STALE_DAYS, STALE_NOW)
+        .expect("remove worktree");
+    assert!(!clean.exists());
+    assert!(dirty.join("untracked").is_file());
+    assert!(locked.is_dir());
+    repo.git()
+        .find_branch("clean", git2::BranchType::Local)
+        .expect("branch retained");
+}
+
+#[test]
+fn stale_removal_rechecks_dirty_worktree_and_branch_tip() {
+    let (dir, repo) = stale_fixture();
+    let p = dir.path();
+    let linked = p.join("linked");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().expect("UTF8"),
+        ],
+    );
+    git(p, &["branch", "old"]);
+    let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
+    let worktree = candidates
+        .iter()
+        .find(|c| c.kind == canopy_core::StaleKind::Worktree)
+        .expect("worktree");
+    fs::write(linked.join("a.txt"), "changed").expect("dirty");
+    assert!(
+        repo.remove_stale_candidates(std::slice::from_ref(worktree), STALE_DAYS, STALE_NOW)
+            .is_err()
+    );
+    assert_eq!(
+        fs::read_to_string(linked.join("a.txt")).expect("read"),
+        "changed"
+    );
+    let branch = candidates.iter().find(|c| c.name == "old").expect("branch");
+    stale_commit(p, STALE_OLD_DATE);
+    git(p, &["branch", "-f", "old", "HEAD"]);
+    assert!(
+        repo.remove_stale_candidates(std::slice::from_ref(branch), STALE_DAYS, STALE_NOW)
+            .is_err()
+    );
+    repo.git()
+        .find_branch("old", git2::BranchType::Local)
+        .expect("branch retained");
+}
+
+#[test]
+fn stale_candidates_exclude_ahead_upstream_and_remote_default_branch() {
+    let (dir, repo) = stale_fixture();
+    let p = dir.path();
+    git(p, &["branch", "trunk"]);
+    git(p, &["update-ref", "refs/remotes/origin/trunk", "trunk"]);
+    git(
+        p,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/trunk",
+        ],
+    );
+    git(p, &["config", "remote.origin.url", "../unused"]);
+    git(
+        p,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    git(p, &["switch", "-q", "-c", "ahead"]);
+    git(p, &["branch", "--set-upstream-to", "origin/trunk"]);
+    stale_commit(p, STALE_OLD_DATE);
+    git(p, &["switch", "-q", "main"]);
+    git(p, &["branch", "eligible"]);
+    let names: Vec<_> = repo
+        .stale_candidates(STALE_DAYS, STALE_NOW)
+        .expect("scan")
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert_eq!(names, ["eligible"]);
+}
+
+#[test]
+fn stale_candidates_detached_worktree_and_unknown_default_fail_safe() {
+    let (dir, repo) = stale_fixture();
+    let p = dir.path();
+    let detached = p.join("detached");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            detached.to_str().expect("UTF8"),
+        ],
+    );
+    stale_commit(&detached, STALE_OLD_DATE);
+    let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].protected.is_some());
+    assert_eq!(candidates[0].unmerged, 1);
+    git(p, &["branch", "-m", "main", "trunk"]);
+    git(p, &["branch", "old"]);
+    assert!(
+        repo.stale_candidates(STALE_DAYS, STALE_NOW)
+            .expect("scan")
+            .iter()
+            .all(|c| c.protected.is_some())
+    );
+}
+
+#[test]
+fn stale_candidates_unborn_repository_has_nothing_to_remove() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    let repo = Repo::open(dir.path()).expect("open");
+    assert_eq!(
+        repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan"),
+        []
+    );
+}
+
+#[test]
+fn stale_removal_rejects_mutually_retained_branch_selection_before_deleting() {
+    let (dir, repo) = stale_fixture();
+    let p = dir.path();
+    git(p, &["switch", "-q", "-c", "one"]);
+    stale_commit(p, STALE_OLD_DATE);
+    git(p, &["branch", "two"]);
+    git(p, &["config", "branch.one.remote", "."]);
+    git(p, &["config", "branch.one.merge", "refs/heads/two"]);
+    git(p, &["config", "branch.two.remote", "."]);
+    git(p, &["config", "branch.two.merge", "refs/heads/one"]);
+    git(p, &["switch", "-q", "main"]);
+    let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
+    assert_eq!(candidates.len(), 2);
+    assert!(
+        candidates
+            .iter()
+            .all(|c| c.unmerged == 0 && c.protected.is_none())
+    );
+    let before = git(p, &["for-each-ref", "--format=%(refname) %(objectname)"]);
+    assert!(
+        repo.remove_stale_candidates(&candidates, STALE_DAYS, STALE_NOW)
+            .is_err()
+    );
+    assert_eq!(
+        git(p, &["for-each-ref", "--format=%(refname) %(objectname)"]),
+        before
+    );
+    // A single removal is safe because the other branch keeps the commits.
+    repo.remove_stale_candidates(&candidates[..1], STALE_DAYS, STALE_NOW)
+        .expect("one removal");
+    repo.git()
+        .find_branch("two", git2::BranchType::Local)
+        .expect("branch retained");
+}
+
+#[test]
+fn stale_candidates_period_uses_strict_committer_time_cutoff() {
+    let (dir, repo) = stale_fixture();
+    let p = dir.path();
+    git(p, &["branch", "old"]);
+    let tip_time = git(p, &["show", "-s", "--format=%ct", "old"])
+        .trim()
+        .parse::<i64>()
+        .expect("time");
+    let now = tip_time + i64::from(STALE_DAYS) * 86_400;
+    assert_eq!(
+        repo.stale_candidates(STALE_DAYS, now).expect("at boundary"),
+        []
+    );
+    assert_eq!(
+        repo.stale_candidates(STALE_DAYS, now + 1)
+            .expect("past boundary")
+            .len(),
+        1
+    );
+    assert_eq!(
+        repo.stale_candidates(STALE_DAYS + 1, now + 1)
+            .expect("longer period"),
+        []
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn stale_candidates_non_utf8_worktree_path_is_protected_without_lossy_removal() {
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let (dir, repo) = stale_fixture();
+    let parent = dir
+        .path()
+        .join(std::ffi::OsString::from_vec(b"parent-\xff".to_vec()));
+    fs::create_dir(&parent).expect("non-UTF8 parent");
+    let path = parent.join("linked");
+    let out = canopy_core::cli::command(Some(dir.path()))
+        .args(["worktree", "add", "-q", "-b", "non-utf8", "--"])
+        .arg(&path)
+        .output()
+        .expect("worktree add");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].path.as_ref(), Some(&path));
+    assert!(candidates[0].protected.is_some());
+    assert!(
+        repo.remove_stale_candidates(&candidates, STALE_DAYS, STALE_NOW)
+            .is_err()
+    );
+    assert!(path.is_dir());
+}
+
+#[test]
+fn stale_candidates_protect_index_flags_that_hide_worktree_edits() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let (dir, repo) = stale_fixture();
+        let p = dir.path();
+        let linked = p.join("linked");
+        git(
+            p,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "linked",
+                linked.to_str().expect("UTF8"),
+            ],
+        );
+        git(&linked, &["update-index", flag, "--", "a.txt"]);
+        fs::write(linked.join("a.txt"), "valuable hidden changes\n").expect("hidden edit");
+        assert_eq!(git(&linked, &["status", "--porcelain"]), "");
+        let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
+        assert_eq!(candidates.len(), 1);
+        assert!(
+            candidates[0].protected.is_some(),
+            "{flag} must be protected"
+        );
+        assert!(
+            repo.remove_stale_candidates(&candidates, STALE_DAYS, STALE_NOW)
+                .is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(linked.join("a.txt")).expect("preserved"),
+            "valuable hidden changes\n"
+        );
+    }
+}
+
+#[test]
+fn stale_candidates_protect_clean_index_flags_and_revalidate_new_flags() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let (dir, repo) = stale_fixture();
+        let p = dir.path();
+        let linked = p.join("linked");
+        git(
+            p,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "linked",
+                linked.to_str().expect("UTF8"),
+            ],
+        );
+        let preview = repo
+            .stale_candidates(STALE_DAYS, STALE_NOW)
+            .expect("preview");
+        assert_eq!(preview.len(), 1);
+        assert!(preview[0].protected.is_none());
+        git(&linked, &["update-index", flag, "--", "a.txt"]);
+        let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
+        assert!(!candidates[0].dirty);
+        assert!(
+            candidates[0].protected.is_some(),
+            "{flag} cannot establish a clean worktree"
+        );
+        assert!(
+            repo.remove_stale_candidates(&preview, STALE_DAYS, STALE_NOW)
+                .is_err()
+        );
+        assert!(linked.join("a.txt").is_file());
+    }
+}
+
+#[test]
+fn stale_candidates_skip_unavailable_locked_worktree_but_keep_its_branch_excluded() {
+    let (dir, repo) = stale_fixture();
+    let p = dir.path();
+    let locked = p.join("locked");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "locked",
+            locked.to_str().expect("UTF8"),
+        ],
+    );
+    git(p, &["worktree", "lock", locked.to_str().expect("UTF8")]);
+    git(p, &["branch", "eligible"]);
+    // This disposable test owns the folder; removal simulates an unplugged worktree disk.
+    fs::remove_dir_all(&locked).expect("unavailable folder");
+    let candidates = repo
+        .stale_candidates(STALE_DAYS, STALE_NOW)
+        .expect("locked folder is irrelevant");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].name, "eligible");
+    assert!(candidates[0].protected.is_none());
+    // The same registry must protect branches when Canopy is opened in a linked folder.
+    let current = p.join("current");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "current",
+            current.to_str().expect("UTF8"),
+        ],
+    );
+    let linked_repo = Repo::open(&current).expect("linked repo");
+    let candidates = linked_repo
+        .stale_candidates(STALE_DAYS, STALE_NOW)
+        .expect("linked scan");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].name, "eligible");
+}

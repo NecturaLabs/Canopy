@@ -112,6 +112,38 @@ pub struct WorktreeInfo {
     pub main: bool,
 }
 
+/// The kind of repository item offered for stale cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StaleKind {
+    /// A linked working folder.
+    Worktree,
+    /// A local branch.
+    Branch,
+}
+
+/// A stale item and the safety checks made when it was previewed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleCandidate {
+    /// Whether removal deletes a working folder or a branch.
+    pub kind: StaleKind,
+    /// Branch short name or registered worktree name.
+    pub name: String,
+    /// Working folder for a worktree; absent for a branch.
+    pub path: Option<PathBuf>,
+    /// The previewed commit, checked again before removal.
+    pub tip: Oid,
+    /// Last commit's committer time, in seconds since the Unix epoch.
+    pub last_commit_time: i64,
+    /// Last commit's author.
+    pub author: Signature,
+    /// A worktree has uncommitted or untracked changes.
+    pub dirty: bool,
+    /// Commits unreachable from every other local or remote branch.
+    pub unmerged: usize,
+    /// Why removal must be refused; absent when the item can be selected.
+    pub protected: Option<String>,
+}
+
 /// A remote-tracking branch, e.g. `origin/main`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteBranchInfo {
