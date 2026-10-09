@@ -199,13 +199,19 @@ impl Http {
     /// author's email address), replaced. Profile paths may contain an author's email, which must
     /// not appear in logs or notifications.
     fn hide_request(&self, text: &str, path: &str, private: &[&str]) -> String {
-        let url = format!("{}{}", self.base, path);
-        let mut text = text.replace(&url, "[profile URL]");
+        let url = plain_text(&format!("{}{}", self.base, path), usize::MAX);
+        let mut text = plain_text(text, usize::MAX).replace(&url, "[profile URL]");
         if !path.is_empty() {
-            text = text.replace(path, "[profile path]");
+            let path = plain_text(path, usize::MAX);
+            if !path.is_empty() {
+                text = text.replace(&path, "[profile path]");
+            }
         }
         for value in private.iter().filter(|v| !v.is_empty()) {
-            text = text.replace(value, "[private]");
+            let value = plain_text(value, usize::MAX);
+            if !value.is_empty() {
+                text = text.replace(&value, "[private]");
+            }
         }
         text
     }
@@ -816,6 +822,25 @@ mod tests {
         assert!(!message.contains("private@example.com"), "{message}");
         assert!(!message.contains("private-auth-token-123"), "{message}");
         assert!(!message.contains(full_url.as_str()), "{message}");
+    }
+
+    #[test]
+    fn profile_errors_redact_private_data_after_removing_invisible_characters() {
+        let http = Http::new(ForgeKind::GitLab, "https://gitlab.example/api/v4", None);
+        let email = "private@example.com";
+        let path = "/avatar?email=private%40example.com&size=64";
+        for hidden in ['\u{200B}', '\u{2060}', '\u{FEFF}'] {
+            let detail = format!(
+                "connection refused: pri{hidden}vate@example.com at https://gitlab.example/api/v4/ava{hidden}tar?email=private%40example.com&size=64"
+            );
+            let message = http
+                .profile_error("Profile lookup failed", &detail, path, &[email])
+                .to_string();
+            assert!(message.contains("connection refused"), "{message}");
+            assert!(!message.contains(email), "{message}");
+            assert!(!message.contains("private%40example.com"), "{message}");
+            assert!(!message.contains("/avatar?"), "{message}");
+        }
     }
 
     #[test]
