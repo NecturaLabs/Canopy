@@ -1883,6 +1883,67 @@ mod tests {
         );
     }
 
+    /// #63: every control the Changes view draws (the lists, their buttons and the commit
+    /// composer) is named for a screen reader, and the composer's message is a text field.
+    #[test]
+    fn every_control_in_the_changes_view_has_a_name() {
+        use egui::accesskit::Role;
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let dir = tempfile::tempdir().expect("temporary tab");
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        tab.identity = Some(identity("Ada", "ada@example.com", None, true));
+        let mut snap = unstaged_snapshot();
+        snap.status.staged = vec![entry("README.md")];
+        tab.snap = Some(std::sync::Arc::new(snap));
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                egui::Panel::top("test-actions")
+                    .exact_size(84.0)
+                    .show(ui, |_| {});
+                show(ui, &mut tab, &mut Vec::new());
+            });
+        }
+        let controls = [
+            Role::Button,
+            Role::CheckBox,
+            Role::Link,
+            Role::MenuItem,
+            Role::RadioButton,
+            Role::Switch,
+            Role::Tab,
+            Role::TextInput,
+            Role::MultilineTextInput,
+        ];
+        let unnamed: Vec<_> = nodes
+            .iter()
+            .filter(|n| controls.contains(&n.role))
+            .filter(|n| n.label.as_deref().is_none_or(|l| l.trim().is_empty()))
+            .map(|n| format!("{:?} at {:?}", n.role, n.bounds))
+            .collect();
+        assert!(unnamed.is_empty(), "controls with no name: {unnamed:?}");
+        assert!(
+            nodes
+                .iter()
+                .any(|n| matches!(n.role, Role::TextInput | Role::MultilineTextInput)),
+            "the commit message field is exposed as a text field"
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref().is_some_and(|l| l.contains("main.rs"))),
+            "the files are named"
+        );
+    }
+
     #[test]
     fn wrapped_identity_notice_does_not_overlap_commit_fields() {
         let ctx = egui::Context::default();
