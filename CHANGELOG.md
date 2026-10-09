@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Fixed
 
+- A download of a commit's files that runs past ten minutes now stops with a message naming the
+  limit and a Retry button, and the failure is remembered, instead of leaving the commit
+  without a way to ask again.
 - The notification center saved between runs no longer keeps a user name or password that sat in
   a URL in a title or in Git's error text, and the Privacy Policy now lists those saved
   notifications among the data that stays on your computer (updated 9 October 2026).

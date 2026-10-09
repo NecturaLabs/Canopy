@@ -42,7 +42,10 @@ pub enum MissingObjects {
 
 /// How long one download may take before git is killed and the read fails, so a server that
 /// never answers cannot hold the repository's thread for good.
-const DOWNLOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+const DOWNLOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(DOWNLOAD_MINUTES * 60);
+
+/// [`DOWNLOAD_LIMIT`] in minutes, the unit the message names.
+const DOWNLOAD_MINUTES: u64 = 10;
 
 /// How many fetch-and-retry rounds a read may take: trees (treeless clones), then blobs, then a
 /// last round for anything the read needed that the first estimate missed.
@@ -377,6 +380,20 @@ pub(crate) fn not_downloaded(repo: &Repository, reason: Option<String>) -> Error
     Error::NotDownloaded { remote, reason }
 }
 
+/// `e` as the failure of a download: one that outlasted [`DOWNLOAD_LIMIT`] is
+/// [`Error::NotDownloaded`] naming the limit, so it can be retried; any other error is itself.
+fn timed_out(repo: &Repository, e: Error) -> Error {
+    match e {
+        Error::Invalid(message) if message.contains("did not answer within") => not_downloaded(
+            repo,
+            Some(format!(
+                "The download stopped after {DOWNLOAD_MINUTES} minutes without finishing. {message}"
+            )),
+        ),
+        other => other,
+    }
+}
+
 /// Fetches `oids` from the promisor remotes, trying each in turn until every object is present.
 pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Result<()> {
     let remotes = promisor_remotes(repo);
@@ -425,7 +442,9 @@ pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Resul
                 last_error = Some(stderr);
                 continue;
             }
-            Err(e) => return Err(e),
+            // A download that took too long is a failed download (Retry asks again, and the
+            // app remembers it), not a reason to start the next round for another ten minutes.
+            Err(e) => return Err(timed_out(repo, e)),
         }
         // A successful fetch wrote a new pack; let libgit2 see it.
         refresh(repo);
@@ -517,6 +536,27 @@ pub(crate) fn missing_head_tree(repo: &Repository) -> Option<Oid> {
 
 #[cfg(test)]
 mod tests {
+    /// A download that outlasted its limit can be retried; other errors pass through.
+    #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
+    fn a_download_that_timed_out_can_be_retried() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(dir.path()).expect("init");
+        repo.remote("origin", "https://example.com/r.git")
+            .expect("remote");
+        repo.config()
+            .and_then(|mut c| c.set_bool("remote.origin.promisor", true))
+            .expect("promisor");
+        let timeout = Error::Invalid("git fetch did not answer within 600 seconds.".into());
+        let err = timed_out(&repo, timeout);
+        assert!(err.can_download(), "{err}");
+        assert!(err.to_string().contains("10 minutes"), "{err}");
+        let other = timed_out(&repo, Error::Invalid("something else".into()));
+        assert!(matches!(other, Error::Invalid(m) if m == "something else"));
+    }
 
     use super::*;
 
