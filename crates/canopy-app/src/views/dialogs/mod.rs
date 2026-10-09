@@ -893,7 +893,8 @@ pub fn show(
             })
         }
         Dialog::ApplyPatches { path } => {
-            let ok = !path.trim().is_empty();
+            let full = crate::settings::expand_home(path.trim()).is_absolute();
+            let ok = !path.trim().is_empty() && full;
             let result = KitDialog::new(salt)
                 .title("Apply patch")
                 .icon(icon::FILE_ARROW_DOWN)
@@ -915,12 +916,13 @@ pub fn show(
                             label: "Patch file or folder",
                             hint: "~/patches/0001-fix.patch",
                             helper: None,
-                            error: None,
+                            error: (!path.trim().is_empty() && !full)
+                                .then_some("Enter the full path, or start with ~/"),
                             focus: true,
                         },
                     );
                 })
-                .footer(|f| confirm(f, "Apply", ok, "Enter a patch file or folder"))
+                .footer(|f| confirm(f, "Apply", ok, "Enter the full path of a patch file or folder"))
                 .show(ctx);
             answer(result, || {
                 if path.trim().is_empty() {

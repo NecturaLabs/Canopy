@@ -1622,6 +1622,11 @@ fn exported_message(files: &[PathBuf], dir: &Path) -> String {
 
 /// The patch files `path` names: itself, or a folder's `.patch` files in name order.
 fn patch_files(path: &Path) -> canopy_core::Result<Vec<PathBuf>> {
+    if !path.is_absolute() {
+        return Err(canopy_core::Error::Invalid(
+            "Choose a full path to the patch file or folder.".into(),
+        ));
+    }
     if !path.is_dir() {
         return Ok(vec![path.to_path_buf()]);
     }
