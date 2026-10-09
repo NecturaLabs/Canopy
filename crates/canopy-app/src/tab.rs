@@ -713,6 +713,9 @@ pub struct RepoTab {
     /// The diff whose download failed in a partial clone: it is not asked for again (the file
     /// watcher refreshes the status often) until the user chooses Retry or the file again.
     pub failed_diff: Option<DiffKey>,
+    /// The failure of the last automatic fetch that was shown, so the same one is not shown
+    /// again at every interval; a fetch that works, or a change of trusted folders, forgets it.
+    auto_fetch_failure: Option<String>,
     /// Files whose diff a partial clone could not download, for the "not downloaded" marker on
     /// their rows.
     pub not_downloaded: HashSet<(DiffSource, String)>,
@@ -841,6 +844,7 @@ impl RepoTab {
             diff_layout: None,
             diff_error: None,
             failed_diff: None,
+            auto_fetch_failure: None,
             not_downloaded: HashSet::new(),
             pending_diff: None,
             awaiting_diff: false,
@@ -1242,6 +1246,7 @@ impl RepoTab {
     /// way from the worker carries an older version and is then found out of date.
     pub fn trust_changed(&mut self, version: u64) {
         self.trust_version = version;
+        self.auto_fetch_failure = None;
         if self.downloads_refused.take().is_some() {
             self.reread();
         }
@@ -1860,6 +1865,7 @@ impl RepoTab {
                             }
                             if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
+                                self.auto_fetch_failure = None;
                             }
                             // The remote moved, or Canopy moved it: its requests may have too.
                             if kind.syncs_remote() {
@@ -1884,7 +1890,15 @@ impl RepoTab {
                             OpKind::SafeDelete(name) if e.contains("not fully merged") => {
                                 self.force_delete_offer = Some(name.clone());
                             }
+                            // An automatic fetch that fails the way it failed last time (the
+                            // folder is not trusted, the server is down) says so once.
+                            OpKind::Fetch
+                                if !announce
+                                    && self.auto_fetch_failure.as_deref() == Some(e.as_str()) => {}
                             _ => {
+                                if kind == OpKind::Fetch && !announce {
+                                    self.auto_fetch_failure = Some(e.clone());
+                                }
                                 self.finished = Some(Finished {
                                     label: label.clone(),
                                     kind: kind.clone(),
@@ -3367,6 +3381,55 @@ mod tests {
         tab.poll(&[]);
         assert!(tab.diff_error.is_none());
         assert!(tab.downloads_refused.is_none(), "nothing left to explain");
+        Ok(())
+    }
+
+    /// An automatic fetch that fails the same way every interval (an untrusted folder's guard,
+    /// a server that is down) is shown once; a different failure, or a fetch that works, shows
+    /// again.
+    #[test]
+    fn an_automatic_fetch_failure_is_shown_once() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let finished = |announce, result: Result<&str, &str>| Event::OpFinished {
+            label: "Fetching".into(),
+            kind: OpKind::Fetch,
+            announce,
+            result: result.map(str::to_owned).map_err(str::to_owned),
+        };
+        let shown = |tab: &mut RepoTab, e: Event| -> Result<usize, Box<dyn std::error::Error>> {
+            events.send(e)?;
+            Ok(tab.poll(&[]).len())
+        };
+        let refusal = "Auto-fetch skipped: this repository's own files run programs";
+        assert_eq!(shown(&mut tab, finished(false, Err(refusal)))?, 1);
+        assert_eq!(
+            shown(&mut tab, finished(false, Err(refusal)))?,
+            0,
+            "again, quietly"
+        );
+        assert_eq!(
+            shown(&mut tab, finished(false, Err("could not resolve host")))?,
+            1
+        );
+        assert_eq!(shown(&mut tab, finished(false, Ok("")))?, 0);
+        assert_eq!(
+            shown(&mut tab, finished(false, Err(refusal)))?,
+            1,
+            "after a good fetch"
+        );
+        tab.trust_changed(1);
+        assert_eq!(
+            shown(&mut tab, finished(false, Err(refusal)))?,
+            1,
+            "trust changed"
+        );
+        // The fetch the user starts always says how it went.
+        assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
+        assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
         Ok(())
     }
 

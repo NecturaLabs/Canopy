@@ -1438,7 +1438,13 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         Op::StashApply { index, pop } => done(repo.stash_apply(index, pop)),
         Op::StashApplyCommit { oid, pop } => done(repo.stash_apply_commit(oid, pop)),
         Op::StashDrop(oid) => done(repo.stash_drop_commit(oid)),
-        Op::Fetch { prune, .. } => repo.fetch(None, prune, progress),
+        Op::Fetch { prune, quiet } => {
+            if quiet && !trusted_now(repo) {
+                repo.fetch_unattended(prune, progress)
+            } else {
+                repo.fetch(None, prune, progress)
+            }
+        }
         Op::Pull {
             strategy,
             follow_config,
@@ -2817,6 +2823,164 @@ mod read_tests {
             matches!(events.last(), Some(Event::Diff(_, Ok(_)))),
             "{events:?}"
         );
+    }
+
+    /// What an untrusted folder's own files can make a fetch run besides the keys the guard
+    /// lists: an `ext::` remote URL (with `protocol.ext.allow`), the command that advertises the
+    /// tips of an alternate (`core.alternateRefsCommand`) and the fetch of each submodule, which
+    /// reads the submodule's own configuration. An automatic fetch neutralises them on its
+    /// command line; the fetch the user starts runs as in a terminal.
+    #[cfg(unix)]
+    #[test]
+    fn an_automatic_fetch_neutralises_what_the_guard_cannot_list() {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn script(path: &Path, marker: &Path, then: &str) {
+            std::fs::write(
+                path,
+                format!("#!/bin/sh\ntouch '{}'\n{then}\n", marker.display()),
+            )
+            .expect("script");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("mode");
+        }
+        // Each case: how to arm `copy` so that a fetch runs `marker`'s script.
+        type Arm = fn(&Path, &Path, &Path, &Path);
+        let cases: [(&str, Arm); 3] = [
+            ("core.alternateRefsCommand", |root, up, copy, marker| {
+                let program = root.join("alternates");
+                script(&program, marker, "exit 0");
+                std::fs::write(
+                    copy.join(".git/objects/info/alternates"),
+                    format!("{}\n", up.join(".git/objects").display()),
+                )
+                .expect("alternates");
+                git(
+                    copy,
+                    &[
+                        "config",
+                        "core.alternateRefsCommand",
+                        &program.to_string_lossy(),
+                    ],
+                );
+            }),
+            ("an ext:: remote", |root, _, copy, marker| {
+                let program = root.join("ext");
+                script(&program, marker, "exec git-upload-pack \"$1\"");
+                git(copy, &["config", "protocol.ext.allow", "always"]);
+                let url = format!(
+                    "ext::{} %S {}",
+                    program.display(),
+                    root.join("up").display()
+                );
+                git(copy, &["config", "remote.origin.url", &url]);
+            }),
+            (
+                "a submodule's own configuration",
+                |root, _, copy, marker| {
+                    let program = root.join("sub-upload");
+                    script(&program, marker, "exec git-upload-pack \"$@\"");
+                    git(copy, &["config", "fetch.recurseSubmodules", "true"]);
+                    let sub = copy.join("sub");
+                    git(
+                        &sub,
+                        &[
+                            "config",
+                            "remote.origin.uploadpack",
+                            &program.to_string_lossy(),
+                        ],
+                    );
+                },
+            ),
+        ];
+        for (name, arm) in cases {
+            let root = tempfile::tempdir().expect("tempdir");
+            std::fs::create_dir_all(root.path().join("home")).expect("home");
+            std::fs::write(
+                root.path().join("home").join("gitconfig"),
+                "[protocol \"file\"]\n\tallow = always\n",
+            )
+            .expect("config");
+            let up = root.path().join("up");
+            std::fs::create_dir(&up).expect("up");
+            git(&up, &["init", "-q", "-b", "main"]);
+            std::fs::write(up.join("a.txt"), "base\n").expect("write");
+            git(&up, &["add", "."]);
+            git(&up, &["commit", "-q", "-m", "base"]);
+            let subsrc = root.path().join("subsrc");
+            std::fs::create_dir(&subsrc).expect("subsrc");
+            git(&subsrc, &["init", "-q", "-b", "main"]);
+            std::fs::write(subsrc.join("s.txt"), "s\n").expect("write");
+            git(&subsrc, &["add", "."]);
+            git(&subsrc, &["commit", "-q", "-m", "s"]);
+            git(
+                &up,
+                &["submodule", "add", "-q", &subsrc.to_string_lossy(), "sub"],
+            );
+            git(&up, &["commit", "-q", "-m", "sub"]);
+            git(
+                root.path(),
+                &["clone", "-q", "--recurse-submodules", "up", "copy"],
+            );
+            let copy = root.path().join("copy");
+            let marker = root.path().join("ran");
+            arm(root.path(), &up, &copy, &marker);
+            // The upstream moves, so the fetch has something to do.
+            std::fs::write(up.join("b.txt"), "more\n").expect("write");
+            git(&up, &["add", "."]);
+            git(&up, &["commit", "-q", "-m", "more"]);
+            let repo = Repo::open(&copy).expect("open");
+            let fetch = |quiet| Op::Fetch {
+                prune: false,
+                quiet,
+            };
+
+            // The guard's key list names none of these, so it lets the fetch through; the
+            // fetch itself must not run them.
+            let _ = perform(&repo, fetch(true), |_| {});
+            assert!(!marker.exists(), "{name}: an automatic fetch ran it");
+
+            // The user's own fetch is theirs to decide, as in a terminal.
+            let _ = perform(&repo, fetch(false), |_| {});
+            assert!(
+                marker.exists(),
+                "{name}: the control fetch never ran it, so the case proves nothing"
+            );
+        }
+    }
+
+    /// The guard names what it found in the message and the log: a credential helper keyed by a
+    /// URL with a password in it is named without the password.
+    #[test]
+    fn the_automatic_fetch_guard_redacts_what_it_names() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        git(
+            &copy,
+            &[
+                "config",
+                "credential.https://ada:hunter2@example.com.helper",
+                "store",
+            ],
+        );
+        let repo = Repo::open(&copy).expect("open");
+        let fetch = Op::Fetch {
+            prune: false,
+            quiet: true,
+        };
+        let error = perform(&repo, fetch.clone(), |_| {}).expect_err("not trusted");
+        let message = error.to_string();
+        assert!(message.contains("credential."), "{message}");
+        assert!(!message.contains("hunter2"), "{message}");
+
+        git(
+            &copy,
+            &[
+                "config",
+                "--unset",
+                "credential.https://ada:hunter2@example.com.helper",
+            ],
+        );
+        perform(&repo, fetch, |_| {}).expect("nothing to refuse on");
     }
 
     /// #43: Publish works on any local branch, not only the checked-out one, and makes the remote

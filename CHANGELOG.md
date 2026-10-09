@@ -10,6 +10,12 @@ commits since the previous build.
 
 ### Fixed
 
+- An automatic fetch in a folder you have not trusted now also switches off, on its command line,
+  the `ext::` transport, the command that advertises an alternate's tips and the fetch of
+  submodules, which a repository's own files could use to run a program; a setting the guard
+  names with a password in its URL is shown without it; and a failure of an automatic fetch that
+  is the same as the last one is shown once instead of at every interval.
+
 - Windows uninstall help and purge confirmation now say that saved hosting tokens are deleted
   along with settings, logs and caches.
 - Finishing a single-commit git-flow feature or bugfix fast-forwards when possible, matching

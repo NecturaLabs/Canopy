@@ -146,23 +146,36 @@ pub fn fetch_programs(repo: &Repository) -> Vec<String> {
     use git2::ConfigLevel;
 
     let mut found = Vec::new();
+    let unreadable = |found: &mut Vec<String>| found.push(UNREADABLE.to_owned());
     if let Ok(config) = repo.config() {
         for level in [ConfigLevel::Local, ConfigLevel::Worktree] {
-            let Ok(config) = config.open_level(level) else {
-                continue;
+            let config = match config.open_level(level) {
+                Ok(config) => config,
+                // A repository with no worktree configuration is normal.
+                Err(e) if e.code() == ErrorCode::NotFound => continue,
+                Err(_) => {
+                    unreadable(&mut found);
+                    continue;
+                }
             };
             let Ok(entries) = config.entries(None) else {
+                unreadable(&mut found);
                 continue;
             };
-            // Errors end the walk: an entry that cannot be read names nothing.
-            let _ = entries.for_each(|entry| {
+            // A walk that stops on an entry it cannot read has not seen the rest.
+            let walked = entries.for_each(|entry| {
                 if let Ok(name) = entry.name()
                     && runs_a_program(name)
                 {
-                    found.push(name.to_owned());
+                    found.push(redact_name(name));
                 }
             });
+            if walked.is_err() {
+                unreadable(&mut found);
+            }
         }
+    } else {
+        unreadable(&mut found);
     }
     let hooks = repo.commondir().join("hooks");
     for hook in ["reference-transaction", "pre-auto-gc"] {
@@ -173,6 +186,16 @@ pub fn fetch_programs(repo: &Repository) -> Vec<String> {
     found.sort();
     found.dedup();
     found
+}
+
+/// What [`fetch_programs`] reports when it could not read the configuration: a fetch that cannot
+/// be checked is not run on its own.
+const UNREADABLE: &str = "a configuration that could not be read";
+
+/// A configuration key as it may be logged or shown: a credential section is named by its URL
+/// (`credential.https://user:secret@host.helper`), which can hold the password.
+fn redact_name(name: &str) -> String {
+    cli::redact_url(name)
 }
 
 /// Whether the configuration key `name` (section and variable lower-cased by libgit2) makes a
