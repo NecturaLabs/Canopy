@@ -1292,6 +1292,7 @@ impl RepoTab {
         self.details_error = None;
         if let Some(oid) = self.selected_commit {
             self.worker.send(Job::Details(oid));
+            self.worker.send(Job::Signature(oid));
         }
         self.reload_diff();
     }
