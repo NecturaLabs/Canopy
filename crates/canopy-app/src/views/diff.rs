@@ -360,7 +360,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
         return;
     };
-    if let Some(change) = &d.submodule {
+    if let Some(change) = &d.submodule
+        && d.kind != Some(ChangeKind::Typechange)
+    {
         submodule_card(ui, change);
         return;
     }
@@ -555,7 +557,8 @@ fn header(
     let m = theme::metrics();
     let compact = ui.available_height() < theme::XL * 10.0;
     let single_row = ui.available_width() >= 720.0;
-    let gitlink = sel.entry.old_mode == Some(0o160_000) || sel.entry.new_mode == Some(0o160_000);
+    let gitlink = sel.entry.kind != ChangeKind::Typechange
+        && (sel.entry.old_mode == Some(0o160_000) || sel.entry.new_mode == Some(0o160_000));
     // One row of small controls fills `file_header_height`; wrapped rows get the usual gaps.
     let vertical_padding = if single_row {
         ((m.file_header_height - m.control_sm) / 2.0).max(0.0)
@@ -1320,11 +1323,16 @@ fn mode_note(old: u32, new: u32) -> &'static str {
     const FILE: u32 = 0o100_644;
     const EXECUTABLE: u32 = 0o100_755;
     const LINK: u32 = 0o120_000;
+    const SUBMODULE: u32 = 0o160_000;
     match (old, new) {
         (FILE, EXECUTABLE) => "Now executable.",
         (EXECUTABLE, FILE) => "No longer executable.",
         (LINK, FILE | EXECUTABLE) => "Was a symbolic link, now a regular file.",
         (FILE | EXECUTABLE, LINK) => "Was a regular file, now a symbolic link.",
+        (FILE | EXECUTABLE, SUBMODULE) => "Was a regular file, now a submodule.",
+        (SUBMODULE, FILE | EXECUTABLE) => "Was a submodule, now a regular file.",
+        (LINK, SUBMODULE) => "Was a symbolic link, now a submodule.",
+        (SUBMODULE, LINK) => "Was a submodule, now a symbolic link.",
         _ => "Only the file mode changed.",
     }
 }
@@ -1571,6 +1579,99 @@ mod tests {
                 mode != 0o160_000,
                 "gitlinks have no text columns: {nodes:?}"
             );
+        }
+    }
+
+    #[test]
+    fn file_submodule_type_changes_render_both_sides() {
+        use crate::ui::kit::testkit::{ctx, spoken};
+        for source in [
+            DiffSource::Staged,
+            DiffSource::Commit(canopy_core::Oid::ZERO_SHA1),
+        ] {
+            for split in [false, true] {
+                for reverse in [false, true] {
+                    let ctx = ctx();
+                    let (worker, _, _) = crate::worker::Worker::detached();
+                    let mut tab = RepoTab::with_worker(
+                        std::path::PathBuf::from("fixture"),
+                        100,
+                        crate::settings::DiffPrefs::default(),
+                        worker,
+                    );
+                    let id = canopy_core::Oid::from_bytes(&[2; 20]).expect("oid");
+                    let pointer = format!("Subproject commit {id}");
+                    let (old_mode, new_mode, old, new) = if reverse {
+                        (0o160_000, 0o100_644, pointer.as_str(), "replacement text")
+                    } else {
+                        (0o100_644, 0o160_000, "original text", pointer.as_str())
+                    };
+                    tab.split_diff = split;
+                    tab.file = Some(crate::tab::FileSelection {
+                        source,
+                        entry: canopy_core::FileEntry {
+                            path: "dependency".into(),
+                            old_path: None,
+                            kind: ChangeKind::Typechange,
+                            additions: 1,
+                            deletions: 1,
+                            lfs: false,
+                            old_mode: Some(old_mode),
+                            new_mode: Some(new_mode),
+                        },
+                        conflicted: false,
+                    });
+                    let mut old_hunk = hunk("-");
+                    old_hunk.lines[0].old_no = Some(1);
+                    old_hunk.lines[0].text = old.into();
+                    let mut new_hunk = hunk("+");
+                    new_hunk.lines[0].new_no = Some(1);
+                    new_hunk.lines[0].text = new.into();
+                    tab.diff = Some(Arc::new(FileDiff {
+                        path: "dependency".into(),
+                        kind: Some(ChangeKind::Typechange),
+                        hunks: vec![old_hunk, new_hunk],
+                        additions: 1,
+                        deletions: 1,
+                        old_mode: Some(old_mode),
+                        new_mode: Some(new_mode),
+                        submodule: Some(canopy_core::SubmoduleChange {
+                            old: reverse.then_some(id),
+                            new: (!reverse).then_some(id),
+                            old_present: false,
+                            new_present: false,
+                            log: canopy_core::SubmoduleLog::default(),
+                        }),
+                        ..FileDiff::default()
+                    }));
+                    let mut nodes = Vec::new();
+                    let mut actions = Vec::new();
+                    for _ in 0..3 {
+                        nodes = spoken(&ctx, |ui| show(ui, &mut tab, &mut actions));
+                    }
+                    for label in [
+                        format!("Removed line 1: {old}"),
+                        format!("Added line 1: {new}"),
+                        "Diff layout".into(),
+                        "3 lines".into(),
+                    ] {
+                        assert!(
+                            nodes.iter().any(|n| {
+                                n.label.as_deref().or(n.value.as_deref()) == Some(&label)
+                            }),
+                            "{source:?}, split={split}, reverse={reverse}: missing {label:?} in {nodes:?}"
+                        );
+                    }
+                    assert!(
+                        !nodes
+                            .iter()
+                            .any(|n| n.label.as_deref().is_some_and(|label| {
+                                label.starts_with("Stage hunk") || label.starts_with("Discard hunk")
+                            }))
+                    );
+                    assert!(actions.is_empty());
+                }
+            }
         }
     }
 

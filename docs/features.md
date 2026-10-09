@@ -138,7 +138,9 @@ otherwise read their targets as regular files. Git's ordinary-file link emulatio
 Link diffs label their target paths; a file turned into a link (or back) shows the old side removed
 and the new side added, as `git diff` does, with the link's target text and never the file it points
 to, and its hunks offer no actions (stage or discard the whole file); mode
-changes remain visible alongside content changes.
+changes remain visible alongside content changes. A file or link replaced by a submodule (or
+back) shows both text sides, including the recorded submodule commit, in the usual unified or
+side-by-side diff. Changes between two submodule pointers retain the commit-list card.
 
 ## Branches and merging
 

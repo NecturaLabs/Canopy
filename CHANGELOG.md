@@ -23,6 +23,9 @@ commits since the previous build.
 
 ### Fixed
 
+- File-to-submodule diffs and their reverse show the removed and added text, instead of
+  hiding it behind a submodule card. Whole-file staging and unstaging remain available.
+
 - Commit file counts include every text line in a file-type change, including files larger
   than the diff preview limit and changes to or from a submodule pointer.
 
