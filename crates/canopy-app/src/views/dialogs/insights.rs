@@ -110,7 +110,7 @@ fn body(ui: &mut Ui, data: &Insights) {
     }
     branch_table(ui, &data.branches);
     ui.add_space(m.dialog_gap);
-    ui.label(RichText::new("Local history only. Shallow clones omit older commits; squash-merged branches are not detected.").color(p.text_dim));
+    ui.label(RichText::new("Local history only; shallow clones omit older commits. Squash merged? means every changed branch path already matches the default branch. This hint can miss merges after further edits and does not prove a merge occurred.").color(p.text_dim));
 }
 
 fn divergence(value: Option<canopy_core::Divergence>) -> String {
@@ -206,6 +206,7 @@ fn branch_table(ui: &mut Ui, branches: &[canopy_core::BranchMetrics]) {
         egui::ScrollArea::vertical()
             .id_salt("insights-branches")
             .max_height(m.row_height * 8.0)
+            .min_scrolled_height(m.row_height * crate::ui::count_f32((branches.len() + 1).min(8)))
             .show_rows(ui, m.row_height, branches.len() + 1, |ui, rows| {
                 egui::Grid::new("insights-branch-table")
                     .striped(true)
@@ -252,7 +253,12 @@ fn branch_row(ui: &mut Ui, branch: &canopy_core::BranchMetrics, name_width: f32)
         .show();
     ui.label(branch.unique_commits.to_string());
     ui.label(state_label(branch))
-        .kit_tooltip(branch.merged.map_or("", canopy_core::MergedReason::label))
+        .kit_tooltip(branch.merged.map_or("", |reason| match reason {
+            canopy_core::MergedReason::SquashMerged => {
+                "Every changed branch path matches the default branch; a squash or rebase merge is possible"
+            }
+            other => other.label(),
+        }))
         .show();
 }
 
