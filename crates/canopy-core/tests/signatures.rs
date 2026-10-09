@@ -142,6 +142,33 @@ fn a_signed_commit_git_cannot_check_is_not_shown_as_unsigned() {
     );
 }
 
+/// The folder of a throwaway keyring; dropping it stops the `gpg-agent` the keyring started.
+#[cfg(unix)]
+struct Keyring(tempfile::TempDir);
+
+#[cfg(unix)]
+impl std::ops::Deref for Keyring {
+    type Target = tempfile::TempDir;
+    fn deref(&self) -> &tempfile::TempDir {
+        &self.0
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Keyring {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "stops the agent this test's keyring started"
+    )]
+    fn drop(&mut self) {
+        let _ = Command::new("gpgconf")
+            .args(["--homedir"])
+            .arg(self.0.path().join("gnupg"))
+            .args(["--kill", "gpg-agent"])
+            .output();
+    }
+}
+
 /// A repository that signs with `OpenPGP` through a throwaway keyring: `gpg.program` is a script
 /// that points gpg at it. `None` when `gpg` is not installed.
 #[cfg(unix)]
@@ -149,7 +176,7 @@ fn a_signed_commit_git_cannot_check_is_not_shown_as_unsigned() {
     clippy::disallowed_methods,
     reason = "the test asks whether gpg is installed before it builds a keyring"
 )]
-fn gpg_repository() -> Option<(tempfile::TempDir, Repo)> {
+fn gpg_repository() -> Option<(Keyring, Repo)> {
     use std::os::unix::fs::PermissionsExt;
 
     if Command::new("gpg").arg("--version").output().is_err() {
@@ -197,7 +224,7 @@ fn gpg_repository() -> Option<(tempfile::TempDir, Repo)> {
         git(p, &["config", name, value]);
     }
     let repo = Repo::open(p).expect("open");
-    Some((dir, repo))
+    Some((Keyring(dir), repo))
 }
 
 #[cfg(unix)]
