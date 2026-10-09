@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use egui::{RichText, Ui};
 use egui_phosphor::regular as icon;
+use serde::{Deserialize, Serialize};
 
 use super::kit::Tone;
 use super::kit::button::IconButton;
@@ -103,6 +104,9 @@ pub enum Offer {
     Pull(PathBuf),
     /// The host refused the credentials: open Settings at Accounts.
     Accounts,
+    /// Git's own configuration sets a choice against Canopy's recommendation: open Settings at
+    /// Git, where each choice names where it is set.
+    GitSettings,
     /// A new build is out: open its update dialog.
     ReviewUpdate,
     /// A new build is installed at this path: restart into it.
@@ -115,6 +119,7 @@ impl Offer {
         let (confirm, glyph, decline) = match self {
             Self::Pull(_) => ("Pull", icon::ARROW_DOWN, "Not now"),
             Self::Accounts => ("Open Accounts", icon::USER_CIRCLE, "Not now"),
+            Self::GitSettings => ("Open Git settings", icon::GIT_BRANCH, "Later"),
             Self::ReviewUpdate => ("Review update", icon::DOWNLOAD_SIMPLE, "Later"),
             Self::Restart(_) => ("Restart now", icon::ARROW_CLOCKWISE, "Later"),
         };
@@ -259,6 +264,8 @@ struct Entry {
     body: String,
     /// When it arrived, in Unix seconds.
     at: i64,
+    /// The repository it is about, by folder name.
+    source: Option<String>,
     /// What an error means, before git's own words.
     help: Option<&'static str>,
     offer: Option<Offer>,
@@ -314,7 +321,93 @@ impl Slide {
     }
 }
 
+/// The key the notification center is kept under between runs.
+pub const STORAGE_KEY: &str = "canopy-notifications-v1";
+
+/// A notification as it is kept on disk: what the center lists, and the decision it still asks
+/// for when that one survives a restart.
+#[derive(Debug, Serialize, Deserialize)]
+struct Saved {
+    kind: SavedKind,
+    title: String,
+    body: String,
+    at: i64,
+    source: Option<String>,
+    offer: Option<SavedOffer>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum SavedKind {
+    Info,
+    Success,
+    Error,
+}
+
+/// The decisions that still mean something after a restart: an update to review or to restart
+/// into does not.
+#[derive(Debug, Serialize, Deserialize)]
+enum SavedOffer {
+    Pull(PathBuf),
+    Accounts,
+    GitSettings,
+}
+
 impl Toasts {
+    /// The center's notifications as text to keep between runs.
+    pub fn to_json(&self) -> String {
+        let saved: Vec<Saved> = self
+            .history
+            .iter()
+            .map(|e| Saved {
+                kind: match e.kind {
+                    ToastKind::Info => SavedKind::Info,
+                    ToastKind::Success => SavedKind::Success,
+                    ToastKind::Error => SavedKind::Error,
+                },
+                title: e.title.clone(),
+                body: e.body.clone(),
+                at: e.at,
+                source: e.source.clone(),
+                offer: match &e.offer {
+                    Some(Offer::Pull(path)) => Some(SavedOffer::Pull(path.clone())),
+                    Some(Offer::Accounts) => Some(SavedOffer::Accounts),
+                    Some(Offer::GitSettings) => Some(SavedOffer::GitSettings),
+                    Some(Offer::ReviewUpdate | Offer::Restart(_)) | None => None,
+                },
+            })
+            .collect();
+        serde_json::to_string(&saved).unwrap_or_default()
+    }
+
+    /// Puts back what [`Self::to_json`] kept, newest first and already read; text that does not
+    /// parse is ignored.
+    pub fn restore_json(&mut self, json: &str) {
+        let Ok(saved) = serde_json::from_str::<Vec<Saved>>(json) else {
+            return;
+        };
+        for s in saved.into_iter().take(HISTORY) {
+            self.next += 1;
+            self.history.push_back(Entry {
+                id: self.next,
+                kind: match s.kind {
+                    SavedKind::Info => ToastKind::Info,
+                    SavedKind::Success => ToastKind::Success,
+                    SavedKind::Error => ToastKind::Error,
+                },
+                title: s.title,
+                body: s.body,
+                at: s.at,
+                source: s.source,
+                help: None,
+                offer: s.offer.map(|o| match o {
+                    SavedOffer::Pull(path) => Offer::Pull(path),
+                    SavedOffer::Accounts => Offer::Accounts,
+                    SavedOffer::GitSettings => Offer::GitSettings,
+                }),
+            });
+        }
+    }
+
     /// Applies new card filters immediately; hidden cards remain in the notification center.
     pub fn set_prefs(&mut self, prefs: NotificationPrefs) {
         self.prefs = prefs;
@@ -353,7 +446,10 @@ impl Toasts {
         } else {
             (None, None)
         };
-        self.notify(ctx, kind, topic, title, body, help, offer);
+        let source = repo
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned());
+        self.notify(ctx, kind, topic, title, body, help, offer, source);
     }
 
     /// Notifies with a decision to make: the card shows buttons for it for a decision's time
@@ -375,6 +471,40 @@ impl Toasts {
             body.into(),
             None,
             Some(offer),
+            None,
+        );
+    }
+
+    /// Like [`Self::push_offer`] (an Info notice), about `repo`, and only when the center does not already hold
+    /// the same notice for it (one kept from an earlier run included).
+    pub fn push_offer_for(
+        &mut self,
+        ctx: &egui::Context,
+        topic: Topic,
+        title: &str,
+        body: String,
+        offer: Offer,
+        repo: &Path,
+    ) {
+        let source = repo
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        if self
+            .history
+            .iter()
+            .any(|e| e.title == title && e.source == source)
+        {
+            return;
+        }
+        self.notify(
+            ctx,
+            ToastKind::Info,
+            topic,
+            title.into(),
+            body,
+            None,
+            Some(offer),
+            source,
         );
     }
 
@@ -391,6 +521,7 @@ impl Toasts {
         body: String,
         help: Option<&'static str>,
         offer: Option<Offer>,
+        source: Option<String>,
     ) {
         let left = lifetime(
             kind,
@@ -405,6 +536,7 @@ impl Toasts {
             title: title.clone(),
             body: body.clone(),
             at: chrono::Utc::now().timestamp(),
+            source,
             help,
             offer: offer.clone(),
         });
@@ -838,12 +970,23 @@ impl Toasts {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
+                                            if IconButton::new(icon::X, "Dismiss notification")
+                                                .size(Size::Xs)
+                                                .id_salt(("dismiss", e.id))
+                                                .show(ui)
+                                                .clicked()
+                                            {
+                                                gone = Some(e.id);
+                                            }
+                                            let when = super::widgets::relative_time(e.at, now);
+                                            let when = match &e.source {
+                                                Some(source) => format!("{source}  \u{b7}  {when}"),
+                                                None => when,
+                                            };
                                             ui.label(
-                                                RichText::new(super::widgets::relative_time(
-                                                    e.at, now,
-                                                ))
-                                                .size(m.meta_size)
-                                                .color(p.text_faint),
+                                                RichText::new(when)
+                                                    .size(m.meta_size)
+                                                    .color(p.text_faint),
                                             )
                                             .kit_tooltip(super::widgets::full_date(
                                                 e.at,
@@ -1739,7 +1882,7 @@ mod tests {
             n.sort();
             n
         };
-        let header = ["Clear all", "Notification settings"];
+        let header = ["Clear all", "Dismiss notification", "Notification settings"];
         assert_eq!(names(&frame(&mut toasts, Vec::new())), header);
         toasts.push_offer(
             &ctx,
@@ -1752,7 +1895,14 @@ mod tests {
         let buttons = frame(&mut toasts, Vec::new());
         assert_eq!(
             names(&buttons),
-            ["Clear all", "Later", "Notification settings", "Restart now"]
+            [
+                "Clear all",
+                "Dismiss notification",
+                "Dismiss notification",
+                "Later",
+                "Notification settings",
+                "Restart now"
+            ]
         );
         let (_, b) = buttons
             .iter()
@@ -1954,6 +2104,80 @@ mod tests {
             toasts.history.front().map(|e| e.title.as_str()),
             Some(format!("n{}", HISTORY + 4).as_str())
         );
+    }
+
+    #[test]
+    fn the_center_survives_a_restart_without_what_cannot() {
+        let ctx = egui::Context::default();
+        let mut before = Toasts::default();
+        before.push_for(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Fetch failed",
+            "no route",
+            Some(Path::new("/work/canopy")),
+        );
+        before.push_offer(
+            &ctx,
+            ToastKind::Info,
+            Topic::Attention,
+            "Git decides",
+            "pull.rebase is set",
+            Offer::GitSettings,
+        );
+        before.push_offer(
+            &ctx,
+            ToastKind::Info,
+            Topic::Update,
+            "Canopy 9 is out",
+            "",
+            Offer::ReviewUpdate,
+        );
+        let mut after = Toasts::default();
+        after.restore_json(&before.to_json());
+        let kept: Vec<_> = after
+            .history
+            .iter()
+            .map(|e| (e.title.as_str(), e.source.as_deref(), e.offer.clone()))
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                ("Canopy 9 is out", None, None),
+                ("Git decides", None, Some(Offer::GitSettings)),
+                ("Fetch failed", Some("canopy"), None),
+            ],
+            "the update to review is gone, the rest is back, newest first"
+        );
+        assert_eq!(after.unread, 0, "restored notifications are read");
+        after.restore_json("not json");
+        assert_eq!(after.history.len(), 3, "unreadable text is ignored");
+    }
+
+    #[test]
+    fn a_notice_about_a_repository_is_kept_once() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for _ in 0..2 {
+            toasts.push_offer_for(
+                &ctx,
+                Topic::Attention,
+                "Git settings differ",
+                "Prune: x".into(),
+                Offer::GitSettings,
+                Path::new("/work/canopy"),
+            );
+        }
+        toasts.push_offer_for(
+            &ctx,
+            Topic::Attention,
+            "Git settings differ",
+            "Prune: x".into(),
+            Offer::GitSettings,
+            Path::new("/work/other"),
+        );
+        assert_eq!(toasts.history.len(), 2, "once per repository");
     }
 
     /// The bell opens the center, which marks everything read and lists the notifications; while

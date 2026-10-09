@@ -279,6 +279,41 @@ impl CanopyApp {
         tab
     }
 
+    /// Starts reading the repository's git configuration, to report what goes against
+    /// Canopy's recommendation. A screenshot run reads nothing.
+    fn read_config_for(&mut self, ctx: &egui::Context, root: &std::path::Path) {
+        if self.screenshot.is_none() {
+            let rx = crate::repo_config::read_async(ctx, Some(root.to_path_buf()));
+            self.config_reads.push((root.to_path_buf(), rx));
+        }
+    }
+
+    /// Puts what the finished configuration reads found into the notification center.
+    pub(super) fn poll_config_reads(&mut self, ctx: &egui::Context) {
+        let mut waiting = Vec::new();
+        for (path, rx) in std::mem::take(&mut self.config_reads) {
+            match rx.try_recv() {
+                Ok(facts) => {
+                    let lines =
+                        settings_screen::against_recommendation(&facts, &self.settings, &path);
+                    if !lines.is_empty() {
+                        self.toasts.push_offer_for(
+                            ctx,
+                            Topic::Attention,
+                            "Git settings differ from the recommendation",
+                            lines.join("\n"),
+                            Offer::GitSettings,
+                            &path,
+                        );
+                    }
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => waiting.push((path, rx)),
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {}
+            }
+        }
+        self.config_reads = waiting;
+    }
+
     fn add_tab(&mut self, ctx: &egui::Context, root: PathBuf, focus: bool) {
         if let Some(i) = self.tabs.iter().position(|t| t.path == root) {
             if focus {
@@ -287,6 +322,7 @@ impl CanopyApp {
         } else {
             let tab = self.new_tab(ctx, root.clone());
             self.tabs.push(tab);
+            self.read_config_for(ctx, &root);
             if focus || self.tabs.len() == 1 {
                 self.active = self.tabs.len() - 1;
             }
@@ -314,6 +350,7 @@ impl CanopyApp {
             let mut tab = self.new_tab(ctx, root.clone());
             tab.view = view;
             self.tabs.insert(source, tab);
+            self.read_config_for(ctx, &root);
         }
         let next_focus = if focused.as_deref() == Some(from) {
             Some(&root)

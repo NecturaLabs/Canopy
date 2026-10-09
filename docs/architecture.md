@@ -147,7 +147,7 @@ thread.
 | `ui/art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
 | `ui/widgets.rs` | Ref pills, avatars, badges, segmented controls, switches, checkboxes, and the older button helpers, which now draw `ui::kit` buttons. |
 | `ui/folder_picker.rs` | Native folder selection on a background thread; a bounded result channel and requesting-field lifetime keep the event loop responsive. |
-| `ui/toast.rs` | Toast queue and animation. |
+| `ui/toast.rs` | Toast queue and animation, and the notification center's history, kept in eframe storage (`canopy-notifications-v1`; `Toasts::to_json`/`restore_json`). |
 | `ui/palette.rs` | Command palette with fuzzy matching; entries built on opening, ranked on query change. |
 | `ui/cheatsheet.rs` | The keyboard cheatsheet, drawn from `keymap::BINDINGS`. |
 | `ui/legal.rs` | The Terms and Privacy Policy as shipped (`docs/legal/`) and the versions a user accepts. |

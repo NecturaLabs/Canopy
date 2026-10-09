@@ -51,6 +51,11 @@ commits since the previous build.
 
 ### Added
 
+- The notification center is kept across restarts (the last 100, shown as read; the decisions
+  that need the running session are dropped), each row names the repository it is about and can
+  be dismissed on its own, and a repository whose git configuration decides against Canopy's
+  recommendation is listed there once, with a button to Git settings.
+
 - Canopy names the programs a repository needs and the system lacks (`git-lfs`, `ssh`, the signing
   program) when it is opened, with install steps for the system.
 

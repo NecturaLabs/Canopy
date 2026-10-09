@@ -186,6 +186,9 @@ pub struct CanopyApp {
     )>,
     /// Repositories asked for and not opened yet (a screenshot waits for them).
     pending_opens: usize,
+    /// Git configuration reads started for tabs just opened, answered once into the
+    /// notification center.
+    config_reads: Vec<(PathBuf, Receiver<crate::repo_config::GitFacts>)>,
     git_version: String,
     tokens: TokenStore,
     updater: Updater,
@@ -304,6 +307,7 @@ impl CanopyApp {
             clone: None,
             opener: open::start(&cc.egui_ctx),
             pending_opens: 0,
+            config_reads: Vec::new(),
             git_version,
             tokens: if shooting {
                 TokenStore::default()
@@ -328,6 +332,13 @@ impl CanopyApp {
                 .map(|n| crate::ui::kit::glass::Soak::new(n, crate::ui::kit::glass::Soak::CYCLE)),
         };
         app.apply_look(&cc.egui_ctx);
+        if !shooting
+            && let Some(kept) = cc
+                .storage
+                .and_then(|s| s.get_string(crate::ui::toast::STORAGE_KEY))
+        {
+            app.toasts.restore_json(&kept);
+        }
         let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
         } else {
@@ -1146,6 +1157,9 @@ impl eframe::App for CanopyApp {
                 Offer::Accounts => {
                     self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }
+                Offer::GitSettings => {
+                    self.open_settings(SettingsScreen::at(settings_screen::Section::Git));
+                }
                 Offer::ReviewUpdate => {
                     if let UpdateState::Available(a) = &self.updater.state {
                         self.dialogs.open(Dialog::Update(a.clone()));
@@ -1191,6 +1205,7 @@ impl eframe::App for CanopyApp {
         }
         self.settings.open_tabs = self.tabs.iter().map(|t| t.path.clone()).collect();
         eframe::set_value(storage, settings::KEY, &self.settings);
+        storage.set_string(crate::ui::toast::STORAGE_KEY, self.toasts.to_json());
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -1471,6 +1486,7 @@ pub(super) fn test_app() -> CanopyApp {
         clone: None,
         opener: None,
         pending_opens: 0,
+        config_reads: Vec::new(),
         git_version: String::new(),
         tokens: TokenStore::default(),
         updater: Updater::default(),

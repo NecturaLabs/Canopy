@@ -5099,6 +5099,53 @@ fn keyboard(ui: &mut Ui) {
     }
 }
 
+/// What the repository's git configuration decides against Canopy's recommendation, one line per
+/// choice, for the notification center. Empty unless Canopy follows the configuration (when it
+/// does not, Canopy's own choice applies and nothing is overruled) and it sets such a value.
+pub(crate) fn against_recommendation(
+    facts: &GitFacts,
+    settings: &Settings,
+    repo: &Path,
+) -> Vec<String> {
+    if !settings.follow_git_config {
+        return Vec::new();
+    }
+    let follow = true;
+    let pull = settings.pull_for(repo);
+    let follow_tags = config_note(
+        &facts.follow_tags.iter().collect::<Vec<_>>(),
+        follow,
+        |v| v.as_bool() == Some(settings.follow_tags),
+        |v| v.as_bool() == Some(true),
+        "on",
+        "--follow-tags",
+        "pushes",
+    );
+    [
+        ("Pull", pull_note(facts, pull)),
+        ("Prune", prune_note(facts, settings.prune_on_fetch, follow)),
+        (
+            "Prune tags",
+            prune_tags_note(facts, settings.prune_tags, follow),
+        ),
+        (
+            "Autostash",
+            autostash_note(facts, settings.autostash, follow),
+        ),
+        ("Push tags", follow_tags),
+    ]
+    .into_iter()
+    .filter_map(|(name, note)| {
+        note.filter(|n| n.text.contains("Recommended")).map(|n| {
+            let text = n
+                .text
+                .trim_start_matches("Your git configuration decides: ");
+            format!("{name}: {text}")
+        })
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6646,6 +6693,40 @@ mod tests {
             );
         }
     }
+    /// #42: the notification center lists what the git configuration decides against the
+    /// recommendation, only while Canopy follows it.
+    #[test]
+    fn the_configuration_against_the_recommendation_is_listed_while_following_it() {
+        let facts = GitFacts {
+            fetch_prune: Some(fact("fetch.prune", "false")),
+            follow_tags: Some(fact("push.followTags", "true")),
+            ..GitFacts::default()
+        };
+        let repo = Path::new("/work/canopy");
+        let follow = Settings {
+            follow_git_config: true,
+            ..Settings::default()
+        };
+        let lines = against_recommendation(&facts, &follow, repo);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("Prune: fetch.prune = false") && lines[0].contains("Recommended"),
+            "{lines:?}"
+        );
+        let ours = Settings {
+            follow_git_config: false,
+            ..Settings::default()
+        };
+        assert!(
+            against_recommendation(&facts, &ours, repo).is_empty(),
+            "Canopy's own choice applies, so nothing is overruled"
+        );
+        assert!(
+            against_recommendation(&GitFacts::default(), &follow, repo).is_empty(),
+            "a configuration that sets nothing is not listed"
+        );
+    }
+
     /// Selecting another predefined theme leaves the appearance controls at the same position.
     #[test]
     fn choosing_a_theme_does_not_shift_the_page() {
