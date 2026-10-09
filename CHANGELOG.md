@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Added
 
+- A pull or merge request whose checks and reviews are not loaded (before they arrive, or without a
+  token and never opened) shows a faint question mark with that tooltip, instead of looking like a
+  request that has none.
 - A file replaced by a symbolic link (or the other way round) now shows its lines in the diff: the old
   content or target removed and the new one added, as `git diff` prints them. A link is read, never
   followed, so what it points to is not shown; its hunks offer no actions, since only the whole file

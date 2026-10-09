@@ -209,7 +209,8 @@ Request list icons show lifecycle and draft state. Branches have a separate line
 reserved for the target. The request list shows each request's checks (passed, failed, running)
 and review (approved, changes requested, and on GitHub review required) without opening it when
 Canopy has a token for the host; without a token a row shows them once the request was opened in
-the session.
+the session, and until then a faint question mark says they are not loaded (a request with no
+checks shows nothing).
 
 The request list stays current without pressing Reload: a fetch (manual or the background one),
 pull or push that succeeds refreshes it, and the open request, quietly (no spinner or toast; the

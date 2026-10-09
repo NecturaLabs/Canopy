@@ -28,7 +28,7 @@ use crate::tab::RepoTab;
 static CHOSEN: OnceLock<Scenario> = OnceLock::new();
 
 /// What `--demo-requests` accepts, for `--help` and the error message.
-pub const SPECS: &str = "list, list-all, list-closed, <number>, busy, loading, details-loading, \
+pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, <number>, busy, loading, details-loading, \
 details-error, error, no-token or empty; prefix gitlab: for merge requests";
 
 /// Which part of the requests view to show.
@@ -36,6 +36,8 @@ details-error, error, no-token or empty; prefix gitlab: for merge requests";
 enum Scene {
     /// The list under this filter, nothing selected.
     List(StateFilter),
+    /// The open list as it shows before its checks and reviews arrive (or without a token).
+    Unchecked,
     /// The list with this request selected and its details loaded.
     Request(u64),
     /// The request in flight: its merge box shows the busy line.
@@ -90,6 +92,7 @@ impl Scenario {
             "list" => Scene::List(StateFilter::Open),
             "list-all" => Scene::List(StateFilter::All),
             "list-closed" => Scene::List(StateFilter::Closed),
+            "list-unchecked" => Scene::Unchecked,
             "busy" => Scene::Busy,
             "loading" => Scene::Loading,
             "details-loading" => Scene::DetailsLoading,
@@ -186,6 +189,16 @@ impl Scenario {
             Scene::List(filter) => {
                 requests.filter = filter;
                 requests.list = list(filter);
+            }
+            Scene::Unchecked => {
+                let rows: Vec<RequestSummary> = summaries(kind, StateFilter::Open, now)
+                    .iter()
+                    .map(|r| RequestSummary {
+                        rollup: None,
+                        ..r.clone()
+                    })
+                    .collect();
+                requests.list = Some(Ok(rows.into()));
             }
             Scene::Request(number) => {
                 let open = ROWS
@@ -809,6 +822,7 @@ mod tests {
             "list",
             "list-all",
             "list-closed",
+            "list-unchecked",
             "428",
             "busy",
             "loading",

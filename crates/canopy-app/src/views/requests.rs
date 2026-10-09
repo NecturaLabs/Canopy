@@ -639,7 +639,18 @@ fn row(
     let (glyph, tone, state) = state_style(r);
     let color = tone.color(p);
     let number = number_text(kind, r.number);
-    let glyphs = signals.map(Signals::glyphs).unwrap_or_default();
+    // Nothing known (no rollup yet or at all, and never opened): said, rather than left to look
+    // like a request without checks.
+    let glyphs = signals.map_or_else(
+        || {
+            vec![(
+                icon::QUESTION,
+                Tone::Neutral,
+                "Checks and reviews not loaded".to_owned(),
+            )]
+        },
+        Signals::glyphs,
+    );
     let mut tooltip = format!(
         "{state} · {}\n{number} · {}\n{} → {}",
         r.title, r.author, r.source_branch, r.target_branch
@@ -2157,6 +2168,24 @@ mod tests {
         assert!(frame.has(icon::CHECK_CIRCLE), "{:?}", frame.texts);
         assert!(frame.has(icon::THUMBS_UP), "{:?}", frame.texts);
         assert!(!frame.has(icon::X_CIRCLE), "{:?}", frame.texts);
+        // A request nothing is known about (no rollup, never opened) says so instead of showing
+        // what a request without checks shows.
+        let mut nine = summary(RequestState::Open);
+        nine.number = 9;
+        let frame = draw(vec![nine]);
+        assert!(frame.has(icon::QUESTION), "{:?}", frame.texts);
+        let mut ten = summary(RequestState::Open);
+        ten.number = 10;
+        ten.rollup = Some(Rollup {
+            checks: None,
+            review: None,
+        });
+        let frame = draw(vec![ten]);
+        assert!(
+            !frame.has(icon::QUESTION),
+            "a rollup of nothing is known: {:?}",
+            frame.texts
+        );
     }
 
     /// F6: with the list failed, the list pane stays short and leaves the way out to the details
