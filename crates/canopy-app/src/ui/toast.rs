@@ -195,8 +195,13 @@ fn card_text<'a>(kind: ToastKind, body: &'a str, help: Option<&'static str>) -> 
             details: Some(body),
         };
     }
-    // No hint: git's own first line says why, and the details hold the rest.
-    let first = body.lines().map(str::trim).find(|l| !l.is_empty());
+    // No hint: git's own words say why, and the details hold the rest. Git opens some commands
+    // with a progress line ("Cloning into ..."), so its first `fatal:` or `error:` line, when it
+    // wrote one, is the reason; else the first line.
+    let lines = || body.lines().map(str::trim);
+    let first = lines()
+        .find(|l| l.starts_with("fatal:") || l.starts_with("error:"))
+        .or_else(|| lines().find(|l| !l.is_empty()));
     let more = first.is_some_and(|f| body.trim() != f);
     CardText {
         body: first,
@@ -2250,6 +2255,22 @@ mod tests {
         toasts.push(&ctx, ToastKind::Error, Topic::Error, "Push failed", "no");
         assert!(toasts.items.is_empty(), "no card while the center is open");
         assert_eq!(toasts.history.len(), 2);
+    }
+
+    /// Git opens a clone with a progress line; the card must say why it failed, not that.
+    #[test]
+    fn a_failure_card_gives_gits_fatal_line_not_its_progress_line() {
+        let raw = "git submodule failed: Cloning into 'libs/three'...\n\
+                   fatal: unable to access 'https://127.0.0.1:9/o/r.git/': Failed to connect";
+        let said = card_text(ToastKind::Error, raw, None);
+        assert_eq!(
+            said.body,
+            Some("fatal: unable to access 'https://127.0.0.1:9/o/r.git/': Failed to connect")
+        );
+        assert_eq!(said.details, Some(raw), "the tooltip keeps all of it");
+
+        let plain = card_text(ToastKind::Error, "something went wrong\nand more", None);
+        assert_eq!(plain.body, Some("something went wrong"));
     }
 
     /// The center says what the card says: a known git failure as its hint, git's own output in
