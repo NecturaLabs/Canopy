@@ -585,8 +585,11 @@ impl Repo {
             .filter(|c| c.kind == crate::StaleKind::Branch)
             .map(|c| format!("refs/heads/{}", c.name))
             .collect();
+        // One scan checks the whole selection; each removal then re-scans once, because the
+        // repository may have changed since.
+        let fresh = self.stale_candidates(older_than_days, now)?;
         for candidate in candidates {
-            self.validate_stale_candidate(candidate, older_than_days, now)?;
+            Self::validate_stale_candidate(candidate, &fresh)?;
             if self.stale_unique_commits(candidate.tip, &removed_refs)? > 0 {
                 return Err(Error::invalid(format!(
                     "Cannot remove {}: the selection would leave commits without a branch",
@@ -595,7 +598,8 @@ impl Repo {
             }
         }
         for candidate in candidates {
-            self.validate_stale_candidate(candidate, older_than_days, now)?;
+            let fresh = self.stale_candidates(older_than_days, now)?;
+            Self::validate_stale_candidate(candidate, &fresh)?;
             match candidate.kind {
                 crate::StaleKind::Branch => self.delete_merged_branch(&candidate.name)?,
                 crate::StaleKind::Worktree => {

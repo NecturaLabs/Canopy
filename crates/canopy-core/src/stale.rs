@@ -217,14 +217,12 @@ impl Repo {
             .map_err(Into::into)
     }
 
-    /// Finds a freshly previewed, still removable item at the same commit and identity.
+    /// Finds `preview` among the `fresh` candidates: still removable, at the same commit and
+    /// identity.
     pub(crate) fn validate_stale_candidate(
-        &self,
         preview: &StaleCandidate,
-        older_than_days: u32,
-        now: i64,
+        fresh: &[StaleCandidate],
     ) -> Result<()> {
-        let fresh = self.stale_candidates(older_than_days, now)?;
         let current = fresh
             .iter()
             .find(|c| c.kind == preview.kind && c.name == preview.name && c.path == preview.path)
