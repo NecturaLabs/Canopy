@@ -267,6 +267,34 @@ fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<Option<Vec<u8>>
     Ok(Some(bytes))
 }
 
+/// Counts a committed type change without building display lines or applying the display cap.
+pub(crate) fn typechange_stats(
+    repo: &crate::Repo,
+    delta: &git2::DiffDelta<'_>,
+) -> Result<(usize, usize)> {
+    let count = |file: &git2::DiffFile<'_>| -> Result<Option<usize>> {
+        if file.id().is_zero() {
+            return Ok(None);
+        }
+        if file.mode() == git2::FileMode::Commit {
+            return Ok(Some(1));
+        }
+        let blob = repo.git().find_blob(file.id())?;
+        let bytes = blob.content();
+        if bytes.contains(&0) {
+            return Ok(None);
+        }
+        let lines = bytes.split_inclusive(|&b| b == b'\n').count();
+        Ok(Some(lines))
+    };
+    Ok(
+        match (count(&delta.old_file())?, count(&delta.new_file())?) {
+            (Some(old), Some(new)) => (new, old),
+            _ => (0, 0),
+        },
+    )
+}
+
 /// The two sides of a type change as lines (old, new): `Ok(None)` when a side is binary or too
 /// large to show.
 pub(crate) fn typechange_sides(

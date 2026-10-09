@@ -23,6 +23,9 @@ commits since the previous build.
 
 ### Fixed
 
+- Commit file counts include every text line in a file-type change, including files larger
+  than the diff preview limit and changes to or from a submodule pointer.
+
 - A repository's own `sequence.editor` setting can no longer start a program through Canopy's git
   commands; the security audit of the other configuration keys is in the architecture notes.
 - The installer and the in-app updater now remove the old scalable icon an earlier build left in your
