@@ -114,6 +114,8 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Unstaged, staged and conflicted lists (empty ones hidden while another has content) | Done | Yes | Yes | Yes |
 | Clean working tree summary: branch status, Push/Pull/Publish, last commit | Done | ? | ? | ? |
 | Stage, unstage, discard per file and all (Stage selected beside Stage all; Ctrl/Shift-click select several files) | Done | Yes | Yes | Yes |
+| Untracked folders the status lists as one entry (a folder holding a repository of its own, or any top folder when there are very many untracked files) are listed under "Untracked folders" with a Stage action; staging one that holds a repository asks first, since Git records it as a link nobody can clone, and Stage all leaves such folders out and says so | Done | Yes | ? | ? |
+| Publish any local branch (not only the checked-out one) to a remote from its context menu, making the remote branch its upstream | Done | Yes | ? | ? |
 | Hunk staging, unstaging and discard | Done | Yes | Yes | Yes |
 | Line-level staging | Done | Yes | Yes | Yes |
 | Diff with old and new line numbers | Done | Yes | Yes | Yes |

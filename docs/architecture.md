@@ -56,11 +56,12 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `update.rs` | Build numbers for the update check: `parse_build` reads one (digits only; a semantic version has none) and `is_newer` orders builds as integers. |
 | `cli.rs` | Runs the `git` executable non-interactively (`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, no console window on Windows), returns git's stderr on failure and streams `--progress` output line by line for long operations. Keeps the environment's repository variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of `git rev-parse --local-env-vars` but the configuration ones) away from git, so a command works in the repository Canopy gave it, the one it checked and shows. Registers Canopy's askpass hook and redacts URLs and arguments for the log (`redact_url`, `loggable`). |
 
-The app still calls `delete_branch(name, force)` and `stage_all()`, thin wrappers over the newer
-calls. It does not yet use `flow.rs`, `merged.rs`, `lfs.rs`,
-`paths::safe_join`, `publish_branch`, `untracked_children`, `stage_all_except_repositories` or the
-file-mode fields outside the core's own code and tests; the backlog entries for those features
-are the UI work.
+The app calls `delete_merged_branch` and `force_delete_branch` (the old `delete_branch(name,
+force)` wrapper is gone), `stage_all_except_repositories` (its `stage_all` wrapper is gone; it
+returns the folders it left out) and `publish_branch` (the branch menu's Publish). It does not
+yet use `flow.rs`, `merged.rs`, `lfs.rs`, `paths::safe_join` or `untracked_children` (the Changes list shows
+the collapsed folders, not their contents) outside the core's own code and tests; the backlog
+entries for those features are the UI work.
 
 ## canopy-hosting
 

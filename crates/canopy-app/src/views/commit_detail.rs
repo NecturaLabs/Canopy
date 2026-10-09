@@ -799,7 +799,7 @@ fn file_list_row_inner(
 const CHANGE_BADGE: f32 = 17.0;
 const CHANGE_LETTER: f32 = 10.0;
 /// Gap between a file row's badge, name, folder and counts (concept 1's `.frow`).
-const ROW_GAP: f32 = 8.0;
+pub(crate) const ROW_GAP: f32 = 8.0;
 
 /// `+n −n` as `kit::chip::DiffStat` paints it: mono in `success` and `danger` at 85%.
 fn diffstat_galley(ui: &Ui, f: &FileEntry) -> std::sync::Arc<egui::Galley> {
@@ -817,7 +817,7 @@ fn diffstat_galley(ui: &Ui, f: &FileEntry) -> std::sync::Arc<egui::Galley> {
 }
 
 /// Paints `text` on one line from `x`, ellipsized before `right`; returns where it ends.
-fn paint_line(
+pub(crate) fn paint_line(
     painter: &egui::Painter,
     x: f32,
     right: f32,

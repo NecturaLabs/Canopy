@@ -332,9 +332,128 @@ fn lists(
         if staged {
             list(ui, tab, List::Staged, &st.staged, actions, flip);
         }
+        if !st.untracked_dirs.is_empty() {
+            ui.add_space(LIST_GAP);
+            untracked_folders(ui, &st.untracked_dirs, actions);
+        }
     }
     ui.spacing_mut().item_spacing.y = spacing;
     ui.spacing_mut().interact_size.y = row_height;
+}
+
+/// The untracked folders the status lists as one entry each (a folder holding a repository of
+/// its own, or any top-most folder when there are very many untracked files), with a Stage
+/// action. A folder with a repository in it is staged only after a question: Git would record
+/// the repository as a link nobody can clone.
+fn untracked_folders(ui: &mut Ui, dirs: &[canopy_core::UntrackedDir], actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    list_header(ui, "Untracked folders", dirs.len(), Tone::Warning, |_| {});
+    ui.add_space(theme::XS);
+    for d in dirs {
+        let id = ui.id().with(("untracked-folder", &d.path));
+        let detail = if d.repository {
+            "repository".to_owned()
+        } else if d.files == 1 {
+            "1 file".to_owned()
+        } else {
+            format!("{} files", d.files)
+        };
+        let tip = if d.repository {
+            format!(
+                "{} holds a Git repository of its own; Stage all leaves it out.",
+                d.path
+            )
+        } else {
+            d.path.clone()
+        };
+        let mut clicked = false;
+        let row = crate::ui::kit::row::ListRow::new(id)
+            .kind(RowKind::File)
+            .tooltip(tip)
+            .actions(|ui| {
+                let r = IconButton::new(icon::PLUS, "Stage folder")
+                    .size(Size::Sm)
+                    .id_salt(("stage-folder", &d.path))
+                    .show(ui);
+                r.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        format!("Stage folder {}", d.path),
+                    )
+                });
+                clicked = r.clicked();
+            })
+            .show_with(ui, |rc, painter| {
+                let cy = rc.rect.center().y;
+                let glyph = painter.layout_no_wrap(
+                    icon::FOLDER_SIMPLE.to_owned(),
+                    FontId::proportional(m.body_size),
+                    p.text_dim,
+                );
+                let glyph_width = glyph.size().x;
+                painter.galley(
+                    pos2(rc.content.left(), cy - glyph.size().y / 2.0),
+                    glyph,
+                    p.text_dim,
+                );
+                let side = painter.layout_no_wrap(
+                    detail.clone(),
+                    FontId::proportional(m.meta_size),
+                    p.text_faint,
+                );
+                let right =
+                    rc.content.right() - commit_detail::icon_actions_width() - side.size().x;
+                painter.galley(pos2(right, cy - side.size().y / 2.0), side, p.text_faint);
+                commit_detail::paint_line(
+                    painter,
+                    rc.content.left() + glyph_width + commit_detail::ROW_GAP,
+                    right - commit_detail::ROW_GAP,
+                    cy,
+                    &d.path,
+                    FontId::new(m.body_size, theme::medium()),
+                    rc.text,
+                );
+            });
+        ui.ctx().accesskit_node_builder(row.id, |n| {
+            n.set_label(format!("{}, untracked folder, {detail}", d.path));
+        });
+        if clicked {
+            actions.push(stage_folder(d));
+        }
+    }
+}
+
+/// Staging an untracked folder: at once, or after a question when a repository of its own is
+/// in it.
+fn stage_folder(d: &canopy_core::UntrackedDir) -> Action {
+    let op = Op::Stage(vec![d.path.clone()]);
+    if d.repository || d.contains_repository {
+        Action::Confirm {
+            title: format!("Stage {}?", d.path),
+            body: if d.repository {
+                format!(
+                    "{} is a Git repository of its own. Staging it records a link to one commit, \
+                     not its files, and nobody can clone that without a submodule entry. Add it as \
+                     a submodule, or ignore it, instead.",
+                    d.path
+                )
+            } else {
+                format!(
+                    "{} holds a Git repository of its own. Staging the folder records that \
+                     repository as a link to one commit, which nobody can clone without a \
+                     submodule entry.",
+                    d.path
+                )
+            },
+            confirm: "Stage anyway".into(),
+            danger: false,
+            op,
+        }
+    } else {
+        Action::Op(op)
+    }
 }
 
 /// Shared entry point from the Changes header and overflow menu.
@@ -1890,6 +2009,59 @@ mod tests {
             identity_notice(None, true),
             Some("Could not read Git identity.")
         );
+    }
+
+    /// #43: an untracked folder the status lists as one entry is on the list, named, with a
+    /// Stage action; one with a repository in it is staged only after the question.
+    #[test]
+    fn collapsed_untracked_folders_are_listed_and_staged_after_a_question_when_they_hold_a_repository()
+     {
+        use canopy_core::UntrackedDir;
+        let dir = |path: &str, files, repository, contains_repository| UntrackedDir {
+            path: path.into(),
+            files,
+            repository,
+            contains_repository,
+        };
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let folders = vec![
+            dir("vendor/", 0, true, false),
+            dir("build/", 120, false, false),
+        ];
+        let mut actions = Vec::new();
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    untracked_folders(ui, &folders, &mut actions);
+                });
+            });
+        }
+        let named = |what: &str| {
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref().is_some_and(|l| l.contains(what)))
+        };
+        assert!(named("vendor/, untracked folder, repository"));
+        assert!(named("build/, untracked folder, 120 files"));
+        assert!(actions.is_empty(), "listing stages nothing");
+
+        assert!(matches!(
+            stage_folder(&folders[0]),
+            Action::Confirm { confirm, op: Op::Stage(p), .. }
+                if confirm == "Stage anyway" && p == ["vendor/"]
+        ));
+        assert!(matches!(
+            stage_folder(&dir("tools/", 3, false, true)),
+            Action::Confirm { .. }
+        ));
+        assert!(matches!(
+            stage_folder(&folders[1]),
+            Action::Op(Op::Stage(p)) if p == ["build/"]
+        ));
     }
 
     /// #63: every control the Changes view draws (the lists, their buttons and the commit

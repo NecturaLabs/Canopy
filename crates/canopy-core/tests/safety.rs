@@ -220,7 +220,7 @@ fn unmerged_branch_refuses_with_gits_message() {
     }
     assert!(ref_exists(p, "refs/heads/wip"), "nothing deleted");
     // The compatibility entry point without force behaves the same.
-    assert!(repo.delete_branch("wip", false).is_err());
+    assert!(repo.delete_merged_branch("wip").is_err());
 
     repo.force_delete_branch("wip").expect("force deletes");
     assert!(!ref_exists(p, "refs/heads/wip"));
@@ -801,7 +801,7 @@ fn embedded_repositories_are_listed_and_not_staged_by_stage_all() {
 
     // The compatibility entry point does the same.
     git(p, &["reset", "-q"]);
-    repo.stage_all().unwrap();
+    repo.stage_all_except_repositories().unwrap();
     assert!(!git(p, &["ls-files", "-s"]).contains("160000"));
     assert_eq!(
         git(p, &["diff", "--cached", "--name-only"]),

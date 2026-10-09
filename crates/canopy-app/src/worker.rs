@@ -104,6 +104,12 @@ pub enum Op {
         remote: String,
         tag: String,
     },
+    /// Publishes a local branch (checked out or not) to `remote` and makes the remote branch its
+    /// upstream.
+    PublishBranch {
+        name: String,
+        remote: String,
+    },
     StashSave {
         message: Option<String>,
         untracked: bool,
@@ -190,7 +196,7 @@ impl Op {
             Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
             Self::Fetch { .. } => OpKind::Fetch,
             Self::Pull { .. } => OpKind::Pull,
-            Self::Push { .. } => OpKind::Push,
+            Self::Push { .. } | Self::PublishBranch { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             Self::Merge(..) | Self::Rebase(_) => OpKind::Merge,
             Self::StashSave { .. } => OpKind::Stash,
@@ -263,6 +269,7 @@ impl Op {
             Self::CreateTag { name, .. } => format!("Tagging {name}"),
             Self::DeleteTag(t) => format!("Deleting tag {t}"),
             Self::PushTag { tag, .. } => format!("Pushing tag {tag}"),
+            Self::PublishBranch { name, .. } => format!("Publishing {name}"),
             Self::StashSave { .. } => "Stashing".into(),
             Self::StashApply { pop: true, .. } | Self::StashApplyCommit { pop: true, .. } => {
                 "Popping stash".into()
@@ -1409,7 +1416,8 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         }
         Op::CheckoutDetached(oid) => done(repo.checkout_detached(oid)),
         Op::RenameBranch { old, new } => done(repo.rename_branch(&old, &new)),
-        Op::DeleteBranch { name, force } => done(repo.delete_branch(&name, force)),
+        Op::DeleteBranch { name, force: true } => done(repo.force_delete_branch(&name)),
+        Op::DeleteBranch { name, force: false } => done(repo.delete_merged_branch(&name)),
         Op::Merge(t, mode) => repo.merge(&t, mode),
         Op::Rebase(t) => repo.rebase(&t),
         Op::ContinueOrAbort { state, abort } => repo.continue_or_abort(state, abort),
@@ -1423,6 +1431,7 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         } => done(repo.create_tag(&name, target, message.as_deref())),
         Op::DeleteTag(t) => done(repo.delete_tag(&t)),
         Op::PushTag { remote, tag } => repo.push_tag(&remote, &tag, progress),
+        Op::PublishBranch { name, remote } => repo.publish_branch(&name, &remote, progress),
         Op::StashSave { message, untracked } => {
             done(repo.stash_save(message.as_deref(), untracked))
         }
@@ -2032,7 +2041,7 @@ mod read_tests {
                 "{strategy:?}, recurse={recurse}"
             );
             if recurse {
-                repo.stage_all().expect("stage all");
+                repo.stage_all_except_repositories().expect("stage all");
                 assert_eq!(
                     repo.submodules(false).expect("submodules")[0].index_id,
                     Some(new),
@@ -2808,6 +2817,44 @@ mod read_tests {
             matches!(events.last(), Some(Event::Diff(_, Ok(_)))),
             "{events:?}"
         );
+    }
+
+    /// #43: Publish works on any local branch, not only the checked-out one, and makes the remote
+    /// branch its upstream.
+    #[test]
+    fn a_branch_that_is_not_checked_out_can_be_published() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        git(&copy, &["branch", "topic"]);
+        let repo = Repo::open(&copy).expect("open");
+        let op = Op::PublishBranch {
+            name: "topic".into(),
+            remote: "origin".into(),
+        };
+        assert_eq!(op.kind(), OpKind::Push);
+        assert_eq!(op.label(), "Publishing topic");
+        perform(&repo, op, |_| {}).expect("publishes");
+        let up = root.path().join("up");
+        assert_eq!(
+            git(&up, &["rev-parse", "refs/heads/topic"]),
+            git(&copy, &["rev-parse", "refs/heads/topic"]),
+            "the remote has the branch"
+        );
+        assert_eq!(git(&copy, &["config", "branch.topic.remote"]), "origin");
+        assert_eq!(
+            git(&copy, &["config", "branch.topic.merge"]),
+            "refs/heads/topic"
+        );
+        let refused = perform(
+            &repo,
+            Op::PublishBranch {
+                name: "nothing".into(),
+                remote: "origin".into(),
+            },
+            |_| {},
+        )
+        .expect_err("not a branch");
+        assert!(refused.to_string().contains("not a local branch"));
     }
 
     #[test]

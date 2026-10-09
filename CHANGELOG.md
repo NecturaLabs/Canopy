@@ -51,6 +51,11 @@ commits since the previous build.
 
 ### Added
 
+- Any local branch without an upstream can be published to a remote from its context menu in the
+  sidebar, and the Changes list shows untracked folders the status collapsed (a folder that is a
+  Git repository, or any top folder when there are very many untracked files) with a Stage
+  action that asks first when a repository is inside.
+
 - A partial clone made by Git before 2.24 can be converted from the Open error: Canopy asks, sets
   `remote.<name>.promisor` and removes `extensions.partialClone`, then opens it. A diff a partial
   clone could not download shows a Retry button, is not asked for again on every refresh, and its

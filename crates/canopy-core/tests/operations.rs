@@ -141,7 +141,7 @@ fn stage_unstage_discard_and_commit() {
     assert!(!p.join("new.txt").exists());
 
     fs::write(p.join("a.txt"), "again\n").expect("write");
-    repo.stage_all().expect("stage all");
+    repo.stage_all_except_repositories().expect("stage all");
     let oid = repo
         .commit("fix: change a\n\nBody.", false, false)
         .expect("commit");
@@ -508,7 +508,7 @@ fn branches_tags_stash_reset() {
     assert_eq!(repo.head().expect("head").branch.as_deref(), Some("topic"));
     repo.rename_branch("topic", "topic2").expect("rename");
     repo.checkout_branch("main").expect("checkout");
-    repo.delete_branch("topic2", false).expect("delete");
+    repo.delete_merged_branch("topic2").expect("delete");
     assert_eq!(repo.branches().expect("branches").len(), 1);
 
     let head = repo.head().expect("head").oid.expect("oid");
@@ -529,7 +529,7 @@ fn branches_tags_stash_reset() {
     assert!(snap.stashes.is_empty(), "{:?}", snap.stashes);
     assert_eq!(snap.status.unstaged.len(), 1);
 
-    repo.stage_all().expect("stage");
+    repo.stage_all_except_repositories().expect("stage");
     let second = repo.commit("feat: second", false, false).expect("commit");
     repo.reset(head, ResetMode::Soft).expect("reset");
     let snap = repo.snapshot(10).expect("snapshot");
@@ -608,7 +608,7 @@ fn push_and_fetch_against_a_local_remote() {
     assert_eq!((main.ahead, main.behind), (0, 0));
 
     fs::write(dir.path().join("a.txt"), "ahead\n").expect("write");
-    repo.stage_all().expect("stage");
+    repo.stage_all_except_repositories().expect("stage");
     repo.commit("feat: ahead", false, false).expect("commit");
     let snap = repo.snapshot(10).expect("snapshot");
     assert_eq!(snap.current_branch().expect("main").ahead, 1);
@@ -1039,7 +1039,7 @@ fn diverge(up: &Path, copy: &Repo) {
     git(up, &["add", "."]);
     git(up, &["commit", "-q", "-m", "feat: upstream"]);
     fs::write(copy.workdir().join("local.txt"), "local\n").expect("write");
-    copy.stage_all().expect("stage");
+    copy.stage_all_except_repositories().expect("stage");
     copy.commit("feat: local", false, false).expect("commit");
 }
 
@@ -1056,7 +1056,7 @@ fn head_parents(repo: &Repo) -> usize {
 fn commit_signoff_adds_a_trailer() {
     let (dir, repo) = fixture();
     fs::write(dir.path().join("a.txt"), "signed\n").expect("write");
-    repo.stage_all().expect("stage");
+    repo.stage_all_except_repositories().expect("stage");
     repo.commit("feat: signed\n\nBody.", false, true)
         .expect("commit");
     let msg = repo.head_message().expect("message");
@@ -1140,7 +1140,7 @@ fn whitespace_modes_hide_whitespace_only_changes() {
     assert_eq!(hunks(Whitespace::IgnoreAll), cli_hunks("-w"));
 
     // Staged and commit diffs honour the mode too.
-    repo.stage_all().expect("stage");
+    repo.stage_all_except_repositories().expect("stage");
     let staged = |ws| {
         repo.file_diff(
             &DiffSource::Staged,
@@ -2028,7 +2028,7 @@ fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
     // Local commits on top of the request head: checking it out again just switches to the
     // branch, like `git merge --ff-only` finding it already up to date.
     fs::write(dest.join("mine.txt"), "mine\n").expect("write");
-    repo.stage_all().expect("stage");
+    repo.stage_all_except_repositories().expect("stage");
     let mine = repo.commit("feat: mine", false, false).expect("commit");
     repo.checkout_branch("main").expect("switch to main");
     repo.checkout_request("origin", "refs/pull/1/head", "pr/1", |_| {})
@@ -2939,7 +2939,7 @@ fn fetch_keeps_local_tags_whatever_fetch_prune_tags_says() {
 fn commit_keeps_lines_that_start_with_a_hash() {
     let (dir, repo) = fixture();
     fs::write(dir.path().join("a.txt"), "hash\n").expect("write");
-    repo.stage_all().expect("stage");
+    repo.stage_all_except_repositories().expect("stage");
     repo.commit(
         "\nfix: close the stale tab   \n\n#42 was the report.\n# Notes\n\n\n",
         false,
@@ -3026,7 +3026,7 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
             git(dir.path(), &["config", "commit.cleanup", mode]);
         }
         fs::write(dir.path().join("a.txt"), "hash\n").expect("write");
-        repo.stage_all().expect("stage");
+        repo.stage_all_except_repositories().expect("stage");
         repo.commit("fix: tab\n\n# Notes\n", false, false)
             .expect("commit");
         let message = repo.head_message().expect("message");

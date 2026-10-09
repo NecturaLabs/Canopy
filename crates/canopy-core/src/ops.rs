@@ -320,12 +320,6 @@ impl Repo {
             .map(drop)
     }
 
-    /// Stages every change, including untracked files, except folders holding a repository of
-    /// their own (see [`Self::stage_all_except_repositories`]).
-    pub fn stage_all(&self) -> Result<()> {
-        self.stage_all_except_repositories().map(drop)
-    }
-
     /// Stages every change, including untracked files (`git add -A`), but leaves out untracked
     /// folders that hold a Git repository of their own and are not submodules: `git add` would
     /// record each as a gitlink with no `.gitmodules` entry, which nobody can clone. Returns those
@@ -529,16 +523,6 @@ impl Repo {
     /// Renames a local branch.
     pub fn rename_branch(&self, old: &str, new: &str) -> Result<()> {
         self.git_cmd(&["branch", "-m", "--", old, new]).map(drop)
-    }
-
-    /// Deletes a local branch: [`Self::force_delete_branch`] when `force` is set, otherwise
-    /// [`Self::delete_merged_branch`]. Kept for existing callers; new code calls those two.
-    pub fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
-        if force {
-            self.force_delete_branch(name)
-        } else {
-            self.delete_merged_branch(name)
-        }
     }
 
     /// Deletes a local branch with `git branch -d`, which refuses (with git's "not fully merged"

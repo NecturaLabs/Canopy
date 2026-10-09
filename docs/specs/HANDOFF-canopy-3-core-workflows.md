@@ -99,7 +99,7 @@ failures stay `Error::Cli` with git's stderr.
   - `submodule_remove` loses unpushed commits in the submodule.
   - `flow_push` with `delete_remote`.
   - Deleting a branch whose `MergedReason` is not `is_proof()` needs `-D`
-    (`delete_branch(name, true)`) after explicit confirmation.
+    (`force_delete_branch(name)`) after explicit confirmation.
 - The flow finish dialog maps to `FlowFinish`; the toast shows the returned summary or the
   refusal text.
 - `FlowConfig::classify` tells the `F` menu whether the current branch is a flow branch.

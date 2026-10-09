@@ -27,12 +27,11 @@ worker to the new ones, then delete the wrappers.
 - `Repo::delete_merged_branch(name)`: `git branch -d -- name`. Unmerged fails with
   `Error::Cli { command: "branch", stderr }`, and the stderr contains "not fully merged".
 - `Repo::force_delete_branch(name)`: `git branch -D -- name`.
-- Wrapper: `delete_branch(name, force)` dispatches to the two.
+- The old wrapper `delete_branch(name, force)` was removed; callers pick one of the two.
 - UI: done in `7003ef0`. The sidebar sends `Op::DeleteBranch { force: false }`, which the worker
   reports as `OpKind::SafeDelete`; on "not fully merged" the tab offers a forced delete behind a
-  danger confirmation (`RepoTab::force_delete_offer`). The wrapper `delete_branch(name, force)`
-  is still what the worker calls, and nothing calls `delete_merged_branch` or
-  `force_delete_branch` directly yet.
+  danger confirmation (`RepoTab::force_delete_offer`). The worker calls `delete_merged_branch` or
+  `force_delete_branch` directly.
 
 ### 2. New branches and publishing (`ops.rs`)
 - `create_branch` now always passes `--no-track` (including from `origin/main`, and under
@@ -93,7 +92,7 @@ worker to the new ones, then delete the wrappers.
   `git add -A -- :/ ':(top,exclude,literal)<repo>'…` and returns the skipped folders.
 - If a nested repository's name is not UTF-8, it cannot be excluded through a `&str` argument.
   `stage_all_except_repositories` then returns `Error::Invalid` and stages nothing.
-- Wrapper: `stage_all()` does the same and drops the list. It never adds a gitlink any more.
+- The old wrapper `stage_all()` was removed; `stage_all_except_repositories` never adds a gitlink.
 - It finds the repositories with a full status pass (`collect_with(usize::MAX)`), which also runs
   canopy-3's `lfs::mark`, so Stage all may hash modified LFS files once.
   Until the UI is wired, the app's Stage all silently skips nested repositories.

@@ -275,6 +275,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 }
                 let name = b.name.clone();
                 let is_head = b.is_head;
+                let has_upstream = b.upstream.is_some();
+                let remotes: Vec<String> = snap.remotes.iter().map(|r| r.name.clone()).collect();
                 let worktree = worktree.cloned();
                 // The branch's page on GitHub/GitLab, through its upstream remote.
                 let upstream_forge = b.upstream.as_deref().and_then(|u| {
@@ -315,6 +317,15 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                     if is_head && m.item(icon::ARROW_FAT_LINE_UP, "Push").shortcut(Command::Push).show(m.ui).clicked() {
                         actions.push(Action::Op(Op::Push { force: false, expect: None }));
+                    }
+                    // Any local branch without an upstream, checked out or not.
+                    if !has_upstream {
+                        for r in &remotes {
+                            let label = format!("Publish to {r}");
+                            if m.item(icon::CLOUD_ARROW_UP, label).show(m.ui).clicked() {
+                                actions.push(Action::Op(Op::PublishBranch { name: name.clone(), remote: r.clone() }));
+                            }
+                        }
                     }
                     if m.item(icon::COPY, "Copy name").show(m.ui).clicked() {
                         actions.push(Action::Copy(name.clone()));
