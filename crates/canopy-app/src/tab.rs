@@ -765,8 +765,10 @@ pub struct RepoTab {
     /// The branch `pull_config` was last asked for (`None`: detached or unborn), once asked.
     pull_config_asked: bool,
     tools_asked: bool,
-    /// The commit template was asked for, once for the tab.
+    /// The commit template was asked for; a skipped read may retry after trust changes.
     template_asked: bool,
+    /// A template was received, even if an existing draft prevented it from being applied.
+    template_loaded: bool,
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
@@ -886,6 +888,7 @@ impl RepoTab {
             pull_config_asked: false,
             tools_asked: false,
             template_asked: false,
+            template_loaded: false,
             pull_config_branch: None,
             force_delete_offer: None,
             force_push_offer: None,
@@ -1277,9 +1280,13 @@ impl RepoTab {
     /// The trusted folders changed, to `version` (`trust::changes()`). A tab whose downloads were
     /// refused asks again for what it was showing, which may now download. A refusal still on its
     /// way from the worker carries an older version and is then found out of date.
+    /// A commit template skipped before trust is also requested again, until one is received.
     pub fn trust_changed(&mut self, version: u64) {
         self.trust_version = version;
         self.auto_fetch_failure = None;
+        if self.template_asked && !self.template_loaded {
+            self.worker.send(Job::CommitTemplate);
+        }
         if self.downloads_refused.take().is_some() {
             self.reread();
         }
@@ -1802,34 +1809,39 @@ impl RepoTab {
                             Some((self.commit_summary.clone(), self.commit_body.clone()));
                     }
                 }
-                Event::CommitTemplate(result) => match result {
-                    Ok(Some(template))
-                        if !self.amend
-                            && self.snap.as_ref().is_some_and(|snap| {
-                                snap.state == canopy_core::RepoState::Clean
-                            })
-                            && self.commit_summary.trim().is_empty()
-                            && self.commit_body.trim().is_empty() =>
-                    {
-                        let mut parts = template.trim_start().splitn(2, '\n');
-                        parts
-                            .next()
-                            .unwrap_or_default()
-                            .trim_end()
-                            .clone_into(&mut self.commit_summary);
-                        parts
-                            .next()
-                            .unwrap_or_default()
-                            .trim()
-                            .clone_into(&mut self.commit_body);
+                Event::CommitTemplate(result) => {
+                    let previously_loaded = self.template_loaded;
+                    self.template_loaded |= result.as_ref().is_ok_and(Option::is_some);
+                    match result {
+                        Ok(Some(template))
+                            if !previously_loaded
+                                && !self.amend
+                                && self.snap.as_ref().is_some_and(|snap| {
+                                    snap.state == canopy_core::RepoState::Clean
+                                })
+                                && self.commit_summary.trim().is_empty()
+                                && self.commit_body.trim().is_empty() =>
+                        {
+                            let mut parts = template.trim_start().splitn(2, '\n');
+                            parts
+                                .next()
+                                .unwrap_or_default()
+                                .trim_end()
+                                .clone_into(&mut self.commit_summary);
+                            parts
+                                .next()
+                                .unwrap_or_default()
+                                .trim()
+                                .clone_into(&mut self.commit_body);
+                        }
+                        Ok(_) => {}
+                        Err(body) => notices.push(Notice {
+                            ok: false,
+                            title: "Could not read the commit template".into(),
+                            body,
+                        }),
                     }
-                    Ok(_) => {}
-                    Err(body) => notices.push(Notice {
-                        ok: false,
-                        title: "Could not read the commit template".into(),
-                        body,
-                    }),
-                },
+                }
                 Event::PullConfig(result) => match result {
                     Ok(config) => self.pull_config = Some(config),
                     Err(e) => {
@@ -2822,6 +2834,73 @@ mod tests {
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].title, "Could not read the commit template");
         assert!(notices[0].body.contains("bad config"));
+    }
+
+    #[test]
+    fn trusting_a_folder_retries_a_missing_template_without_reopening_the_tab() {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        events
+            .send(Event::Snapshot(Arc::new(RepoSnapshot::default())))
+            .expect("snapshot");
+        events
+            .send(Event::CommitTemplate(Ok(None)))
+            .expect("untrusted read");
+        tab.poll(&[]);
+        let asked = std::iter::from_fn(|| jobs.try_recv().ok())
+            .filter(|j| matches!(j, Job::CommitTemplate))
+            .count();
+        assert_eq!(asked, 1);
+
+        tab.trust_changed(1);
+        let retried = std::iter::from_fn(|| jobs.try_recv().ok())
+            .filter(|j| matches!(j, Job::CommitTemplate))
+            .count();
+        assert_eq!(retried, 1, "retry after the trust list changes");
+        events
+            .send(Event::CommitTemplate(Ok(Some(
+                "feat: trusted\n\nWhy".into(),
+            ))))
+            .expect("trusted template");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat: trusted");
+        assert_eq!(tab.commit_body, "Why");
+
+        tab.commit_summary.clear();
+        tab.commit_body.clear();
+        tab.trust_changed(2);
+        assert!(
+            std::iter::from_fn(|| jobs.try_recv().ok()).all(|j| !matches!(j, Job::CommitTemplate)),
+            "a loaded template is never inserted again after the user clears it"
+        );
+    }
+
+    #[test]
+    fn a_pending_template_retry_cannot_refill_a_cleared_message() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        events
+            .send(Event::Snapshot(Arc::new(RepoSnapshot::default())))
+            .expect("snapshot");
+        tab.poll(&[]);
+        tab.trust_changed(1);
+        events
+            .send(Event::CommitTemplate(Ok(Some("feat: template".into()))))
+            .expect("first reply");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat: template");
+        tab.commit_summary.clear();
+        events
+            .send(Event::CommitTemplate(Ok(Some("feat: template".into()))))
+            .expect("pending retry reply");
+        tab.poll(&[]);
+        assert!(
+            tab.commit_summary.is_empty(),
+            "keep the user's cleared message"
+        );
+        assert_eq!(tab.commit_body, "");
     }
 
     #[test]
