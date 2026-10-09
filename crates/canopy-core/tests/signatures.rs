@@ -141,3 +141,124 @@ fn a_signed_commit_git_cannot_check_is_not_shown_as_unsigned() {
         SignatureStatus::Unavailable
     );
 }
+
+/// A repository that signs with `OpenPGP` through a throwaway keyring: `gpg.program` is a script
+/// that points gpg at it. `None` when `gpg` is not installed.
+#[cfg(unix)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test asks whether gpg is installed before it builds a keyring"
+)]
+fn gpg_repository() -> Option<(tempfile::TempDir, Repo)> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if Command::new("gpg").arg("--version").output().is_err() {
+        return None;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let p = dir.path();
+    let home = p.join("gnupg");
+    fs::create_dir(&home).expect("keyring");
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).expect("mode");
+    let program = p.join("gpg-here");
+    fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nexec gpg --homedir '{}' \"$@\"\n",
+            home.display()
+        ),
+    )
+    .expect("script");
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).expect("mode");
+    run(
+        "gpg",
+        p,
+        &[
+            "--homedir",
+            &home.to_string_lossy(),
+            "--batch",
+            "--passphrase",
+            "",
+            "--quick-gen-key",
+            "Ada <ada@example.com>",
+            "ed25519",
+            "sign",
+            "never",
+        ],
+    );
+    git(p, &["init", "-q", "-b", "main"]);
+    for (name, value) in [
+        ("user.name", "Ada"),
+        ("user.email", "ada@example.com"),
+        ("user.signingkey", "ada@example.com"),
+        ("gpg.program", &program.to_string_lossy()),
+        ("core.autocrlf", "false"),
+    ] {
+        git(p, &["config", name, value]);
+    }
+    let repo = Repo::open(p).expect("open");
+    Some((dir, repo))
+}
+
+#[cfg(unix)]
+#[test]
+fn a_gpg_signature_from_a_trusted_key_is_verified() {
+    let Some((dir, repo)) = gpg_repository() else {
+        return;
+    };
+    commit(dir.path(), "a", true);
+    // gpg trusts the keys it generates ultimately.
+    assert_eq!(letter(dir.path(), "HEAD"), "G");
+    let status = repo
+        .commit_signature(oid(dir.path(), "HEAD"))
+        .expect("status");
+    assert!(
+        matches!(&status, SignatureStatus::Verified(s) if s.name.contains("ada@example.com")),
+        "{status:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_gpg_signature_from_a_key_you_do_not_trust_is_never_shown_as_verified() {
+    let Some((dir, repo)) = gpg_repository() else {
+        return;
+    };
+    let fingerprint = run(
+        "gpg",
+        dir.path(),
+        &[
+            "--homedir",
+            &dir.path().join("gnupg").to_string_lossy(),
+            "--with-colons",
+            "--list-keys",
+            "ada@example.com",
+        ],
+    )
+    .lines()
+    .find_map(|l| l.strip_prefix("fpr:::::::::"))
+    .map(|l| l.trim_end_matches(':').to_owned())
+    .expect("a fingerprint");
+    let trust = dir.path().join("trust");
+    fs::write(&trust, format!("{fingerprint}:3:\n")).expect("write");
+    run(
+        "gpg",
+        dir.path(),
+        &[
+            "--homedir",
+            &dir.path().join("gnupg").to_string_lossy(),
+            "--batch",
+            "--import-ownertrust",
+            &trust.to_string_lossy(),
+        ],
+    );
+    commit(dir.path(), "a", true);
+    assert_eq!(letter(dir.path(), "HEAD"), "U");
+    let status = repo
+        .commit_signature(oid(dir.path(), "HEAD"))
+        .expect("status");
+    assert!(
+        matches!(&status, SignatureStatus::Untrusted(_)) && !status.is_trusted(),
+        "{status:?}"
+    );
+}
