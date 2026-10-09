@@ -75,9 +75,13 @@ commits since the previous build.
 
 ### Added
 
-- A commit whose signature Git trusts (GPG, SSH or X.509) shows a green "Verified" badge after its
-  author's name in the commit details, with the signer and key in its tooltip. Nothing is shown for
-  any other signature. Git does the checking, in trusted folders only.
+- The author's name in the commit details is a link that opens a card with their email (copy), who
+  committed it when that is someone else, whether the signature is verified, a link to their
+  profile (from a GitHub or GitLab no-reply address) or to the forge's user search for them, and,
+  when pictures are kept away, why and where to turn them on; this replaces the info button. The
+  commit's parents follow its id as links that select them. A green check after the name marks a
+  signature Git trusts (GPG, SSH or X.509), checked in trusted folders only; nothing is shown for
+  any other signature.
 - The commit message field starts with your Git `commit.template` when it is empty (once per
   open repository, never over a draft or an amend); a template that cannot be read is reported.
 - Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick,

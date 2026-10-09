@@ -71,6 +71,7 @@ pub const OVERLAYS: &[&str] = &[
     "about",
     "repository-insights",
     "clean-stale",
+    "author-card",
     "toasts",
     "notifications",
     "branch-selected",

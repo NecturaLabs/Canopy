@@ -58,6 +58,11 @@ impl MenuShot {
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
             "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
+            "author-card" => (
+                "Maya Chen (author card)",
+                View::History,
+                egui::PointerButton::Primary,
+            ),
             "branch-selected" => ("feature/auth", View::History, egui::PointerButton::Primary),
             _ => return None,
         };

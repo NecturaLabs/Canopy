@@ -7,17 +7,19 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, short_id};
+use canopy_core::forge::Forge;
+use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, Signer, short_id};
 
 use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::{DetailsError, FileSelection, RepoTab};
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
-use crate::ui::kit::chip::{Badge, ChangeBadge, DiffStat};
-use crate::ui::kit::overlay::TooltipExt;
+use crate::ui::kit::button::LinkButton;
+use crate::ui::kit::chip::{ChangeBadge, DiffStat};
+use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowKind};
-use crate::ui::kit::{Button, IconButton, Size, Tone, paint};
+use crate::ui::kit::{Button, IconButton, Size, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
 use crate::views::diff;
@@ -104,6 +106,28 @@ pub fn show(
                 )
                 .kit_tooltip(widgets::full_date(d.author.time, d.author.offset_minutes))
                 .show();
+                if !d.parents.is_empty() {
+                    ui.label(
+                        RichText::new(if d.parents.len() == 1 {
+                            "Parent"
+                        } else {
+                            "Parents"
+                        })
+                        .size(m.meta_size)
+                        .color(p.text_dim),
+                    );
+                    for parent in &d.parents {
+                        let link = LinkButton::new(short_id(*parent))
+                            .text_size(m.sha_size)
+                            .show(ui)
+                            .kit_tooltip(parent.to_string())
+                            .show();
+                        if link.clicked() {
+                            tab.select_commit(*parent);
+                            tab.scroll_to_selected = true;
+                        }
+                    }
+                }
             });
             // Up to two whole file rows, the "N files changed" line above them (as tall as it
             // was last frame, at first one line of its text) and the gaps between them.
@@ -378,8 +402,7 @@ fn author(
     note: Option<&PictureNote>,
     actions: &mut Vec<Action>,
 ) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
+    let forge = tab.forge().map(|(_, forge)| forge.clone());
     ui.horizontal(|ui| {
         tab.request_avatar(d.oid, &d.author.email);
         let picture = tab
@@ -390,48 +413,131 @@ fn author(
             .size(AvatarSize::Detail)
             .id_salt(("commit-author", &d.author.email))
             .show(ui);
-        let tip = ui
-            .add(
-                egui::Label::new(
-                    RichText::new(&d.author.name)
-                        .font(FontId::new(m.body_size, theme::semibold()))
-                        .color(p.text),
-                )
-                .truncate(),
+        let name = LinkButton::new(&d.author.name).show(ui);
+        name.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("{} (author card)", d.author.name),
             )
-            .kit_tooltip(format!("{} <{}>", d.author.name, d.author.email));
-        match committed_by(d) {
-            Some(by) => tip.detail(by).show(),
-            None => tip.show(),
-        };
-        if let Some((oid, status)) = &tab.signature
-            && *oid == d.oid
-        {
-            signature_mark(ui, status);
+        });
+        let verified = tab
+            .signature
+            .as_ref()
+            .filter(|(oid, _)| *oid == d.oid)
+            .and_then(|(_, status)| match status {
+                SignatureStatus::Verified(signer) => Some(signer.clone()),
+                _ => None,
+            });
+        if let Some(signer) = &verified {
+            verified_mark(ui, signer);
         }
-        if let Some(note) = note {
-            picture_note(ui, note, actions);
-        }
+        Popover::new("commit-author", &name)
+            .width(AUTHOR_CARD_WIDTH)
+            .show(|ui| author_card(ui, d, forge.as_ref(), verified.as_ref(), note, actions));
     });
 }
 
-/// The badge after the author's name for a commit whose signature git trusts: "Verified" in the
-/// success tone, with the signer and key in its tooltip. Every other state (unsigned, untrusted,
-/// expired, invalid, cannot be checked) shows nothing: only a verified signature is a claim worth
-/// a mark.
-fn signature_mark(ui: &mut Ui, status: &SignatureStatus) {
-    let SignatureStatus::Verified(signer) = status else {
-        return;
-    };
-    let tip = Badge::new("Verified")
-        .tone(Tone::Success)
-        .show(ui)
-        .kit_tooltip("Signature verified");
+/// The card the author's name opens: who they are, whether the commit is verified, where to find
+/// them on the forge and, when pictures are kept away, why and how to turn them on.
+fn author_card(
+    ui: &mut Ui,
+    d: &CommitDetails,
+    forge: Option<&Forge>,
+    verified: Option<&Signer>,
+    note: Option<&PictureNote>,
+    actions: &mut Vec<Action>,
+) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    ui.spacing_mut().item_spacing.y = theme::XS;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(&d.author.name)
+                .font(FontId::new(m.body_size, theme::semibold()))
+                .color(p.text),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(&d.author.email)
+                .size(m.meta_size)
+                .color(p.text_dim),
+        );
+        if IconButton::new(icon::COPY, "Copy email")
+            .size(Size::Xs)
+            .show(ui)
+            .clicked()
+        {
+            actions.push(Action::Copy(d.author.email.clone()));
+        }
+    });
+    if let Some(by) = committed_by(d) {
+        ui.label(RichText::new(by).size(m.meta_size).color(p.text_dim));
+    }
+    if let Some(signer) = verified {
+        ui.label(
+            RichText::new(format!("{} Signature verified", icon::SEAL_CHECK))
+                .size(m.meta_size)
+                .color(p.success),
+        );
+        for line in [signer.name.as_str(), signer.key.as_str()]
+            .into_iter()
+            .filter(|t| !t.is_empty())
+        {
+            ui.label(RichText::new(line).size(m.meta_size).color(p.text_dim));
+        }
+    }
+    if let Some(forge) = forge {
+        let page = forge.author_page(&d.author.email);
+        let name = forge.kind.name();
+        let label = if page.profile {
+            format!("View profile on {name}")
+        } else {
+            format!("Find on {name}")
+        };
+        if LinkButton::new(label).url(&page.url).show(ui).clicked() {
+            actions.push(Action::OpenUrl(page.url));
+        }
+    }
+    if let Some(note) = note {
+        ui.add_space(theme::XS);
+        ui.label(RichText::new(&note.title).size(m.meta_size).color(p.text));
+        ui.label(
+            RichText::new(&note.detail)
+                .size(m.meta_size)
+                .color(p.text_dim),
+        );
+        if let Some(fix) = &note.fix
+            && LinkButton::new("Open settings").show(ui).clicked()
+        {
+            actions.push(fix.clone());
+        }
+    }
+}
+
+/// The check after the author's name for a commit whose signature git trusts. Nothing is drawn for
+/// any other signature: only a verified one is a claim worth a mark. The tooltip names the signer.
+fn verified_mark(ui: &mut Ui, signer: &Signer) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let response = ui.add(
+        egui::Label::new(
+            RichText::new(icon::SEAL_CHECK)
+                .size(m.icon_md)
+                .color(p.success),
+        )
+        .sense(egui::Sense::hover()),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Signature verified")
+    });
     let detail = [signer.name.as_str(), signer.key.as_str()]
         .into_iter()
         .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
         .join("\n");
+    let tip = response.kit_tooltip("Signature verified");
     if detail.is_empty() {
         tip.show();
     } else {
@@ -439,57 +545,8 @@ fn signature_mark(ui: &mut Ui, status: &SignatureStatus) {
     }
 }
 
-/// The info mark after the author's name when pictures are kept away: faint at rest, dim on hover,
-/// no fill; its tooltip gives the title and the cause, and a click opens the setting that fixes it.
-fn picture_note(ui: &mut Ui, note: &PictureNote, actions: &mut Vec<Action>) {
-    let ctx = ui.ctx().clone();
-    let p = palette(&ctx);
-    let m = theme::metrics();
-    let side = Size::Xs.height();
-    let sense = if note.fix.is_some() {
-        egui::Sense::click()
-    } else {
-        egui::Sense::focusable_noninteractive()
-    };
-    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(side), sense);
-    let st = crate::ui::kit::Interact::of(&ctx, &response, true, None);
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        if st.focus > 0.0 {
-            paint::focus_ring(
-                painter,
-                rect,
-                CornerRadius::same(m.radius_sm),
-                p.focus.gamma_multiply(st.focus),
-                egui::Color32::TRANSPARENT,
-            );
-        }
-        let color = p.text_faint.lerp_to_gamma(p.text_dim, st.hover);
-        painter.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            icon::INFO,
-            FontId::proportional(m.icon_sm),
-            color,
-        );
-    }
-    let title = note.title.clone();
-    let response = response.on_hover_cursor(if note.fix.is_some() {
-        egui::CursorIcon::PointingHand
-    } else {
-        egui::CursorIcon::Default
-    });
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
-    let response = response
-        .kit_tooltip(note.title.clone())
-        .detail(note.detail.clone())
-        .show();
-    if response.clicked()
-        && let Some(fix) = &note.fix
-    {
-        actions.push(fix.clone());
-    }
-}
+/// The width of the author card.
+const AUTHOR_CARD_WIDTH: f32 = 280.0;
 
 /// "Committed by …" when someone other than the author made the commit (a cherry-pick, a rebase,
 /// an applied patch).
@@ -1078,32 +1135,29 @@ mod tests {
         assert!(open(None).is_none());
     }
 
-    /// Override O2 (contracts/avatars.md, "Picture status UI" 1): when pictures are kept away the
-    /// author line carries an info button named by the reason, and activating it opens the
-    /// setting that fixes it; with nothing to explain the line is unchanged.
+    /// The author line has no info button: the name is a link that opens the author card, and the
+    /// setting that fixes missing pictures is a link in that card.
     #[test]
-    fn the_author_line_explains_missing_pictures_and_opens_the_fix() {
-        let (actions, labels) = author_line(None, &[]);
-        assert!(actions.is_empty());
-        assert!(
-            !labels.iter().any(|l| l == "Profile pictures are off"),
-            "{labels:?}"
-        );
-
+    fn the_author_card_opens_the_fix_for_missing_pictures() {
         let fix = Some(crate::action::Action::Settings);
-        let (actions, labels) = author_line(Some(&note(fix)), &[egui::Key::Tab, egui::Key::Enter]);
+        let (_, labels) = author_line(Some(&note(fix.clone())), &[]);
         assert!(
-            labels.iter().any(|l| l == "Profile pictures are off"),
+            labels.iter().any(|l| l == "Author (author card)"),
             "{labels:?}"
         );
-        assert!(
-            matches!(actions.as_slice(), [crate::action::Action::Settings]),
-            "{actions:?}"
-        );
+        assert!(!labels.iter().any(|l| l == "Profile pictures are off"));
+        assert!(!labels.iter().any(|l| l == "Open settings"), "{labels:?}");
 
-        let (actions, labels) = author_line(Some(&note(None)), &[egui::Key::Tab, egui::Key::Enter]);
-        assert!(labels.iter().any(|l| l == "Profile pictures are off"));
-        assert!(actions.is_empty(), "nothing to open: {actions:?}");
+        // Tab to the name, Enter opens the card, a frame later it is drawn.
+        let open = [egui::Key::Tab, egui::Key::Enter, egui::Key::F13];
+        let (_, labels) = author_line(Some(&note(fix)), &open);
+        assert!(labels.iter().any(|l| l == "Copy email"), "{labels:?}");
+        assert!(labels.iter().any(|l| l == "Open settings"), "{labels:?}");
+
+        let (_, labels) = author_line(Some(&note(None)), &open);
+        assert!(!labels.iter().any(|l| l == "Open settings"), "{labels:?}");
+        let (_, labels) = author_line(None, &open);
+        assert!(!labels.iter().any(|l| l == "Open settings"), "{labels:?}");
     }
 
     /// One frame-settled draw of the message block with `room`: the first line's rectangle, the
