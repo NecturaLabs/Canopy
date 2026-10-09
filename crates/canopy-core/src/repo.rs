@@ -286,6 +286,9 @@ impl Repo {
 
     fn remote_branches(&self) -> Result<Vec<RemoteBranchInfo>> {
         let mut out = Vec::new();
+        // The remote is read off the ref name, not looked up through libgit2, which refuses a
+        // remote whose configuration it cannot parse (for example `remote.<name>.prune = x`).
+        let remotes = self.git.remotes()?;
         for item in self.git.branches(Some(BranchType::Remote))? {
             let (branch, _) = item?;
             let reference = branch.get();
@@ -293,15 +296,17 @@ impl Repo {
                 continue; // origin/HEAD
             }
             let Ok(full) = reference.name() else { continue };
-            let remote = match self.git.branch_remote_name(full) {
-                Ok(buf) => buf.as_str().unwrap_or_default().to_owned(),
-                Err(_) => continue,
-            };
             let short = full.strip_prefix("refs/remotes/").unwrap_or(full);
-            let name = short
-                .strip_prefix(&format!("{remote}/"))
-                .unwrap_or(short)
-                .to_owned();
+            let Some((remote, name)) = remotes
+                .iter()
+                .flatten()
+                .flatten()
+                .filter_map(|r| Some((r, short.strip_prefix(r)?.strip_prefix('/')?)))
+                .max_by_key(|(r, _)| r.len())
+                .map(|(r, n)| (r.to_owned(), n.to_owned()))
+            else {
+                continue;
+            };
             if name == "HEAD" {
                 continue;
             }

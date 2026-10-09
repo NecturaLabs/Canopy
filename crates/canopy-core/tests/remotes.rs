@@ -191,3 +191,35 @@ fn credentials_are_recognised_in_every_spelling_git_accepts() {
         assert!(!url_has_credentials(url), "{url}");
     }
 }
+
+#[test]
+fn remote_branches_are_listed_when_a_remote_has_an_unparsable_setting() {
+    let (dir, _) = repository();
+    git(
+        dir.path(),
+        &[
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "one",
+        ],
+    );
+    git(
+        dir.path(),
+        &["update-ref", "refs/remotes/origin/feature", "HEAD"],
+    );
+    git(dir.path(), &["config", "remote.origin.prune", "banana"]);
+    let repo = Repo::open(dir.path()).expect("open");
+    let snap = repo.snapshot(10).expect("snapshot");
+    let listed: Vec<_> = snap
+        .remote_branches
+        .iter()
+        .map(|b| (b.remote.as_str(), b.branch.as_str()))
+        .collect();
+    assert_eq!(listed, [("origin", "feature")]);
+}
