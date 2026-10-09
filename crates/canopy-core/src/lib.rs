@@ -22,6 +22,7 @@ pub mod ignore;
 pub mod lfs;
 mod lines;
 mod merged;
+mod metrics;
 pub mod model;
 pub mod ops;
 pub mod options;
@@ -53,6 +54,9 @@ pub use ignore::{
 };
 pub use lfs::{LfsFile, LfsPointer};
 pub use merged::{MergedBranch, MergedReason};
+pub use metrics::{
+    AuthorActivity, BranchMetrics, Divergence, MetricCommit, RepositoryMetrics, WeekActivity,
+};
 pub use model::*;
 pub use ops::{HunkAction, MergeMode, PullStrategy, PushTarget, ResetMode};
 pub use options::{Cleanup, ConflictStyle, GitOptions, PushDefault};
