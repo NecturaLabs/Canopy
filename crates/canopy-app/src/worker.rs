@@ -110,6 +110,15 @@ pub enum Op {
         name: String,
         remote: String,
     },
+    /// Writes each commit as a patch file in `dir`, oldest first.
+    ExportPatches {
+        oids: Vec<Oid>,
+        dir: PathBuf,
+    },
+    /// Applies a patch file, or the `.patch` files of a folder in name order, as commits.
+    ApplyPatches {
+        path: PathBuf,
+    },
     StashSave {
         message: Option<String>,
         untracked: bool,
@@ -270,6 +279,8 @@ impl Op {
             Self::DeleteTag(t) => format!("Deleting tag {t}"),
             Self::PushTag { tag, .. } => format!("Pushing tag {tag}"),
             Self::PublishBranch { name, .. } => format!("Publishing {name}"),
+            Self::ExportPatches { .. } => "Exporting patches".into(),
+            Self::ApplyPatches { .. } => "Applying patches".into(),
             Self::StashSave { .. } => "Stashing".into(),
             Self::StashApply { pop: true, .. } | Self::StashApplyCommit { pop: true, .. } => {
                 "Popping stash".into()
@@ -1432,6 +1443,14 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         Op::DeleteTag(t) => done(repo.delete_tag(&t)),
         Op::PushTag { remote, tag } => repo.push_tag(&remote, &tag, progress),
         Op::PublishBranch { name, remote } => repo.publish_branch(&name, &remote, progress),
+        Op::ExportPatches { oids, dir } => repo
+            .export_patches(&oids, &dir)
+            .map(|files| exported_message(&files, &dir)),
+        Op::ApplyPatches { path } => {
+            let files = patch_files(&path)?;
+            repo.apply_patches(&files)
+                .map(|out| applied_message(&out, files.len()))
+        }
         Op::StashSave { message, untracked } => {
             done(repo.stash_save(message.as_deref(), untracked))
         }
@@ -1488,6 +1507,53 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
 
 /// What Stage all says when it left out folders that hold a repository of their own (staging
 /// them would record bare gitlinks nobody can clone); empty when it left out nothing.
+/// What an export tells: the files written, by name.
+fn exported_message(files: &[PathBuf], dir: &Path) -> String {
+    let names: Vec<String> = files
+        .iter()
+        .filter_map(|f| f.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .collect();
+    format!("Wrote {} to {}.", names.join(", "), dir.display())
+}
+
+/// The patch files `path` names: itself, or a folder's `.patch` files in name order.
+fn patch_files(path: &Path) -> canopy_core::Result<Vec<PathBuf>> {
+    if !path.is_dir() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(path)
+        .map_err(|e| canopy_core::Error::Invalid(format!("{}: {e}", path.display())))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "patch"))
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        return Err(canopy_core::Error::Invalid(format!(
+            "{} has no .patch files.",
+            path.display()
+        )));
+    }
+    Ok(files)
+}
+
+/// What an apply tells: the commits made, by their subjects as `git am` printed them.
+fn applied_message(out: &str, files: usize) -> String {
+    let subjects: Vec<&str> = out
+        .lines()
+        .filter_map(|l| l.strip_prefix("Applying: "))
+        .collect();
+    match subjects.as_slice() {
+        [] => format!(
+            "Applied {files} patch file{}.",
+            if files == 1 { "" } else { "s" }
+        ),
+        [one] => format!("Applied {one}."),
+        many => format!("Applied {} commits: {}.", many.len(), many.join("; ")),
+    }
+}
+
 fn left_out_message(folders: &[String]) -> String {
     if folders.is_empty() {
         return String::new();
@@ -3019,6 +3085,72 @@ mod read_tests {
         )
         .expect_err("not a branch");
         assert!(refused.to_string().contains("not a local branch"));
+    }
+
+    /// #99: a commit is exported to a folder and applied again, by its file or by the folder; a
+    /// patch that does not fit stops in the "Applying patches" state and names its file.
+    #[test]
+    fn exported_patches_apply_again_and_a_misfit_stops_naming_its_file() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let repo = Repo::open(&copy).expect("open");
+        let local = repo.snapshot(5).expect("snapshot").head.oid.expect("head");
+        let out = root.path().join("out");
+        let exported = Op::ExportPatches {
+            oids: vec![local],
+            dir: out.clone(),
+        };
+        assert_eq!(exported.kind(), OpKind::Other);
+        let message = perform(&repo, exported, |_| {}).expect("exports");
+        assert!(
+            message.starts_with("Wrote 0001-local.patch to "),
+            "{message}"
+        );
+        assert!(out.join("0001-local.patch").is_file());
+
+        git(&copy, &["checkout", "-q", "-B", "fresh", "origin/main"]);
+        let applied = perform(&repo, Op::ApplyPatches { path: out.clone() }, |_| {})
+            .expect("applies the folder");
+        assert_eq!(applied, "Applied local.");
+        assert_eq!(
+            git(&copy, &["log", "-1", "--format=%an: %s"]),
+            "Ada Lovelace: local"
+        );
+
+        // The same patch again does not fit: it stops, says where, and leaves the state to resolve.
+        git(&copy, &["checkout", "-q", "-B", "second", "origin/main"]);
+        std::fs::write(copy.join("local.txt"), "other\n").expect("write");
+        git(&copy, &["add", "."]);
+        git(&copy, &["commit", "-q", "-m", "other"]);
+        let stopped = perform(
+            &repo,
+            Op::ApplyPatches {
+                path: out.join("0001-local.patch"),
+            },
+            |_| {},
+        )
+        .expect_err("does not fit");
+        assert!(stopped.to_string().contains("local.txt"), "{stopped}");
+        assert_eq!(
+            repo.snapshot(5).expect("snapshot").state,
+            RepoState::ApplyMailbox
+        );
+    }
+
+    #[test]
+    fn a_folder_without_patches_says_so() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("notes.txt"), "x").expect("write");
+        let err = patch_files(dir.path()).expect_err("nothing to apply");
+        assert!(err.to_string().contains("has no .patch files"), "{err}");
+        std::fs::write(dir.path().join("0002-b.patch"), "x").expect("write");
+        std::fs::write(dir.path().join("0001-a.patch"), "x").expect("write");
+        let names: Vec<_> = patch_files(dir.path())
+            .expect("patches")
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(names, ["0001-a.patch", "0002-b.patch"]);
     }
 
     #[test]

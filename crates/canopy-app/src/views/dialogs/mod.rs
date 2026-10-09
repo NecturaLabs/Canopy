@@ -41,8 +41,8 @@ mod url;
 
 use common::{
     FolderField, alternatives, answer, beside, bullet, confirm, document, field, field_with_error,
-    folder_row, home, identity_in_scope, inset_scroll, note, recent_rows, remote_name_problem,
-    swallow_enter, tilde, working,
+    file_row, folder_row, home, identity_in_scope, inset_scroll, note, recent_rows,
+    remote_name_problem, swallow_enter, tilde, working,
 };
 use credential::credential;
 pub use ignore::IgnoreForm;
@@ -103,6 +103,15 @@ pub enum Dialog {
     Stash {
         message: String,
         untracked: bool,
+    },
+    /// Write a commit as a patch file in a folder.
+    ExportPatches {
+        oid: Oid,
+        folder: String,
+    },
+    /// Apply a patch file, or the patch files of a folder, as commits.
+    ApplyPatches {
+        path: String,
     },
     Merge {
         target: String,
@@ -822,6 +831,95 @@ pub fn show(
                     })])
                 } else {
                     Outcome::Keep
+                }
+            })
+        }
+        Dialog::ExportPatches { oid, folder } => {
+            let ok = !folder.trim().is_empty();
+            let summary = tab
+                .and_then(|t| t.snap.as_ref())
+                .and_then(|s| s.commits.iter().find(|c| c.oid == *oid))
+                .map(|c| c.summary.clone());
+            let result = KitDialog::new(salt)
+                .title(format!("Export {} as a patch", short_id(*oid)))
+                .icon(icon::FILE_ARROW_UP)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .description("Writes the commit as a .patch file that Git can apply again, with its author and message.")
+                .body(|ui| {
+                    if let Some(summary) = &summary {
+                        note(
+                            ui,
+                            format!("{}  {}  {summary}", icon::GIT_COMMIT, short_id(*oid)),
+                            p.text_dim,
+                        );
+                    }
+                    let start = crate::settings::expand_home(folder);
+                    folder_row(
+                        ui,
+                        picker,
+                        "export-patches",
+                        folder,
+                        &start,
+                        FolderField {
+                            label: "Folder",
+                            hint: "~/patches",
+                            helper: Some("Created if it does not exist."),
+                            error: None,
+                            focus: true,
+                        },
+                    );
+                })
+                .footer(|f| confirm(f, "Export", ok, "Enter a folder"))
+                .show(ctx);
+            answer(result, || {
+                if folder.trim().is_empty() {
+                    Outcome::Keep
+                } else {
+                    Outcome::Run(vec![Action::Op(Op::ExportPatches {
+                        oids: vec![*oid],
+                        dir: crate::settings::expand_home(folder.trim()),
+                    })])
+                }
+            })
+        }
+        Dialog::ApplyPatches { path } => {
+            let ok = !path.trim().is_empty();
+            let result = KitDialog::new(salt)
+                .title("Apply patch")
+                .icon(icon::FILE_ARROW_DOWN)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .description("Applies a patch file made by Export as patch, or every .patch file of a folder in order, as commits that keep their authors. A patch that does not fit stops with the conflicts to resolve.")
+                .body(|ui| {
+                    let start = crate::settings::expand_home(path)
+                        .parent()
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_default();
+                    file_row(
+                        ui,
+                        picker,
+                        "apply-patches",
+                        path,
+                        &start,
+                        FolderField {
+                            label: "Patch file or folder",
+                            hint: "~/patches/0001-fix.patch",
+                            helper: None,
+                            error: None,
+                            focus: true,
+                        },
+                    );
+                })
+                .footer(|f| confirm(f, "Apply", ok, "Enter a patch file or folder"))
+                .show(ctx);
+            answer(result, || {
+                if path.trim().is_empty() {
+                    Outcome::Keep
+                } else {
+                    Outcome::Run(vec![Action::Op(Op::ApplyPatches {
+                        path: crate::settings::expand_home(path.trim()),
+                    })])
                 }
             })
         }

@@ -206,6 +206,8 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "remove-submodule",
     "new-tag",
     "stash",
+    "export-patch",
+    "apply-patch",
     "add-remote",
     "add-remote-refused",
     "publish",
@@ -326,6 +328,13 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             name: "v1.4.0".into(),
             target: commit,
             message: String::new(),
+        },
+        "export-patch" => Dialog::ExportPatches {
+            oid: commit,
+            folder: "~/patches".into(),
+        },
+        "apply-patch" => Dialog::ApplyPatches {
+            path: "~/patches/0001-fix-shout-two.patch".into(),
         },
         "stash" => Dialog::Stash {
             message: String::new(),

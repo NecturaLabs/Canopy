@@ -332,6 +332,10 @@ impl CanopyApp {
                     Action::AddRemoteDialog,
                 ),
                 (
+                    e(icon::FILE_ARROW_DOWN, "Apply patch…", "Repository", None),
+                    Action::OpenDialog(Dialog::ApplyPatches { path: "~/".into() }),
+                ),
+                (
                     e(icon::PACKAGE, "Add submodule…", "Repository", None),
                     Action::OpenDialog(Dialog::AddSubmodule {
                         url: String::new(),

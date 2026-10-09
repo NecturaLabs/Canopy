@@ -9,6 +9,13 @@ use egui_phosphor::regular as icon;
 use super::kit::Button;
 use super::theme::{self, palette};
 
+/// What the native chooser picks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick {
+    Folder,
+    File,
+}
+
 #[derive(Debug, Default)]
 pub struct FolderPicker {
     pending: Option<(Id, Receiver<Option<PathBuf>>)>,
@@ -68,7 +75,12 @@ impl FolderPicker {
     /// Browse without the error line under it: for a field beside the button that shows
     /// [`FolderPicker::error`] itself.
     pub fn show_button(&mut self, ui: &mut Ui, salt: &str, start: &Path) -> Option<PathBuf> {
-        self.button(ui, salt, start, "Browse…")
+        self.button(ui, salt, start, "Browse…", Pick::Folder)
+    }
+
+    /// [`Self::show_button`] choosing one file.
+    pub fn show_file_button(&mut self, ui: &mut Ui, salt: &str, start: &Path) -> Option<PathBuf> {
+        self.button(ui, salt, start, "Browse…", Pick::File)
     }
 
     /// Why the chooser for `salt` failed, if it did.
@@ -88,7 +100,7 @@ impl FolderPicker {
         start: &Path,
         idle_label: &str,
     ) -> Option<PathBuf> {
-        let selected = self.button(ui, salt, start, idle_label);
+        let selected = self.button(ui, salt, start, idle_label, Pick::Folder);
         if let Some(error) = self.error(salt) {
             let p = palette(ui.ctx());
             let m = theme::metrics();
@@ -107,6 +119,7 @@ impl FolderPicker {
         salt: &str,
         start: &Path,
         idle_label: &str,
+        pick: Pick,
     ) -> Option<PathBuf> {
         let id = Id::new(("folder-picker", salt));
         let active = self
@@ -135,7 +148,11 @@ impl FolderPicker {
         let label = if choosing { "Choosing…" } else { idle_label };
         if Button::new(label)
             .secondary()
-            .icon(icon::FOLDER)
+            .icon(if pick == Pick::File {
+                icon::FILE
+            } else {
+                icon::FOLDER
+            })
             .enabled(self.pending.is_none())
             .id_salt(id)
             .show(ui)
@@ -143,7 +160,11 @@ impl FolderPicker {
         {
             let start = start.to_path_buf();
             self.start(ui.ctx(), id, move || {
-                rfd::FileDialog::new().set_directory(start).pick_folder()
+                let dialog = rfd::FileDialog::new().set_directory(start);
+                match pick {
+                    Pick::Folder => dialog.pick_folder(),
+                    Pick::File => dialog.pick_file(),
+                }
             });
         }
         selected

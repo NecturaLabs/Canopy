@@ -1,6 +1,7 @@
 //! Small pieces shared by the dialogs: fields, folder rows, results and ref-name checks.
 
 use super::*;
+use crate::ui::folder_picker::Pick;
 
 pub(super) fn home() -> String {
     crate::settings::home_dir().display().to_string()
@@ -172,6 +173,30 @@ pub(super) fn folder_row(
     start: &std::path::Path,
     f: FolderField<'_>,
 ) -> egui::Response {
+    path_row(ui, picker, salt, value, start, f, Pick::Folder)
+}
+
+/// [`folder_row`] for a file: Browse opens the chooser on files.
+pub(super) fn file_row(
+    ui: &mut Ui,
+    picker: &mut crate::ui::folder_picker::FolderPicker,
+    salt: &str,
+    value: &mut String,
+    start: &std::path::Path,
+    f: FolderField<'_>,
+) -> egui::Response {
+    path_row(ui, picker, salt, value, start, f, Pick::File)
+}
+
+fn path_row(
+    ui: &mut Ui,
+    picker: &mut crate::ui::folder_picker::FolderPicker,
+    salt: &str,
+    value: &mut String,
+    start: &std::path::Path,
+    f: FolderField<'_>,
+    pick: Pick,
+) -> egui::Response {
     let chooser_error = picker.error(salt).map(str::to_owned);
     let error = f.error.or(chooser_error.as_deref());
     let mut picked = None;
@@ -190,7 +215,12 @@ pub(super) fn folder_row(
             }
             field.show(ui)
         },
-        |ui| picked = picker.show_button(ui, salt, start),
+        |ui| {
+            picked = match pick {
+                Pick::Folder => picker.show_button(ui, salt, start),
+                Pick::File => picker.show_file_button(ui, salt, start),
+            };
+        },
     );
     if let Some(p) = picked {
         *value = p.display().to_string();

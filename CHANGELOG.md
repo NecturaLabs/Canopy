@@ -69,6 +69,10 @@ commits since the previous build.
 
 ### Added
 
+- Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick,
+  and Apply patch… in the palette applies a patch file, or the `.patch` files of a folder, as
+  commits that keep their authors; a patch that does not fit stops in "Applying patches" with
+  Continue and Abort, and the message names the conflicting files.
 - Any local branch without an upstream can be published to a remote from its context menu in the
   sidebar, and the Changes list shows untracked folders the status collapsed (a folder that is a
   Git repository, or any top folder when there are very many untracked files) with a Stage

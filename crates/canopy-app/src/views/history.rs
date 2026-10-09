@@ -874,6 +874,15 @@ pub fn commit_menu(
         },
     );
     m.separator();
+    if m.item(icon::FILE_ARROW_UP, "Export as patch…")
+        .show(m.ui)
+        .clicked()
+    {
+        actions.push(Action::OpenDialog(Dialog::ExportPatches {
+            oid,
+            folder: "~".into(),
+        }));
+    }
     if m.item(icon::COPY, "Copy SHA")
         .shortcut(Command::CopySha)
         .show(m.ui)

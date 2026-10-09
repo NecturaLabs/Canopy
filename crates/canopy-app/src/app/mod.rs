@@ -90,6 +90,8 @@ pub const OVERLAYS: &[&str] = &[
     "remove-submodule",
     "new-tag",
     "stash",
+    "export-patch",
+    "apply-patch",
     "add-remote",
     "add-remote-refused",
     "publish",

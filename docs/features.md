@@ -191,7 +191,7 @@ The git-flow UI remains planned.
 | Tags: lightweight and annotated, delete, push | Done | Yes | Yes | Yes |
 | Stash: save (message, untracked), apply, pop, drop | Done | Yes | Yes | Yes |
 | Pop and drop act on the stash you picked, by its commit, even if the list changed | Done | ? | ? | ? |
-| Patches: create and apply | Planned | Yes | ? | Yes |
+| Patches: Export as patch… in a commit's menu writes a .patch file with its author; Apply patch… in the palette applies a file or a folder of them as commits, stopping in "Applying patches" for conflicts | Unreleased | Yes | ? | Yes |
 
 Requests supports Ctrl+Shift+A to approve and Ctrl+Shift+M to open the merge confirmation,
 with the same state and busy guards as the buttons.
