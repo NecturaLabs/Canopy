@@ -195,22 +195,35 @@ impl Http {
         &self.base
     }
 
-    /// A lookup diagnostic with the private request URL and token hidden. Profile paths may
-    /// contain an author's email, which must not appear in logs or notifications.
-    fn profile_error(&self, context: &str, detail: &str, path: &str) -> Error {
+    /// `text` with the profile request's URL and path, and anything else private to it (an
+    /// author's email address), replaced. Profile paths may contain an author's email, which must
+    /// not appear in logs or notifications.
+    fn hide_request(&self, text: &str, path: &str, private: &[&str]) -> String {
         let url = format!("{}{}", self.base, path);
-        let detail = detail.replace(&url, "[profile URL]");
-        let detail = if path.is_empty() {
-            detail
-        } else {
-            detail.replace(path, "[profile path]")
-        };
+        let mut text = text.replace(&url, "[profile URL]");
+        if !path.is_empty() {
+            text = text.replace(path, "[profile path]");
+        }
+        for value in private.iter().filter(|v| !v.is_empty()) {
+            text = text.replace(value, "[private]");
+        }
+        text
+    }
+
+    /// A lookup diagnostic with the private request URL and token hidden.
+    fn profile_error(&self, context: &str, detail: &str, path: &str, private: &[&str]) -> Error {
+        let detail = self.hide_request(detail, path, private);
         Error::Network(shorten(&self.hide_token(&format!("{context}: {detail}"))))
     }
 
     /// Profile lookup: no redirects, bounded JSON, and no author email in logs. Sends nothing
-    /// while the switch is off.
-    pub(crate) fn avatar_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+    /// while the switch is off. `private` lists text (the author's email, plain and encoded) that
+    /// an error must not repeat, even when the server echoes it.
+    pub(crate) fn avatar_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        private: &[&str],
+    ) -> Result<T> {
         if self.stopped() {
             return Err(Error::Stopped);
         }
@@ -220,7 +233,9 @@ impl Http {
             .max_redirects(0)
             .build()
             .call()
-            .map_err(|e| self.profile_error("Profile lookup failed", &e.to_string(), path))?;
+            .map_err(|e| {
+                self.profile_error("Profile lookup failed", &e.to_string(), path, private)
+            })?;
         let status = response.status().as_u16();
         let bytes = response
             .body_mut()
@@ -228,7 +243,12 @@ impl Http {
             .limit(MAX_PROFILE_BODY)
             .read_to_vec()
             .map_err(|e| {
-                self.profile_error("Could not read the profile response", &e.to_string(), path)
+                self.profile_error(
+                    "Could not read the profile response",
+                    &e.to_string(),
+                    path,
+                    private,
+                )
             })?;
         if !status::SUCCESS.contains(&status) {
             return Err(map_status_with_token(
@@ -237,6 +257,7 @@ impl Http {
                 &bytes,
                 self.kind,
                 self.token.as_deref(),
+                &|message| self.hide_request(message, path, private),
             ));
         }
         self.parse(&bytes, "profile response")
@@ -326,6 +347,7 @@ impl Http {
                 &bytes,
                 self.kind,
                 self.token.as_deref(),
+                &str::to_owned,
             );
             tracing::warn!(method = method.as_str(), path, status, ms, error = %err, "hosting request rejected");
             Err(err)
@@ -527,6 +549,7 @@ fn map_status_with_token(
     body: &[u8],
     kind: ForgeKind,
     token: Option<&str>,
+    hide: &dyn Fn(&str) -> String,
 ) -> Error {
     let message =
         server_message_unbounded(body).unwrap_or_else(|| default_reason(status).to_owned());
@@ -534,6 +557,8 @@ fn map_status_with_token(
         Some(token) if token.len() >= MIN_TOKEN_LEN => message.replace(token, REDACTED),
         _ => message,
     };
+    // Before the cut, so a request path that straddles it cannot be left half hidden.
+    let message = hide(&message);
     let message = shorten(&message);
     match status {
         status::UNAUTHORIZED => Error::Unauthorized(message),
@@ -567,7 +592,7 @@ pub(crate) fn server_message(body: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 pub(crate) fn map_status(status: u16, headers: &HeaderMap, body: &[u8], kind: ForgeKind) -> Error {
-    map_status_with_token(status, headers, body, kind, None)
+    map_status_with_token(status, headers, body, kind, None, &str::to_owned)
 }
 
 fn default_reason(status: u16) -> &'static str {
@@ -785,7 +810,7 @@ mod tests {
         let diagnostic =
             format!("connection refused at {full_url}: private-auth-token-123 (path {path})");
         let message = http
-            .profile_error("Profile lookup failed", &diagnostic, path)
+            .profile_error("Profile lookup failed", &diagnostic, path, &[])
             .to_string();
         assert!(message.contains("connection refused"), "{message}");
         assert!(!message.contains("private@example.com"), "{message}");
@@ -1081,7 +1106,14 @@ mod tests {
             br#"{"message":"arbitrarySecret\u0054oken1234567"}"#.as_slice(),
             b"{\"message\":\"arbitrarySecret\xe2\x80\x8bToken1234567\"}".as_slice(),
         ] {
-            let error = map_status_with_token(422, &headers, body, ForgeKind::GitLab, Some(token));
+            let error = map_status_with_token(
+                422,
+                &headers,
+                body,
+                ForgeKind::GitLab,
+                Some(token),
+                &str::to_owned,
+            );
             let message = error.to_string();
             assert!(message.contains("<redacted>"), "{message}");
             assert!(!message.contains(token), "{message}");

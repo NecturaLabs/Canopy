@@ -31,6 +31,8 @@ mod github;
 mod gitlab;
 mod http;
 mod model;
+#[cfg(test)]
+mod test_server;
 mod token;
 pub mod updates;
 

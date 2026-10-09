@@ -193,7 +193,7 @@ pub(crate) fn lookup(
             // The list endpoint, not `commits/<sha>`: that one carries the changed files and, for a
             // large commit, outgrows the lookup's size limit.
             let commits: Vec<Commit> =
-                http.avatar_json(&format!("{project}/commits?sha={commit}&per_page=1"))?;
+                http.avatar_json(&format!("{project}/commits?sha={commit}&per_page=1"), &[])?;
             commits
                 .into_iter()
                 .next()
@@ -208,8 +208,11 @@ pub(crate) fn lookup(
             {
                 return Ok(None);
             }
-            let account: Account =
-                http.avatar_json(&format!("/avatar?email={}&size=64", encode(email)))?;
+            let encoded = encode(email);
+            let account: Account = http.avatar_json(
+                &format!("/avatar?email={encoded}&size=64"),
+                &[email, &encoded],
+            )?;
             account.avatar_url
         }
     };
@@ -243,13 +246,16 @@ pub fn is_unknown_commit(error: &Error) -> bool {
 pub(crate) fn repository(http: &Http, kind: ForgeKind, project: &str) -> Result<()> {
     match kind {
         ForgeKind::GitHub => http
-            .avatar_json::<serde::de::IgnoredAny>(project)
+            .avatar_json::<serde::de::IgnoredAny>(project, &[])
             .map(|_| ()),
         ForgeKind::GitLab => Err(Error::NotFound(
             "GitLab picture lookups name no repository".into(),
         )),
     }
 }
+
+#[cfg(test)]
+mod network_failures;
 
 #[cfg(test)]
 mod tests {

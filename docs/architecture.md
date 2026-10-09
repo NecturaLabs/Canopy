@@ -74,7 +74,7 @@ thread.
 
 | Module | Responsibility |
 |---|---|
-| `avatars.rs` | Author profile lookup and validated, credential-free HTTPS image downloads; exact image hosts, no redirects and a 2 MiB compressed limit (ADR 0008); a separate repository request (`Client::author_repository`) tells GitHub's two 404s apart, and Gravatar/Libravatar links ask for a 404 (`d=404`) instead of a generated stand-in. |
+| `avatars/mod.rs` | Author profile lookup and validated, credential-free HTTPS image downloads; exact image hosts, no redirects and a 2 MiB compressed limit (ADR 0008); a separate repository request (`Client::author_repository`) tells GitHub's two 404s apart, and Gravatar/Libravatar links ask for a 404 (`d=404`) instead of a generated stand-in. |
 | `client.rs` | `Client`: provider-neutral entry point for listing, reading, creating, merging, closing, commenting on and approving pull and merge requests, and reading a page's checks and reviews (`rollup`, only with a token). `with_switch` stops every request the client sends, profile lookups included, once the hosting thread is let go. |
 | `github.rs`, `gitlab.rs` | The two providers' REST calls (GitHub API v3, GitLab API v4 including self-hosted hosts) and the one GraphQL query each for a list's checks and reviews (`rollup`). |
 | `http.rs` | One `ureq` agent per client, the common headers, timeouts, and HTTP failures mapped to `Error` with the server's own message, made plain text (`plain_text`) before client-token redaction. JSON shape errors retain their location without quoting response values. The token travels only in an `Authorization` header. The GraphQL endpoint on the same host (`graphql`: same headers, no redirects). One 10 MiB body limit for every response. |
@@ -82,6 +82,7 @@ thread.
 | `token.rs` | Finding a token: provider environment variables (offered only to their own host) or git's credential helpers. |
 | `updates.rs` | Canopy's own update manifest, fetched anonymously from the public `NecturaLabs/app-updates` repository. |
 | `error.rs` | Errors, carrying the server's message. |
+| `test_server.rs`, `avatars/network_failures.rs` | Test-only: a scripted 127.0.0.1 listener (answer, hang up, stall, redirect) and the tests that drive profile lookups and picture downloads against it, asserting each failure names its cause and repeats no token, email, private repository or picture address. |
 
 ## canopy-app
 
