@@ -169,12 +169,41 @@ fn chart(ui: &mut Ui, weeks: &[canopy_core::WeekActivity]) {
     });
 }
 
+/// The width of `text` on one line in the body font.
+fn text_width(ui: &Ui, text: &str) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    ui.fonts_mut(|f| {
+        f.layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
+            .size()
+            .x
+    })
+}
+
+/// One row per branch in columns that always fit the dialog: the branch name takes what the
+/// other columns leave and is cut short when it must be (its tooltip has the full name), and the
+/// last commit's author, date and age are in that tooltip rather than a column of their own.
 fn branch_table(ui: &mut Ui, branches: &[canopy_core::BranchMetrics]) {
     let m = theme::metrics();
+    let spacing = m.item_spacing.x;
+    let columns = ["Default ↑/↓", "Upstream ↑/↓", "Unique"];
+    let widths: Vec<f32> = columns
+        .iter()
+        .map(|header| text_width(ui, header))
+        .collect();
+    let state_width = branches
+        .iter()
+        .map(|b| text_width(ui, &state_label(b)))
+        .fold(text_width(ui, "State"), f32::max);
+    // The scroll bar's room is kept so a long list does not squeeze the last column.
+    let name_width = (ui.available_width()
+        - widths.iter().sum::<f32>()
+        - state_width
+        - 4.0 * spacing
+        - ui.spacing().scroll.allocated_width())
+    .max(m.row_height * 2.0);
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing = m.item_spacing;
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-        egui::ScrollArea::both()
+        egui::ScrollArea::vertical()
             .id_salt("insights-branches")
             .max_height(m.row_height * 8.0)
             .show_rows(ui, m.row_height, branches.len() + 1, |ui, rows| {
@@ -186,18 +215,13 @@ fn branch_table(ui: &mut Ui, branches: &[canopy_core::BranchMetrics]) {
                     .show(ui, |ui| {
                         for row in rows {
                             if row == 0 {
-                                for header in [
-                                    "Branch",
-                                    "Default ↑/↓",
-                                    "Upstream ↑/↓",
-                                    "Unique",
-                                    "Last author / commit",
-                                    "State",
-                                ] {
+                                for header in
+                                    ["Branch", columns[0], columns[1], columns[2], "State"]
+                                {
                                     ui.label(RichText::new(header).strong());
                                 }
                             } else {
-                                branch_row(ui, &branches[row - 1]);
+                                branch_row(ui, &branches[row - 1], name_width);
                             }
                             ui.end_row();
                         }
@@ -206,37 +230,30 @@ fn branch_table(ui: &mut Ui, branches: &[canopy_core::BranchMetrics]) {
     });
 }
 
-fn branch_row(ui: &mut Ui, branch: &canopy_core::BranchMetrics) {
-    ui.label(&branch.name);
+fn branch_row(ui: &mut Ui, branch: &canopy_core::BranchMetrics, name_width: f32) {
+    let last = &branch.last_commit;
+    ui.scope(|ui| {
+        ui.set_max_width(name_width);
+        ui.add(egui::Label::new(&branch.name).truncate().selectable(false))
+            .kit_tooltip(format!(
+                "{}\nLast commit: {} <{}> · {} · {} days ago\n{}",
+                branch.name,
+                last.author.name,
+                last.author.email,
+                date(last.committed_at),
+                branch.age_days,
+                last.summary
+            ))
+            .show();
+    });
     ui.label(divergence(branch.default_divergence));
     ui.label(divergence(branch.upstream_divergence))
         .kit_tooltip(branch.upstream.as_deref().unwrap_or("No upstream"))
         .show();
     ui.label(branch.unique_commits.to_string());
-    ui.label(format!(
-        "{} · {} · {}d",
-        branch.last_commit.author.name,
-        date(branch.last_commit.committed_at),
-        branch.age_days
-    ))
-    .kit_tooltip(format!(
-        "{} <{}>\n{}",
-        branch.last_commit.author.name, branch.last_commit.author.email, branch.last_commit.summary
-    ))
-    .show();
-    let state = match branch.merged {
-        Some(canopy_core::MergedReason::Reachable) => "Merged",
-        Some(canopy_core::MergedReason::SquashMerged) => "Squash merged?",
-        Some(canopy_core::MergedReason::UpstreamGone) => "Upstream gone",
-        None => "—",
-    };
-    ui.label(if branch.stale {
-        format!("{state} · stale")
-    } else {
-        state.into()
-    })
-    .kit_tooltip(branch.merged.map_or("", canopy_core::MergedReason::label))
-    .show();
+    ui.label(state_label(branch))
+        .kit_tooltip(branch.merged.map_or("", canopy_core::MergedReason::label))
+        .show();
 }
 
 fn weekly_counts(ui: &mut Ui, weeks: &[canopy_core::WeekActivity]) {
@@ -258,4 +275,19 @@ fn weekly_counts(ui: &mut Ui, weeks: &[canopy_core::WeekActivity]) {
         }
     });
     ui.data_mut(|data| data.insert_temp(id, open));
+}
+
+/// What the State column says of a branch.
+fn state_label(branch: &canopy_core::BranchMetrics) -> String {
+    let state = match branch.merged {
+        Some(canopy_core::MergedReason::Reachable) => "Merged",
+        Some(canopy_core::MergedReason::SquashMerged) => "Squash merged?",
+        Some(canopy_core::MergedReason::UpstreamGone) => "Upstream gone",
+        None => "—",
+    };
+    if branch.stale {
+        format!("{state} · stale")
+    } else {
+        state.into()
+    }
 }
