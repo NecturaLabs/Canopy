@@ -751,10 +751,10 @@ pub struct RepoTab {
     pub commit_body: String,
     /// The merge message put into the commit boxes when a merge began, to drop it again if the
     /// merge ends without a commit and nobody edited it.
-    merge_prefill: Option<(String, String)>,
+    pub(crate) merge_prefill: Option<(String, String)>,
     /// The summary and description the commit template filled in, while they stay as filled:
     /// such a message still counts as unwritten for the amend, merge and squash prefills.
-    template_prefill: Option<(String, String)>,
+    pub(crate) template_prefill: Option<(String, String)>,
     pub amend: bool,
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,

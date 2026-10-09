@@ -23,9 +23,19 @@ pub(super) struct OpenRequest {
     /// Switch to the tab when it opens (a session restore focuses only its first tab).
     pub(super) focus: bool,
     /// Tab path to replace after the target worktree opens successfully.
-    pub(super) replace: Option<PathBuf>,
+    pub(super) replace: Option<WorktreeSwitch>,
     /// Convert an old-style partial clone first (the user confirmed it).
     pub(super) convert_legacy: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct WorktreeSwitch {
+    from: PathBuf,
+    serial: u64,
+}
+
+fn switch_id(from: &std::path::Path) -> egui::Id {
+    egui::Id::new(("pending-worktree-switch", from))
 }
 
 /// What the opener thread found.
@@ -99,6 +109,8 @@ fn open(
 struct RepositoryDraft {
     summary: String,
     body: String,
+    merge_prefill: Option<(String, String)>,
+    template_prefill: Option<(String, String)>,
     resolution: Option<(Option<crate::tab::FileSelection>, crate::tab::Resolver)>,
     comments: Vec<crate::tab::RequestCommentDraft>,
 }
@@ -128,6 +140,8 @@ pub(super) fn keep_draft(ctx: &egui::Context, tab: &RepoTab) {
         let draft = RepositoryDraft {
             summary: tab.commit_summary.clone(),
             body: tab.commit_body.clone(),
+            merge_prefill: tab.merge_prefill.clone(),
+            template_prefill: tab.template_prefill.clone(),
             resolution,
             comments,
         };
@@ -145,6 +159,8 @@ fn restore_draft(ctx: &egui::Context, tab: &mut RepoTab) {
     }) {
         tab.commit_summary = draft.summary;
         tab.commit_body = draft.body;
+        tab.merge_prefill = draft.merge_prefill;
+        tab.template_prefill = draft.template_prefill;
         tab.request_comments = draft.comments;
         if let Some((file, resolver)) = draft.resolution {
             tab.file = file;
@@ -173,13 +189,20 @@ impl CanopyApp {
         let Some(from) = self.tab().map(|t| t.path.clone()) else {
             return;
         };
+        let serial = ctx.data_mut(|data| {
+            let counter = egui::Id::new("worktree-switch-serial");
+            let next = data.get_temp::<u64>(counter).unwrap_or(0).wrapping_add(1);
+            data.insert_temp(counter, next);
+            data.insert_temp(switch_id(&from), next);
+            next
+        });
         self.request_open(
             ctx,
             OpenRequest {
                 path,
                 create: None,
                 focus: true,
-                replace: Some(from),
+                replace: Some(WorktreeSwitch { from, serial }),
                 convert_legacy: false,
             },
         );
@@ -245,6 +268,19 @@ impl CanopyApp {
         let done: Vec<Opened> = rx.try_iter().collect();
         for Opened { request, result } in done {
             self.pending_opens = self.pending_opens.saturating_sub(1);
+            if let Some(replacement) = &request.replace {
+                let current = ctx.data_mut(|data| {
+                    let id = switch_id(&replacement.from);
+                    let current = data.get_temp::<u64>(id) == Some(replacement.serial);
+                    if current {
+                        data.remove::<u64>(id);
+                    }
+                    current
+                });
+                if !current {
+                    continue;
+                }
+            }
             if let Err(e) = &result {
                 tracing::warn!(path = %request.path.display(), create = request.create.is_some(), "could not open the repository: {}", e.message);
             }
@@ -265,8 +301,8 @@ impl CanopyApp {
                             root.display().to_string(),
                         );
                     }
-                    if let Some(from) = request.replace {
-                        self.replace_tab(ctx, &from, root);
+                    if let Some(replacement) = request.replace {
+                        self.replace_tab(ctx, &replacement.from, root);
                     } else {
                         self.add_tab(ctx, root, request.focus);
                     }
@@ -496,6 +532,109 @@ mod tests {
 
     /// Switching a worktree replaces the source tab, preserves its current view and draft,
     /// and never redirects focus away from a tab chosen while the opener was busy.
+    #[test]
+    fn switching_worktrees_keeps_generated_message_provenance() {
+        use crate::worker::{Event, Worker};
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("folder");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        for path in [&a, &b] {
+            std::fs::create_dir(path).expect("folder");
+        }
+        let mut app = test_app();
+        app.add_tab(&ctx, a.clone(), true);
+        let (worker, events, _jobs) = Worker::detached();
+        app.tabs[0].worker = worker;
+        let merge = canopy_core::RepoSnapshot {
+            state: canopy_core::RepoState::Merge,
+            ..Default::default()
+        };
+        events
+            .send(Event::Snapshot(std::sync::Arc::new(merge)))
+            .expect("snapshot");
+        events
+            .send(Event::MergeMessage("Merge branch topic".into()))
+            .expect("message");
+        let _ = app.tabs[0].poll(&[]);
+        assert_ne!(app.tabs[0].commit_summary, "");
+        app.replace_tab(&ctx, &a, b.clone());
+        app.replace_tab(&ctx, &b, a.clone());
+        let (worker, events, _jobs) = Worker::detached();
+        app.tabs[0].worker = worker;
+        events
+            .send(Event::Snapshot(std::sync::Arc::default()))
+            .expect("aborted merge snapshot");
+        let _ = app.tabs[0].poll(&[]);
+        assert!(
+            app.tabs[0].commit_summary.is_empty(),
+            "an untouched aborted merge message is removed"
+        );
+        events
+            .send(Event::CommitTemplate(Ok(Some(
+                "Template summary\nTemplate body".into(),
+            ))))
+            .expect("template");
+        let _ = app.tabs[0].poll(&[]);
+        assert!(app.tabs[0].message_is_unwritten());
+        app.replace_tab(&ctx, &a, b.clone());
+        app.replace_tab(&ctx, &b, a);
+        assert!(
+            app.tabs[0].message_is_unwritten(),
+            "Amend can replace the untouched restored template"
+        );
+        app.tabs[0].commit_summary.push_str(" edited");
+        assert!(
+            !app.tabs[0].message_is_unwritten(),
+            "user edits remain drafts"
+        );
+    }
+
+    #[test]
+    fn the_latest_pending_worktree_switch_wins() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("folders");
+        let source = dir.path().join("source");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        for path in [&source, &a, &b] {
+            std::fs::create_dir(path).expect("folder");
+        }
+        let mut app = test_app();
+        app.add_tab(&ctx, source.clone(), true);
+        app.tabs[0].commit_summary = "Keep this draft".into();
+        let (requests, queued) = unbounded();
+        let (replies, opened) = unbounded();
+        app.opener = Some((requests, opened));
+        app.switch_worktree(&ctx, a.clone());
+        app.switch_worktree(&ctx, b.clone());
+        let first = queued.recv().expect("first request");
+        let second = queued.recv().expect("second request");
+        replies
+            .send(Opened {
+                request: first,
+                result: Ok(a),
+            })
+            .expect("first reply");
+        app.poll_opened(&ctx);
+        assert_eq!(
+            app.tabs[0].path, source,
+            "obsolete reply must not replace the source"
+        );
+        replies
+            .send(Opened {
+                request: second,
+                result: Ok(b.clone()),
+            })
+            .expect("latest reply");
+        app.poll_opened(&ctx);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.tabs[0].path, b);
+        assert_eq!(app.pending_opens, 0);
+        app.replace_tab(&ctx, &b, source);
+        assert_eq!(app.tabs[0].commit_summary, "Keep this draft");
+    }
+
     #[test]
     fn switching_worktrees_reuses_the_source_tab() {
         let ctx = egui::Context::default();
