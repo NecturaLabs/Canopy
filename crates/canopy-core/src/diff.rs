@@ -270,6 +270,10 @@ pub(crate) fn typechange_sides(
         if id.is_zero() {
             return Ok(None);
         }
+        // A submodule's side holds a commit, which `git diff` prints as one line.
+        if file.mode() == git2::FileMode::Commit {
+            return Ok(Some(format!("Subproject commit {id}\n").into_bytes()));
+        }
         let blob = repo.git().find_blob(id)?;
         Ok((blob.size() as u64 <= TYPECHANGE_READ_LIMIT).then(|| blob.content().to_vec()))
     };

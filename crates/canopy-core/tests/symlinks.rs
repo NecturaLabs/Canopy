@@ -230,3 +230,37 @@ fn a_binary_file_replaced_by_a_link_is_not_shown_as_text() {
     assert!(d.binary, "{d:?}");
     never_the_secret(&d);
 }
+
+/// A file turned into a submodule has a commit, not a blob, on its new side: the diff must still
+/// be readable, not an error about a missing blob.
+#[test]
+fn a_file_replaced_by_a_submodule_entry_still_diffs() {
+    let (_root, p, repo) = fixture();
+    let head = git(&p, &["rev-parse", "HEAD"]);
+    git(&p, &["rm", "-q", "--cached", "file.txt"]);
+    git(
+        &p,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{},file.txt", head.trim()),
+        ],
+    );
+    let result = repo.file_diff(
+        &DiffSource::Staged,
+        "file.txt",
+        None,
+        3,
+        Whitespace::Show,
+        MissingObjects::Fail,
+    );
+    let lines = signed(&result.expect("a type change to a submodule diffs"));
+    assert_eq!(
+        lines,
+        [
+            "-plain".to_owned(),
+            format!("+Subproject commit {}", head.trim())
+        ]
+    );
+}
