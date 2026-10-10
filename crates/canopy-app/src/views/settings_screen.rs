@@ -1384,8 +1384,32 @@ struct Note {
     warn: bool,
 }
 
+/// How a note opens when git's own configuration decides a choice.
+const DECIDES: &str = "Your git configuration decides";
+
 impl Note {
+    /// Whether this note says git's configuration decides the choice.
+    fn decided(&self) -> bool {
+        self.text.starts_with(DECIDES)
+    }
+
+    /// The note, with a button that stops following the git configuration when it decides.
     fn show(&self, ui: &mut Ui) {
+        self.show_text(ui);
+        if self.decided()
+            && Button::new("Stop following my git config")
+                .ghost()
+                .size(Size::Sm)
+                .id_salt(("stop-following", &self.text))
+                .show(ui)
+                .clicked()
+        {
+            ui.data_mut(|d| d.insert_temp(stop_following_id(), true));
+            ui.ctx().request_repaint();
+        }
+    }
+
+    fn show_text(&self, ui: &mut Ui) {
         let p = palette(ui.ctx());
         let m = theme::metrics();
         let (glyph, color) = if self.warn {
@@ -1406,6 +1430,11 @@ impl Note {
             );
         });
     }
+}
+
+/// Set by a note's button; [`git`] turns Follow my git config off on the next frame.
+fn stop_following_id() -> egui::Id {
+    egui::Id::new("settings-stop-following-git-config")
 }
 
 /// `key = value (where it is set)`, for a note.
@@ -2902,6 +2931,12 @@ fn git(
         actions,
     );
     group_gap(ui, theme::LG);
+    if ui
+        .data_mut(|d| d.remove_temp::<bool>(stop_following_id()))
+        .unwrap_or(false)
+    {
+        s.follow_git_config = false;
+    }
     let facts = screen.facts.global(ui.ctx()).cloned();
     let f = facts.as_deref();
     let follow = s.follow_git_config;
@@ -2923,6 +2958,24 @@ fn git(
             switch(ui, &mut s.follow_git_config, "Follow my git config");
         },
     );
+    row(
+        ui,
+        "Recommended settings",
+        "Every choice on this page back to Canopy's recommendation, Follow my git config included. Choices a repository made for itself stay.",
+        |ui| {
+            let at_recommended = s.git_choices_are_recommended();
+            if Button::new("Use recommended")
+                .icon(icon::ARROW_COUNTER_CLOCKWISE)
+                .enabled(!at_recommended)
+                .disabled_reason("Every choice already is the recommendation.")
+                .id_salt("use-recommended-git")
+                .show(ui)
+                .clicked()
+            {
+                s.use_recommended_git_choices();
+            }
+        },
+    );
     heading(ui, "Remote");
     default_row(
         ui,
@@ -2930,11 +2983,22 @@ fn git(
         "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward. Recommended: fast-forward only; when the branches diverged, Canopy asks how to combine them.",
         f.and_then(|f| pull_note(f, s.pull_default())).as_ref(),
         |ui| {
-            let set = f.is_some_and(|f| f.pull.as_ref().is_some_and(|p| p.strategy.is_some()));
-            ui.add_enabled_ui(!decided(set), |ui| {
+            let configured = f.and_then(|f| f.pull.as_ref()).and_then(|p| p.strategy);
+            let decides = decided(configured.is_some());
+            // While the git configuration decides, the select shows what pulls will use.
+            let mut shown = configured
+                .and_then(|c| PullMode::ALL.into_iter().find(|m| m.strategy() == c))
+                .filter(|_| decides)
+                .unwrap_or(s.pull_mode);
+            ui.add_enabled_ui(!decides, |ui| {
                 revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
                 let options = PullMode::ALL.map(|m| (m, m.label()));
-                Select::new(&mut s.pull_mode, &options)
+                let target = if decides {
+                    &mut shown
+                } else {
+                    &mut s.pull_mode
+                };
+                Select::new(target, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Pull strategy")
                     .id_salt("pull-strategy")
@@ -3764,7 +3828,8 @@ fn repo_row(
     let help_text = |ui: &mut Ui| {
         help_label(ui, help);
         if let Some(note) = note {
-            note.show(ui);
+            // A repository follows through its own switch, not the global one.
+            note.show_text(ui);
         }
     };
     row_layout(ui, title, None, help, &help_text, "", control);
@@ -5282,9 +5347,7 @@ pub(crate) fn against_recommendation(
     .into_iter()
     .filter_map(|(name, note)| {
         note.filter(|n| n.text.contains("Recommended")).map(|n| {
-            let text = n
-                .text
-                .trim_start_matches("Your git configuration decides: ");
+            let text = n.text.trim_start_matches(DECIDES).trim_start_matches(": ");
             format!("{name}: {text}")
         })
     })
@@ -5294,6 +5357,35 @@ pub(crate) fn against_recommendation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A choice the git configuration decides offers to stop following it; a plain note, and
+    /// the notes of a repository's rows, do not.
+    #[test]
+    fn a_decided_note_offers_to_stop_following_the_git_config() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let decided = Note {
+            text: format!("{DECIDES}: pull.rebase = true (global)."),
+            warn: false,
+        };
+        let plain = Note {
+            text: "Matches your git configuration: pull.rebase = true (global).".to_owned(),
+            warn: false,
+        };
+        let label = "Stop following my git config";
+        assert!(testkit::find(&testkit::spoken(&ctx, |ui| plain.show(ui)), label).is_none());
+        assert!(testkit::find(&testkit::spoken(&ctx, |ui| decided.show_text(ui)), label).is_none());
+        let nodes = testkit::spoken(&ctx, |ui| decided.show(ui));
+        let at = testkit::find(&nodes, label)
+            .and_then(|n| n.bounds)
+            .expect("the button is offered")
+            .center();
+        testkit::click(&ctx, at, |ui| decided.show(ui));
+        assert_eq!(
+            ctx.data_mut(|d| d.remove_temp::<bool>(stop_following_id())),
+            Some(true)
+        );
+    }
 
     /// Every preview theme needs an outlined selection marker; merely changing the
     /// card border is not enough to distinguish it from an unselected miniature.

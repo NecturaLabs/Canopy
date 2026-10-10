@@ -81,6 +81,43 @@ impl PullChoice {
     }
 }
 
+impl Settings {
+    /// Whether every choice of Settings → Git is Canopy's recommendation.
+    pub fn git_choices_are_recommended(&self) -> bool {
+        let d = Self::default();
+        self.follow_git_config == d.follow_git_config
+            && self.pull_mode == d.pull_mode
+            && self.prune_on_fetch == d.prune_on_fetch
+            && self.prune_tags == d.prune_tags
+            && self.autostash == d.autostash
+            && self.follow_tags == d.follow_tags
+            && self.recurse_submodules == d.recurse_submodules
+            && self.push_default == d.push_default
+            && self.conflict_style == d.conflict_style
+            && self.cleanup == d.cleanup
+            && self.auto_fetch_minutes == d.auto_fetch_minutes
+            && self.stale_inactivity_days == d.stale_inactivity_days
+    }
+
+    /// Settings → Git back to Canopy's recommendations, all at once; what a repository chose
+    /// for itself stays.
+    pub fn use_recommended_git_choices(&mut self) {
+        let d = Self::default();
+        self.follow_git_config = d.follow_git_config;
+        self.pull_mode = d.pull_mode;
+        self.prune_on_fetch = d.prune_on_fetch;
+        self.prune_tags = d.prune_tags;
+        self.autostash = d.autostash;
+        self.follow_tags = d.follow_tags;
+        self.recurse_submodules = d.recurse_submodules;
+        self.push_default = d.push_default;
+        self.conflict_style = d.conflict_style;
+        self.cleanup = d.cleanup;
+        self.auto_fetch_minutes = d.auto_fetch_minutes;
+        self.stale_inactivity_days = d.stale_inactivity_days;
+    }
+}
+
 impl Default for PullChoice {
     fn default() -> Self {
         Self {
@@ -800,6 +837,25 @@ fn expand_home_in(typed: &str, home: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn use_recommended_resets_every_git_choice_and_nothing_else() {
+        let mut s = Settings {
+            follow_git_config: false,
+            pull_mode: PullMode::Rebase,
+            prune_on_fetch: false,
+            autostash: false,
+            auto_fetch_minutes: 5,
+            iso_dates: true,
+            ..Settings::default()
+        };
+        assert!(!s.git_choices_are_recommended());
+        s.use_recommended_git_choices();
+        assert!(s.git_choices_are_recommended());
+        assert!(s.follow_git_config);
+        assert_eq!(s.pull_mode, PullMode::FastForwardOnly);
+        assert!(s.iso_dates, "settings outside Git stay");
+    }
+
     /// An arbitrary hue chosen with the sliders is saved and comes back, and it colours the
     /// theme: the picker's whole purpose.
     #[test]
