@@ -21,7 +21,7 @@ use canopy_core::identity::{Field, Identity, Scope, Source};
 use crate::action::Action;
 use crate::hosting::{self, TokenStore};
 use crate::keymap::{Command, Section as KeySection};
-use crate::repo_config::{ConfigValue, GitFacts};
+use crate::repo_config::{ConfigValue, GitFacts, SigningProblem};
 use crate::settings::{
     CleanupMode, CloneProtocol, ConflictMode, DiffPrefs, PullChoice, PullMode, PushMode, Settings,
     WhitespaceMode,
@@ -3693,7 +3693,7 @@ fn repository(
         },
     );
     if let Some(facts) = &facts {
-        signing_row(ui, facts);
+        signing_row(ui, facts, actions);
     }
     if own != s.repo(path) {
         *s.repo_mut(path) = own;
@@ -4021,27 +4021,123 @@ fn override_select<T: PartialEq + Copy>(
     }
 }
 
-/// Whether git signs this repository's commits, and where that is set: shown, not changed
-/// (overriding signing is the owner's call, GitHub issue #42).
-fn signing_row(ui: &mut Ui, facts: &GitFacts) {
-    let with = facts
-        .gpg_format
-        .as_ref()
-        .filter(|_| facts.signs_commits())
-        .map_or_else(String::new, |f| format!(" with {} keys", f.value));
-    let help = match &facts.gpg_sign {
-        Some(v) => format!(
-            "Git {}{with} here: {}. Canopy commits with git, so this applies; change it in your git configuration.",
-            if facts.signs_commits() { "signs commits" } else { "does not sign commits" },
-            config_phrase(v)
-        ),
-        None => "Git does not sign commits here (commit.gpgsign is not set). To sign, set it in your git configuration.".to_owned(),
+/// What the commit signing row states: whether commits get signed, with which key and program,
+/// and what would make signing fail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SigningLook {
+    badge: &'static str,
+    tone: Tone,
+    help: String,
+    /// A warning with the fix, when signing is on and would fail.
+    note: Option<Note>,
+}
+
+/// The program as a person would name it: a configured path shows as its file name.
+fn program_label(program: &str) -> String {
+    Path::new(program)
+        .file_name()
+        .map_or_else(|| program.to_owned(), |n| n.to_string_lossy().into_owned())
+}
+
+fn signing_look(facts: &GitFacts) -> SigningLook {
+    const APPLIES: &str = "Canopy commits with git, so this applies.";
+    if !facts.signs_commits() {
+        let state = facts
+            .gpg_sign
+            .as_ref()
+            .map_or_else(|| "commit.gpgsign is not set".to_owned(), config_phrase);
+        return SigningLook {
+            badge: "Not signing",
+            tone: Tone::Neutral,
+            help: format!(
+                "Commits are not signed here ({state}). {APPLIES} To sign, turn commit.gpgsign on in your git configuration."
+            ),
+            note: None,
+        };
+    }
+    let Some(signing) = &facts.signing else {
+        return SigningLook {
+            badge: "Signing",
+            tone: Tone::Success,
+            help: format!("Git signs commits here. {APPLIES}"),
+            note: None,
+        };
     };
-    row(ui, "Commit signing", &help, |ui| {
-        let on = facts.signs_commits();
-        Badge::new(if on { "On" } else { "Off" })
-            .tone(if on { Tone::Success } else { Tone::Neutral })
-            .show(ui);
+    let program = program_label(&signing.program);
+    let key = signing.key_label().map_or_else(
+        || "git's default key for your committer identity".to_owned(),
+        |k| format!("key {k}"),
+    );
+    let setting = facts
+        .gpg_sign
+        .as_ref()
+        .map_or_else(String::new, |v| format!(" ({})", config_phrase(v)));
+    let help = format!(
+        "Commits are signed as {} with {key}, by {program}{setting}. {APPLIES} Commit details show whether each signature verifies.",
+        signing.format_label()
+    );
+    let program_key = match signing.format.as_str() {
+        "ssh" => "gpg.ssh.program",
+        "x509" => "gpg.x509.program",
+        _ => "gpg.openpgp.program",
+    };
+    let note = signing.problem.map(|problem| Note {
+        text: match problem {
+            SigningProblem::ProgramMissing => format!(
+                "{program} is not installed or not on the PATH, so every commit will fail. Install it, or set {program_key} to another program in your git configuration."
+            ),
+            SigningProblem::KeyNotSet => "SSH signing needs a key and user.signingkey is not set, so every commit will fail. Set user.signingkey to your public key file in your git configuration.".to_owned(),
+            SigningProblem::KeyFileMissing => format!(
+                "The key file {} does not exist, so every commit will fail. Correct user.signingkey in your git configuration.",
+                signing.key_label().unwrap_or_default()
+            ),
+            SigningProblem::UnknownFormat => format!(
+                "gpg.format = {} is not a format git knows (openpgp, ssh or x509), so every commit will fail. Correct it in your git configuration.",
+                signing.format
+            ),
+        },
+        warn: true,
+    });
+    SigningLook {
+        badge: if note.is_some() {
+            "Will fail"
+        } else {
+            "Signing"
+        },
+        tone: if note.is_some() {
+            Tone::Danger
+        } else {
+            Tone::Success
+        },
+        help,
+        note,
+    }
+}
+
+/// Whether git signs this repository's commits, with which key and program, and what would make
+/// it fail: shown, not changed (overriding signing is the owner's call, GitHub issue #42), with a
+/// button to open the file that sets it.
+fn signing_row(ui: &mut Ui, facts: &GitFacts, actions: &mut Vec<Action>) {
+    let look = signing_look(facts);
+    let file = facts
+        .gpg_sign
+        .as_ref()
+        .filter(|v| v.scope != "command")
+        .and_then(|v| v.origin.strip_prefix("file:"))
+        .map(PathBuf::from);
+    row_with_note(ui, "Commit signing", &look.help, look.note.as_ref(), |ui| {
+        // Right to left.
+        Badge::new(look.badge).tone(look.tone).show(ui);
+        if let Some(file) = file
+            && Button::new("Open git configuration")
+                .ghost()
+                .size(Size::Sm)
+                .tooltip(format!("Edit {}", file.display()))
+                .show(ui)
+                .clicked()
+        {
+            actions.push(Action::OpenInEditor(file));
+        }
     });
 }
 
@@ -5492,6 +5588,7 @@ pub(crate) fn against_recommendation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repo_config::Signing;
 
     /// A choice the git configuration decides offers to stop following it; a plain note, and
     /// the notes of a repository's rows, do not.
@@ -6656,6 +6753,106 @@ mod tests {
         let on = prune_note(&facts, true, false).unwrap();
         assert!(on.warn);
         assert!(on.text.starts_with("Canopy passes --prune"), "{}", on.text);
+    }
+
+    fn signing(format: &str, key: Option<&str>, problem: Option<SigningProblem>) -> GitFacts {
+        GitFacts {
+            gpg_sign: Some(fact("commit.gpgsign", "true")),
+            signing: Some(Signing {
+                format: format.to_owned(),
+                key: key.map(|k| fact("user.signingkey", k)),
+                program: match format {
+                    "ssh" => "/usr/bin/ssh-keygen".to_owned(),
+                    "x509" => "gpgsm".to_owned(),
+                    _ => "gpg".to_owned(),
+                },
+                problem,
+            }),
+            ..GitFacts::default()
+        }
+    }
+
+    /// Off, on and broken read differently in words, not only in colour.
+    #[test]
+    fn the_signing_row_tells_off_on_and_broken_apart() {
+        let off = signing_look(&GitFacts::default());
+        assert_eq!((off.badge, off.tone), ("Not signing", Tone::Neutral));
+        assert!(
+            off.help.contains("commit.gpgsign is not set"),
+            "{}",
+            off.help
+        );
+        assert_eq!(off.note, None);
+
+        let explicit = GitFacts {
+            gpg_sign: Some(fact("commit.gpgsign", "false")),
+            ..GitFacts::default()
+        };
+        assert!(
+            signing_look(&explicit)
+                .help
+                .contains("commit.gpgsign = false"),
+            "{}",
+            signing_look(&explicit).help
+        );
+
+        let on = signing_look(&signing("openpgp", Some("3AA5C34371567BD2"), None));
+        assert_eq!((on.badge, on.tone), ("Signing", Tone::Success));
+        for part in ["OpenPGP", "key 3AA5C34371567BD2", "by gpg"] {
+            assert!(on.help.contains(part), "{part}: {}", on.help);
+        }
+        assert_eq!(on.note, None);
+
+        let ssh = signing_look(&signing("ssh", Some("/home/me/.ssh/id.pub"), None));
+        assert!(
+            ssh.help.contains("SSH with key id.pub, by ssh-keygen"),
+            "{}",
+            ssh.help
+        );
+        assert!(!ssh.help.contains("/usr/bin"), "{}", ssh.help);
+
+        let x509 = signing_look(&signing("x509", None, None));
+        assert!(x509.help.contains("X.509"), "{}", x509.help);
+        assert!(x509.help.contains("default key"), "{}", x509.help);
+    }
+
+    #[test]
+    fn a_signing_problem_is_a_warning_with_its_fix() {
+        let missing = signing_look(&signing(
+            "ssh",
+            Some("/home/me/.ssh/id.pub"),
+            Some(SigningProblem::ProgramMissing),
+        ));
+        assert_eq!((missing.badge, missing.tone), ("Will fail", Tone::Danger));
+        let note = missing.note.expect("a warning");
+        assert!(note.warn);
+        assert!(
+            note.text.contains("ssh-keygen is not installed")
+                && note.text.contains("gpg.ssh.program"),
+            "{}",
+            note.text
+        );
+        for (problem, part) in [
+            (SigningProblem::KeyNotSet, "user.signingkey is not set"),
+            (SigningProblem::KeyFileMissing, "id.pub does not exist"),
+            (SigningProblem::UnknownFormat, "is not a format git knows"),
+        ] {
+            let look = signing_look(&signing("ssh", Some("/home/me/.ssh/id.pub"), Some(problem)));
+            let text = look.note.expect("a warning").text;
+            assert!(text.contains(part), "{part}: {text}");
+        }
+    }
+
+    /// An inline key never reaches the row.
+    #[test]
+    fn an_inline_ssh_key_is_not_shown() {
+        let look = signing_look(&signing(
+            "ssh",
+            Some("key::ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIsecret"),
+            None,
+        ));
+        assert!(look.help.contains("an inline SSH key"), "{}", look.help);
+        assert!(!look.help.contains("AAAA"), "{}", look.help);
     }
 
     /// A remote's own `remote.<name>.prune` is named beside `fetch.prune`, and replaces it once
