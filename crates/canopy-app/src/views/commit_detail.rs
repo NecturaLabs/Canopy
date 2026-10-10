@@ -191,7 +191,8 @@ fn fact_row(ui: &mut Ui, label: &str, label_w: f32, content: impl FnOnce(&mut Ui
     ui.horizontal_wrapped(|ui| {
         ui.add_sized(
             [label_w, Size::Xs.height()],
-            egui::Label::new(RichText::new(label).size(m.meta_size).color(p.text_dim)),
+            egui::Label::new(RichText::new(label).size(m.meta_size).color(p.text_dim))
+                .halign(Align::Min),
         );
         content(ui);
     });
