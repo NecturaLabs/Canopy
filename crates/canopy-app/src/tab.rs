@@ -522,6 +522,23 @@ pub struct Finished {
 /// How old the request list may be when its view opens before it is loaded again.
 const REQUESTS_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How long a request's loaded details are shown again, on returning to it, without asking the
+/// host: browsing A, B and back to A is not three loads of A.
+const REQUEST_DETAILS_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How many requests' details the cache keeps; the oldest is dropped first.
+const REQUEST_DETAILS_CACHE_MAX: usize = 16;
+
+/// One request's details as loaded, with the project and time they came from. Keyed by forge so
+/// equal numbers in different projects never share an entry.
+#[derive(Debug)]
+struct CachedDetails {
+    forge: Forge,
+    number: u64,
+    loaded_at: Instant,
+    details: Arc<RequestDetails>,
+}
+
 /// An unsent comment, isolated by forge project and request number.
 #[derive(Debug, Clone)]
 pub struct RequestCommentDraft {
@@ -544,6 +561,9 @@ pub struct Requests {
     pub details_generation: u64,
     /// Failure policy of the current details generation, independent of the list response.
     pub details_quiet_refresh: bool,
+    /// Recently loaded details, oldest first, so returning to a request needs no new load.
+    /// Emptied by a reload, an action's result and a token change (`restart_host`).
+    details_cache: Vec<CachedDetails>,
     /// An action in flight ("Merging PR #12").
     pub busy: Option<String>,
     pub comment: String,
@@ -578,6 +598,7 @@ impl Default for Requests {
             details_loading: false,
             details_generation: 0,
             details_quiet_refresh: false,
+            details_cache: Vec::new(),
             busy: None,
             comment: String::new(),
             pending_comment: None,
@@ -587,6 +608,39 @@ impl Default for Requests {
             loaded_at: None,
             quiet_refresh: false,
         }
+    }
+}
+
+impl Requests {
+    /// The details of `number` in `forge` loaded less than [`REQUEST_DETAILS_CACHE_TTL`] ago.
+    fn cached_details(&self, forge: &Forge, number: u64) -> Option<Arc<RequestDetails>> {
+        self.details_cache
+            .iter()
+            .find(|c| c.number == number && &c.forge == forge)
+            .filter(|c| c.loaded_at.elapsed() < REQUEST_DETAILS_CACHE_TTL)
+            .map(|c| Arc::clone(&c.details))
+    }
+
+    /// Remembers a load that just arrived, replacing the request's older entry and dropping
+    /// the oldest entries beyond [`REQUEST_DETAILS_CACHE_MAX`].
+    fn cache_details(&mut self, forge: &Forge, number: u64, details: &Arc<RequestDetails>) {
+        self.forget_details(forge, number);
+        self.details_cache
+            .retain(|c| c.loaded_at.elapsed() < REQUEST_DETAILS_CACHE_TTL);
+        while self.details_cache.len() >= REQUEST_DETAILS_CACHE_MAX {
+            self.details_cache.remove(0);
+        }
+        self.details_cache.push(CachedDetails {
+            forge: forge.clone(),
+            number,
+            loaded_at: Instant::now(),
+            details: Arc::clone(details),
+        });
+    }
+
+    fn forget_details(&mut self, forge: &Forge, number: u64) {
+        self.details_cache
+            .retain(|c| c.number != number || &c.forge != forge);
     }
 }
 
@@ -1127,6 +1181,8 @@ impl RepoTab {
     ) {
         self.request_comments = self.request_comment_drafts();
         self.requests.comment.clear();
+        // Details loaded with the old token may differ from what the new one is allowed to see.
+        self.requests.details_cache.clear();
         self.host = None;
         self.ensure_host(ctx, saved_token, enabled);
     }
@@ -1145,6 +1201,9 @@ impl RepoTab {
     /// Reloads the request list.
     pub fn load_requests(&mut self) {
         if self.host.is_some() {
+            // A reload the user asked for (or an action's aftermath) must not be answered from
+            // what was loaded before it.
+            self.requests.details_cache.clear();
             self.requests.quiet_refresh = false;
             self.requests.loading = true;
             self.host_job(HostJob::List(self.requests.filter));
@@ -1168,6 +1227,8 @@ impl RepoTab {
             return;
         }
         self.requests.quiet_refresh = true;
+        // The list is being revalidated, so what was cached before it may disagree with its rows.
+        self.requests.details_cache.clear();
         self.host_job(HostJob::List(self.requests.filter));
         if let Some(n) = self.requests.selected
             && self.requests.details.is_some()
@@ -1224,7 +1285,16 @@ impl RepoTab {
             })
             .map(|index| self.request_comments.remove(index).body)
             .unwrap_or_default();
-        if self.host.is_some() {
+        let cached = self
+            .host
+            .as_ref()
+            .and_then(|host| self.requests.cached_details(&host.forge, number));
+        if let Some(details) = cached {
+            self.requests.details = Some(Ok(details));
+            self.requests.details_loading = false;
+            // An older load still in flight must not land on what is now shown.
+            self.requests.details_generation = self.requests.details_generation.wrapping_add(1);
+        } else if self.host.is_some() {
             self.requests.details_loading = true;
             self.request_details(number);
         } else {
@@ -2203,7 +2273,12 @@ impl RepoTab {
                             && result.is_err()
                             && matches!(self.requests.details, Some(Ok(_)));
                         if !kept {
-                            self.requests.details = Some(result.map(Arc::new));
+                            let result = result.map(Arc::new);
+                            match &result {
+                                Ok(details) => self.requests.cache_details(&forge, n, details),
+                                Err(_) => self.requests.forget_details(&forge, n),
+                            }
+                            self.requests.details = Some(result);
                         }
                     }
                 }
@@ -4490,6 +4565,256 @@ mod tests {
                 .any(|j| matches!(j, HostJob::List(_)))
         );
         assert!(!tab.requests.loading);
+    }
+
+    fn details_of(number: u64) -> RequestDetails {
+        RequestDetails {
+            summary: RequestSummary {
+                number,
+                title: format!("request {number}"),
+                author: String::new(),
+                state: canopy_hosting::RequestState::Open,
+                draft: false,
+                source_branch: "feature".into(),
+                target_branch: "main".into(),
+                from_fork: false,
+                created_at: 0,
+                updated_at: 0,
+                web_url: String::new(),
+                labels: Vec::new(),
+                rollup: None,
+            },
+            body: String::new(),
+            head_sha: None,
+            mergeable: None,
+            commits: None,
+            changed_files: None,
+            additions: None,
+            deletions: None,
+            reviews: Vec::new(),
+            checks: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
+
+    /// A tab on a fresh hosting thread, nothing selected: the channels to feed it and read it.
+    fn tab_on_a_fresh_host() -> (
+        RepoTab,
+        crossbeam_channel::Sender<HostEvent>,
+        crossbeam_channel::Receiver<HostJob>,
+    ) {
+        let (mut tab, _events, _jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().expect("host").forge.clone();
+        let (host, host_events, host_jobs) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        tab.requests.selected = None;
+        tab.requests.details = None;
+        (tab, host_events, host_jobs)
+    }
+
+    /// Selects `number` and answers its details load, as the hosting thread would.
+    fn open_request(
+        tab: &mut RepoTab,
+        host_events: &crossbeam_channel::Sender<HostEvent>,
+        host_jobs: &crossbeam_channel::Receiver<HostJob>,
+        number: u64,
+    ) {
+        tab.select_request(number);
+        let jobs = jobs_of(host_jobs);
+        assert!(
+            matches!(jobs.as_slice(), [HostJob::Details(n, _)] if *n == number),
+            "opening request {number} loads it once: {jobs:?}"
+        );
+        host_events
+            .send(HostEvent::Details(
+                number,
+                tab.requests.details_generation,
+                Box::new(Ok(details_of(number))),
+            ))
+            .expect("details");
+        tab.poll(&[]);
+        assert!(matches!(&tab.requests.details, Some(Ok(d)) if d.summary.number == number));
+    }
+
+    /// #29: A, then B, then A again within the cache's lifetime shows A at once, without
+    /// asking the host for it a second time.
+    #[test]
+    fn returning_to_a_request_shows_its_cached_details_without_a_new_load() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        let before = tab.requests.details_generation;
+
+        tab.select_request(9);
+        assert!(jobs_of(&host_jobs).is_empty(), "A is not loaded again");
+        assert_eq!(tab.requests.selected, Some(9));
+        assert!(!tab.requests.details_loading);
+        assert!(matches!(&tab.requests.details, Some(Ok(d)) if d.summary.number == 9));
+        assert_ne!(
+            tab.requests.details_generation, before,
+            "an in-flight result of the earlier selection must not land"
+        );
+
+        // B's late result (it was answered once; a duplicate or old one) changes nothing.
+        host_events
+            .send(HostEvent::Details(4, before, Box::new(Err("late".into()))))
+            .expect("late");
+        tab.poll(&[]);
+        assert!(matches!(&tab.requests.details, Some(Ok(d)) if d.summary.number == 9));
+    }
+
+    #[test]
+    fn a_failed_load_is_not_cached() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        tab.select_request(9);
+        host_events
+            .send(HostEvent::Details(
+                9,
+                tab.requests.details_generation,
+                Box::new(Err("offline".into())),
+            ))
+            .expect("failure");
+        tab.poll(&[]);
+        drop(jobs_of(&host_jobs));
+        tab.select_request(4);
+        drop(jobs_of(&host_jobs));
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+    }
+
+    #[test]
+    fn an_expired_cache_entry_is_loaded_again() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        let long_ago = Instant::now()
+            .checked_sub(REQUEST_DETAILS_CACHE_TTL * 2)
+            .unwrap_or_else(Instant::now);
+        for entry in &mut tab.requests.details_cache {
+            entry.loaded_at = long_ago;
+        }
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+        assert!(tab.requests.details_loading);
+    }
+
+    #[test]
+    fn a_manual_reload_drops_the_cached_details() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        tab.load_requests();
+        drop(jobs_of(&host_jobs));
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+    }
+
+    #[test]
+    fn an_automatic_list_refresh_drops_the_cached_details() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        tab.refresh_requests_quietly();
+        drop(jobs_of(&host_jobs));
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+    }
+
+    #[test]
+    fn an_action_result_drops_the_cached_details() {
+        for result in [Ok(()), Err("refused".to_owned())] {
+            let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+            open_request(&mut tab, &host_events, &host_jobs, 9);
+            open_request(&mut tab, &host_events, &host_jobs, 4);
+            host_events
+                .send(HostEvent::Done {
+                    label: "Merging".into(),
+                    action: HostAction::Merge,
+                    number: Some(4),
+                    result,
+                })
+                .expect("done");
+            tab.poll(&[]);
+            drop(jobs_of(&host_jobs));
+            tab.select_request(9);
+            assert!(matches!(
+                jobs_of(&host_jobs).as_slice(),
+                [HostJob::Details(9, _)]
+            ));
+        }
+    }
+
+    #[test]
+    fn the_same_number_in_another_project_is_not_a_cache_hit() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        let mut other = tab.host.as_ref().expect("host").forge.clone();
+        other.path = "o/other".into();
+        let (host, _events, other_jobs) = HostWorker::detached(other);
+        tab.host = Some(host);
+        tab.select_request(4);
+        tab.select_request(9);
+        let jobs = jobs_of(&other_jobs);
+        assert!(
+            matches!(
+                jobs.as_slice(),
+                [HostJob::Details(4, _), HostJob::Details(9, _)]
+            ),
+            "{jobs:?}"
+        );
+    }
+
+    #[test]
+    fn restarting_the_host_for_a_new_token_forgets_the_cached_details() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        assert!(!tab.requests.details_cache.is_empty());
+        tab.restart_host(&egui::Context::default(), None, false);
+        assert!(tab.requests.details_cache.is_empty());
+    }
+
+    #[test]
+    fn the_cache_is_bounded_and_drops_the_oldest_first() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        let first = 1000;
+        let last = first + REQUEST_DETAILS_CACHE_MAX as u64;
+        for number in first..=last {
+            open_request(&mut tab, &host_events, &host_jobs, number);
+        }
+        assert_eq!(tab.requests.details_cache.len(), REQUEST_DETAILS_CACHE_MAX);
+        tab.select_request(first);
+        assert!(
+            matches!(jobs_of(&host_jobs).as_slice(), [HostJob::Details(n, _)] if *n == first),
+            "the oldest entry was dropped"
+        );
+        tab.select_request(last);
+        assert!(jobs_of(&host_jobs).is_empty(), "the newest is still cached");
+    }
+
+    #[test]
+    fn a_cached_return_restores_that_requests_own_comment_draft() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        tab.requests.comment = "draft for nine".into();
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        assert_eq!(tab.requests.comment, "");
+        tab.requests.comment = "draft for four".into();
+        tab.select_request(9);
+        assert_eq!(tab.requests.comment, "draft for nine");
+        tab.select_request(4);
+        assert_eq!(tab.requests.comment, "draft for four");
     }
 }
 
