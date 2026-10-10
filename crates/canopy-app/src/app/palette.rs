@@ -292,6 +292,10 @@ impl CanopyApp {
                     Action::OpenDialog(Dialog::new_branch_at(Start::Head)),
                 ),
                 (
+                    e(icon::FOLDERS, "New worktree…", "Branch", None),
+                    Action::OpenDialog(Dialog::new_worktree()),
+                ),
+                (
                     e(icon::GIT_MERGE, "Merge…", "Branch", Some(C::MergeDialog)),
                     Action::OpenDialog(Dialog::Merge {
                         target: String::new(),
