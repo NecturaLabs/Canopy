@@ -4064,7 +4064,7 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
         };
     };
     let program = program_label(&signing.program);
-    let key = signing.key_label().map_or_else(
+    let key = signing.key.as_deref().map_or_else(
         || "git's default key for your committer identity".to_owned(),
         |k| format!("key {k}"),
     );
@@ -4089,7 +4089,7 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
             SigningProblem::KeyNotSet => "SSH signing needs a key and user.signingkey is not set, so every commit will fail. Set user.signingkey to your public key file in your git configuration.".to_owned(),
             SigningProblem::KeyFileMissing => format!(
                 "The key file {} does not exist, so every commit will fail. Correct user.signingkey in your git configuration.",
-                signing.key_label().unwrap_or_default()
+                signing.key.as_deref().unwrap_or_default()
             ),
             SigningProblem::UnknownFormat => format!(
                 "gpg.format = \"{}\" is not a format git knows (openpgp, ssh or x509), so every commit will fail. Correct it in your git configuration.",
@@ -6760,7 +6760,7 @@ mod tests {
             gpg_sign: Some(fact("commit.gpgsign", "true")),
             signing: Some(Signing {
                 format: format.to_owned(),
-                key: key.map(|k| fact("user.signingkey", k)),
+                key: key.map(str::to_owned),
                 program: match format {
                     "ssh" => "/usr/bin/ssh-keygen".to_owned(),
                     "x509" => "gpgsm".to_owned(),
@@ -6803,7 +6803,7 @@ mod tests {
         }
         assert_eq!(on.note, None);
 
-        let ssh = signing_look(&signing("ssh", Some("/home/me/.ssh/id.pub"), None));
+        let ssh = signing_look(&signing("ssh", Some("id.pub"), None));
         assert!(
             ssh.help.contains("SSH with key id.pub, by ssh-keygen"),
             "{}",
@@ -6820,7 +6820,7 @@ mod tests {
     fn a_signing_problem_is_a_warning_with_its_fix() {
         let missing = signing_look(&signing(
             "ssh",
-            Some("/home/me/.ssh/id.pub"),
+            Some("id.pub"),
             Some(SigningProblem::ProgramMissing),
         ));
         assert_eq!((missing.badge, missing.tone), ("Will fail", Tone::Danger));
@@ -6837,22 +6837,10 @@ mod tests {
             (SigningProblem::KeyFileMissing, "id.pub does not exist"),
             (SigningProblem::UnknownFormat, "is not a format git knows"),
         ] {
-            let look = signing_look(&signing("ssh", Some("/home/me/.ssh/id.pub"), Some(problem)));
+            let look = signing_look(&signing("ssh", Some("id.pub"), Some(problem)));
             let text = look.note.expect("a warning").text;
             assert!(text.contains(part), "{part}: {text}");
         }
-    }
-
-    /// An inline key never reaches the row.
-    #[test]
-    fn an_inline_ssh_key_is_not_shown() {
-        let look = signing_look(&signing(
-            "ssh",
-            Some("key::ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIsecret"),
-            None,
-        ));
-        assert!(look.help.contains("an inline SSH key"), "{}", look.help);
-        assert!(!look.help.contains("AAAA"), "{}", look.help);
     }
 
     /// A remote's own `remote.<name>.prune` is named beside `fetch.prune`, and replaces it once
