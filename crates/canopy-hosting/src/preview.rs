@@ -15,21 +15,38 @@ const SOURCE_CHARS: usize = 8_000;
 const RULE_CHARS: usize = 3;
 /// The width of a doubled emphasis mark (`**`, `__`, `~~`).
 const DOUBLE_MARK: usize = 2;
+/// What stands between two paragraphs, so the end of one sentence does not run into the start of
+/// the next.
+const PARAGRAPH_BREAK: &str = " \u{B7} ";
+/// The Braille blank: a character that draws nothing and is neither whitespace nor ignorable.
+const BRAILLE_BLANK: char = '\u{2800}';
+/// The most characters a link's target (or a reference's name) is read over. A target longer than
+/// this is left as text, which bounds what a run of openers can cost.
+const TARGET_CHARS: usize = 512;
 
 /// `markdown` flattened to plain text on one line, at most [`PREVIEW_CHARS`] characters; empty
 /// when the description says nothing.
 ///
 /// Comments, HTML tags, code fences, heading, quote and list marks and emphasis are dropped,
-/// links and images reduced to their text, and control and invisible characters removed
-/// ([`plain_text`]).
+/// links and images reduced to their text, paragraphs told apart by [`PARAGRAPH_BREAK`], and
+/// control and invisible characters removed ([`plain_text`]).
 pub fn description_preview(markdown: &str) -> String {
-    let source: String = markdown.chars().take(SOURCE_CHARS).collect();
+    let source: String = markdown
+        .chars()
+        .take(SOURCE_CHARS)
+        .map(|c| if c == BRAILLE_BLANK { ' ' } else { c })
+        .collect();
     let mut flat = String::new();
     let mut in_fence = false;
+    let mut new_paragraph = false;
     for line in without_comments(&source).lines() {
         let line = line.trim();
         if line.starts_with("```") || line.starts_with("~~~") {
             in_fence = !in_fence;
+            continue;
+        }
+        if line.is_empty() && !in_fence {
+            new_paragraph = true;
             continue;
         }
         let text = if in_fence {
@@ -39,8 +56,14 @@ pub fn description_preview(markdown: &str) -> String {
         } else {
             continue;
         };
+        if text.trim().is_empty() {
+            continue;
+        }
+        if !flat.is_empty() {
+            flat.push_str(if new_paragraph { PARAGRAPH_BREAK } else { " " });
+        }
+        new_paragraph = false;
         flat.push_str(&text);
-        flat.push(' ');
     }
     plain_text(&flat, usize::MAX)
         .chars()
@@ -137,7 +160,13 @@ fn inline(text: &str) -> String {
                 }
             }
             '<' => {
-                let close = c[i..].iter().position(|&ch| ch == '>');
+                // The tag or address ends at the first `>`, and a `<` before it is not one: the
+                // search stops there, so a run of `<` is scanned once, not once each.
+                let close = c[i + 1..]
+                    .iter()
+                    .position(|&ch| ch == '>' || ch == '<')
+                    .filter(|&at| c[i + 1 + at] == '>')
+                    .map(|at| at + 1);
                 let inner: String = close
                     .map(|close| c[i + 1..i + close].iter().collect())
                     .unwrap_or_default();
@@ -145,11 +174,10 @@ fn inline(text: &str) -> String {
                     .iter()
                     .any(|scheme| inner.starts_with(scheme))
                     && !inner.contains(' ');
-                let tag = !inner.contains('<')
-                    && inner
-                        .chars()
-                        .next()
-                        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '/' || ch == '!');
+                let tag = inner
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '/' || ch == '!');
                 match close {
                     Some(close) if address || tag => {
                         // An autolink keeps its address; a tag is a word break.
@@ -192,13 +220,25 @@ fn inline(text: &str) -> String {
 /// A link or reference `[label](target)` / `[label][reference]` starting at `open`: its label
 /// and the index after it. `None` for a bare bracket.
 fn bracketed(c: &[char], open: usize) -> Option<(String, usize)> {
-    let close = open + c[open..].iter().position(|&ch| ch == ']')?;
+    // The label ends at the first `]`; a `[` before it opens a link of its own, so a run of `[` is
+    // scanned once, not once each.
+    let close = open
+        + 1
+        + c[open + 1..]
+            .iter()
+            .position(|&ch| ch == ']' || ch == '[')
+            .filter(|&at| c[open + 1 + at] == ']')?;
     let closer = match c.get(close + 1)? {
         '(' => ')',
         '[' => ']',
         _ => return None,
     };
-    let end = close + 1 + c[close + 1..].iter().position(|&ch| ch == closer)?;
+    let end = close
+        + 1
+        + c[close + 1..]
+            .iter()
+            .take(TARGET_CHARS)
+            .position(|&ch| ch == closer)?;
     Some((c[open + 1..close].iter().collect(), end + 1))
 }
 
@@ -213,8 +253,8 @@ mod tests {
             ---\n| a | b |\n|---|---|\n| 1 | 2 |";
         assert_eq!(
             description_preview(text),
-            "Summary Adds bold and soft text, a link, an screenshot and code. quoted done open \
-             first a b 1 2"
+            "Summary · Adds bold and soft text, a link, an screenshot and code. · quoted done \
+             open first a b 1 2"
         );
     }
 
@@ -245,6 +285,7 @@ mod tests {
             "<!-- only a template -->",
             "---",
             "![](x.png)",
+            "\u{2800}\u{2800}\n\n\u{2800}",
         ] {
             assert_eq!(description_preview(empty), "", "{empty:?}");
         }
@@ -263,5 +304,61 @@ mod tests {
         let text = "use ghp_abcdefghijklmnopqrstuvwxyz0123456789ABCD to log in";
         let preview = description_preview(text);
         assert!(!preview.contains("ghp_abcdef"), "{preview}");
+    }
+
+    #[test]
+    fn paragraphs_are_told_apart_and_blanks_leave_no_separator() {
+        assert_eq!(
+            description_preview("First idea.\n\nSecond idea.\nStill the second."),
+            "First idea. · Second idea. Still the second."
+        );
+        assert_eq!(
+            description_preview("\n\nA\n\n\n<!-- note -->\n\nB\n\n"),
+            "A · B"
+        );
+        assert_eq!(
+            description_preview("```\na\n\nb\n```\nafter"),
+            "a b after",
+            "a blank line in code is not a paragraph break"
+        );
+        assert_eq!(description_preview("A\n\n![](x.png)\n\nB"), "A · B");
+        let long = format!("{}\n\n{}", "word ".repeat(400), "more ".repeat(400));
+        assert_eq!(description_preview(&long).chars().count(), PREVIEW_CHARS);
+    }
+
+    #[test]
+    fn a_braille_blank_is_a_space() {
+        assert_eq!(description_preview("a\u{2800}b"), "a b");
+    }
+
+    #[test]
+    fn unclosed_marks_cost_one_pass_and_closed_ones_still_work() {
+        // Far past what a description is cut to, so a pass per mark could not finish.
+        let n = 200_000;
+        let started = std::time::Instant::now();
+        for hostile in [
+            format!("{}>", "<a".repeat(n / 2)),
+            "<".repeat(n),
+            "[".repeat(n),
+            "[a](".repeat(n / 4),
+            "[a][".repeat(n / 4),
+        ] {
+            let flat = inline(&hostile);
+            assert_ne!(flat, "");
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+
+        assert_eq!(
+            description_preview("<<<a [[b](c) [d](e) <f>g</f> [h"),
+            "<<<a [b d g [h"
+        );
+        assert_eq!(
+            description_preview("<https://example.com/a?b=1> and [x][y]"),
+            "https://example.com/a?b=1 and x"
+        );
     }
 }

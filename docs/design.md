@@ -351,8 +351,9 @@ in the density's metrics:
   560 points, following the window) and goes to 60% or 800 points. The Changes file list and the
   request list are resized with `kit::split::SplitHandle` (drag, the arrow keys while it has focus,
   a double-click resets it) and keep their width across restarts; the request list keeps only a
-  width the user set, else it follows the window. Pane limits follow the current viewport. Read-only diff headers share a wrapping row at short heights to keep more
-  changed lines visible without reducing text size.
+  width the user set, else it follows the window. Pane limits follow the current viewport.
+  Read-only diff headers share a wrapping row at short heights to keep more changed lines
+  visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
   the full state and branch pair remain available on hover.
 - A request row has no fixed height: the state glyph and `#number title` (medium weight, the

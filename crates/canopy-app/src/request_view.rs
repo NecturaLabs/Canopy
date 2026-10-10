@@ -4,8 +4,10 @@
 
 use std::cmp::{Ordering, Reverse};
 
-use canopy_hosting::{CheckState, RequestSummary, ReviewDecision, Rollup};
+use canopy_hosting::RequestSummary;
 use serde::{Deserialize, Serialize};
+
+use crate::settings::{known, known_option};
 
 /// Which drafts the list keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,36 +127,21 @@ pub struct Standing {
     pub review: Option<ReviewChoice>,
 }
 
-impl Standing {
-    /// What a list's rollup (the provider's combined checks state and review decision) says.
-    pub fn of_rollup(rollup: Rollup) -> Self {
-        Self {
-            checks: rollup.checks.and_then(|state| match state {
-                CheckState::Success => Some(ChecksChoice::Passed),
-                CheckState::Failure => Some(ChecksChoice::Failed),
-                CheckState::Pending => Some(ChecksChoice::Running),
-                CheckState::Neutral => None,
-            }),
-            review: rollup.review.map(|decision| match decision {
-                ReviewDecision::Approved => ReviewChoice::Approved,
-                ReviewDecision::ChangesRequested => ReviewChoice::ChangesRequested,
-                ReviewDecision::Required => ReviewChoice::Required,
-            }),
-        }
-    }
-}
-
 /// The filters and the sort of one repository's request list.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RequestView {
     /// Words that must all appear in the number, title, author or description.
     pub text: String,
+    #[serde(deserialize_with = "known_option")]
     pub draft: Option<DraftChoice>,
+    #[serde(deserialize_with = "known_option")]
     pub checks: Option<ChecksChoice>,
+    #[serde(deserialize_with = "known_option")]
     pub review: Option<ReviewChoice>,
     /// An author's login.
     pub author: Option<String>,
+    #[serde(deserialize_with = "known")]
     pub sort: RequestSort,
 }
 
@@ -212,15 +199,6 @@ impl RequestView {
         shown.sort_by(|&a, &b| self.sort.compare(&rows[a], &rows[b]));
         shown
     }
-}
-
-/// The number of the request a list opens on: the first one shown, going by what each row's own
-/// rollup says (a list that has just arrived has nothing else).
-pub fn first_shown(view: &RequestView, rows: &[RequestSummary]) -> Option<u64> {
-    let standing = |r: &RequestSummary| r.rollup.map(Standing::of_rollup).unwrap_or_default();
-    view.visible(rows, standing)
-        .first()
-        .map(|&i| rows[i].number)
 }
 
 /// Whether every word of `query` (any case) is in `r`'s number (`154`, `#154` or `!154`), title,
@@ -521,5 +499,25 @@ mod tests {
         let partial: RequestView = serde_json::from_str(r#"{"sort":"Title"}"#).expect("partial");
         assert_eq!(partial.sort, RequestSort::Title);
         assert_eq!(partial.filters(), 0);
+    }
+
+    #[test]
+    fn a_choice_this_build_no_longer_has_reads_as_its_default() {
+        let view: RequestView = serde_json::from_str(
+            r#"{"text":"graph","sort":"Nope","checks":"Nope","draft":"Nope","review":"Approved"}"#,
+        )
+        .expect("an unknown choice must not fail the file");
+        assert_eq!(view.sort, RequestSort::default());
+        assert_eq!((view.checks, view.draft), (None, None));
+        assert_eq!(view.text, "graph", "the rest of the view survives");
+        assert_eq!(view.review, Some(ReviewChoice::Approved));
+
+        // One bad view must not cost the user the rest of their settings.
+        let settings: crate::settings::Settings = serde_json::from_str(
+            r#"{"theme":"Daylight","repo_requests":{"/r":{"sort":"Nope","checks":"Nope"}}}"#,
+        )
+        .expect("settings load");
+        assert_eq!(settings.theme, crate::ui::theme::ThemeId::Daylight);
+        assert!(settings.repo_requests[std::path::Path::new("/r")].is_default());
     }
 }

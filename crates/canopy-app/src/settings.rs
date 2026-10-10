@@ -359,7 +359,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Known<T> {
 }
 
 /// A choice, or its default when the saved one no longer exists.
-fn known<'de, D, T>(d: D) -> Result<T, D::Error>
+pub(crate) fn known<'de, D, T>(d: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de> + Default,
@@ -368,7 +368,7 @@ where
 }
 
 /// An optional choice, or none when the saved one no longer exists.
-fn known_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+pub(crate) fn known_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,

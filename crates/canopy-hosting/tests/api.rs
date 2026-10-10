@@ -363,7 +363,7 @@ fn github_list_maps_fields() {
     assert_eq!(first.web_url, "https://github.com/octo/hello/pull/1");
     assert_eq!(first.labels, ["bug", "ui"]);
     assert_eq!(
-        first.description, "Why Fixes the bug.",
+        first.description, "Why · Fixes the bug.",
         "the list's own body is the preview"
     );
     assert_eq!(all[1].description, "", "a pull request without a body");

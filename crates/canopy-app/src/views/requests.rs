@@ -476,6 +476,14 @@ fn row_signals(ctx: &egui::Context, tab: &RepoTab, r: &RequestSummary) -> Option
     })
 }
 
+/// Where row `r`'s checks and review stand as the row shows them, for the filters and for the
+/// request a list opens on.
+pub(crate) fn row_standing(ctx: &egui::Context, tab: &RepoTab, r: &RequestSummary) -> Standing {
+    row_signals(ctx, tab, r)
+        .map(Signals::standing)
+        .unwrap_or_default()
+}
+
 // ------------------------------------------------------------------------------------- the list
 
 /// The id of the filter field, which the filter command focuses.
@@ -553,6 +561,9 @@ fn list(
             {
                 ui.add_space(theme::XS);
                 filter_bar(ui, tab, items, actions);
+            } else {
+                // No field to take the caret: the request must not wait for a later list's.
+                tab.requests.focus_filter = false;
             }
         });
     let r = ui.available_rect_before_wrap();
@@ -631,7 +642,6 @@ fn filter_bar(ui: &mut Ui, tab: &mut RepoTab, items: &[RequestSummary], actions:
             .active(narrowing > 0)
             .id_salt("request-filters-button")
             .show(ui);
-        let authors = request_view::authors(items);
         // The open state is kept here, not in egui's one popup slot: a choice's own list opens
         // in that slot and would close the popover under it.
         let open_id = Id::new((FILTERS_POPUP, "open"));
@@ -639,6 +649,11 @@ fn filter_bar(ui: &mut Ui, tab: &mut RepoTab, items: &[RequestSummary], actions:
         if anchor.clicked() {
             open = !open;
         }
+        let authors = if open {
+            request_view::authors(items)
+        } else {
+            Vec::new()
+        };
         let list_was_open = egui::Popup::is_any_open(ui.ctx());
         let was_open = open;
         Popover::new(FILTERS_POPUP, &anchor)
@@ -656,6 +671,7 @@ fn filter_bar(ui: &mut Ui, tab: &mut RepoTab, items: &[RequestSummary], actions:
             format!("Sort requests: {}", view.sort.label()),
         )
         .size(Size::Sm)
+        .active(view.sort != RequestSort::default())
         .id_salt("request-sort-button")
         .show(ui);
         let _ = kit::menu::menu(&sort, |menu| {
@@ -803,11 +819,9 @@ fn rows(
 ) {
     let m = theme::metrics();
     let ctx = ui.ctx().clone();
-    let order = tab.request_view.visible(items, |r| {
-        row_signals(&ctx, tab, r)
-            .map(Signals::standing)
-            .unwrap_or_default()
-    });
+    let order = tab
+        .request_view
+        .visible(items, |r| row_standing(&ctx, tab, r));
     let numbers: Vec<u64> = order.iter().map(|&i| items[i].number).collect();
     if tab.requests.shown.as_ref() != Some(&numbers) {
         tab.requests.shown = Some(numbers);
@@ -3370,6 +3384,26 @@ mod tests {
         tab.request_view.author = Some("sam".into());
         let (order, _) = numbers_shown(&mut tab);
         assert_eq!(order, ["#27"]);
+    }
+
+    #[test]
+    fn a_request_to_focus_the_filter_does_not_wait_for_a_field() {
+        let draw = |tab: &mut RepoTab| {
+            render(theme::ThemeId::Midnight, SCREEN, |ui| {
+                list(ui, tab, ForgeKind::GitHub, Color32::BLACK, &mut Vec::new());
+            });
+        };
+        let mut tab = tab_with(Vec::new());
+        tab.requests.focus_filter = true;
+        draw(&mut tab);
+        assert!(!tab.requests.focus_filter, "no field was drawn to take it");
+
+        tab.requests.list = Some(Ok(vec![request(1, "Add help", "ann", "")].into()));
+        draw(&mut tab);
+        assert!(
+            !tab.requests.focus_filter,
+            "a later list's field is not stolen"
+        );
     }
 
     #[test]
