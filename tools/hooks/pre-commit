@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Git pre-commit hook: refuses a commit while clippy, with warnings denied as in CI, finds
-# anything. Skipped when the commit stages no Rust source or build configuration.
+# anything or a workspace test fails (CI's test jobs are off unless CI_TESTS=1, so this is where
+# the tests gate). Skipped when the commit stages no Rust source or build configuration.
 # Install with tools/install-hooks.sh.
 set -euo pipefail
 
@@ -25,5 +26,11 @@ fi
 echo "pre-commit: cargo clippy --workspace --all-targets --locked -- -D warnings" >&2
 if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
     echo "pre-commit: clippy found problems; fix them and commit again." >&2
+    exit 1
+fi
+
+echo "pre-commit: cargo test --workspace --locked" >&2
+if ! cargo test --workspace --locked; then
+    echo "pre-commit: a test failed; fix it and commit again." >&2
     exit 1
 fi

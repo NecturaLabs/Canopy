@@ -100,7 +100,8 @@ adding a dependency.
   `stall-check.py` runs in CI's Linux test job (required on GitHub-hosted runners, advisory on the
   self-hosted one). Run `cargo deny check`
   yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) adds
-  tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
+  tests per platform only when `CI_TESTS` is `1` (off: the pre-commit hook runs `cargo test`),
+  then one repository variable each: Linux runs unless `CI_LINUX`
   is `0`; macOS and Windows run only when `CI_MACOS` / `CI_WINDOWS` is `1` (off for now).
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`
