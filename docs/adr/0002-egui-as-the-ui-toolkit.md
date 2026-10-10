@@ -56,7 +56,7 @@ interface.
 - **Bad:** no native platform look; menus, dialogs and widgets are Canopy's own and must be
   designed (`docs/design.md`).
 - **Bad:** accessibility depends on egui's AccessKit integration (enabled in `eframe`'s features);
-  an audit is on the backlog and screen-reader support is not claimed until it is done.
+  an audit is tracked in GitHub issue #63 and screen-reader support is not claimed until it is done.
 - **Bad:** immediate mode punishes per-frame work: no allocation of large collections, no
   repository access and no re-layout of off-screen rows per frame.
 - **Bad:** egui's API changes between releases (the 0.36 `App::ui` and panel changes recorded in

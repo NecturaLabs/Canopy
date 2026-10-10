@@ -3,15 +3,17 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use canopy_core::forge::Forge;
 use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, PullConfig, RepoSnapshot};
 use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
-use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource};
+use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource, rate_limit_pause};
+use crate::request_view::RequestView;
 use crate::settings::{DiffPrefs, PullChoice};
+use crate::views::requests::row_standing;
 use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
 
 /// The main views of a repository.
@@ -34,6 +36,18 @@ pub enum SidebarItem {
     Tag(String),
     Stash(Oid),
     Worktree(PathBuf),
+}
+
+/// The sidebar sections a new tab starts with closed: only Branches is the daily surface. The
+/// user's own opening or closing of a section replaces this in [`RepoTab::collapsed`]. A saved
+/// set lists the closed sections, so a section added here opens in repositories that have one.
+const SIDEBAR_CLOSED_AT_START: [&str; 5] =
+    ["worktrees", "remotes", "tags", "stashes", "submodules"];
+
+/// Whether `message`, a hosting error's text, is the host refusing the token
+/// (`canopy_hosting::Error::Unauthorized`).
+fn credential_refused(message: &str) -> bool {
+    message.starts_with("The server refused the request (check the access token")
 }
 
 /// How the history list and selected commit share the content area.
@@ -508,7 +522,120 @@ pub struct Finished {
 }
 
 /// How old the request list may be when its view opens before it is loaded again.
-const REQUESTS_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+const REQUESTS_STALE_AFTER: Duration = Duration::from_secs(60);
+
+/// How often the open Requests view refreshes its list while automatic fetching is off.
+pub const REQUESTS_REFRESH_EVERY: Duration = Duration::from_secs(60);
+
+/// The longest wait between timed refreshes after repeated failures (never below the interval).
+const REQUESTS_REFRESH_BACKOFF_CAP: Duration = Duration::from_mins(15);
+
+/// What the timed refresh of the open Requests view may do right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshStep {
+    /// A condition is not met (another view, an unfocused window, a load under way, ...).
+    Paused,
+    /// Nothing to do yet; the next refresh falls due after this long.
+    Wait(Duration),
+    /// Refresh now.
+    Due,
+}
+
+/// The conditions under which the open Requests view refreshes itself.
+#[derive(Debug, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of the frame, each a plain yes or no"
+)]
+pub struct RefreshGate {
+    pub view: View,
+    pub focused: bool,
+    /// The tab has a hosting thread (hosting on, consent given, a forge).
+    pub hosting: bool,
+    /// The host reported a token. Without one a refresh would spend the anonymous rate limit
+    /// (60 requests an hour on GitHub) that Reload, actions and picture lookups share.
+    pub token: bool,
+    /// The list on screen loaded without error.
+    pub loaded: bool,
+    /// A list load is under way, or a fetch, pull or push that refreshes the list when it ends.
+    pub busy: bool,
+}
+
+/// The timed refresh's bookkeeping, apart from the clock.
+#[derive(Debug, Default)]
+pub struct RefreshTimer {
+    /// The configured cadence, shared by timed and post-sync retries (zero before configured).
+    pub interval: Duration,
+    /// A quiet refresh was sent and its list has not come back.
+    pub in_flight: bool,
+    /// Quiet refreshes in a row that failed; each doubles the wait.
+    pub failures: u32,
+    /// When the newest quiet refresh failed.
+    pub failed_at: Option<Instant>,
+    /// A rate limit asked the host to be left alone until then.
+    pub held_until: Option<Instant>,
+}
+
+/// `interval` doubled per failed refresh in a row, up to [`REQUESTS_REFRESH_BACKOFF_CAP`] (which
+/// never shortens it).
+fn backoff_wait(interval: Duration, failures: u32) -> Duration {
+    interval
+        .saturating_mul(1_u32.checked_shl(failures).unwrap_or(u32::MAX))
+        .min(REQUESTS_REFRESH_BACKOFF_CAP.max(interval))
+}
+
+/// How long a rate limit that lifts at `reset` (unix seconds, when the host said) holds the
+/// timer at `now`: until then, an hour at most, else the longest backoff.
+fn rate_limit_hold(reset: Option<i64>, now: i64) -> Duration {
+    u64::try_from(rate_limit_pause(reset, now, 0) - now)
+        .ok()
+        .filter(|&secs| secs > 0)
+        .map_or(REQUESTS_REFRESH_BACKOFF_CAP, Duration::from_secs)
+}
+
+/// Decides, from instants and flags alone, whether the open Requests view refreshes now: the
+/// wait is `interval`, doubled per failure up to [`REQUESTS_REFRESH_BACKOFF_CAP`], counted from
+/// `last` (the newest load or failed attempt).
+pub fn request_refresh_step(
+    now: Instant,
+    last: Instant,
+    interval: Duration,
+    failures: u32,
+    gate: RefreshGate,
+) -> RefreshStep {
+    let ready = gate.view == View::Requests
+        && gate.focused
+        && gate.hosting
+        && gate.token
+        && gate.loaded
+        && !gate.busy;
+    if !ready {
+        return RefreshStep::Paused;
+    }
+    let due = last + backoff_wait(interval, failures);
+    if now >= due {
+        RefreshStep::Due
+    } else {
+        RefreshStep::Wait(due - now)
+    }
+}
+
+/// How long a request's loaded details are shown again, on returning to it, without asking the
+/// host: browsing A, B and back to A is not three loads of A.
+const REQUEST_DETAILS_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// How many requests' details the cache keeps; the oldest is dropped first.
+const REQUEST_DETAILS_CACHE_MAX: usize = 16;
+
+/// One request's details as loaded, with the project and time they came from. Keyed by forge so
+/// equal numbers in different projects never share an entry.
+#[derive(Debug)]
+struct CachedDetails {
+    forge: Forge,
+    number: u64,
+    loaded_at: Instant,
+    details: Arc<RequestDetails>,
+}
 
 /// An unsent comment, isolated by forge project and request number.
 #[derive(Debug, Clone)]
@@ -524,6 +651,12 @@ pub struct Requests {
     pub filter: StateFilter,
     /// Shared so a frame can hold the list while it mutates the tab, without copying it.
     pub list: Option<Result<Arc<[RequestSummary]>, String>>,
+    /// The request filter field takes the caret on the next frame (the filter command).
+    pub focus_filter: bool,
+    /// The numbers of the requests the list showed on its last frame, in the order it showed
+    /// them (the view's filters and sort applied); `None` before it was drawn. The arrow keys
+    /// walk this order.
+    pub shown: Option<Vec<u64>>,
     pub loading: bool,
     pub selected: Option<u64>,
     pub details: Option<Result<Arc<RequestDetails>, String>>,
@@ -532,6 +665,9 @@ pub struct Requests {
     pub details_generation: u64,
     /// Failure policy of the current details generation, independent of the list response.
     pub details_quiet_refresh: bool,
+    /// Recently loaded details, oldest first, so returning to a request needs no new load.
+    /// Emptied by a reload, an action's result and a token change (`restart_host`).
+    details_cache: Vec<CachedDetails>,
     /// An action in flight ("Merging PR #12").
     pub busy: Option<String>,
     pub comment: String,
@@ -544,11 +680,17 @@ pub struct Requests {
         reason = "not yet known, known to be absent, or known, as the doc comment says"
     )]
     pub token: Option<Option<TokenSource>>,
+    /// The host refused the token on the newest read (a list or a request's details); cleared by
+    /// the next read or action it accepted. An action's refusal does not set it: the host also
+    /// answers 403 to a locked conversation or an archived repository.
+    pub token_rejected: bool,
     /// When the list was last loaded.
     pub loaded_at: Option<Instant>,
     /// The newest load was a quiet refresh (no spinner): if it fails, the list on screen stays.
     /// Any load the user asked for clears it.
     pub quiet_refresh: bool,
+    /// The timer that refreshes the list while the view stays open.
+    pub refresh: RefreshTimer,
 }
 
 impl Default for Requests {
@@ -556,20 +698,58 @@ impl Default for Requests {
         Self {
             filter: StateFilter::Open,
             list: None,
+            shown: None,
+            focus_filter: false,
             loading: false,
             selected: None,
             details: None,
             details_loading: false,
             details_generation: 0,
             details_quiet_refresh: false,
+            details_cache: Vec::new(),
             busy: None,
             comment: String::new(),
             pending_comment: None,
             merge_method: MergeMethod::Merge,
             token: None,
+            token_rejected: false,
             loaded_at: None,
             quiet_refresh: false,
+            refresh: RefreshTimer::default(),
         }
+    }
+}
+
+impl Requests {
+    /// The details of `number` in `forge` loaded less than [`REQUEST_DETAILS_CACHE_TTL`] ago.
+    fn cached_details(&self, forge: &Forge, number: u64) -> Option<Arc<RequestDetails>> {
+        self.details_cache
+            .iter()
+            .find(|c| c.number == number && &c.forge == forge)
+            .filter(|c| c.loaded_at.elapsed() < REQUEST_DETAILS_CACHE_TTL)
+            .map(|c| Arc::clone(&c.details))
+    }
+
+    /// Remembers a load that just arrived, replacing the request's older entry and dropping
+    /// the oldest entries beyond [`REQUEST_DETAILS_CACHE_MAX`].
+    fn cache_details(&mut self, forge: &Forge, number: u64, details: &Arc<RequestDetails>) {
+        self.forget_details(forge, number);
+        self.details_cache
+            .retain(|c| c.loaded_at.elapsed() < REQUEST_DETAILS_CACHE_TTL);
+        while self.details_cache.len() >= REQUEST_DETAILS_CACHE_MAX {
+            self.details_cache.remove(0);
+        }
+        self.details_cache.push(CachedDetails {
+            forge: forge.clone(),
+            number,
+            loaded_at: Instant::now(),
+            details: Arc::clone(details),
+        });
+    }
+
+    fn forget_details(&mut self, forge: &Forge, number: u64) {
+        self.details_cache
+            .retain(|c| c.number != number || &c.forge != forge);
     }
 }
 
@@ -741,6 +921,9 @@ pub struct RepoTab {
     /// Side-by-side diff and syntax highlighting (from the settings).
     pub split_diff: bool,
     pub highlight_diff: bool,
+    /// Hint at a commit message that is too wide (from the settings; set each frame the
+    /// Changes view is drawn).
+    pub check_message: bool,
     pub filter: String,
     pub filtered: Option<Vec<usize>>,
     pub filter_for: String,
@@ -748,7 +931,10 @@ pub struct RepoTab {
     pub commit_body: String,
     /// The merge message put into the commit boxes when a merge began, to drop it again if the
     /// merge ends without a commit and nobody edited it.
-    merge_prefill: Option<(String, String)>,
+    pub(crate) merge_prefill: Option<(String, String)>,
+    /// The summary and description the commit template filled in, while they stay as filled:
+    /// such a message still counts as unwritten for the amend, merge and squash prefills.
+    pub(crate) template_prefill: Option<(String, String)>,
     pub amend: bool,
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,
@@ -765,8 +951,10 @@ pub struct RepoTab {
     /// The branch `pull_config` was last asked for (`None`: detached or unborn), once asked.
     pull_config_asked: bool,
     tools_asked: bool,
-    /// The commit template was asked for, once for the tab.
+    /// The commit template was asked for; a skipped read may retry after trust changes.
     template_asked: bool,
+    /// A template was received, even if an existing draft prevented it from being applied.
+    template_loaded: bool,
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
@@ -781,7 +969,17 @@ pub struct RepoTab {
     pub scroll_to_selected: bool,
     /// Scroll just enough to show the selected commit next frame.
     pub reveal_selected: bool,
+    /// The sidebar sections and remotes the user (or the tab's start, [`SIDEBAR_CLOSED_AT_START`])
+    /// closed, by key.
     pub collapsed: HashSet<String>,
+    /// The saved sidebar state has been applied after the first repository snapshot.
+    pub sidebar_restored: bool,
+    /// A section was toggled this frame, awaiting persistence by the app.
+    pub sidebar_changed: bool,
+    /// The request list's filters and sort for this repository.
+    pub request_view: RequestView,
+    /// The saved request view has been applied after the first repository snapshot.
+    pub request_view_restored: bool,
     /// The sidebar row last clicked ([`RepoTab::sidebar_shows`]).
     pub sidebar_pick: Option<SidebarItem>,
     /// GitHub and GitLab remotes: (remote name, forge).
@@ -869,12 +1067,14 @@ impl RepoTab {
             resolver: None,
             split_diff: false,
             highlight_diff: true,
+            check_message: true,
             filter: String::new(),
             filtered: None,
             filter_for: String::new(),
             commit_summary: String::new(),
             commit_body: String::new(),
             merge_prefill: None,
+            template_prefill: None,
             amend: false,
             focus_summary: false,
             running: None,
@@ -886,6 +1086,7 @@ impl RepoTab {
             pull_config_asked: false,
             tools_asked: false,
             template_asked: false,
+            template_loaded: false,
             pull_config_branch: None,
             force_delete_offer: None,
             force_push_offer: None,
@@ -894,7 +1095,11 @@ impl RepoTab {
             commit_limit,
             scroll_to_selected: false,
             reveal_selected: false,
-            collapsed: HashSet::new(),
+            collapsed: SIDEBAR_CLOSED_AT_START.map(str::to_owned).into(),
+            sidebar_restored: false,
+            sidebar_changed: false,
+            request_view: RequestView::default(),
+            request_view_restored: false,
             sidebar_pick: None,
             forges: Vec::new(),
             host: None,
@@ -907,6 +1112,18 @@ impl RepoTab {
             avatars: crate::avatars::Avatars::default(),
             last_fetch: Instant::now(),
         }
+    }
+
+    /// Whether the message boxes hold nothing the user wrote: empty, or still exactly what the
+    /// commit template filled in. The amend, merge and squash prefills may replace such a message.
+    pub fn message_is_unwritten(&self) -> bool {
+        (self.commit_summary.trim().is_empty() && self.commit_body.trim().is_empty())
+            || self
+                .template_prefill
+                .as_ref()
+                .is_some_and(|(summary, body)| {
+                    *summary == self.commit_summary && *body == self.commit_body
+                })
     }
 
     /// Whether the composer can submit a commit through any input path.
@@ -1079,6 +1296,8 @@ impl RepoTab {
     ) {
         self.request_comments = self.request_comment_drafts();
         self.requests.comment.clear();
+        // Details loaded with the old token may differ from what the new one is allowed to see.
+        self.requests.details_cache.clear();
         self.host = None;
         self.ensure_host(ctx, saved_token, enabled);
     }
@@ -1097,6 +1316,9 @@ impl RepoTab {
     /// Reloads the request list.
     pub fn load_requests(&mut self) {
         if self.host.is_some() {
+            // A reload the user asked for (or an action's aftermath) must not be answered from
+            // what was loaded before it.
+            self.requests.details_cache.clear();
             self.requests.quiet_refresh = false;
             self.requests.loading = true;
             self.host_job(HostJob::List(self.requests.filter));
@@ -1116,10 +1338,14 @@ impl RepoTab {
     /// (hosting off, no consent, no forge) or while the list was never loaded: a tab nobody
     /// opened asks its forge for nothing.
     pub fn refresh_requests_quietly(&mut self) {
-        if self.host.is_none() || self.requests.list.is_none() {
+        // One at a time: a refresh in flight (the timer's, say) already answers for this one.
+        if self.host.is_none() || self.requests.list.is_none() || self.requests.refresh.in_flight {
             return;
         }
         self.requests.quiet_refresh = true;
+        self.requests.refresh.in_flight = true;
+        // The list is being revalidated, so what was cached before it may disagree with its rows.
+        self.requests.details_cache.clear();
         self.host_job(HostJob::List(self.requests.filter));
         if let Some(n) = self.requests.selected
             && self.requests.details.is_some()
@@ -1128,16 +1354,70 @@ impl RepoTab {
         }
     }
 
+    /// When the list was last loaded or a quiet refresh of it last failed.
+    fn refresh_last(&self) -> Option<Instant> {
+        match (self.requests.loaded_at, self.requests.refresh.failed_at) {
+            (Some(loaded), Some(failed)) => Some(loaded.max(failed)),
+            (loaded, failed) => loaded.or(failed),
+        }
+    }
+
     /// Refreshes the list quietly when it was loaded more than [`REQUESTS_STALE_AFTER`] ago:
-    /// the Requests view opens on a list as current as the last sync, not as old as the tab.
+    /// the Requests view opens on a list as current as the last sync, not as old as the tab. After
+    /// failed refreshes it waits as long as the timer would, and it leaves a rate-limited host be.
     pub fn refresh_requests_if_stale(&mut self) {
+        let now = Instant::now();
+        let timer = &self.requests.refresh;
+        let held = timer.held_until.is_some_and(|until| now < until);
+        let interval = if timer.failures == 0 {
+            REQUESTS_STALE_AFTER
+        } else {
+            timer.interval.max(REQUESTS_STALE_AFTER)
+        };
+        let wait = backoff_wait(interval, timer.failures);
         if !self.requests.loading
+            && !held
+            && self.requests.loaded_at.is_some()
             && self
-                .requests
-                .loaded_at
-                .is_some_and(|at| at.elapsed() >= REQUESTS_STALE_AFTER)
+                .refresh_last()
+                .is_some_and(|last| now.saturating_duration_since(last) >= wait)
         {
             self.refresh_requests_quietly();
+        }
+    }
+
+    /// Refreshes the list quietly when the timer is due (see [`request_refresh_step`]); returns
+    /// how long until it next falls due so the frame loop can wake then, or `None` when paused.
+    pub fn refresh_requests_on_timer(
+        &mut self,
+        now: Instant,
+        interval: Duration,
+        focused: bool,
+    ) -> Option<Duration> {
+        self.requests.refresh.interval = interval;
+        let last = self.refresh_last()?;
+        let timer = &self.requests.refresh;
+        let syncing = self.running_kind.as_ref().is_some_and(OpKind::syncs_remote);
+        let gate = RefreshGate {
+            view: self.view,
+            focused,
+            hosting: self.host.is_some(),
+            token: matches!(self.requests.token, Some(Some(_))),
+            loaded: matches!(self.requests.list, Some(Ok(_))),
+            busy: self.requests.loading || timer.in_flight || syncing,
+        };
+        let held = timer
+            .held_until
+            .and_then(|until| until.checked_duration_since(now))
+            .unwrap_or_default();
+        match request_refresh_step(now, last, interval, timer.failures, gate) {
+            RefreshStep::Paused => None,
+            RefreshStep::Wait(d) => Some(d.max(held)),
+            RefreshStep::Due if !held.is_zero() => Some(held),
+            RefreshStep::Due => {
+                self.refresh_requests_quietly();
+                None
+            }
         }
     }
 
@@ -1176,7 +1456,16 @@ impl RepoTab {
             })
             .map(|index| self.request_comments.remove(index).body)
             .unwrap_or_default();
-        if self.host.is_some() {
+        let cached = self
+            .host
+            .as_ref()
+            .and_then(|host| self.requests.cached_details(&host.forge, number));
+        if let Some(details) = cached {
+            self.requests.details = Some(Ok(details));
+            self.requests.details_loading = false;
+            // An older load still in flight must not land on what is now shown.
+            self.requests.details_generation = self.requests.details_generation.wrapping_add(1);
+        } else if self.host.is_some() {
             self.requests.details_loading = true;
             self.request_details(number);
         } else {
@@ -1277,9 +1566,13 @@ impl RepoTab {
     /// The trusted folders changed, to `version` (`trust::changes()`). A tab whose downloads were
     /// refused asks again for what it was showing, which may now download. A refusal still on its
     /// way from the worker carries an older version and is then found out of date.
+    /// A commit template skipped before trust is also requested again, until one is received.
     pub fn trust_changed(&mut self, version: u64) {
         self.trust_version = version;
         self.auto_fetch_failure = None;
+        if self.template_asked && !self.template_loaded {
+            self.worker.send(Job::CommitTemplate);
+        }
         if self.downloads_refused.take().is_some() {
             self.reread();
         }
@@ -1509,8 +1802,9 @@ impl RepoTab {
 
     /// Moves the request selection.
     pub fn move_request(&mut self, delta: isize) {
-        let numbers: Vec<u64> = match &self.requests.list {
-            Some(Ok(l)) => l.iter().map(|r| r.number).collect(),
+        let numbers: Vec<u64> = match (&self.requests.shown, &self.requests.list) {
+            (Some(shown), Some(Ok(_))) => shown.clone(),
+            (None, Some(Ok(l))) => l.iter().map(|r| r.number).collect(),
             _ => return,
         };
         if numbers.is_empty() {
@@ -1570,6 +1864,37 @@ impl RepoTab {
         }
     }
 
+    /// The repository identity from the worker; no path resolution happens on the UI thread.
+    pub fn sidebar_key(&self) -> Option<&std::path::Path> {
+        self.snap.as_ref().map(|s| {
+            if s.common_dir.as_os_str().is_empty() {
+                s.workdir.as_path()
+            } else {
+                s.common_dir.as_path()
+            }
+        })
+    }
+
+    /// Whether the sidebar is as a new tab opens it.
+    pub fn sidebar_is_default(&self) -> bool {
+        self.collapsed.len() == SIDEBAR_CLOSED_AT_START.len()
+            && SIDEBAR_CLOSED_AT_START
+                .iter()
+                .all(|k| self.collapsed.contains(*k))
+    }
+
+    /// Changes a sidebar section only on a toggle, keeping steady frames allocation-free.
+    pub fn set_sidebar_open(&mut self, key: &str, open: bool) {
+        if open == self.collapsed.contains(key) {
+            if open {
+                self.collapsed.remove(key);
+            } else {
+                self.collapsed.insert(key.to_owned());
+            }
+            self.sidebar_changed = true;
+        }
+    }
+
     /// Applies events from the workers. Returns notices for the app to show.
     pub fn poll(&mut self, gitlab_hosts: &[String]) -> Vec<Notice> {
         let mut notices = Vec::new();
@@ -1605,10 +1930,7 @@ impl RepoTab {
                         self.commit_summary.clear();
                         self.commit_body.clear();
                     }
-                    if entering_merge
-                        && self.commit_summary.trim().is_empty()
-                        && self.commit_body.trim().is_empty()
-                    {
+                    if entering_merge && self.message_is_unwritten() {
                         self.worker.send(Job::MergeMessage);
                     }
                     // The pull settings depend on the current branch: read them again when it
@@ -1784,8 +2106,7 @@ impl RepoTab {
                         .as_ref()
                         .is_some_and(|snap| snap.state == canopy_core::RepoState::Merge)
                         && !self.amend
-                        && self.commit_summary.trim().is_empty()
-                        && self.commit_body.trim().is_empty()
+                        && self.message_is_unwritten()
                     {
                         let mut parts = message.splitn(2, '\n');
                         parts
@@ -1802,34 +2123,41 @@ impl RepoTab {
                             Some((self.commit_summary.clone(), self.commit_body.clone()));
                     }
                 }
-                Event::CommitTemplate(result) => match result {
-                    Ok(Some(template))
-                        if !self.amend
-                            && self.snap.as_ref().is_some_and(|snap| {
-                                snap.state == canopy_core::RepoState::Clean
-                            })
-                            && self.commit_summary.trim().is_empty()
-                            && self.commit_body.trim().is_empty() =>
-                    {
-                        let mut parts = template.trim_start().splitn(2, '\n');
-                        parts
-                            .next()
-                            .unwrap_or_default()
-                            .trim_end()
-                            .clone_into(&mut self.commit_summary);
-                        parts
-                            .next()
-                            .unwrap_or_default()
-                            .trim()
-                            .clone_into(&mut self.commit_body);
+                Event::CommitTemplate(result) => {
+                    let previously_loaded = self.template_loaded;
+                    self.template_loaded |= result.as_ref().is_ok_and(Option::is_some);
+                    match result {
+                        Ok(Some(template))
+                            if !previously_loaded
+                                && !self.amend
+                                && self.snap.as_ref().is_some_and(|snap| {
+                                    snap.state == canopy_core::RepoState::Clean
+                                })
+                                && self.commit_summary.trim().is_empty()
+                                && self.commit_body.trim().is_empty() =>
+                        {
+                            let mut parts = template.trim_start().splitn(2, '\n');
+                            parts
+                                .next()
+                                .unwrap_or_default()
+                                .trim_end()
+                                .clone_into(&mut self.commit_summary);
+                            parts
+                                .next()
+                                .unwrap_or_default()
+                                .trim()
+                                .clone_into(&mut self.commit_body);
+                            self.template_prefill =
+                                Some((self.commit_summary.clone(), self.commit_body.clone()));
+                        }
+                        Ok(_) => {}
+                        Err(body) => notices.push(Notice {
+                            ok: false,
+                            title: "Could not read the commit template".into(),
+                            body,
+                        }),
                     }
-                    Ok(_) => {}
-                    Err(body) => notices.push(Notice {
-                        ok: false,
-                        title: "Could not read the commit template".into(),
-                        body,
-                    }),
-                },
+                }
                 Event::PullConfig(result) => match result {
                     Ok(config) => self.pull_config = Some(config),
                     Err(e) => {
@@ -1873,8 +2201,7 @@ impl RepoTab {
                             .snap
                             .as_ref()
                             .is_none_or(|snap| snap.state != canopy_core::RepoState::Clean)
-                        || !self.commit_summary.trim().is_empty()
-                        || !self.commit_body.trim().is_empty()
+                        || !self.message_is_unwritten()
                     {
                         continue;
                     }
@@ -1896,8 +2223,7 @@ impl RepoTab {
                             .snap
                             .as_ref()
                             .is_some_and(|snap| snap.state == canopy_core::RepoState::Clean)
-                        && self.commit_summary.trim().is_empty()
-                        && self.commit_body.trim().is_empty()
+                        && self.message_is_unwritten()
                     {
                         let mut parts = message.splitn(2, '\n');
                         parts
@@ -1957,7 +2283,18 @@ impl RepoTab {
                                 self.auto_fetch_failure = None;
                             }
                             // The remote moved, or Canopy moved it: its requests may have too.
-                            if kind.syncs_remote() {
+                            // A successful Git sync does not lift the API's retry hold.
+                            let now = Instant::now();
+                            let timer = &self.requests.refresh;
+                            let held = timer.held_until.is_some_and(|until| now < until);
+                            let backing_off = timer.failed_at.is_some_and(|failed| {
+                                now.saturating_duration_since(failed)
+                                    < backoff_wait(
+                                        timer.interval.max(REQUESTS_REFRESH_EVERY),
+                                        timer.failures,
+                                    )
+                            });
+                            if kind.syncs_remote() && !held && !backing_off {
                                 self.refresh_requests_quietly();
                             }
                             if announce {
@@ -2050,6 +2387,16 @@ impl RepoTab {
         notices
     }
 
+    /// Remembers whether the host refused the token in `reply` to a read: an accepted reply
+    /// clears the note, a refusal sets it, and any other failure says nothing about the token.
+    fn note_token<T>(&mut self, reply: &Result<T, String>) {
+        match reply {
+            Ok(_) => self.requests.token_rejected = false,
+            Err(message) if credential_refused(message) => self.requests.token_rejected = true,
+            Err(_) => {}
+        }
+    }
+
     fn poll_host(&mut self, notices: &mut Vec<Notice>) {
         let Some(host) = &self.host else { return };
         let kind = host.forge.kind;
@@ -2062,7 +2409,13 @@ impl RepoTab {
                     self.avatars.finish(&ctx, oid, email, result);
                 }
                 HostEvent::Token(t) => self.requests.token = Some(t),
+                HostEvent::RateLimited { reset } => {
+                    let now = chrono::Utc::now().timestamp();
+                    self.requests.refresh.held_until =
+                        Some(Instant::now() + rate_limit_hold(reset, now));
+                }
                 HostEvent::List(filter, result) => {
+                    self.note_token(&result);
                     let kept_through_failure = self.requests.quiet_refresh
                         && result.is_err()
                         && matches!(self.requests.list, Some(Ok(_)));
@@ -2071,14 +2424,27 @@ impl RepoTab {
                         // screen is still the best there is. The next sync tries again.
                         tracing::debug!("a quiet request refresh failed; keeping the list");
                         self.requests.quiet_refresh = false;
+                        let timer = &mut self.requests.refresh;
+                        timer.in_flight = false;
+                        timer.failures = timer.failures.saturating_add(1);
+                        timer.failed_at = Some(Instant::now());
                     } else if filter == self.requests.filter {
                         self.requests.loading = false;
                         self.requests.loaded_at = Some(Instant::now());
-                        let first = result
-                            .as_ref()
-                            .ok()
-                            .and_then(|l| l.first())
-                            .map(|r| r.number);
+                        self.requests.refresh.in_flight = false;
+                        if result.is_ok() {
+                            self.requests.refresh.failures = 0;
+                            self.requests.refresh.failed_at = None;
+                            self.requests.refresh.held_until = None;
+                        }
+                        // The order the list will show, standing as its rows will show it: the
+                        // arrow keys walk it from now, and the first of it opens.
+                        let order: Option<Vec<u64>> = result.as_ref().ok().map(|l| {
+                            let standing = |r: &RequestSummary| row_standing(&ctx, self, r);
+                            let visible = self.request_view.visible(l, standing);
+                            visible.into_iter().map(|i| l[i].number).collect()
+                        });
+                        let first = order.as_ref().and_then(|o| o.first().copied());
                         self.generation += 1;
                         let keep = self.requests.selected.is_some_and(|n| {
                             result
@@ -2086,6 +2452,7 @@ impl RepoTab {
                                 .is_ok_and(|l| l.iter().any(|r| r.number == n))
                         });
                         self.requests.list = Some(result.map(Arc::from));
+                        self.requests.shown = order;
                         if !keep {
                             self.request_comments = self.request_comment_drafts();
                             self.requests.comment.clear();
@@ -2098,6 +2465,7 @@ impl RepoTab {
                     }
                 }
                 HostEvent::Details(n, generation, result) => {
+                    self.note_token(&result);
                     if self.requests.selected == Some(n)
                         && self.requests.details_generation == generation
                     {
@@ -2107,7 +2475,12 @@ impl RepoTab {
                             && result.is_err()
                             && matches!(self.requests.details, Some(Ok(_)));
                         if !kept {
-                            self.requests.details = Some(result.map(Arc::new));
+                            let result = result.map(Arc::new);
+                            match &result {
+                                Ok(details) => self.requests.cache_details(&forge, n, details),
+                                Err(_) => self.requests.forget_details(&forge, n),
+                            }
+                            self.requests.details = Some(result);
                         }
                     }
                 }
@@ -2137,6 +2510,9 @@ impl RepoTab {
                     number,
                     result,
                 } => {
+                    if result.is_ok() {
+                        self.requests.token_rejected = false;
+                    }
                     self.requests.busy = None;
                     let submitted = if action == HostAction::Comment {
                         self.requests.pending_comment.take()
@@ -2262,6 +2638,64 @@ mod tests {
             .expect("late response");
         tab.poll(&[]);
         assert!(tab.ignore_result.is_none() && tab.ignore_query.is_none());
+    }
+
+    /// #142: the host refusing the token is noted until it accepts one; a network failure or
+    /// another refusal says nothing about the token.
+    #[test]
+    fn a_refused_token_is_remembered_until_the_host_accepts_one() {
+        use canopy_hosting::Error;
+        let refused = Error::Unauthorized("Bad credentials".into()).to_string();
+        assert!(credential_refused(&refused), "{refused}");
+        for other in [
+            Error::Network("timed out".into()),
+            Error::RateLimited { reset: None },
+            Error::NotFound("no such project".into()),
+            Error::Api {
+                status: 500,
+                message: "oops".into(),
+            },
+        ] {
+            assert!(!credential_refused(&other.to_string()), "{other}");
+        }
+        let (worker, _, _) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        assert!(!tab.requests.token_rejected);
+        tab.note_token::<()>(&Err(refused));
+        assert!(tab.requests.token_rejected);
+        tab.note_token::<()>(&Err("Could not reach the server: timed out".into()));
+        assert!(
+            tab.requests.token_rejected,
+            "a network failure changes nothing"
+        );
+        tab.note_token(&Ok(()));
+        assert!(!tab.requests.token_rejected);
+    }
+
+    /// An action refused for another reason (a locked conversation answers 403) must not turn a
+    /// token that reads fine into a rejected one; one the host accepted still clears the note.
+    #[test]
+    fn a_refused_action_does_not_flag_the_token() {
+        let refused = canopy_hosting::Error::Unauthorized("Conversation is locked".into());
+        let done = |result| HostEvent::Done {
+            label: "Commenting".into(),
+            action: HostAction::Comment,
+            number: Some(7),
+            result,
+        };
+        let (mut tab, _, _) = tab_showing_requests();
+        let forge = tab.host.as_ref().expect("host").forge.clone();
+        let (host, events, _) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        events.send(done(Err(refused.to_string()))).expect("event");
+        tab.poll(&[]);
+        assert!(!tab.requests.token_rejected);
+
+        tab.requests.token_rejected = true;
+        events.send(done(Ok(()))).expect("event");
+        tab.poll(&[]);
+        assert!(!tab.requests.token_rejected, "an accepted action clears it");
     }
 
     /// A notification says what happened in the past tense, or what could not be done.
@@ -2532,10 +2966,10 @@ mod tests {
         let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
         tab.snap = Some(Arc::new(RepoSnapshot::default()));
         tab.worker.send(Job::SquashMessage("topic".into()));
-        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(3);
         while tab.commit_summary.is_empty() && Instant::now() < deadline {
             tab.poll(&[]);
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(5));
         }
         assert!(!tab.amend, "a squash is a new commit, not an amend");
         assert_eq!(tab.commit_summary, "Merge topic (squashed)");
@@ -2822,6 +3256,144 @@ mod tests {
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].title, "Could not read the commit template");
         assert!(notices[0].body.contains("bad config"));
+    }
+
+    /// A template sitting untouched in the boxes must not stop git's own messages from filling
+    /// them: HEAD's for an amend, `MERGE_MSG` for a merge, `SQUASH_MSG` for a squash.
+    #[test]
+    fn an_untouched_template_yields_to_the_amend_merge_and_squash_messages() {
+        let state = |state| {
+            Event::Snapshot(Arc::new(RepoSnapshot {
+                state,
+                ..Default::default()
+            }))
+        };
+        let template = || Event::CommitTemplate(Ok(Some("\nfeat: \n\nWhy:\n".into())));
+        let fresh = |first| {
+            let (worker, events, _jobs) = Worker::detached();
+            let mut tab =
+                RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+            events.send(state(first)).expect("snapshot");
+            tab.poll(&[]);
+            (tab, events)
+        };
+
+        let (mut tab, events) = fresh(canopy_core::RepoState::Clean);
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat:");
+        assert!(tab.message_is_unwritten());
+        tab.amend = true;
+        events
+            .send(Event::HeadMessage("fix: the last one\n\nbecause".into()))
+            .expect("head message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "fix: the last one");
+        assert_eq!(tab.commit_body, "because");
+
+        let (mut tab, events) = fresh(canopy_core::RepoState::Clean);
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        events
+            .send(Event::SquashMessage(
+                "Squashed commit of the following:".into(),
+            ))
+            .expect("squash message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "Squashed commit of the following:");
+
+        let (mut tab, events) = fresh(canopy_core::RepoState::Clean);
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        events
+            .send(state(canopy_core::RepoState::Merge))
+            .expect("merge snapshot");
+        tab.poll(&[]);
+        events
+            .send(Event::MergeMessage("Merge branch 'topic'".into()))
+            .expect("merge message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "Merge branch 'topic'");
+
+        // Text the user changed is theirs: none of the three replaces it.
+        let (mut tab, events) = fresh(canopy_core::RepoState::Clean);
+        events.send(template()).expect("template");
+        tab.poll(&[]);
+        tab.commit_summary.push_str(" mine");
+        assert!(!tab.message_is_unwritten());
+        tab.amend = true;
+        events
+            .send(Event::HeadMessage("fix: the last one".into()))
+            .expect("head message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat: mine");
+    }
+
+    #[test]
+    fn trusting_a_folder_retries_a_missing_template_without_reopening_the_tab() {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        events
+            .send(Event::Snapshot(Arc::new(RepoSnapshot::default())))
+            .expect("snapshot");
+        events
+            .send(Event::CommitTemplate(Ok(None)))
+            .expect("untrusted read");
+        tab.poll(&[]);
+        let asked = std::iter::from_fn(|| jobs.try_recv().ok())
+            .filter(|j| matches!(j, Job::CommitTemplate))
+            .count();
+        assert_eq!(asked, 1);
+
+        tab.trust_changed(1);
+        let retried = std::iter::from_fn(|| jobs.try_recv().ok())
+            .filter(|j| matches!(j, Job::CommitTemplate))
+            .count();
+        assert_eq!(retried, 1, "retry after the trust list changes");
+        events
+            .send(Event::CommitTemplate(Ok(Some(
+                "feat: trusted\n\nWhy".into(),
+            ))))
+            .expect("trusted template");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat: trusted");
+        assert_eq!(tab.commit_body, "Why");
+
+        tab.commit_summary.clear();
+        tab.commit_body.clear();
+        tab.trust_changed(2);
+        assert!(
+            std::iter::from_fn(|| jobs.try_recv().ok()).all(|j| !matches!(j, Job::CommitTemplate)),
+            "a loaded template is never inserted again after the user clears it"
+        );
+    }
+
+    #[test]
+    fn a_pending_template_retry_cannot_refill_a_cleared_message() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        events
+            .send(Event::Snapshot(Arc::new(RepoSnapshot::default())))
+            .expect("snapshot");
+        tab.poll(&[]);
+        tab.trust_changed(1);
+        events
+            .send(Event::CommitTemplate(Ok(Some("feat: template".into()))))
+            .expect("first reply");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "feat: template");
+        tab.commit_summary.clear();
+        events
+            .send(Event::CommitTemplate(Ok(Some("feat: template".into()))))
+            .expect("pending retry reply");
+        tab.poll(&[]);
+        assert!(
+            tab.commit_summary.is_empty(),
+            "keep the user's cleared message"
+        );
+        assert_eq!(tab.commit_body, "");
     }
 
     #[test]
@@ -4109,6 +4681,7 @@ mod tests {
                 updated_at: 0,
                 web_url: String::new(),
                 labels: Vec::new(),
+                description: String::new(),
                 rollup: None,
             },
             body: String::new(),
@@ -4179,6 +4752,96 @@ mod tests {
         Ok(())
     }
 
+    fn listed(number: u64, updated_at: i64) -> RequestSummary {
+        RequestSummary {
+            number,
+            title: format!("Request {number}"),
+            author: "sam".into(),
+            state: canopy_hosting::RequestState::Open,
+            draft: false,
+            source_branch: format!("topic-{number}"),
+            target_branch: "main".into(),
+            from_fork: false,
+            created_at: 0,
+            updated_at,
+            web_url: String::new(),
+            labels: Vec::new(),
+            description: String::new(),
+            rollup: None,
+        }
+    }
+
+    #[test]
+    fn the_arrow_keys_select_nothing_in_a_list_that_has_become_empty()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, _events, host_jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().ok_or("no host")?.forge.clone();
+        let (host, host_events, _) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        // A drawn frame of the open list left its order behind.
+        tab.requests.list = Some(Ok(Arc::from(vec![listed(2, 20), listed(1, 10)])));
+        tab.requests.shown = Some(vec![2, 1]);
+        tab.requests.selected = None;
+
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        tab.poll(&[]);
+        tab.move_request(1);
+        assert_eq!(
+            tab.requests.selected, None,
+            "no request is listed to select"
+        );
+        assert!(
+            !jobs_of(&host_jobs)
+                .iter()
+                .any(|j| matches!(j, HostJob::Details(..))),
+            "nothing was opened"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_list_that_arrives_opens_on_the_row_the_list_shows_first()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, _events, _jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().ok_or("no host")?.forge.clone();
+        let (host, host_events, _) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        tab.requests.selected = None;
+        tab.request_view.checks = Some(crate::request_view::ChecksChoice::Failed);
+
+        // Request 1's checks were seen when it was opened; the list itself says nothing of them,
+        // so the row shows the remembered failure and the filter keeps it.
+        let seen = RequestDetails {
+            summary: listed(1, 10),
+            body: String::new(),
+            head_sha: None,
+            mergeable: None,
+            commits: None,
+            changed_files: None,
+            additions: None,
+            deletions: None,
+            reviews: Vec::new(),
+            checks: vec![canopy_hosting::Check {
+                name: "build".into(),
+                state: canopy_hosting::CheckState::Failure,
+                url: None,
+            }],
+            comments: Vec::new(),
+        };
+        let ctx = tab.host.as_ref().ok_or("no host")?.context().clone();
+        crate::views::requests::remember_signals(&ctx, &tab, &seen);
+
+        host_events.send(HostEvent::List(
+            StateFilter::Open,
+            Ok(vec![listed(2, 20), listed(1, 10)]),
+        ))?;
+        tab.poll(&[]);
+        assert_eq!(tab.requests.selected, Some(1));
+        Ok(())
+    }
+
     #[test]
     fn opening_the_requests_view_refreshes_a_list_gone_stale() {
         let (mut tab, _events, host_jobs) = tab_showing_requests();
@@ -4195,6 +4858,729 @@ mod tests {
                 .any(|j| matches!(j, HostJob::List(_)))
         );
         assert!(!tab.requests.loading);
+    }
+
+    fn gate() -> RefreshGate {
+        RefreshGate {
+            view: View::Requests,
+            focused: true,
+            hosting: true,
+            token: true,
+            loaded: true,
+            busy: false,
+        }
+    }
+
+    #[test]
+    fn the_timed_refresh_falls_due_once_the_interval_has_passed() {
+        let last = Instant::now();
+        let every = Duration::from_secs(60);
+        let step = |after: u64| {
+            request_refresh_step(last + Duration::from_secs(after), last, every, 0, gate())
+        };
+        assert_eq!(step(0), RefreshStep::Wait(every));
+        assert_eq!(step(45), RefreshStep::Wait(Duration::from_secs(15)));
+        assert_eq!(step(60), RefreshStep::Due);
+        assert_eq!(step(500), RefreshStep::Due);
+    }
+
+    #[test]
+    fn the_timed_refresh_waits_for_every_condition() {
+        let last = Instant::now();
+        let every = Duration::from_secs(60);
+        let now = last + every * 2;
+        let step = |g: RefreshGate| request_refresh_step(now, last, every, 0, g);
+        assert_eq!(step(gate()), RefreshStep::Due);
+        let cases = [
+            (
+                "another view",
+                RefreshGate {
+                    view: View::History,
+                    ..gate()
+                },
+            ),
+            (
+                "the changes view",
+                RefreshGate {
+                    view: View::Changes,
+                    ..gate()
+                },
+            ),
+            (
+                "an unfocused window",
+                RefreshGate {
+                    focused: false,
+                    ..gate()
+                },
+            ),
+            (
+                "hosting off",
+                RefreshGate {
+                    hosting: false,
+                    ..gate()
+                },
+            ),
+            (
+                "no token (the anonymous rate limit is shared with Reload and actions)",
+                RefreshGate {
+                    token: false,
+                    ..gate()
+                },
+            ),
+            (
+                "no list loaded",
+                RefreshGate {
+                    loaded: false,
+                    ..gate()
+                },
+            ),
+            (
+                "a load under way",
+                RefreshGate {
+                    busy: true,
+                    ..gate()
+                },
+            ),
+        ];
+        for (why, g) in cases {
+            assert_eq!(step(g), RefreshStep::Paused, "{why}");
+        }
+    }
+
+    #[test]
+    fn failures_double_the_wait_up_to_the_cap_and_never_below_the_interval() {
+        let last = Instant::now();
+        let every = Duration::from_secs(60);
+        let wait = |failures: u32, interval: Duration| match request_refresh_step(
+            last,
+            last,
+            interval,
+            failures,
+            gate(),
+        ) {
+            RefreshStep::Wait(d) => d,
+            other => panic!("expected a wait, got {other:?}"),
+        };
+        assert_eq!(wait(0, every), every);
+        assert_eq!(wait(1, every), every * 2);
+        assert_eq!(wait(3, every), every * 8);
+        assert_eq!(wait(4, every), REQUESTS_REFRESH_BACKOFF_CAP);
+        assert_eq!(wait(u32::MAX, every), REQUESTS_REFRESH_BACKOFF_CAP);
+        let hourly = Duration::from_secs(3600);
+        assert_eq!(wait(0, hourly), hourly);
+        assert_eq!(
+            wait(5, hourly),
+            hourly,
+            "the cap never shortens the interval"
+        );
+    }
+
+    /// A tab on the Requests view with a loaded list that was loaded at `loaded`.
+    fn timed_tab(
+        loaded: Instant,
+    ) -> (
+        RepoTab,
+        crossbeam_channel::Sender<HostEvent>,
+        crossbeam_channel::Receiver<HostJob>,
+    ) {
+        let (mut tab, _events, _jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            unreachable!("tab_showing_requests gives the tab a host")
+        };
+        let (host, host_events, host_jobs) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        tab.view = View::Requests;
+        tab.requests.token = Some(Some(TokenSource::Saved));
+        tab.requests.loaded_at = Some(loaded);
+        (tab, host_events, host_jobs)
+    }
+
+    fn lists_in(host_jobs: &crossbeam_channel::Receiver<HostJob>) -> usize {
+        jobs_of(host_jobs)
+            .iter()
+            .filter(|j| matches!(j, HostJob::List(_)))
+            .count()
+    }
+
+    #[test]
+    fn the_open_requests_view_refreshes_quietly_when_the_timer_is_due()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        let every = Duration::from_secs(60);
+        let (mut tab, host_events, host_jobs) = timed_tab(start);
+
+        assert_eq!(
+            tab.refresh_requests_on_timer(start + Duration::from_secs(10), every, true),
+            Some(Duration::from_secs(50))
+        );
+        assert_eq!(lists_in(&host_jobs), 0, "not due yet");
+
+        let due = start + every;
+        assert_eq!(tab.refresh_requests_on_timer(due, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 1);
+        assert!(!tab.requests.loading, "a timed refresh shows no spinner");
+        assert!(tab.requests.quiet_refresh);
+
+        // Under way: it does not ask again however long the answer takes.
+        assert_eq!(
+            tab.refresh_requests_on_timer(due + every * 3, every, true),
+            None
+        );
+        assert_eq!(lists_in(&host_jobs), 0, "one refresh in flight at a time");
+
+        // The answer restarts the wait from when it arrived.
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        tab.poll(&[]);
+        assert!(!tab.requests.refresh.in_flight);
+        let Some(loaded) = tab.requests.loaded_at else {
+            unreachable!("a list answer sets loaded_at")
+        };
+        assert_eq!(
+            tab.refresh_requests_on_timer(loaded + Duration::from_secs(1), every, true),
+            Some(Duration::from_secs(59))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_timer_stays_quiet_while_a_condition_fails() {
+        let start = Instant::now();
+        let every = Duration::from_secs(60);
+        let late = start + every * 2;
+
+        let (mut tab, _events, host_jobs) = timed_tab(start);
+        assert_eq!(tab.refresh_requests_on_timer(late, every, false), None);
+        assert_eq!(lists_in(&host_jobs), 0, "an unfocused window");
+
+        tab.view = View::History;
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 0, "another view");
+
+        tab.view = View::Requests;
+        tab.requests.loading = true;
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 0, "a load under way");
+
+        tab.requests.loading = false;
+        tab.requests.list = None;
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 0, "no list loaded");
+
+        tab.requests.list = Some(Err("Not Found".into()));
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(
+            lists_in(&host_jobs),
+            0,
+            "a list that failed is not refreshed"
+        );
+
+        tab.requests.list = Some(Ok(Arc::from(Vec::new())));
+        tab.host = None;
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 0, "hosting off");
+    }
+
+    #[test]
+    fn the_timer_never_runs_without_a_token() {
+        let start = Instant::now();
+        let every = Duration::from_secs(60);
+        let late = start + every * 2;
+        let (mut tab, _events, host_jobs) = timed_tab(start);
+        for (why, token) in [
+            ("the host has not reported yet", None),
+            ("the host found no token", Some(None)),
+        ] {
+            tab.requests.token = token;
+            assert_eq!(
+                tab.refresh_requests_on_timer(late, every, true),
+                None,
+                "{why}"
+            );
+            assert_eq!(lists_in(&host_jobs), 0, "{why}");
+        }
+        tab.requests.token = Some(Some(TokenSource::GitCredentials));
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 1, "a token turns the timer on");
+    }
+
+    #[test]
+    fn the_timer_waits_while_a_sync_runs() {
+        let start = Instant::now();
+        let every = Duration::from_secs(60);
+        let late = start + every * 2;
+        for kind in [OpKind::Fetch, OpKind::Pull, OpKind::Push] {
+            let (mut tab, _events, host_jobs) = timed_tab(start);
+            tab.running_kind = Some(kind.clone());
+            assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+            assert_eq!(lists_in(&host_jobs), 0, "{kind:?} is running");
+            tab.running_kind = None;
+            assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+            assert_eq!(lists_in(&host_jobs), 1, "{kind:?} is over");
+        }
+    }
+
+    #[test]
+    fn a_sync_finishing_during_a_timed_refresh_does_not_refresh_twice() {
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        tab.view = View::Requests;
+        tab.requests.token = Some(Some(TokenSource::Saved));
+        let every = Duration::from_secs(60);
+        let due = Instant::now() + every;
+        assert_eq!(tab.refresh_requests_on_timer(due, every, true), None);
+        assert!(tab.requests.refresh.in_flight);
+
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        let jobs = jobs_of(&host_jobs);
+        let lists = jobs
+            .iter()
+            .filter(|j| matches!(j, HostJob::List(_)))
+            .count();
+        let details = jobs
+            .iter()
+            .filter(|j| matches!(j, HostJob::Details(..)))
+            .count();
+        assert_eq!((lists, details), (1, 1), "{jobs:?}");
+    }
+
+    #[test]
+    fn a_successful_sync_respects_the_request_refresh_backoff() {
+        for held in [false, true] {
+            let (mut tab, events, _host_jobs) = tab_showing_requests();
+            let forge = tab.host.as_ref().expect("host").forge.clone();
+            let (host, host_events, host_jobs) = HostWorker::detached(forge);
+            tab.host = Some(host);
+            tab.requests.refresh.interval = Duration::from_mins(5);
+            tab.requests.refresh.failures = u32::from(!held);
+            tab.requests.refresh.failed_at = (!held).then(|| {
+                Instant::now()
+                    .checked_sub(Duration::from_mins(5))
+                    .expect("earlier instant")
+            });
+            if held {
+                tab.requests.refresh.held_until = Some(Instant::now() + Duration::from_mins(30));
+            }
+            finish(&events, OpKind::Fetch, Ok(String::new()));
+            tab.poll(&[]);
+            assert!(
+                jobs_of(&host_jobs).is_empty(),
+                "sync must respect the API backoff (held={held})"
+            );
+            tab.load_requests();
+            assert_eq!(
+                lists_in(&host_jobs),
+                1,
+                "explicit Reload is still available"
+            );
+            tab.requests.refresh.failed_at = Some(Instant::now());
+            host_events
+                .send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))
+                .expect("reload");
+            tab.poll(&[]);
+            finish(&events, OpKind::Fetch, Ok(String::new()));
+            tab.poll(&[]);
+            assert_eq!(
+                lists_in(&host_jobs),
+                1,
+                "success clears the backoff immediately"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rate_limit_holds_the_timer_until_it_lifts_or_for_the_longest_backoff()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let every = Duration::from_secs(60);
+        let minutes = |m: u64| Duration::from_secs(m * 60);
+        // (what the host said, wait before the next attempt in minutes)
+        let now = chrono::Utc::now().timestamp();
+        let cases = [
+            ("a reset half an hour ahead", Some(now + 1_800), 30),
+            ("no reset", None, 15),
+            ("a reset already past", Some(now - 5), 15),
+            ("a reset a day ahead", Some(now + 86_400), 60),
+        ];
+        for (why, reset, wait) in cases {
+            let start = Instant::now();
+            let (mut tab, host_events, host_jobs) = timed_tab(start);
+            assert_eq!(
+                tab.refresh_requests_on_timer(start + every, every, true),
+                None
+            );
+            assert_eq!(lists_in(&host_jobs), 1, "{why}");
+            host_events.send(HostEvent::RateLimited { reset })?;
+            host_events.send(HostEvent::List(
+                StateFilter::Open,
+                Err("rate limit exceeded".into()),
+            ))?;
+            tab.poll(&[]);
+            let Some(failed_at) = tab.requests.refresh.failed_at else {
+                return Err(format!("{why}: the failure was not recorded").into());
+            };
+            let early = failed_at + minutes(wait).saturating_sub(every);
+            assert!(
+                tab.refresh_requests_on_timer(early, every, true).is_some(),
+                "{why}: held while the limit stands"
+            );
+            assert_eq!(lists_in(&host_jobs), 0, "{why}: no probe before it lifts");
+            let after = failed_at + minutes(wait) + every;
+            assert_eq!(
+                tab.refresh_requests_on_timer(after, every, true),
+                None,
+                "{why}"
+            );
+            assert_eq!(lists_in(&host_jobs), 1, "{why}: asks again once it lifted");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn switching_to_the_requests_view_respects_the_backoff() {
+        let (mut tab, _events, host_jobs) = tab_showing_requests();
+        let ago = |secs: u64| {
+            Instant::now()
+                .checked_sub(Duration::from_secs(secs))
+                .unwrap_or_else(Instant::now)
+        };
+        tab.requests.loaded_at = Some(ago(600));
+        // A refresh failed 10 s ago: the list is stale, but the host is not asked again yet.
+        tab.requests.refresh.failures = 1;
+        tab.requests.refresh.failed_at = Some(ago(10));
+        tab.refresh_requests_if_stale();
+        assert!(
+            jobs_of(&host_jobs).is_empty(),
+            "no resend before the backoff elapsed"
+        );
+        tab.requests.refresh.failures = 2;
+        tab.requests.refresh.failed_at = Some(ago(150));
+        tab.refresh_requests_if_stale();
+        assert!(
+            jobs_of(&host_jobs).is_empty(),
+            "two failures wait four times the stale age"
+        );
+        tab.requests.refresh.failed_at = Some(ago(250));
+        tab.refresh_requests_if_stale();
+        assert_eq!(lists_in(&host_jobs), 1, "the backoff elapsed");
+    }
+
+    #[test]
+    fn switching_to_the_requests_view_leaves_a_rate_limited_host_alone() {
+        let (mut tab, _events, host_jobs) = tab_showing_requests();
+        let long_ago = Instant::now()
+            .checked_sub(REQUESTS_STALE_AFTER * 5)
+            .unwrap_or_else(Instant::now);
+        tab.requests.loaded_at = Some(long_ago);
+        tab.requests.refresh.held_until = Some(Instant::now() + Duration::from_secs(600));
+        tab.refresh_requests_if_stale();
+        assert!(jobs_of(&host_jobs).is_empty());
+    }
+
+    #[test]
+    fn a_failed_timed_refresh_backs_off_and_a_success_resets_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        let every = Duration::from_secs(60);
+        let (mut tab, host_events, host_jobs) = timed_tab(start);
+        let fail = |tab: &mut RepoTab| -> Result<(), Box<dyn std::error::Error>> {
+            host_events.send(HostEvent::List(
+                StateFilter::Open,
+                Err("rate limited".into()),
+            ))?;
+            tab.poll(&[]);
+            Ok(())
+        };
+
+        assert_eq!(
+            tab.refresh_requests_on_timer(start + every, every, true),
+            None
+        );
+        assert_eq!(lists_in(&host_jobs), 1);
+        fail(&mut tab)?;
+        assert!(
+            matches!(tab.requests.list, Some(Ok(_))),
+            "the shown list stays"
+        );
+        assert_eq!(tab.requests.refresh.failures, 1);
+        assert!(!tab.requests.refresh.in_flight);
+        let Some(failed_at) = tab.requests.refresh.failed_at else {
+            unreachable!("a failure records when it happened")
+        };
+
+        // One failure: the next attempt waits twice as long, counted from the failure.
+        assert_eq!(
+            tab.refresh_requests_on_timer(failed_at + every, every, true),
+            Some(every)
+        );
+        assert_eq!(
+            tab.refresh_requests_on_timer(failed_at + every * 2, every, true),
+            None
+        );
+        assert_eq!(lists_in(&host_jobs), 1);
+        fail(&mut tab)?;
+        assert_eq!(tab.requests.refresh.failures, 2);
+
+        // A success clears the backoff.
+        tab.requests.refresh.failed_at = Some(start);
+        assert_eq!(
+            tab.refresh_requests_on_timer(start + every * 4, every, true),
+            None
+        );
+        assert_eq!(lists_in(&host_jobs), 1);
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        tab.poll(&[]);
+        assert_eq!(tab.requests.refresh.failures, 0);
+        Ok(())
+    }
+
+    fn details_of(number: u64) -> RequestDetails {
+        RequestDetails {
+            summary: RequestSummary {
+                number,
+                title: format!("request {number}"),
+                author: String::new(),
+                state: canopy_hosting::RequestState::Open,
+                draft: false,
+                source_branch: "feature".into(),
+                target_branch: "main".into(),
+                from_fork: false,
+                created_at: 0,
+                updated_at: 0,
+                web_url: String::new(),
+                labels: Vec::new(),
+                description: String::new(),
+                rollup: None,
+            },
+            body: String::new(),
+            head_sha: None,
+            mergeable: None,
+            commits: None,
+            changed_files: None,
+            additions: None,
+            deletions: None,
+            reviews: Vec::new(),
+            checks: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
+
+    /// A tab on a fresh hosting thread, nothing selected: the channels to feed it and read it.
+    fn tab_on_a_fresh_host() -> (
+        RepoTab,
+        crossbeam_channel::Sender<HostEvent>,
+        crossbeam_channel::Receiver<HostJob>,
+    ) {
+        let (mut tab, _events, _jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().expect("host").forge.clone();
+        let (host, host_events, host_jobs) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        tab.requests.selected = None;
+        tab.requests.details = None;
+        (tab, host_events, host_jobs)
+    }
+
+    /// Selects `number` and answers its details load, as the hosting thread would.
+    fn open_request(
+        tab: &mut RepoTab,
+        host_events: &crossbeam_channel::Sender<HostEvent>,
+        host_jobs: &crossbeam_channel::Receiver<HostJob>,
+        number: u64,
+    ) {
+        tab.select_request(number);
+        let jobs = jobs_of(host_jobs);
+        assert!(
+            matches!(jobs.as_slice(), [HostJob::Details(n, _)] if *n == number),
+            "opening request {number} loads it once: {jobs:?}"
+        );
+        host_events
+            .send(HostEvent::Details(
+                number,
+                tab.requests.details_generation,
+                Box::new(Ok(details_of(number))),
+            ))
+            .expect("details");
+        tab.poll(&[]);
+        assert!(matches!(&tab.requests.details, Some(Ok(d)) if d.summary.number == number));
+    }
+
+    /// #29: A, then B, then A again within the cache's lifetime shows A at once, without
+    /// asking the host for it a second time.
+    #[test]
+    fn returning_to_a_request_shows_its_cached_details_without_a_new_load() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        let before = tab.requests.details_generation;
+
+        tab.select_request(9);
+        assert!(jobs_of(&host_jobs).is_empty(), "A is not loaded again");
+        assert_eq!(tab.requests.selected, Some(9));
+        assert!(!tab.requests.details_loading);
+        assert!(matches!(&tab.requests.details, Some(Ok(d)) if d.summary.number == 9));
+        assert_ne!(
+            tab.requests.details_generation, before,
+            "an in-flight result of the earlier selection must not land"
+        );
+
+        // B's late result (it was answered once; a duplicate or old one) changes nothing.
+        host_events
+            .send(HostEvent::Details(4, before, Box::new(Err("late".into()))))
+            .expect("late");
+        tab.poll(&[]);
+        assert!(matches!(&tab.requests.details, Some(Ok(d)) if d.summary.number == 9));
+    }
+
+    #[test]
+    fn a_failed_load_is_not_cached() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        tab.select_request(9);
+        host_events
+            .send(HostEvent::Details(
+                9,
+                tab.requests.details_generation,
+                Box::new(Err("offline".into())),
+            ))
+            .expect("failure");
+        tab.poll(&[]);
+        drop(jobs_of(&host_jobs));
+        tab.select_request(4);
+        drop(jobs_of(&host_jobs));
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+    }
+
+    #[test]
+    fn an_expired_cache_entry_is_loaded_again() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        let long_ago = Instant::now()
+            .checked_sub(REQUEST_DETAILS_CACHE_TTL * 2)
+            .unwrap_or_else(Instant::now);
+        for entry in &mut tab.requests.details_cache {
+            entry.loaded_at = long_ago;
+        }
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+        assert!(tab.requests.details_loading);
+    }
+
+    #[test]
+    fn a_manual_reload_drops_the_cached_details() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        tab.load_requests();
+        drop(jobs_of(&host_jobs));
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+    }
+
+    #[test]
+    fn an_automatic_list_refresh_drops_the_cached_details() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        tab.refresh_requests_quietly();
+        drop(jobs_of(&host_jobs));
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+    }
+
+    #[test]
+    fn an_action_result_drops_the_cached_details() {
+        for result in [Ok(()), Err("refused".to_owned())] {
+            let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+            open_request(&mut tab, &host_events, &host_jobs, 9);
+            open_request(&mut tab, &host_events, &host_jobs, 4);
+            host_events
+                .send(HostEvent::Done {
+                    label: "Merging".into(),
+                    action: HostAction::Merge,
+                    number: Some(4),
+                    result,
+                })
+                .expect("done");
+            tab.poll(&[]);
+            drop(jobs_of(&host_jobs));
+            tab.select_request(9);
+            assert!(matches!(
+                jobs_of(&host_jobs).as_slice(),
+                [HostJob::Details(9, _)]
+            ));
+        }
+    }
+
+    #[test]
+    fn the_same_number_in_another_project_is_not_a_cache_hit() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        let mut other = tab.host.as_ref().expect("host").forge.clone();
+        other.path = "o/other".into();
+        let (host, _events, other_jobs) = HostWorker::detached(other);
+        tab.host = Some(host);
+        tab.select_request(4);
+        tab.select_request(9);
+        let jobs = jobs_of(&other_jobs);
+        assert!(
+            matches!(
+                jobs.as_slice(),
+                [HostJob::Details(4, _), HostJob::Details(9, _)]
+            ),
+            "{jobs:?}"
+        );
+    }
+
+    #[test]
+    fn restarting_the_host_for_a_new_token_forgets_the_cached_details() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        assert!(!tab.requests.details_cache.is_empty());
+        tab.restart_host(&egui::Context::default(), None, false);
+        assert!(tab.requests.details_cache.is_empty());
+    }
+
+    #[test]
+    fn the_cache_is_bounded_and_drops_the_oldest_first() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        let first = 1000;
+        let last = first + REQUEST_DETAILS_CACHE_MAX as u64;
+        for number in first..=last {
+            open_request(&mut tab, &host_events, &host_jobs, number);
+        }
+        assert_eq!(tab.requests.details_cache.len(), REQUEST_DETAILS_CACHE_MAX);
+        tab.select_request(first);
+        assert!(
+            matches!(jobs_of(&host_jobs).as_slice(), [HostJob::Details(n, _)] if *n == first),
+            "the oldest entry was dropped"
+        );
+        tab.select_request(last);
+        assert!(jobs_of(&host_jobs).is_empty(), "the newest is still cached");
+    }
+
+    #[test]
+    fn a_cached_return_restores_that_requests_own_comment_draft() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        tab.requests.comment = "draft for nine".into();
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        assert_eq!(tab.requests.comment, "");
+        tab.requests.comment = "draft for four".into();
+        tab.select_request(9);
+        assert_eq!(tab.requests.comment, "draft for nine");
+        tab.select_request(4);
+        assert_eq!(tab.requests.comment, "draft for four");
     }
 }
 

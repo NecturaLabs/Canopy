@@ -14,9 +14,9 @@ pub enum MergedReason {
     /// The branch has an upstream configured, but its remote-tracking branch is gone (deleted on
     /// the remote and pruned). A hint, not proof: deleting it needs `-D` and a confirmation.
     UpstreamGone,
-    /// Merging the branch into the base changes nothing: `git merge-tree --write-tree` gives the
-    /// base's own tree, as after a squash or rebase merge (Git 2.38 or later). A heuristic:
-    /// deleting it needs `-D` and a confirmation.
+    /// A squash/rebase merge hint: either `merge-tree` leaves the base tree unchanged, or
+    /// repository metrics find every changed topic path already matches the base. Neither
+    /// proves a merge occurred; deleting it needs `-D` and a confirmation.
     SquashMerged,
 }
 

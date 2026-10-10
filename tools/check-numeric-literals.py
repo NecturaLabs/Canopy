@@ -10,7 +10,8 @@ where the rules live; the UI takes its sizes and times from `ui/theme.rs` tokens
   tuple/field access such as `.0`;
 - in a `const` or `static` item, or in an attribute;
 - on a line that carries a comment (the comment says what the number is);
-- after the first `#[cfg(test)]`, where this project keeps its unit tests.
+- after the first `#[cfg(test)]`, where this project keeps its unit tests, or anywhere in a file
+  that carries the inner attribute `#![cfg(test)]` (a file of test support or tests).
 
 Strings, raw strings, characters, lifetimes and comments are skipped by a small scanner, not a
 regular expression, so digits inside a message or a GraphQL query never count. Standard library
@@ -95,6 +96,10 @@ def scan(text: str) -> list[tuple[int, str, bool]]:
 
 def unnamed(text: str) -> list[tuple[int, str]]:
     """The literals of `text` outside tests that need a name or a comment."""
+    head = [line.strip() for line in text.split("\n")]
+    head = [line for line in head if line and not line.startswith("//")]
+    if head and head[0] == "#![cfg(test)]":
+        return []
     cut = text.find("#[cfg(test)]")
     if cut >= 0:
         text = text[:cut]
@@ -144,6 +149,7 @@ def selftest() -> int:
 
     assert lits("let a = 0; let b = 1u8; let c = 1.0; let d = 0.0f32;") == []
     assert lits("let a = x.take(2000);") == ["2000"]
+    assert lits("//! docs\n#![cfg(test)]\nlet a = x.take(2000);") == []
     assert lits("let a = 2 + 3;") == ["2", "3"]
     assert lits("let a = x.take(2000); // lines kept") == []
     assert lits("const LIMIT: usize = 2000;") == []

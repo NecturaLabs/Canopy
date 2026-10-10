@@ -45,8 +45,10 @@ These come from the owner and override anything else in the repository.
   when branches diverged). Pull configuration lives in Settings only. Settings shows every
   choice with its recommendation and, where the user's configuration sets it, the setting, its
   value and where it is set. Covered: pull strategy, prune, tag pruning, autostash,
-  follow-tags, submodule updates, `push.default`, conflict style, the first branch of `init`, commit cleanup; no
-  notification outside Settings reports them yet (see the Git settings GitHub issue). A pull
+  follow-tags, submodule updates, `push.default`, conflict style, the first branch of `init`, commit cleanup; the
+  notification center also reports configured values that differ from the recommendations.
+  Supported Git values are editable at global or repository scope; recommendations write global
+  Git configuration after confirmation and preserve signing, hooks, identity and line endings. A pull
   checks first and asks before it would diverge or conflict.
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,
@@ -94,12 +96,14 @@ adding a dependency.
   and `shellcheck` and `cargo deny check` only when installed. CI runs the docs check on every
   push; the rest is skipped only when everything changed since the last commit CI passed is
   documentation (Markdown and `docs/`, except `CHANGELOG.md` and `docs/legal/`, which the app
-  embeds) or the landing site (`site/`), and runs whenever that cannot be established. `site.yml`
+  embeds) or the landing site (`site/`), or when CI already passed on a commit with the same tree
+  (a merge of an up-to-date branch), and runs whenever that cannot be established. `site.yml`
   checks `site/` and, on `main`, deploys it to Netlify (https://canopy.necturalabs.com).
   `stall-check.py` runs in CI's Linux test job (required on GitHub-hosted runners, advisory on the
   self-hosted one). Run `cargo deny check`
   yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) adds
-  tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
+  tests per platform only when `CI_TESTS` is `1` (off: the pre-commit hook runs `cargo test`),
+  then one repository variable each: Linux runs unless `CI_LINUX`
   is `0`; macOS and Windows run only when `CI_MACOS` / `CI_WINDOWS` is `1` (off for now).
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`

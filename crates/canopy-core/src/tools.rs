@@ -6,6 +6,7 @@
 //! on the `PATH` (a macOS app opened from the Finder gets a minimal one), git's own error comes
 //! late and says little; [`Repo::missing_tools`] finds them as the repository is opened.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::{Repo, cli};
@@ -13,6 +14,9 @@ use crate::{Repo, cli};
 /// The owner, group and other execute bits of a Unix file mode.
 #[cfg(unix)]
 const EXECUTE_BITS: u32 = 0o111;
+
+/// Attribute files are only a startup hint; never read an unbounded repository-controlled file.
+const ATTRIBUTE_HINT_LIMIT: u64 = 1024 * 1024;
 
 /// A program a repository needs and the system lacks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,8 +230,23 @@ impl Repo {
             self.git().commondir().join("info").join("attributes"),
         ];
         attributes.iter().any(|file| {
-            std::fs::read_to_string(file)
-                .is_ok_and(|text| text.lines().any(|l| l.contains("filter=lfs")))
+            if !std::fs::symlink_metadata(file).is_ok_and(|m| m.file_type().is_file()) {
+                return false;
+            }
+            let Ok(input) = std::fs::File::open(file) else {
+                return false;
+            };
+            if !input.metadata().is_ok_and(|m| m.is_file()) {
+                return false;
+            }
+            let mut text = Vec::new();
+            input
+                .take(ATTRIBUTE_HINT_LIMIT)
+                .read_to_end(&mut text)
+                .is_ok()
+                && text
+                    .windows(b"filter=lfs".len())
+                    .any(|w| w == b"filter=lfs")
         })
     }
 
@@ -312,6 +331,20 @@ mod tests {
 
     fn repo_in(dir: &Path) -> Repo {
         Repo::init(dir, "main", false).expect("init")
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn attribute_hints_do_not_follow_symlinks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = repo_in(dir.path());
+        let target = dir.path().join("elsewhere");
+        std::fs::write(&target, "*.bin filter=lfs\n").expect("attributes");
+        std::os::unix::fs::symlink(target, dir.path().join(".gitattributes")).expect("link");
+        assert!(
+            !repo.uses_lfs(),
+            "Git ignores symbolic-link attributes files"
+        );
     }
 
     #[test]

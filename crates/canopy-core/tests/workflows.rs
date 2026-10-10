@@ -531,6 +531,24 @@ fn merged_branches_name_the_check_that_matched() {
     );
 }
 
+#[test]
+fn merged_branches_keep_the_cause_of_a_base_that_is_no_commit() {
+    let (_dir, repo) = fixture();
+    // A tree is found but is no commit: libgit2's own reason follows the base's name.
+    let error = repo
+        .merged_branches("HEAD^{tree}", false)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("Could not resolve the base 'HEAD^{tree}': "),
+        "{error}"
+    );
+    assert!(
+        error.contains("can not be successfully peeled into a commit"),
+        "libgit2's reason is preserved: {error}"
+    );
+}
+
 const POINTER_OID: &str = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
 
 fn pointer_text(size: u64) -> String {
@@ -831,6 +849,27 @@ fn following_submodules_checks_out_the_recorded_commit_unless_told_not_to() {
 
     repo.follow_submodules(|_| {}).expect("on");
     assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+}
+
+#[test]
+fn following_submodules_leaves_a_deinitialised_one_alone() {
+    let (dir, repo, _sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    git(&sup, &["submodule", "deinit", "-q", "-f", "deps/lib"]);
+    // A leading "-" in `git submodule status` marks a submodule that is not initialised.
+    assert!(git(&sup, &["submodule", "status"]).starts_with('-'));
+
+    repo.follow_submodules(|_| {}).expect("follow");
+
+    assert!(
+        git(&sup, &["submodule", "status"]).starts_with('-'),
+        "following a pull or checkout must not initialise it again"
+    );
+    assert_eq!(
+        fs::read_dir(sup.join("deps/lib")).expect("folder").count(),
+        0,
+        "and must not clone it"
+    );
 }
 
 #[test]

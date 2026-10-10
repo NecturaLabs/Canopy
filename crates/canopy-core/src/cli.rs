@@ -126,6 +126,9 @@ pub(crate) fn apply_env(cmd: &mut Command) {
     }
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_EDITOR", "true")
+        // `sequence.editor` in a repository's configuration beats `GIT_EDITOR`, and names a
+        // program: only this variable outranks it.
+        .env("GIT_SEQUENCE_EDITOR", "true")
         .env("GIT_MERGE_AUTOEDIT", "no");
     let slot = askpass_slot()
         .read()
@@ -684,6 +687,62 @@ mod tests {
             !marker.exists(),
             "repository fsmonitor command was executed"
         );
+    }
+
+    /// A repository whose `key` names a script that leaves a marker file, with two commits.
+    #[cfg(unix)]
+    fn poisoned_repository(key: &str) -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temporary repository");
+        let path = dir.path();
+        run(path, &["init", "-q"]).expect("initialize repository");
+        run(path, &["config", "user.name", "Ada"]).expect("name");
+        run(path, &["config", "user.email", "ada@example.com"]).expect("email");
+        for message in ["first", "second"] {
+            run(path, &["commit", "-q", "--allow-empty", "-m", message]).expect("commit");
+        }
+        let script = path.join("probe");
+        std::fs::write(&script, "#!/bin/sh\ntouch ran\nexit 0\n").expect("probe");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        run(path, &["config", "--local", key, "./probe"]).expect("poison");
+        let marker = path.join("ran");
+        (dir, marker)
+    }
+
+    /// Ordinary git, as a user's terminal runs it: no editor variables from this process.
+    #[cfg(unix)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test must demonstrate that ordinary git executes the fixture's command"
+    )]
+    fn plain_git(dir: &Path, args: &[&str]) {
+        let _ = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env_remove("GIT_EDITOR")
+            .env_remove("GIT_SEQUENCE_EDITOR")
+            .env_remove("EDITOR")
+            .env_remove("VISUAL")
+            .output()
+            .expect("run unprotected git");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_editors_are_not_executed() {
+        for (key, args) in [
+            ("core.editor", vec!["commit", "-q", "--allow-empty"]),
+            ("sequence.editor", vec!["rebase", "-i", "HEAD~1"]),
+        ] {
+            let (dir, marker) = poisoned_repository(key);
+            plain_git(dir.path(), &args);
+            assert!(marker.exists(), "fixture did not activate {key}");
+            std::fs::remove_file(&marker).expect("reset probe");
+            let _ = run_unchecked(dir.path(), &["rebase", "--abort"]);
+            let _ = run_unchecked(dir.path(), &args);
+            assert!(!marker.exists(), "{key} was executed by Canopy's git");
+        }
     }
 
     #[cfg(unix)]

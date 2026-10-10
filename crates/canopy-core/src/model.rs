@@ -416,6 +416,8 @@ pub struct RefLabel {
 pub struct RepoSnapshot {
     /// Working directory.
     pub workdir: PathBuf,
+    /// Shared Git directory, the stable repository identity across linked worktrees.
+    pub common_dir: PathBuf,
     /// Folder name, used as the tab title.
     pub name: String,
     /// `HEAD`.

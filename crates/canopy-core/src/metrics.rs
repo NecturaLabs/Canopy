@@ -1,6 +1,6 @@
 //! Local repository activity and branch comparisons, without fetching missing objects.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{BranchType, Oid};
@@ -190,8 +190,8 @@ impl Repo {
 
     /// Every local branch compared with the cached default branch and its upstream.
     /// Uses remote HEAD (origin first), then main/master; an unknown default stays absent.
-    /// Squash detection is never run: `git merge-tree` writes objects and would execute merge and
-    /// filter drivers, and this read must change nothing and run no repository-defined program.
+    /// Squash hints compare stored tree entries: every path changed since the unique merge base
+    /// must already match the default branch. No merge or filter driver runs and nothing is written.
     pub fn branch_metrics(&self) -> Result<Vec<BranchMetrics>> {
         self.branch_metrics_at(now()?)
     }
@@ -296,7 +296,13 @@ impl Repo {
             let reason = merged
                 .iter()
                 .find(|b| b.name == *name)
-                .and_then(|b| b.reason);
+                .and_then(|b| b.reason)
+                .or_else(|| {
+                    base.as_ref()
+                        .filter(|(base_name, _)| base_name != name)
+                        .filter(|(_, base)| self.metrics_squash_merged(*base, *tip))
+                        .map(|_| MergedReason::SquashMerged)
+                });
             out.push(BranchMetrics {
                 name: name.clone(),
                 default_branch: base.as_ref().map(|(name, _)| name.clone()),
@@ -324,6 +330,34 @@ impl Repo {
         Ok(Divergence { ahead, behind })
     }
 
+    fn metrics_squash_merged(&self, default: Oid, tip: Oid) -> bool {
+        let compare = || -> Result<bool, git2::Error> {
+            let bases = self.git().merge_bases(default, tip)?;
+            // Multiple bases would need a synthetic merge, which is outside this read-only hint.
+            if bases.len() != 1 {
+                return Ok(false);
+            }
+            let ancestor = self.git().find_commit(bases[0])?.tree()?;
+            let topic = self.git().find_commit(tip)?.tree()?;
+            let current = self.git().find_commit(default)?.tree()?;
+            let mut changed = false;
+            Ok(tree_changes_contained(
+                self.git(),
+                Some(&ancestor),
+                Some(&topic),
+                Some(&current),
+                &mut changed,
+            )? && changed)
+        };
+        match compare() {
+            Ok(contained) => contained,
+            Err(error) => {
+                tracing::debug!(%tip, %error, "squash hint comparison unavailable");
+                false
+            }
+        }
+    }
+
     fn local_metrics_command(&self, args: &[&str]) -> Result<String> {
         let out = cli::command(Some(self.workdir()))
             .env("GIT_NO_LAZY_FETCH", "1")
@@ -338,6 +372,66 @@ impl Repo {
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
+}
+
+fn tree_entry_state(entry: &git2::TreeEntry<'_>) -> (Oid, i32) {
+    (entry.id(), entry.filemode_raw())
+}
+
+/// Compare changed paths without reading blobs, attributes or repository diff settings.
+fn tree_changes_contained(
+    git: &git2::Repository,
+    before: Option<&git2::Tree<'_>>,
+    topic: Option<&git2::Tree<'_>>,
+    current: Option<&git2::Tree<'_>>,
+    changed: &mut bool,
+) -> Result<bool, git2::Error> {
+    let names: BTreeSet<_> = before
+        .into_iter()
+        .chain(topic)
+        .flat_map(git2::Tree::iter)
+        .map(|entry| entry.name_bytes().to_vec())
+        .collect();
+    for name in names {
+        let old = before.and_then(|tree| tree.get_name_bytes(&name));
+        let new = topic.and_then(|tree| tree.get_name_bytes(&name));
+        if old.as_ref().map(tree_entry_state) == new.as_ref().map(tree_entry_state) {
+            continue;
+        }
+        *changed = true;
+        let present = current.and_then(|tree| tree.get_name_bytes(&name));
+        let directory_or_absent = |entry: Option<&git2::TreeEntry<'_>>| {
+            entry.is_none_or(|entry| entry.kind() == Some(git2::ObjectType::Tree))
+        };
+        if [old.as_ref(), new.as_ref(), present.as_ref()]
+            .into_iter()
+            .all(directory_or_absent)
+        {
+            let read_tree = |entry: Option<&git2::TreeEntry<'_>>| {
+                entry.map(|entry| git.find_tree(entry.id())).transpose()
+            };
+            let old_tree = read_tree(old.as_ref())?;
+            let new_tree = read_tree(new.as_ref())?;
+            let present_tree = read_tree(present.as_ref())?;
+            // An explicit empty tree has no children through which to compare its presence.
+            if new_tree.as_ref().is_some_and(git2::Tree::is_empty) {
+                if new.as_ref().map(tree_entry_state) != present.as_ref().map(tree_entry_state) {
+                    return Ok(false);
+                }
+            } else if !tree_changes_contained(
+                git,
+                old_tree.as_ref(),
+                new_tree.as_ref(),
+                present_tree.as_ref(),
+                changed,
+            )? {
+                return Ok(false);
+            }
+        } else if new.as_ref().map(tree_entry_state) != present.as_ref().map(tree_entry_state) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn parse_author(line: &str) -> Result<AuthorActivity> {
@@ -473,6 +567,244 @@ mod tests {
     }
 
     #[test]
+    fn branch_metrics_detect_a_squash_merge_without_marking_the_default() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"], MONDAY);
+        git(p, &["commit", "--allow-empty", "-qm", "root"], MONDAY);
+        git(p, &["switch", "-qc", "topic"], MONDAY);
+        std::fs::write(p.join("topic.txt"), "topic\n").expect("file");
+        git(p, &["add", "--", "topic.txt"], MONDAY);
+        git(p, &["commit", "-qm", "topic"], MONDAY + DAY_SECONDS);
+        git(p, &["switch", "-q", "main"], MONDAY);
+        git(p, &["merge", "--squash", "topic"], MONDAY);
+        git(p, &["commit", "-qm", "squashed"], MONDAY + 2 * DAY_SECONDS);
+        let repo = Repo::open(p).expect("repo");
+        let branches = repo
+            .branch_metrics_at(MONDAY + 3 * DAY_SECONDS)
+            .expect("metrics");
+        let branch = |name| branches.iter().find(|b| b.name == name).expect("branch");
+        assert_eq!(branch("topic").merged, Some(MergedReason::SquashMerged));
+        assert_eq!(branch("main").merged, None);
+    }
+
+    fn branch_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"], MONDAY);
+        for (key, value) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.test"),
+            ("commit.gpgsign", "false"),
+            ("core.filemode", "false"),
+        ] {
+            git(p, &["config", key, value], MONDAY);
+        }
+        dir
+    }
+
+    #[test]
+    fn branch_metrics_squash_hint_allows_unrelated_changes_and_leaves_state_untouched() {
+        let dir = branch_fixture();
+        let p = dir.path();
+        std::fs::create_dir(p.join("folder")).expect("folder");
+        std::fs::write(p.join("folder/old.txt"), "old\n").expect("old file");
+        git(p, &["add", "--", "folder/old.txt"], MONDAY);
+        git(p, &["commit", "-qm", "root"], MONDAY);
+        git(p, &["switch", "-qc", "topic"], MONDAY);
+        git(
+            p,
+            &["mv", "--", "folder/old.txt", "folder/renamed.txt"],
+            MONDAY,
+        );
+        std::fs::write(p.join("folder/binary.bin"), [0, 1, 2]).expect("binary file");
+        git(p, &["add", "--", "folder/binary.bin"], MONDAY);
+        git(p, &["commit", "-qm", "topic"], MONDAY + DAY_SECONDS);
+        git(p, &["switch", "-q", "main"], MONDAY);
+        git(p, &["merge", "--squash", "topic"], MONDAY);
+        git(p, &["commit", "-qm", "squashed"], MONDAY + 2 * DAY_SECONDS);
+        std::fs::write(p.join("folder/unrelated.txt"), "default only\n").expect("unrelated file");
+        git(p, &["add", "--", "folder/unrelated.txt"], MONDAY);
+        git(p, &["commit", "-qm", "unrelated"], MONDAY + 3 * DAY_SECONDS);
+        std::fs::write(p.join("folder/renamed.txt"), "staged work\n").expect("staged work");
+        git(p, &["add", "--", "folder/renamed.txt"], MONDAY);
+        std::fs::write(p.join("folder/renamed.txt"), "unstaged work\n").expect("unstaged work");
+        let commands: [&[&str]; 4] = [
+            &["show-ref"],
+            &["ls-files", "-s"],
+            &["count-objects", "-v"],
+            &["reflog", "show", "--all", "--format=%H %gs"],
+        ];
+        let before = commands.map(|args| git(p, args, MONDAY));
+        let index = std::fs::read(p.join(".git/index")).expect("index");
+        let repo = Repo::open(p).expect("repo");
+        let metrics = repo
+            .branch_metrics_at(MONDAY + 4 * DAY_SECONDS)
+            .expect("metrics");
+        assert_eq!(
+            metrics
+                .iter()
+                .find(|b| b.name == "topic")
+                .expect("topic")
+                .merged,
+            Some(MergedReason::SquashMerged)
+        );
+        assert_eq!(commands.map(|args| git(p, args, MONDAY)), before);
+        assert_eq!(std::fs::read(p.join(".git/index")).expect("index"), index);
+        assert_eq!(
+            std::fs::read(p.join("folder/renamed.txt")).expect("working file"),
+            b"unstaged work\n"
+        );
+    }
+
+    #[test]
+    fn branch_metrics_squash_hint_requires_all_content_and_modes() {
+        let dir = branch_fixture();
+        let p = dir.path();
+        std::fs::write(p.join("tracked.txt"), "base\n").expect("base");
+        std::fs::write(p.join("script.sh"), "echo topic\n").expect("script");
+        git(p, &["add", "--", "tracked.txt", "script.sh"], MONDAY);
+        git(p, &["commit", "-qm", "root"], MONDAY);
+        git(p, &["switch", "-qc", "topic"], MONDAY);
+        std::fs::write(p.join("tracked.txt"), "topic\n").expect("topic");
+        git(p, &["add", "--", "tracked.txt"], MONDAY);
+        git(
+            p,
+            &["update-index", "--chmod=+x", "--", "script.sh"],
+            MONDAY,
+        );
+        git(p, &["commit", "-qm", "topic"], MONDAY + DAY_SECONDS);
+        git(p, &["switch", "-q", "main"], MONDAY);
+        std::fs::write(p.join("tracked.txt"), "topic\n").expect("partial topic");
+        git(p, &["add", "--", "tracked.txt"], MONDAY);
+        git(
+            p,
+            &["commit", "-qm", "partial topic"],
+            MONDAY + 2 * DAY_SECONDS,
+        );
+        let repo = Repo::open(p).expect("repo");
+        let topic_state = || {
+            repo.branch_metrics_at(MONDAY + 4 * DAY_SECONDS)
+                .expect("metrics")
+                .into_iter()
+                .find(|b| b.name == "topic")
+                .expect("topic")
+                .merged
+        };
+        assert_eq!(topic_state(), None, "the executable-bit change is missing");
+        git(
+            p,
+            &["update-index", "--chmod=+x", "--", "script.sh"],
+            MONDAY,
+        );
+        git(
+            p,
+            &["commit", "-qm", "complete topic"],
+            MONDAY + 3 * DAY_SECONDS,
+        );
+        assert_eq!(topic_state(), Some(MergedReason::SquashMerged));
+        std::fs::write(p.join("tracked.txt"), "different\n").expect("different content");
+        git(p, &["add", "--", "tracked.txt"], MONDAY);
+        git(
+            p,
+            &["commit", "-qm", "different content"],
+            MONDAY + 4 * DAY_SECONDS,
+        );
+        assert_eq!(topic_state(), None, "the topic's file content is absent");
+    }
+
+    #[test]
+    fn branch_metrics_squash_hint_skips_missing_trees_and_shallow_history() {
+        for missing_tree in [true, false] {
+            let dir = branch_fixture();
+            let p = dir.path();
+            std::fs::write(p.join("tracked.txt"), "base\n").expect("base");
+            git(p, &["add", "--", "tracked.txt"], MONDAY);
+            git(p, &["commit", "-qm", "root"], MONDAY);
+            let root_tree = git(p, &["rev-parse", "HEAD^{tree}"], MONDAY);
+            git(p, &["switch", "-qc", "topic"], MONDAY);
+            std::fs::write(p.join("tracked.txt"), "topic\n").expect("topic");
+            git(p, &["commit", "-qam", "topic"], MONDAY + DAY_SECONDS);
+            let topic = git(p, &["rev-parse", "HEAD"], MONDAY);
+            git(p, &["switch", "-q", "main"], MONDAY);
+            git(p, &["merge", "--squash", "topic"], MONDAY);
+            git(p, &["commit", "-qm", "squashed"], MONDAY + 2 * DAY_SECONDS);
+            let main = git(p, &["rev-parse", "HEAD"], MONDAY);
+            let missing_path = if missing_tree {
+                git(p, &["config", "remote.origin.promisor", "true"], MONDAY);
+                git(
+                    p,
+                    &[
+                        "config",
+                        "remote.origin.url",
+                        "https://invalid.example/repo",
+                    ],
+                    MONDAY,
+                );
+                let id = root_tree.trim();
+                let path = p
+                    .join(".git/objects")
+                    .join(id.get(..2).expect("object prefix"))
+                    .join(id.get(2..).expect("object suffix"));
+                std::fs::remove_file(&path).expect("remove fixture merge-base tree");
+                Some(path)
+            } else {
+                std::fs::write(p.join(".git/shallow"), format!("{main}{topic}"))
+                    .expect("shallow boundaries");
+                None
+            };
+            let repo = Repo::open(p).expect("repo");
+            let metrics = repo
+                .branch_metrics_at(MONDAY + 3 * DAY_SECONDS)
+                .expect("unavailable squash comparison leaves metrics readable");
+            assert_eq!(
+                metrics
+                    .iter()
+                    .find(|b| b.name == "topic")
+                    .expect("topic")
+                    .merged,
+                None,
+                "missing tree: {missing_tree}"
+            );
+            assert!(!p.join(".git/FETCH_HEAD").exists());
+            if let Some(path) = missing_path {
+                assert!(!path.exists(), "the missing tree was downloaded");
+            }
+        }
+    }
+
+    #[test]
+    fn branch_metrics_squash_hint_requires_a_tree_change() {
+        let dir = branch_fixture();
+        let p = dir.path();
+        git(p, &["commit", "--allow-empty", "-qm", "root"], MONDAY);
+        git(p, &["switch", "-qc", "topic"], MONDAY);
+        git(
+            p,
+            &["commit", "--allow-empty", "-qm", "topic"],
+            MONDAY + DAY_SECONDS,
+        );
+        git(p, &["switch", "-q", "main"], MONDAY);
+        git(
+            p,
+            &["commit", "--allow-empty", "-qm", "main"],
+            MONDAY + 2 * DAY_SECONDS,
+        );
+        let metrics = Repo::open(p)
+            .expect("repo")
+            .branch_metrics_at(MONDAY + 3 * DAY_SECONDS)
+            .expect("metrics");
+        assert_eq!(
+            metrics
+                .iter()
+                .find(|b| b.name == "topic")
+                .expect("topic")
+                .merged,
+            None
+        );
+    }
+
+    #[test]
     fn branch_metrics_divergence_unique_age_and_merge() {
         let dir = tempfile::tempdir().expect("tempdir");
         let p = dir.path();
@@ -582,14 +914,13 @@ mod tests {
         let metrics = repo
             .branch_metrics_at(MONDAY + 93 * DAY_SECONDS)
             .expect("squashed metrics");
-        // Squash detection would write objects, so this read leaves it out.
         assert_eq!(
             metrics
                 .iter()
                 .find(|b| b.name == "topic")
                 .expect("topic")
                 .merged,
-            None
+            Some(MergedReason::SquashMerged)
         );
         // Without any known default, comparisons stay absent rather than comparing to HEAD.
         git(p, &["branch", "-m", "main", "trunk"], MONDAY);

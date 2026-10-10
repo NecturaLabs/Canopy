@@ -44,7 +44,7 @@ filters and credential setup, while reads stay in-process and structured. Option
 local write skip a `pre-commit` hook, a `.gitattributes` filter or commit signing depending on
 which call path an operation happened to take, which is the inconsistency users would notice
 first. Options 1 and 2 give up one of the two drivers outright. Option 5 is not rejected on
-merit; it is deferred to the backlog item "gitoxide for history walks", which evaluates it with
+merit; it is deferred to GitHub issue #102 (gitoxide for history traversal), which evaluates it with
 measurements and would replace only the read side.
 
 Concretely:
@@ -77,6 +77,6 @@ Concretely:
 
 - `docs/architecture.md`, "Why libgit2 and the git CLI": the summary this record backs.
 - ADR 0005: credential prompts for the `git` processes this rule creates.
-- `docs/backlog.md`, "gitoxide for history walks".
+- GitHub issue #102, "Evaluate gitoxide for history traversal".
 - `.claude/skills/add-git-operation/SKILL.md` and `.claude/agents/canopy-git.md`: state the same
   layer rule.

@@ -284,6 +284,7 @@ fn gh_pull(number: u64, state: &str, merged: bool, updated: &str) -> Value {
         "updated_at": updated,
         "html_url": format!("https://github.com/octo/hello/pull/{number}"),
         "labels": [{ "name": "bug" }, { "name": "ui" }],
+        "body": if number == 1 { json!("## Why\n\nFixes the [bug](https://example.test/1).") } else { Value::Null },
         "unknown_field": { "ignored": true },
     })
 }
@@ -305,6 +306,7 @@ fn gl_mr(iid: u64, state: &str, updated: &str) -> Value {
         "updated_at": updated,
         "web_url": format!("https://gitlab.example.com/group/sub/proj/-/merge_requests/{iid}"),
         "labels": ["backend"],
+        "description": if iid == 1 { json!("**Adds** the backend <!-- note -->hook.") } else { Value::Null },
     })
 }
 
@@ -360,6 +362,11 @@ fn github_list_maps_fields() {
     assert_eq!(first.updated_at, 1_704_412_800);
     assert_eq!(first.web_url, "https://github.com/octo/hello/pull/1");
     assert_eq!(first.labels, ["bug", "ui"]);
+    assert_eq!(
+        first.description, "Why · Fixes the bug.",
+        "the list's own body is the preview"
+    );
+    assert_eq!(all[1].description, "", "a pull request without a body");
 
     let req = &server.requests()[0];
     assert_eq!(
@@ -822,6 +829,8 @@ fn gitlab_list_maps_fields_and_merges_closed_states() {
     assert_eq!(mr.target_branch, "main");
     assert_eq!(mr.created_at, 1_706_778_000);
     assert_eq!(mr.labels, ["backend"]);
+    assert_eq!(mr.description, "Adds the backend hook.");
+    assert_eq!(list[1].description, "");
 
     // Closed = closed + merged, interleaved by update time.
     let server = Server::start();
@@ -1871,6 +1880,94 @@ fn checkout_refs() {
 }
 
 #[test]
+fn a_committers_picture_is_not_the_authors_picture() {
+    let server = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let author = format!("{}/author.png", server.base);
+    let committer = format!("{}/committer.png", server.base);
+    server.route(
+        "GET",
+        "/repos/octo/hello/commits",
+        200,
+        &json!([{
+            "sha": sha,
+            "author": {"avatar_url": author},
+            "committer": {"avatar_url": committer},
+            "commit": {
+                "author": {"email": "author@example.com"},
+                "committer": {"email": "committer@example.com"}
+            },
+            "unknown": true
+        }])
+        .to_string(),
+    );
+    server.route(
+        "GET",
+        "/api/v4/avatar?email=committer%40example.com&size=64",
+        200,
+        &json!({"avatar_url": committer}).to_string(),
+    );
+    server.route("GET", "/author.png", 200, "author");
+    server.route("GET", "/committer.png", 200, "committer");
+    for client in [github(&server, None), gitlab(&server, Some(TOKEN))] {
+        let picture = client
+            .author_avatar(sha, "committer@example.com")
+            .expect("lookup")
+            .expect("picture");
+        assert_eq!(picture.download().expect("download"), b"committer");
+    }
+    let picture = github(&server, None)
+        .author_avatar(sha, "author@example.com")
+        .expect("lookup")
+        .expect("picture");
+    assert_eq!(picture.download().expect("download"), b"author");
+    let requests = server.requests();
+    assert_eq!(
+        requests[0].target,
+        format!("/repos/octo/hello/commits?sha={sha}&per_page=1")
+    );
+    assert_eq!(
+        requests[2].header("authorization"),
+        Some(&*format!("Bearer {TOKEN}"))
+    );
+    for i in [0, 1, 3, 4, 5] {
+        assert!(requests[i].header("authorization").is_none());
+    }
+}
+
+#[test]
+fn a_missing_commit_identity_never_uses_someone_elses_picture() {
+    let server = Server::start();
+    let client = github(&server, None);
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    for people in [
+        Value::Null,
+        json!({"author": {"email": "other@example.com"}}),
+        json!({"committer": {"email": "me@example.com"}}),
+    ] {
+        server.route(
+            "GET",
+            "/repos/octo/hello/commits",
+            200,
+            &json!([{
+                "sha": sha,
+                "author": {"avatar_url": format!("{}/other.png", server.base)},
+                "committer": null,
+                "commit": people
+            }])
+            .to_string(),
+        );
+        assert!(
+            client
+                .commit_avatar(sha, "me@example.com")
+                .expect("lookup")
+                .is_none()
+        );
+    }
+    assert_eq!(server.requests().len(), 3, "no picture downloads");
+}
+
+#[test]
 fn author_pictures_resolve_both_providers_and_download_without_tokens() {
     let server = Server::start();
     let sha = "0123456789abcdef0123456789abcdef01234567";
@@ -1881,7 +1978,7 @@ fn author_pictures_resolve_both_providers_and_download_without_tokens() {
         "GET",
         "/repos/octo/hello/commits",
         200,
-        &json!([{"sha": sha, "author": {"avatar_url": picture}, "unknown": true}]).to_string(),
+        &json!([{"sha": sha, "author": {"avatar_url": picture}, "commit": {"author": {"email": "author+git@example.com"}}, "unknown": true}]).to_string(),
     );
     server.route(
         "GET",
@@ -1928,7 +2025,7 @@ fn a_switched_off_client_looks_up_no_author() {
         "GET",
         "/repos/octo/hello/commits",
         200,
-        &json!([{"sha": sha, "author": {"avatar_url": picture}}]).to_string(),
+        &json!([{"sha": sha, "author": {"avatar_url": picture}, "commit": {"author": {"email": "a@example.com"}}}]).to_string(),
     );
     server.route("GET", "/repos/octo/hello", 200, r#"{"id":1}"#);
     server.route(
@@ -1977,7 +2074,7 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
         "GET",
         &path,
         200,
-        &json!([{"sha":sha,"author":{"avatar_url":external}}]).to_string(),
+        &json!([{"sha":sha,"author":{"avatar_url":external},"commit":{"author":{"email":"a@example.com"}}}]).to_string(),
     );
     assert!(
         client
@@ -1990,7 +2087,7 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
         "GET",
         &path,
         200,
-        &json!([{"sha":sha,"author":{"avatar_url":own}}]).to_string(),
+        &json!([{"sha":sha,"author":{"avatar_url":own},"commit":{"author":{"email":"a@example.com"}}}]).to_string(),
     );
     server.route_with_headers("GET", "/picture", 302, &[("Location", &external)], "");
     client
@@ -2074,7 +2171,7 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
         "GET",
         &path,
         200,
-        &json!([{"sha":sha,"author":{"avatar_url":format!("{}/oversized",server.base)}}])
+        &json!([{"sha":sha,"author":{"avatar_url":format!("{}/oversized",server.base)},"commit":{"author":{"email":"a@example.com"}}}])
             .to_string(),
     );
     server.route("GET", "/oversized", 200, &"x".repeat(2 * 1024 * 1024 + 1));

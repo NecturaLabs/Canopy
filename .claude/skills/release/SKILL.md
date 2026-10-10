@@ -34,7 +34,8 @@ the feed manifest.
 
 The channel is chosen per release: `stable` goes to `latest.json`, `beta` to `beta.json` and the
 GitHub release is marked a pre-release. A build is one or the other; a beta is not promoted, the
-next build is released as stable.
+next build is released as stable. A stable build also becomes the beta channel's manifest (the
+same feed release) unless beta already offers a newer build.
 
 `plan` and `number` only read git and print: they are safe to run locally.
 `python3 tools/release.py selftest` is part of `tools/check.sh` and CI.
@@ -44,9 +45,12 @@ next build is released as stable.
 1. Confirm the build and channel with the user: run `python3 tools/release.py plan` and
    `python3 tools/release.py notes` on an up-to-date `main` (full history, not a shallow clone) and
    show the result. A release is public and cannot be unpublished cleanly.
-2. `main` is clean, up to date and has a green CI run on its tip: the workflow refuses otherwise
-   (`gh run list --workflow ci.yml --branch main`). CI includes cargo-deny and the licence-notice
-   check, so a dependency change must already have regenerated
+2. `main` is clean, up to date and has a green CI run on its tip (`gh run list --workflow ci.yml
+   --branch main`). The workflow waits up to 25 minutes for a run still in progress and refuses
+   unless it passed; a dry run only looks. Merging a branch that was up to date with `main` gives a
+   commit with the branch's tree, whose CI run takes under a minute: it takes the branch's passing
+   run as proof and runs only the documentation and site checks. CI includes cargo-deny and the
+   licence-notice check, so a dependency change must already have regenerated
    `docs/legal/third-party-notices.txt` (`python3 tools/notices.py`).
 3. The notes read well for users: they are the commit subjects (see above), so a poorly worded
    `feat` or `fix` subject is what users read. Reword by releasing from a later commit, never by
@@ -93,8 +97,12 @@ next build is released as stable.
      `aarch64-apple-darwin` and `x86_64-apple-darwin` (cross-compiled on the Apple silicon
      runner); Windows is `x86_64-pc-windows-msvc`. The Linux and Windows builds use the
      self-hosted runners from an empty workspace and job-local toolchain, macOS runs hosted. The
-     two cross-compiled targets are `experimental`: their failure shows as a failed job but does
-     not stop the release, and the installer reports that platform as having no build;
+     two cross-compiled targets are `experimental`: they build in a job of their own (20 minute
+     limit) that publishing does not wait for, so their failure or a hang never holds back the
+     release. Once the release and the feed are out, "Add the experimental builds" adds the
+     archives that built to both releases (with a new `SHA256SUMS`) and to every feed manifest
+     that still names the build, and warns about each target that did not build; until then, or
+     without it, the installer reports that platform as having no build;
    - builds with the number, the commit's short hash and the notes embedded
      (`crates/canopy-app/build.rs`), so `canopy --version` prints `canopy build <n> (<hash>)`;
    - packages `canopy-build-<number>-<target>.tar.gz` (Linux, macOS) or `.zip` (Windows):
@@ -106,7 +114,7 @@ next build is released as stable.
    - publishes the GitHub release `build-<number>` with those archives, `install.sh`,
      `install.ps1`, a `SHA256SUMS` file and the notes (`prerelease` for the beta channel);
    - copies them to a release `canopy-build-<number>` in `NecturaLabs/app-updates` and commits
-     `canopy/latest.json` (`canopy/beta.json` for the beta channel) through
+     `canopy/latest.json` (`canopy/beta.json` for the beta channel; a stable release writes both) through
      `tools/update-manifest.sh`; a stable release also commits `packaging/install.sh` and
      `packaging/install.ps1` as `canopy/install.sh` and `canopy/install.ps1`, the files the
      one-line install commands fetch. A channel is never moved backwards (a manifest without a
@@ -117,12 +125,13 @@ next build is released as stable.
 - The Create release run succeeded (`gh run view <id>`). Release runs inside it as a reusable
   workflow, so its jobs appear there as "Build and publish / …", not under
   `gh run list --workflow release.yml` (that lists only manual reruns). Every job is green except
-  possibly an experimental build, and `Publish to the update feed` did not warn that the token is
-  missing.
+  possibly an experimental build and "Add the experimental builds" (both are allowed to fail),
+  and `Publish to the update feed` did not warn that the token is missing.
 - `git fetch --tags` locally; the tag `build-<number>` is on the commit you meant to release.
 - `gh release view build-<number>` lists one archive per target built (two for Linux, two for macOS,
   one for Windows, for the platforms that were on; one fewer for each experimental build that
-  failed: check why), `install.sh`, `install.ps1` and `SHA256SUMS`; the notes match
+  failed: check why; an experimental archive arrives after the others), `install.sh`,
+  `install.ps1` and `SHA256SUMS`; the notes match
   `tools/release.py notes build-<number>`; `gh release view build-<number> --json isPrerelease`
   is `true` for a beta and `false` for a stable release.
 - If Linux was built, download its archive: `sha256sum -c` against `SHA256SUMS`,
@@ -139,13 +148,17 @@ next build is released as stable.
 
 ## If something fails
 
-- Create release stops before tagging (not on `main`, CI not green, nothing releasable,
-  `build-<number>` already exists): fix the cause and dispatch it again; nothing was changed.
+- Create release stops before tagging (not on `main`, CI failed or still running after 25
+  minutes, nothing releasable, `build-<number>` already exists): fix the cause and dispatch it
+  again; nothing was changed.
 - A build or publish job fails after the tag exists: fix the runner or workflow problem and run
   Release by hand with that tag and its channel (`gh workflow run release.yml -f tag=build-<n> -f
   channel=stable|beta`). Do not run Create release again: it would stop, since HEAD is a tagged
   build. Release refuses a tag whose number is not the commit count of its commit, or whose
   commit is not on `main`.
+- An experimental build failed or ran out of time: the release is out without it. Re-running that
+  run's failed jobs (`gh run rerun <id> --failed`) builds it again and, through "Add the
+  experimental builds", adds it; or leave it for the next build.
 - The code is wrong after a release was published: never move or delete a published tag. Merge the
   fix and cut a new build.
 - A tag that never produced a published release may be deleted

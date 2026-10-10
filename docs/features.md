@@ -38,7 +38,7 @@ Update this table in the same change that adds or alters a feature.
 | Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
 | Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Done | Yes | ? | ? |
 | Very large repositories | Planned | ? | ? | ? |
-| Repository insights: 52 weekly commit counts, mailmap authors, last commit, object storage and local branch comparisons, unique commits, age and merged/stale hints; local calculations only | Done | ? | ? | ? |
+| Repository insights: 52 weekly commit counts, mailmap authors, last commit, object storage and local branch comparisons, unique commits, age and merged/stale hints, including conservative tree-based squash hints; local calculations only | Done | ? | ? | ? |
 | Local-only repositories (no remote), with quiet status labels and compact Publish/Add remote actions | Done | ? | ? | ? |
 
 Partial clones differ from a full clone in what the views can show without the network. Commit
@@ -81,7 +81,7 @@ git would run on every `git status`.
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
 | Author avatars | Done (GitHub/GitLab pictures, initials fallback) | Yes | Yes | Yes |
 | On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
-| Commit details: metadata, parents, files with +/- counts, per-file diff; persistent information disclosure, expand/return header and compact full view | Done | Yes | Yes | Yes |
+| Commit details: summary, copyable commit id, parent links and committer picture/name in the header; scrolling description and changed-file card, per-file diff, expand/return and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
 | File history | Planned | Yes | Yes | Yes |
@@ -89,8 +89,8 @@ git would run on every `git status`.
 | Reflog view | Planned | ? | ? | ? |
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |
-| Signature verification badges | In progress: a green check after the author in commit details when git trusts the signature, nothing otherwise; checked by git in trusted folders only; checked live with a GPG key | ? | Yes | ? |
-| Author card and parent links in commit details | Done: the name opens a card (email, committer, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
+| Signature verification badges | Done: distinct verified, invalid, unavailable, untrusted and expired/revoked marks in commit details and the author card; only verified signatures use the trusted mark; checked by git in trusted folders only | ? | Yes | ? |
+| Commit identity card and parent links in commit details | Done: the committer name opens a card (email, original author, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
 
 Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.
 The merge composer names the conclusion and prefills Git's merge message without replacing a draft.
@@ -129,14 +129,21 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Commit composer with summary counter; follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
 | Unsent commit message kept when its tab closes, until the repository opens again (same session) | Done | ? | ? | ? |
 | Amend | Done | Yes | Yes | Yes |
-| The commit template (`commit.template`) fills an empty message field once per tab; a draft or an amend keeps its text | Unreleased | Yes | ? | Yes |
+| The commit template (`commit.template`) fills an empty message field once per tab in trusted folders, including after trusting an open tab; a draft or an amend keeps its text | Unreleased | Yes | ? | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
-| Commit message templates and linting | Planned | ? | Yes | ? |
+| Commit message checks: a summary or description line longer than 72 characters is reported under the fields (Settings → Git → Commits → Check commit messages, on by default); long URLs, indented and quoted lines are left alone, and a hint never blocks the commit or changes the draft | Unreleased | ? | Yes | ? |
 
 Unstaged diffs refuse actual symbolic links when `core.symlinks=false`, because libgit2 would
 otherwise read their targets as regular files. Git's ordinary-file link emulation still works.
-Link diffs label their target paths; type changes still show their mode transition, and mode
-changes remain visible alongside content changes.
+Link diffs label their target paths; a file turned into a link (or back) shows the old side removed
+and the new side added, as `git diff` does, with the link's target text and never the file it points
+to, and its hunks offer no actions (stage or discard the whole file); mode
+changes remain visible alongside content changes. A file or link replaced by a submodule (or
+back) shows both text sides, including the recorded submodule commit, in the usual unified or
+side-by-side diff. Changes between two submodule pointers retain the commit-list card.
+Type-change previews omit content when either side exceeds 256 KiB, with an explicit size
+notice instead of a binary label or zero-change counts. Commit file counts are independent
+of that preview limit.
 
 ## Branches and merging
 
@@ -147,6 +154,7 @@ changes remain visible alongside content changes.
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
 | Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Done | Yes | Yes | Yes |
+| Sidebar rows sit indented under their section header; a new tab opens only Branches (Worktrees, Remotes, Tags, Stashes and Submodules start closed) and keeps the sections you open or close, saved per repository (its worktrees share them) and restored when reopened; Add remote… is in the palette and the local-only card | Done | Yes | ? | ? |
 | A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Done | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |
@@ -169,7 +177,9 @@ The git-flow UI remains planned.
 | Fetch (all remotes, prune) | Done | Yes | Yes | Yes |
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
 | Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Done | ? | ? | ? |
-| Your git configuration decides what it sets (Follow my git config, on by default); elsewhere Canopy passes recommended defaults (autostash, push tags with their commits, `push.default=simple`, zdiff3 conflicts, `main` for new repositories, no tag pruning, `#` lines kept in commit messages), each a choice in Settings with its recommendation and where your configuration sets it | Done | ? | ? | ? |
+| Git configuration: editable supported values in Settings → Git (global) and This repository (local), with values, scopes, files and recommendations; Use recommended writes the non-sensitive recommendations globally after confirmation; Unset/Inherit removes only the selected file's override, preserving included configuration and repository choices; canonical Git booleans and configuration errors are displayed accurately | Unreleased | ? | ? | ? |
+| Repository settings selects show each value once, mark recommended options in their lists, and distinguish a pinned value from an inherited one with Overridden and a named reset; context lines and whitespace pin and reset together | Done | ? | ? | ? |
+| Settings → This repository → Commit signing states what git will do (signs or not) with the format (OpenPGP, SSH, X.509), the key's id or file name (an inline SSH key is never shown), the program and where `commit.gpgsign` is set, and warns with its fix when signing would fail: the program is not installed, an SSH key is not set or its file is missing, or `gpg.format` is unknown; read from the configuration and `PATH` only, never by running the program; a button opens the file that sets it, preserving non-UTF-8 file names; identity, pull and repository settings share absolute, unquoted configuration origins | Done | ? | ? | ? |
 | A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Done | ? | ? | ? |
 | A rebase that stops on conflicts takes you to Changes, like a pull | Done | ? | ? | ? |
 | A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Done | ? | ? | ? |
@@ -195,7 +205,7 @@ The git-flow UI remains planned.
 | Tags: lightweight and annotated, delete, push | Done | Yes | Yes | Yes |
 | Stash: save (message, untracked), apply, pop, drop | Done | Yes | Yes | Yes |
 | Pop and drop act on the stash you picked, by its commit, even if the list changed | Done | ? | ? | ? |
-| Patches: Export as patch… in a commit's menu writes a .patch file with its author; Apply patch… in the palette applies a file or a folder of them as commits, stopping in "Applying patches" for conflicts | Unreleased | Yes | ? | Yes |
+| Patches: Export as patch… in a commit's menu writes the commit, or it and up to 49 commits before it along first parents (How many commits), as numbered .patch files with their authors, skipping merge commits, which git has no patch for; Apply patch… in the palette applies a file or a folder of them as commits, stopping in "Applying patches" for conflicts | Unreleased | Yes | ? | Yes |
 
 Requests supports Ctrl+Shift+A to approve and Ctrl+Shift+M to open the merge confirmation,
 with the same state and busy guards as the buttons.
@@ -203,20 +213,69 @@ with the same state and busy guards as the buttons.
 Without a GitHub or GitLab remote, the requests view offers Publish… for a repository with no
 remote and Add remote… for one whose remotes are elsewhere.
 
-Request list icons show lifecycle and draft state. Branches have a separate line with room
-reserved for the target. The request list shows each request's checks (passed, failed, running)
-and review (approved, changes requested, and on GitHub review required) without opening it when
-Canopy has a token for the host; without a token a row shows them once the request was opened in
-the session.
+Request list icons show lifecycle and draft state. A row leads with the request's number and
+title (`#154 Title`, `!154` for a merge request), which wraps to a second line before it is cut,
+then the author and when it was last updated with the labels at the right, then the first
+lines of its description as plain text (Markdown, comments and tags flattened, paragraphs
+separated by a middle dot; nothing when it has none). The branches are in the request's header and the row's tooltip. The description comes
+with the list response, so a row costs no request of its own. The request list shows each
+request's checks (passed, failed, running) and review (approved, changes requested, and on GitHub
+review required) without opening it when Canopy has a token for the host; without a token a row
+shows them once the request was opened in the session, and until then a faint question mark says
+they are not loaded (a request with no checks shows nothing).
+
+The list narrows and orders the 100 most recently updated requests, the ones the list holds,
+with no further request: a filter field over number (`154`, `#154`, `!154`; a number matches
+as part of a request's number, so `12` also finds 112), title, author and the start of the
+description (every word must match; Ctrl+F or `/` in the Requests view puts the caret in it), a
+Filters popover for
+draft, checks (passed, failed, running), review (approved, changes requested, required) and
+author, and a Sort menu (recently updated, newest, oldest, number, title, author). A line under
+the field counts what is shown and clears the filters; a list with nothing left says so and
+offers the same. The filters and the sort are kept per repository (its worktrees share them),
+across restarts, and stay out of settings export and import. Up and Down, j and k move through
+the list in the order shown.
+
+The list starts at 45% of the pane (320 to 560 points) and follows the window until its width is
+dragged or set with the arrow keys; it can be dragged to 60% of the pane or 800 points, and
+double-clicking the handle makes it follow the window again.
+
+A request's header actions are one group of buttons of the same size: the primary for its state
+(Check out while it is open, Open on GitHub or GitLab otherwise), then the other, Copy link and
+More. Nothing says where the token came from while it works (Settings → Hosting does); a missing
+token, or one the host refused (expired, revoked or short of scope), shows as a warning under the
+actions with Add a token… or Replace the token…, which opens Settings.
+
+A request's details start with its summary line (commits, files changed, lines, conflict
+state) with the lines in the added and removed colours, as the commit and file diffs show them.
 
 The request list stays current without pressing Reload: a fetch (manual or the background one),
 pull or push that succeeds refreshes it, and the open request, quietly (no spinner or toast; the
-list, selection and open request stay on screen, and a failed refresh keeps them), and opening
-the Requests view reloads a list older than a minute. These use the same list and details calls
-as Reload, and only with hosting on and a list already loaded.
+list, selection and open request stay on screen, and a failed refresh keeps them), opening
+the Requests view reloads a list older than a minute, and while the view stays open and the window
+is focused the list refreshes on a timer: at the background fetch's interval when that is on,
+every minute when it is off, doubling after a failed refresh (up to fifteen minutes) and back to
+normal once one succeeds. The timer needs a hosting token: without one the requests would spend
+the host's small anonymous rate limit, which Reload, actions and author pictures share, so
+without a token the list refreshes only on Reload, when the Requests view opens on a stale list
+and after a fetch, pull or push. The timer pauses while another view is shown or the window is
+unfocused, and while a fetch, pull or push runs (that one refreshes the list when it ends); a
+Settings page or a dialog over the Requests view does not pause it. A rate limit holds it until
+the host says the limit lifts (an hour at most), else for fifteen minutes; opening the Requests
+view and a refresh after a Git sync wait out the same backoff. These use the same list and
+details calls as Reload, and only
+with hosting on and a list already loaded.
 
-Hosting error messages hide the client token after normalizing invisible characters. A response
-with the wrong JSON shape reports its failure location without quoting the returned values.
+Going back to a request opened within the last minute (A, then B, then A again) shows its details
+at once from a small cache of the last 16 loads, without asking the host again. The cache is keyed
+by forge host, project and request number, so equal numbers in different projects never share an
+entry. A Reload, an automatic refresh of the list, the result of an action (merge, close,
+approve, comment and so on) and a change of token empty it, and a failed load is never kept.
+Unsent comments are kept apart from it.
+
+Hosting error messages hide the client token after normalizing invisible characters. Profile
+lookup errors also hide private request paths and email addresses after that normalization.
+A response with the wrong JSON shape reports its failure location without quoting the returned values.
 
 ## Interface
 
@@ -245,7 +304,7 @@ with the wrong JSON shape reports its failure location without quoting the retur
 | Tooltip settings (Appearance → Tooltips): Helpful (default; only what the screen does not show), All, or Off (only why a control is unavailable), and a Quick, Normal or Slow delay | Done | ? | ? | ? |
 | Links: a web link shows its address and offers Copy link; links in text are underlined; a cut-off field value shows whole in a tooltip | Unreleased | ? | ? | ? |
 | A settings file cannot turn on tag pruning, automatic fetching or beta builds, fetch more often, stop following your git configuration or choose where a push goes | Unreleased | ? | ? | ? |
-| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, git settings, review or restart into an update); kept across restarts, each row names its repository and dismisses on its own; a repository whose git configuration decides against the recommendation is listed once | Done | ? | Yes | ? |
+| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, git settings, review or restart into an update); entries, dismissals and unread counts kept across restarts, each row names its repository and dismisses on its own; the same notice again straight after itself from one repository (a fetch that found nothing, ten times) is one row with a count and the latest time; a repository whose git configuration decides against the recommendation is listed once | Done | ? | Yes | ? |
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Done | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Done | ? | ? | ? |
@@ -256,3 +315,7 @@ Author pictures are fetched after consent when enabled in Privacy, through the r
 
 Request review and merge shortcuts use the selected request's refreshed details when available,
 matching the state displayed by the action buttons. Merge controls wrap within narrow panes.
+
+A clean Changes view uses one empty state with the branch’s sync status and Push, Pull or Fetch
+as the next action (Publish for a local-only repository). Amend last commit is a secondary link
+that opens the composer with the last message; an existing draft is preserved.

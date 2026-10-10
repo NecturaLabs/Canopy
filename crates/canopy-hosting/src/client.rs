@@ -130,6 +130,17 @@ impl Client {
         commit: &str,
         email: &str,
     ) -> Result<Option<crate::avatars::Avatar>> {
+        self.commit_avatar(commit, email)
+    }
+
+    /// Resolves the author or committer identified by their recorded email on this project's
+    /// host. GitHub receives the commit id; GitLab receives the person's email. Image downloads
+    /// never carry the hosting token. An unmapped account has no picture.
+    pub fn commit_avatar(
+        &self,
+        commit: &str,
+        email: &str,
+    ) -> Result<Option<crate::avatars::Avatar>> {
         crate::avatars::lookup(&self.http, &self.forge, &self.project, commit, email)
     }
 

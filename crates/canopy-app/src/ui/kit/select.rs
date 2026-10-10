@@ -17,9 +17,10 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
+use super::chip::Badge;
 use super::overlay::{self, Entrance, ExitMotion};
 use super::toggle::{component_id, gallery_caption, gallery_row, remembered};
-use super::{ForceState, Interact, Size, anim, field, glass, menu, paint};
+use super::{ForceState, Interact, Size, Tone, anim, field, glass, menu, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Elevation, Fill};
 
@@ -53,6 +54,8 @@ struct ListState {
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct Select<'a, T: PartialEq + Clone> {
     value: &'a mut T,
+    recommended: Option<T>,
+    report_reselection: bool,
     options: &'a [(T, &'a str)],
     label: Option<String>,
     name: Option<String>,
@@ -75,6 +78,8 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
     pub fn new(value: &'a mut T, options: &'a [(T, &'a str)]) -> Self {
         Self {
             value,
+            recommended: None,
+            report_reselection: false,
             options,
             label: None,
             name: None,
@@ -92,6 +97,17 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             id: None,
             force: None,
         }
+    }
+    /// Marks this value with a Recommended badge in the list and an accessible description.
+    pub fn recommended(mut self, value: T) -> Self {
+        self.recommended = Some(value);
+        self
+    }
+    /// Reports an explicit selection even when it equals the current value, for pinning an
+    /// inherited setting. Ordinary selects report only a different value.
+    pub fn report_reselection(mut self) -> Self {
+        self.report_reselection = true;
+        self
     }
     /// A label above the trigger (also its accessible name).
     pub fn label(mut self, text: impl Into<String>) -> Self {
@@ -489,9 +505,30 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             let item_h = m.menu_item_height;
             let rows = crate::ui::count_f32(self.options.len());
             let bounds = overlay::popup_bounds(ui);
+            let badge = Badge::new("Recommended").tone(Tone::Accent);
+            let badge_size = badge.measure(ui);
+            let recommended_width = self
+                .options
+                .iter()
+                .filter(|(value, _)| self.recommended.as_ref() == Some(value))
+                .map(|(_, label)| {
+                    ui.painter()
+                        .layout_no_wrap(
+                            (*label).to_owned(),
+                            FontId::new(m.body_size, theme::medium()),
+                            p.text,
+                        )
+                        .size()
+                        .x
+                        + badge_size.x
+                        + m.icon_sm
+                        + 4.0 * ITEM_PAD
+                })
+                .fold(0.0, f32::max);
             let list_w = anchor
                 .width()
                 .max(LIST_MIN_WIDTH.min(anchor.width() + 120.0))
+                .max(recommended_width)
                 .min(bounds.width());
             let visible = rows.min(LIST_ROWS);
             let desired_h = visible * item_h + 2.0 * m.menu_pad;
@@ -597,7 +634,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     }
                 }
                 let out = area.show_rows(&mut child, item_h, options.len(), |ui, range| {
-                    for (i, (_, label)) in options
+                    for (i, (value, label)) in options
                         .iter()
                         .enumerate()
                         .skip(range.start)
@@ -619,11 +656,33 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                         } else {
                             FontId::new(m.body_size, FontFamily::Proportional)
                         };
-                        ui.painter().text(
-                            pos2(row.left() + ITEM_PAD, row.center().y),
-                            Align2::LEFT_CENTER,
-                            *label,
+                        let recommended = self.recommended.as_ref() == Some(value);
+                        let check_left = row.right() - ITEM_PAD - m.icon_sm;
+                        let text_right = if recommended {
+                            let badge_rect = egui::Rect::from_center_size(
+                                pos2(check_left - ITEM_PAD - badge_size.x / 2.0, row.center().y),
+                                badge_size,
+                            );
+                            badge.paint(ui, badge_rect);
+                            badge_rect.left() - ITEM_PAD
+                        } else {
+                            check_left - ITEM_PAD
+                        };
+                        let mut job = egui::text::LayoutJob::simple_singleline(
+                            (*label).to_owned(),
                             font,
+                            p.text,
+                        );
+                        job.wrap = egui::text::TextWrapping::truncate_at_width(
+                            (text_right - row.left() - ITEM_PAD).max(0.0),
+                        );
+                        let galley = ui.painter().layout_job(job);
+                        ui.painter().galley(
+                            pos2(
+                                row.left() + ITEM_PAD,
+                                row.center().y - galley.size().y / 2.0,
+                            ),
+                            galley,
                             p.text,
                         );
                         if on {
@@ -645,6 +704,9 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                             n.set_role(Role::ListBoxOption);
                             n.clear_toggled();
                             n.set_selected(on);
+                            if recommended {
+                                n.set_description("Recommended");
+                            }
                         });
                     }
                 });
@@ -687,7 +749,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             }
         }
         if let Some(i) = picked
-            && chosen != Some(i)
+            && (chosen != Some(i) || self.report_reselection)
         {
             *self.value = self.options[i].0.clone();
             trigger.mark_changed();

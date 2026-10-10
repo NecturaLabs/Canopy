@@ -78,6 +78,18 @@ impl DialogStack {
         }
     }
 
+    /// App-level Escape also returns the closed dialog's keyboard focus.
+    pub fn dismiss_with_focus(&mut self, ctx: &egui::Context) {
+        let closing = self
+            .current()
+            .filter(|dialog| !matches!(dialog, Dialog::Consent { .. }))
+            .map(salt);
+        self.dismiss();
+        if let Some(salt) = closing {
+            KitDialog::restore_focus(ctx, salt);
+        }
+    }
+
     /// Closes every dialog that matches, wherever it is (credential prompts are cancelled).
     pub fn close_where(&mut self, f: impl Fn(&Dialog) -> bool) {
         self.dialogs.retain(|d| {

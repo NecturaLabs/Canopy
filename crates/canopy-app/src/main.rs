@@ -15,6 +15,7 @@ mod keymap;
 mod logging;
 mod platform;
 mod repo_config;
+mod request_view;
 mod selfupdate;
 mod settings;
 mod settings_file;
@@ -46,13 +47,15 @@ OPTIONS:
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, crash-consent, legal, credential, host-key,
-                              merge, identity, settings-git, settings-git-commits,
+                              merge, identity, settings-git, settings-git-pull, settings-git-commits,
                               clear-identity, update-installed, update-running, trust-folder,
                               diff-options,
                               settings-integrations, settings-accounts, settings-updates,
                               settings-keyboard, settings-backup, settings-repository,
-                              settings-search, about, repository-insights, clean-stale, author-card, toasts, notifications, branch-selected,
-                              gallery, menu-remotes, menu-branch, menu-commit, menu-file, open,
+                              settings-repository-pull, settings-repository-diffs,
+                              settings-search, about, repository-insights, clean-stale, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
+                              long-message,
+                              gallery, menu-branch, menu-commit, menu-file, open,
                               open-error, clone,
                               clone-running, clone-error, init, new-branch, rename, add-submodule,
                               git-missing, remove-submodule, new-tag,
@@ -75,8 +78,9 @@ OPTIONS:
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
         --demo-requests <V>   With --screenshot, show invented pull requests (no network) in a
                               repository without a GitHub or GitLab remote: list, list-all,
-                              list-closed, a request number such as 428, busy, loading,
-                              details-loading, details-error, error, no-token or empty;
+                              list-closed, list-unchecked, list-overflow, filtered, no-match,
+                              a request number such as 428, busy, loading, details-loading,
+                              details-error, error, no-token or empty;
                               prefix gitlab: for merge requests. Implies --view requests
     -h, --help                Print help
     -V, --version             Print version

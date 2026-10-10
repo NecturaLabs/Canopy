@@ -254,6 +254,11 @@ pub enum HostEvent {
         result: crate::avatars::Cached,
     },
     Token(Option<TokenSource>),
+    /// The host answered a list with a rate limit; sent just before that list's failure. `reset`
+    /// is when the limit lifts (unix seconds), when the host said.
+    RateLimited {
+        reset: Option<i64>,
+    },
     List(StateFilter, Result<Vec<RequestSummary>, String>),
     Details(u64, u64, Box<Result<RequestDetails, String>>),
     Created(Result<RequestSummary, String>),
@@ -617,6 +622,9 @@ fn serve_jobs(
                 let delivered = match result {
                     Ok(rows) => emit(HostEvent::List(filter, Ok(rows.clone()))).then_some(rows),
                     Err(e) => {
+                        if let canopy_hosting::Error::RateLimited { reset } = &e {
+                            send(HostEvent::RateLimited { reset: *reset });
+                        }
                         send(HostEvent::List(filter, Err(s(e))));
                         None
                     }
@@ -667,9 +675,17 @@ const ROLLUP_DELAY: Duration = Duration::from_millis(250);
 
 /// How long the list goes without checks and reviews after a rate limit that named no reset.
 const ROLLUP_PAUSE_SECS: i64 = 60;
-/// The longest the list goes without them, however far off a server puts its reset (an hour,
-/// GitHub's longest window): a wrong or hostile reset cannot switch them off for the session.
-const ROLLUP_PAUSE_MAX_SECS: i64 = 3_600;
+/// The longest a rate-limited host is left alone, however far off it puts its reset (an hour,
+/// GitHub's longest window): a wrong or hostile reset cannot switch a feature off for the session.
+const RATE_LIMIT_PAUSE_MAX_SECS: i64 = 3_600;
+
+/// Until when (unix seconds) to leave a host alone after a rate limit: its `reset` when it named
+/// one still ahead (an hour at most), else `default_secs` from `now`.
+pub fn rate_limit_pause(reset: Option<i64>, now: i64, default_secs: i64) -> i64 {
+    reset.filter(|&r| r > now).map_or(now + default_secs, |r| {
+        r.min(now + RATE_LIMIT_PAUSE_MAX_SECS)
+    })
+}
 
 /// Gives each row of a freshly loaded `list` its checks and reviews ([`Client::rollup`]: one
 /// query for the page), only when a token is set and no rate limit asked to wait (`paused`, unix
@@ -701,11 +717,7 @@ fn add_rollup(
         }
         Err(e) => {
             if let canopy_hosting::Error::RateLimited { reset } = &e {
-                *paused = reset
-                    .filter(|&r| r > now)
-                    .map_or(now + ROLLUP_PAUSE_SECS, |r| {
-                        r.min(now + ROLLUP_PAUSE_MAX_SECS)
-                    });
+                *paused = rate_limit_pause(*reset, now, ROLLUP_PAUSE_SECS);
             }
             tracing::warn!(error = %e, "skipping the checks and reviews of the request list");
             false
@@ -820,6 +832,7 @@ mod tests {
                 updated_at: 0,
                 web_url: String::new(),
                 labels: Vec::new(),
+                description: String::new(),
                 rollup: None,
             })
             .collect()
@@ -918,7 +931,7 @@ mod tests {
             5_000,
             limited(Some(32_503_680_000)),
         );
-        assert_eq!(paused, 5_000 + ROLLUP_PAUSE_MAX_SECS);
+        assert_eq!(paused, 5_000 + RATE_LIMIT_PAUSE_MAX_SECS);
     }
 
     type Answer = Box<dyn Fn(&str) -> String + Send + Sync>;
@@ -1025,6 +1038,40 @@ mod tests {
             ctx: egui::Context::default(),
         };
         (worker, thread)
+    }
+
+    #[test]
+    fn a_rate_limited_list_says_when_the_limit_lifts_before_it_fails() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("address"));
+        let reset = chrono::Utc::now().timestamp() + 600;
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let _ = stream.read(&mut [0; 4096]);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 429 Too Many Requests\r\nX-RateLimit-Reset: {reset}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+            }
+        });
+        let (worker, thread) = worker_for(&base);
+        worker.send(HostJob::List(StateFilter::Open));
+        let mut seen = Vec::new();
+        while !matches!(seen.last(), Some(HostEvent::List(..))) {
+            match worker.events.recv_timeout(Duration::from_secs(20)) {
+                Ok(event) => seen.push(event),
+                Err(e) => panic!("no list answer: {e}"),
+            }
+        }
+        drop(worker);
+        thread.join().expect("hosting thread");
+        let limited = seen
+            .iter()
+            .position(|e| matches!(e, HostEvent::RateLimited { reset: Some(r) } if *r == reset));
+        assert_eq!(limited, Some(seen.len() - 2), "{seen:?}");
+        assert!(matches!(seen.last(), Some(HostEvent::List(_, Err(_)))));
     }
 
     #[test]

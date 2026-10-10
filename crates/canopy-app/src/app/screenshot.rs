@@ -15,6 +15,9 @@ pub(super) struct Screenshot {
     pub(super) popup: Option<egui::Id>,
     /// The context menu `--overlay menu-*` opens for the picture.
     pub(super) menu: Option<MenuShot>,
+    /// `--overlay long-message`: a commit draft with a too-long summary and description line
+    /// is typed into the first tab, once.
+    pub(super) long_message: bool,
 }
 
 impl Screenshot {
@@ -29,6 +32,7 @@ impl Screenshot {
             popup: (overlay == Some("diff-options"))
                 .then(|| egui::Id::new(crate::views::diff::OPTIONS_POPUP)),
             menu: overlay.and_then(MenuShot::of),
+            long_message: overlay == Some("long-message"),
         }
     }
 }
@@ -47,23 +51,48 @@ pub(super) struct MenuShot {
     /// Where the click goes once the widget is found, and how many of its two frames (press,
     /// then release) were sent.
     click: Option<(egui::Pos2, u8)>,
+    /// Wait for a scrolled control to stop moving before aiming at it.
+    candidate: Option<(egui::Rect, u8)>,
 }
 
 impl MenuShot {
     fn of(overlay: &str) -> Option<Self> {
         let secondary = egui::PointerButton::Secondary;
         let (name, view, button) = match overlay {
-            "menu-remotes" => ("Remotes", View::History, secondary),
             "menu-branch" => ("feature/auth", View::History, secondary),
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
             "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
+            "amend-commit" => (
+                "Amend last commit",
+                View::Changes,
+                egui::PointerButton::Primary,
+            ),
+            "commit-compact" => (
+                "Commit details",
+                View::History,
+                egui::PointerButton::Primary,
+            ),
+            "settings-git-pull" | "settings-repository-pull" => {
+                ("Pull strategy", View::History, egui::PointerButton::Primary)
+            }
+            "commit-expanded" => ("Expand", View::History, egui::PointerButton::Primary),
             "author-card" => (
-                "Maya Chen (author card)",
+                "Maya Chen (commit identity card)",
                 View::History,
                 egui::PointerButton::Primary,
             ),
             "branch-selected" => ("feature/auth", View::History, egui::PointerButton::Primary),
+            "request-filters" => (
+                "Filter by draft, checks",
+                View::Requests,
+                egui::PointerButton::Primary,
+            ),
+            "request-sort" => (
+                "Sort requests",
+                View::Requests,
+                egui::PointerButton::Primary,
+            ),
             _ => return None,
         };
         Some(Self {
@@ -71,6 +100,7 @@ impl MenuShot {
             view,
             button,
             click: None,
+            candidate: None,
         })
     }
 
@@ -85,7 +115,13 @@ impl MenuShot {
             nodes
                 .iter()
                 .filter(|(_, n)| n.label().is_some_and(|l| l.starts_with(self.name)))
-                .filter_map(|(id, _)| v.this_pass.widgets.get(*id).map(|w| w.rect))
+                .filter_map(|(id, _)| {
+                    v.this_pass
+                        .widgets
+                        .get(*id)
+                        .filter(|w| w.enabled)
+                        .map(|w| w.interact_rect)
+                })
                 .filter(egui::Rect::is_positive)
                 .min_by(|a, b| {
                     (a.top(), a.left())
@@ -94,7 +130,16 @@ impl MenuShot {
                 })
         });
         if let Some(rect) = found {
-            self.click = Some((rect.center(), 0));
+            let frames = self
+                .candidate
+                .filter(|(previous, _)| *previous == rect)
+                .map_or(1, |(_, frames)| frames + 1);
+            self.candidate = Some((rect, frames));
+            if frames >= 3 {
+                self.click = Some((rect.center(), 0));
+            }
+        } else {
+            self.candidate = None;
         }
         false
     }
@@ -141,6 +186,17 @@ impl CanopyApp {
         {
             self.dialogs.close();
             self.apply(ctx, vec![Action::CleanStale]);
+        }
+        if self.screenshot.as_ref().is_some_and(|s| s.long_message)
+            && let Some(tab) = self.tabs.get_mut(self.active)
+        {
+            tab.commit_summary =
+                "Rework the commit composer so that it reports every long line before the commit"
+                    .into();
+            tab.commit_body = "Warn while typing, never block the commit.\n\nThis description line is far too long for most tools, which cut it off or wrap it in the middle of a sentence.".into();
+            if let Some(shot) = &mut self.screenshot {
+                shot.long_message = false;
+            }
         }
         let Some(shot) = &mut self.screenshot else {
             return;
@@ -377,6 +433,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         "export-patch" => Dialog::ExportPatches {
             oid: commit,
             folder: "~/patches".into(),
+            count: 3,
         },
         "apply-patch" => Dialog::ApplyPatches {
             path: "~/patches/0001-fix-shout-two.patch".into(),
@@ -640,7 +697,7 @@ mod tests {
         use eframe::App as _;
         // (The other menus need a repository's commits, branches or a loaded diff: their
         // pictures are checked with tools/screenshot.sh.)
-        let (overlay, item) = ("menu-remotes", "Add remote…");
+        let (overlay, item) = ("menu-branch", "New branch from here…");
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         ctx.enable_accesskit();
@@ -650,12 +707,15 @@ mod tests {
         app.settings.crash_reports = Some(false);
         app.settings.crash_reports_version = crate::crash_reports::DATA_VERSION;
         app.settings.seen_intro = true;
-        // A remote, so "Add remote…" is only in the header's menu (not a local-only link).
         let mut tab = test_tab(canopy_core::RepoSnapshot {
-            remotes: vec![canopy_core::RemoteInfo {
-                name: "origin".into(),
-                url: Some("https://example.com/r.git".into()),
-                default_branch: None,
+            branches: vec![canopy_core::BranchInfo {
+                name: "feature/auth".into(),
+                target: None,
+                is_head: false,
+                upstream: None,
+                ahead: 0,
+                behind: 0,
+                worktree: None,
             }],
             ..Default::default()
         });

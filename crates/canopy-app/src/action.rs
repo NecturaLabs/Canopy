@@ -30,6 +30,15 @@ pub enum AppearanceChoice {
 #[derive(Debug, Clone)]
 pub enum Action {
     CleanStale,
+    RememberSidebar {
+        repo: PathBuf,
+        closed: std::collections::BTreeSet<String>,
+    },
+    /// The request list's filters and sort for the repository identified like the sidebar's.
+    RememberRequestView {
+        repo: PathBuf,
+        view: crate::request_view::RequestView,
+    },
     RepositoryInsights(PathBuf),
     ReadIgnore {
         repo: PathBuf,
@@ -126,6 +135,13 @@ pub enum Action {
         repo: Option<PathBuf>,
         scope: Scope,
     },
+    SaveGitConfig {
+        repo: Option<PathBuf>,
+        scope: Scope,
+        setting: canopy_core::config::Setting,
+        value: Option<String>,
+    },
+    UseRecommendedGitConfig,
     /// Let repositories in this folder download missing objects in partial clones (Settings,
     /// `trusted_folders`).
     TrustFolder(PathBuf),

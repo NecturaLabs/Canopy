@@ -15,7 +15,7 @@ use crate::tab::RepoTab;
 use crate::ui::art;
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::choice::Segmented;
-use crate::ui::kit::field::{TextArea, TextField};
+use crate::ui::kit::field::{NumberField, TextArea, TextField};
 use crate::ui::kit::overlay::{
     Dialog as KitDialog, DialogResult, DialogWidth, Footer, InitialFocus,
 };
@@ -52,6 +52,77 @@ pub use stack::DialogStack;
 pub use stale::StaleForm;
 pub use start::Start;
 pub use url::{UrlBuilder, UrlSource};
+
+/// Width of the "How many commits" field of the patch export.
+const EXPORT_COUNT_WIDTH: f32 = 140.0;
+
+/// What exporting `count` commits from `oid` writes, as far as the loaded history shows (the
+/// export itself walks the repository and reports what it wrote).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PatchPlan {
+    /// The count asked for, kept within 1 and `max`.
+    count: usize,
+    /// The most commits to offer: the whole first-parent line when its root is loaded, else the cap.
+    max: usize,
+    /// Patch files written: the commits of the range that are not merges.
+    files: usize,
+    /// Merge commits of the range, which `git format-patch` writes no patch for.
+    merges: usize,
+}
+
+fn patch_plan(commits: &[canopy_core::CommitSummary], oid: Oid, count: usize) -> PatchPlan {
+    let by_id: std::collections::HashMap<Oid, &canopy_core::CommitSummary> =
+        commits.iter().map(|c| (c.oid, c)).collect();
+    let mut line = Vec::new();
+    let mut next = Some(oid);
+    while let Some(c) = next
+        .and_then(|id| by_id.get(&id))
+        .filter(|_| line.len() < canopy_core::MAX_PATCH_SERIES)
+    {
+        line.push(*c);
+        next = c.parents.first().copied();
+    }
+    // A line that ends before the cap and not at a root runs into history that is not loaded.
+    let rooted = line.last().is_some_and(|c| c.parents.is_empty());
+    let max = if rooted {
+        line.len()
+    } else {
+        canopy_core::MAX_PATCH_SERIES
+    };
+    let count = count.clamp(1, max.max(1));
+    let merges = line
+        .iter()
+        .take(count)
+        .filter(|c| c.parents.len() > 1)
+        .count();
+    PatchPlan {
+        count,
+        max: max.max(1),
+        files: count - merges,
+        merges,
+    }
+}
+
+impl PatchPlan {
+    /// The files this will write, by name pattern.
+    fn writes(&self) -> String {
+        match self.files {
+            0 => "Writes nothing.".into(),
+            1 => "Writes 0001-<subject>.patch.".into(),
+            n => format!(
+                "Writes {n} files, 0001-<subject>.patch to {n:04}-<subject>.patch, oldest first."
+            ),
+        }
+    }
+
+    fn merge_note(&self) -> String {
+        match (self.files, self.merges) {
+            (0, _) => "Every commit in the range is a merge, and git writes no patch for a merge. Raise How many commits to include earlier ones.".into(),
+            (_, 1) => "One merge commit in the range is skipped: git writes no patch for a merge.".into(),
+            (_, n) => format!("{n} merge commits in the range are skipped: git writes no patch for a merge."),
+        }
+    }
+}
 
 /// Every dialog Canopy shows.
 #[derive(Debug, Clone)]
@@ -111,10 +182,12 @@ pub enum Dialog {
         message: String,
         untracked: bool,
     },
-    /// Write a commit as a patch file in a folder.
+    /// Write a commit, and optionally the commits before it, as patch files in a folder.
     ExportPatches {
         oid: Oid,
         folder: String,
+        /// How many commits, counting back from `oid` along first parents.
+        count: usize,
     },
     /// Apply a patch file, or the patch files of a folder, as commits.
     ApplyPatches {
@@ -843,18 +916,28 @@ pub fn show(
                 }
             })
         }
-        Dialog::ExportPatches { oid, folder } => {
-            let ok = !folder.trim().is_empty();
-            let summary = tab
+        Dialog::ExportPatches { oid, folder, count } => {
+            let commits = tab
                 .and_then(|t| t.snap.as_ref())
-                .and_then(|s| s.commits.iter().find(|c| c.oid == *oid))
+                .map_or(&[][..], |s| s.commits.as_slice());
+            let plan = patch_plan(commits, *oid, *count);
+            *count = plan.count;
+            let ok = !folder.trim().is_empty() && plan.files > 0;
+            let reason = if folder.trim().is_empty() {
+                "Enter a folder"
+            } else {
+                "A merge commit has no patch: raise How many commits"
+            };
+            let summary = commits
+                .iter()
+                .find(|c| c.oid == *oid)
                 .map(|c| c.summary.clone());
             let result = KitDialog::new(salt)
-                .title(format!("Export {} as a patch", short_id(*oid)))
+                .title(format!("Export patches from {}", short_id(*oid)))
                 .icon(icon::FILE_ARROW_UP)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Writes the commit as a .patch file that Git can apply again, with its author and message.")
+                .description("Writes commits as .patch files that Git can apply again, with their authors and messages: the one you chose, and optionally the commits before it.")
                 .body(|ui| {
                     if let Some(summary) = &summary {
                         note(
@@ -878,17 +961,42 @@ pub fn show(
                             focus: true,
                         },
                     );
+                    let mut typed = f64::from(u32::try_from(plan.count).unwrap_or(u32::MAX));
+                    let changed = NumberField::new(&mut typed, 1.0..=f64::from(u32::try_from(plan.max).unwrap_or(u32::MAX)))
+                        .label(format!("How many commits (1 to {})", plan.max))
+                        .step_names("Fewer commits", "More commits")
+                        .width(EXPORT_COUNT_WIDTH)
+                        .id_salt("export-patches-count")
+                        .show(ui)
+                        .changed();
+                    if changed {
+                        #[expect(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            reason = "the field clamps to 1..=max, a whole positive count once rounded"
+                        )]
+                        {
+                            *count = typed.round() as usize;
+                        }
+                    }
+                    note(ui, plan.writes(), p.text_dim);
+                    if plan.files == 0 {
+                        note(ui, plan.merge_note(), p.warning);
+                    } else if plan.merges > 0 {
+                        note(ui, plan.merge_note(), p.text_dim);
+                    }
                 })
-                .footer(|f| confirm(f, "Export", ok, "Enter a folder"))
+                .footer(|f| confirm(f, "Export", ok, reason))
                 .show(ctx);
             answer(result, || {
-                if folder.trim().is_empty() {
-                    Outcome::Keep
-                } else {
+                if ok {
                     Outcome::Run(vec![Action::Op(Op::ExportPatches {
-                        oids: vec![*oid],
+                        oid: *oid,
+                        count: plan.count,
                         dir: crate::settings::expand_home(folder.trim()),
                     })])
+                } else {
+                    Outcome::Keep
                 }
             })
         }
@@ -1556,7 +1664,7 @@ pub fn show(
 const NOTES_HEIGHT: f32 = 360.0;
 
 /// The id every dialog of `dialog`'s kind shares, so switching to another kind animates it in.
-fn salt(dialog: &Dialog) -> (&'static str, std::mem::Discriminant<Dialog>) {
+pub(crate) fn salt(dialog: &Dialog) -> (&'static str, std::mem::Discriminant<Dialog>) {
     ("dialog", std::mem::discriminant(dialog))
 }
 
@@ -2032,8 +2140,67 @@ mod tests {
 
     use super::{
         Dialog, DialogStack, Oid, Start, likely_conflict_description, moved_pull_confirm,
-        valid_ref_name,
+        patch_plan, valid_ref_name,
     };
+
+    fn commit(n: u8, parents: &[u8]) -> canopy_core::CommitSummary {
+        let id = |n: u8| Oid::from_bytes(&[n; 20]).expect("an id");
+        canopy_core::CommitSummary {
+            oid: id(n),
+            summary: format!("commit {n}"),
+            author: canopy_core::Signature {
+                name: "Ada".into(),
+                email: "ada@example.com".into(),
+                time: 0,
+                offset_minutes: 0,
+            },
+            parents: parents.iter().map(|p| id(*p)).collect(),
+        }
+    }
+
+    /// The export dialog's range follows first parents, stops at a loaded root, counts merges
+    /// out of the files, and keeps a count that no longer fits inside the range.
+    #[test]
+    fn the_patch_export_range_follows_first_parents_and_clamps() {
+        let id = |n: u8| Oid::from_bytes(&[n; 20]).expect("an id");
+        // 5 is a merge of 4 (first parent) and 9; 4 -> 3 -> 1 (root); 9 is a side commit.
+        let commits = [
+            commit(6, &[5]),
+            commit(5, &[4, 9]),
+            commit(9, &[1]),
+            commit(4, &[3]),
+            commit(3, &[1]),
+            commit(1, &[]),
+        ];
+        let plan = |from: u8, count: usize| patch_plan(&commits, id(from), count);
+
+        let one = plan(4, 1);
+        assert_eq!((one.count, one.max, one.files, one.merges), (1, 3, 1, 0));
+        assert_eq!(one.writes(), "Writes 0001-<subject>.patch.");
+        // 4, 3, 1: the root ends the range, so a larger count falls back to it.
+        let all = plan(4, 40);
+        assert_eq!((all.count, all.max, all.files), (3, 3, 3));
+        assert_eq!(
+            all.writes(),
+            "Writes 3 files, 0001-<subject>.patch to 0003-<subject>.patch, oldest first."
+        );
+        // 6, 5 (merge), 4, 3, 1: the merge has no file.
+        let through = plan(6, 3);
+        assert_eq!((through.count, through.files, through.merges), (3, 2, 1));
+        assert!(through.merge_note().starts_with("One merge commit"));
+        // A merge alone writes nothing and says so.
+        let alone = plan(5, 1);
+        assert_eq!((alone.files, alone.merges), (0, 1));
+        assert_eq!(alone.writes(), "Writes nothing.");
+        assert!(alone.merge_note().contains("Raise How many commits"));
+        // Zero is read as one; a commit not loaded offers the cap.
+        assert_eq!(plan(4, 0).count, 1);
+        let unknown = plan(77, 12);
+        assert_eq!(
+            (unknown.count, unknown.max, unknown.files),
+            (12, canopy_core::MAX_PATCH_SERIES, 12)
+        );
+    }
     use crate::askpass::Prompt;
     use crate::ui::legal::{Document, Pending};
     use crossbeam_channel::Receiver;

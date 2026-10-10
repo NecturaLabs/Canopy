@@ -126,6 +126,10 @@ pub struct RequestSummary {
     pub web_url: String,
     /// Label names.
     pub labels: Vec<String>,
+    /// The start of the description as plain text on one line (see
+    /// [`description_preview`](crate::description_preview)); empty when it has none. The list
+    /// response carries the description, so a row needs no request of its own.
+    pub description: String,
     /// Where the checks and the reviews stand, when the list came with them (see [`Rollup`]);
     /// `None` when they are not known.
     pub rollup: Option<Rollup>,

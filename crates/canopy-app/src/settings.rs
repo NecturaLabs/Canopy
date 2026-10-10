@@ -5,7 +5,7 @@
 //! is ignored; the first save after launch (eframe saves every 30 seconds) writes the file again
 //! without either.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,89 @@ impl PullChoice {
             Some(s) if self.follow_config => s,
             _ => self.mode.strategy(),
         }
+    }
+}
+
+/// The choices of Settings → Git, as one value: [`Settings::git_choices`] reads them and
+/// [`Settings::set_git_choices`] writes them, each naming every field (no `..`), so a choice
+/// added to the page cannot be left out of "Use recommended".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitChoices {
+    follow_git_config: bool,
+    pull_mode: PullMode,
+    prune_on_fetch: bool,
+    prune_tags: bool,
+    autostash: bool,
+    follow_tags: bool,
+    recurse_submodules: bool,
+    push_default: PushMode,
+    conflict_style: ConflictMode,
+    cleanup: CleanupMode,
+    initial_branch: String,
+    auto_fetch_minutes: u32,
+    stale_inactivity_days: u32,
+}
+
+impl Settings {
+    fn git_choices(&self) -> GitChoices {
+        GitChoices {
+            follow_git_config: self.follow_git_config,
+            pull_mode: self.pull_mode,
+            prune_on_fetch: self.prune_on_fetch,
+            prune_tags: self.prune_tags,
+            autostash: self.autostash,
+            follow_tags: self.follow_tags,
+            recurse_submodules: self.recurse_submodules,
+            push_default: self.push_default,
+            conflict_style: self.conflict_style,
+            cleanup: self.cleanup,
+            initial_branch: self.initial_branch.clone(),
+            auto_fetch_minutes: self.auto_fetch_minutes,
+            stale_inactivity_days: self.stale_inactivity_days,
+        }
+    }
+
+    fn set_git_choices(&mut self, choices: GitChoices) {
+        let GitChoices {
+            follow_git_config,
+            pull_mode,
+            prune_on_fetch,
+            prune_tags,
+            autostash,
+            follow_tags,
+            recurse_submodules,
+            push_default,
+            conflict_style,
+            cleanup,
+            initial_branch,
+            auto_fetch_minutes,
+            stale_inactivity_days,
+        } = choices;
+        self.follow_git_config = follow_git_config;
+        self.pull_mode = pull_mode;
+        self.prune_on_fetch = prune_on_fetch;
+        self.prune_tags = prune_tags;
+        self.autostash = autostash;
+        self.follow_tags = follow_tags;
+        self.recurse_submodules = recurse_submodules;
+        self.push_default = push_default;
+        self.conflict_style = conflict_style;
+        self.cleanup = cleanup;
+        self.initial_branch = initial_branch;
+        self.auto_fetch_minutes = auto_fetch_minutes;
+        self.stale_inactivity_days = stale_inactivity_days;
+    }
+
+    /// Whether every choice of Settings → Git is Canopy's recommendation.
+    #[cfg(test)]
+    pub fn git_choices_are_recommended(&self) -> bool {
+        self.git_choices() == Self::default().git_choices()
+    }
+
+    /// Settings → Git back to Canopy's recommendations, all at once; what a repository chose
+    /// for itself stays.
+    pub fn use_recommended_git_choices(&mut self) {
+        self.set_git_choices(Self::default().git_choices());
     }
 }
 
@@ -277,7 +360,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Known<T> {
 }
 
 /// A choice, or its default when the saved one no longer exists.
-fn known<'de, D, T>(d: D) -> Result<T, D::Error>
+pub(crate) fn known<'de, D, T>(d: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de> + Default,
@@ -286,7 +369,7 @@ where
 }
 
 /// An optional choice, or none when the saved one no longer exists.
-fn known_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+pub(crate) fn known_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -409,6 +492,9 @@ pub struct Settings {
     pub stale_inactivity_days: u32,
     /// `git commit --signoff`.
     pub signoff: bool,
+    /// Hint, under the commit message fields, when a summary or description line is longer
+    /// than most tools show. Never blocks a commit or changes the draft.
+    pub check_message: bool,
     /// Pull and rebase over uncommitted changes, stashing them around it (`--autostash`).
     pub autostash: bool,
     /// A push also sends the annotated tags on the commits it pushes (`--follow-tags`).
@@ -437,6 +523,12 @@ pub struct Settings {
     pub diff: DiffPrefs,
     /// Per-repository diff options, keyed by working directory.
     pub repo_diff: HashMap<PathBuf, DiffPrefs>,
+    /// Closed sidebar sections, keyed by shared Git directory so worktrees follow one choice.
+    /// An empty set means every section is open.
+    pub repo_sidebar: HashMap<PathBuf, BTreeSet<String>>,
+    /// The request list's filters and sort, keyed like [`Settings::repo_sidebar`]. A repository
+    /// left at the defaults has no entry.
+    pub repo_requests: HashMap<PathBuf, crate::request_view::RequestView>,
     /// Per-repository choices that differ from the defaults above, keyed by working directory.
     pub repos: HashMap<PathBuf, RepoSettings>,
     /// Show diffs side by side (old left, new right) instead of unified.
@@ -533,6 +625,7 @@ impl Default for Settings {
             auto_fetch_minutes: 0,
             stale_inactivity_days: 90,
             signoff: false,
+            check_message: true,
             autostash: true,
             follow_tags: true,
             recurse_submodules: true,
@@ -545,6 +638,8 @@ impl Default for Settings {
             commit_page: 2000,
             diff: DiffPrefs::default(),
             repo_diff: HashMap::new(),
+            repo_sidebar: HashMap::new(),
+            repo_requests: HashMap::new(),
             repos: HashMap::new(),
             split_diff: false,
             syntax_highlight: true,
@@ -796,6 +891,70 @@ fn expand_home_in(typed: &str, home: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn use_recommended_resets_every_git_choice_and_nothing_else() {
+        let mut s = Settings {
+            follow_git_config: false,
+            pull_mode: PullMode::Rebase,
+            prune_on_fetch: false,
+            prune_tags: true,
+            autostash: false,
+            follow_tags: false,
+            recurse_submodules: false,
+            push_default: PushMode::Current,
+            conflict_style: ConflictMode::Merge,
+            cleanup: CleanupMode::Strip,
+            initial_branch: "trunk".to_owned(),
+            auto_fetch_minutes: 5,
+            stale_inactivity_days: 7,
+            iso_dates: true,
+            ..Settings::default()
+        };
+        let default = Settings::default();
+        // Each field is off its recommendation, so a field the reset forgot stays visible.
+        assert_ne!(s.git_choices(), default.git_choices());
+        assert!(!s.git_choices_are_recommended());
+        for (changed, name) in [
+            (
+                s.follow_git_config != default.follow_git_config,
+                "follow_git_config",
+            ),
+            (s.pull_mode != default.pull_mode, "pull_mode"),
+            (s.prune_on_fetch != default.prune_on_fetch, "prune_on_fetch"),
+            (s.prune_tags != default.prune_tags, "prune_tags"),
+            (s.autostash != default.autostash, "autostash"),
+            (s.follow_tags != default.follow_tags, "follow_tags"),
+            (
+                s.recurse_submodules != default.recurse_submodules,
+                "recurse_submodules",
+            ),
+            (s.push_default != default.push_default, "push_default"),
+            (s.conflict_style != default.conflict_style, "conflict_style"),
+            (s.cleanup != default.cleanup, "cleanup"),
+            (s.initial_branch != default.initial_branch, "initial_branch"),
+            (
+                s.auto_fetch_minutes != default.auto_fetch_minutes,
+                "auto_fetch_minutes",
+            ),
+            (
+                s.stale_inactivity_days != default.stale_inactivity_days,
+                "stale_inactivity_days",
+            ),
+        ] {
+            assert!(changed, "{name} must start off its recommendation");
+        }
+        s.use_recommended_git_choices();
+        assert!(s.git_choices_are_recommended());
+        assert_eq!(s.git_choices(), default.git_choices());
+        assert!(s.iso_dates, "settings outside Git stay");
+        // A lone changed choice, first branch included, is seen.
+        let lone = Settings {
+            initial_branch: "trunk".to_owned(),
+            ..Settings::default()
+        };
+        assert!(!lone.git_choices_are_recommended());
+    }
+
     /// An arbitrary hue chosen with the sliders is saved and comes back, and it colours the
     /// theme: the picker's whole purpose.
     #[test]
@@ -984,6 +1143,23 @@ mod tests {
                 MotionPref::System
             )
         );
+    }
+
+    #[test]
+    fn message_checks_are_on_by_default_and_survive_a_round_trip() {
+        assert!(Settings::default().check_message);
+        let old: Settings = serde_json::from_str("{}").expect("parse");
+        assert!(
+            old.check_message,
+            "a file without the key keeps the default"
+        );
+        let off = Settings {
+            check_message: false,
+            ..Settings::default()
+        };
+        let text = serde_json::to_string(&off).expect("serialize");
+        let back: Settings = serde_json::from_str(&text).expect("parse");
+        assert!(!back.check_message);
     }
 
     #[test]

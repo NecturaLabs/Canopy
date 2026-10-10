@@ -10,12 +10,33 @@ commits since the previous build.
 
 ### Added
 
+- A pull or merge request whose checks and reviews are not loaded (before they arrive, or without a
+  token and never opened) shows a faint question mark with that tooltip, instead of looking like a
+  request that has none.
+- A file replaced by a symbolic link (or the other way round) now shows its lines in the diff: the old
+  content or target removed and the new one added, as `git diff` prints them. A link is read, never
+  followed, so what it points to is not shown; its hunks offer no actions, since only the whole file
+  can be staged or discarded.
 - Preview and safely clean up stale linked worktrees and local branches from the command palette
   or Branches header menu. Settings → Git controls the inactivity period (90 days by default);
   uncommitted work and unmerged commits are protected, with safety checked again before removal.
 
 ### Fixed
 
+- Oversized file-type changes say the diff exceeds the preview limit, not that the file is
+  binary. Their type change and whole-file actions remain visible without false zero counts.
+
+- File-to-submodule diffs and their reverse show the removed and added text, instead of
+  hiding it behind a submodule card. Whole-file staging and unstaging remain available.
+
+- Commit file counts include every text line in a file-type change, including files larger
+  than the diff preview limit and changes to or from a submodule pointer.
+
+- A repository's own `sequence.editor` setting can no longer start a program through Canopy's git
+  commands; the security audit of the other configuration keys is in the architecture notes.
+- The installer and the in-app updater now remove the old scalable icon an earlier build left in your
+  icon folder, even when no install record lists it, but only when it is byte for byte the icon
+  Canopy shipped; a custom, edited or linked icon is left alone.
 - In a small window the Changes view keeps room for the file lists: the staged files are no longer
   pushed out of sight by the commit form, which scrolls its fields instead.
 - A download of a commit's files that runs past ten minutes now stops with a message naming the
@@ -80,12 +101,19 @@ commits since the previous build.
   profile (from a GitHub or GitLab no-reply address) or to the forge's user search for them, and,
   when pictures are kept away, why and where to turn them on; this replaces the info button. The
   commit's parents follow its id as links that select them. A green check after the name marks a
-  signature Git trusts (GPG, SSH or X.509), checked in trusted folders only; nothing is shown for
-  any other signature.
+  signature Git trusts (GPG, SSH or X.509), checked in trusted folders only; invalid, unavailable,
+  untrusted and expired signatures have distinct marks and names in the author card.
 - The commit message field starts with your Git `commit.template` when it is empty (once per
   open repository, never over a draft or an amend); a template that cannot be read is reported.
-- Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick,
-  and Apply patch… in the palette applies a patch file, or the `.patch` files of a folder, as
+- The commit fields now say when the summary or a description line is longer than 72 characters
+  ("Summary is 80 characters; 72 is the most tools show."). The hint only warns: it never stops
+  the commit or changes what you wrote, and URLs, indented and quoted lines are not counted.
+  Settings → Git → Commits → Check commit messages turns it off.
+- Export as patch… in a commit's menu writes the commit as a `.patch` file in a folder you pick;
+  How many commits (1 to 50) adds the commits before it along first parents, oldest first as
+  `0001-…patch`, `0002-…patch`, and the dialog says what it will write. A merge commit has no
+  patch in git, so merges in the range are skipped and named, and a merge alone is refused.
+  Apply patch… in the palette applies a patch file, or the `.patch` files of a folder, as
   commits that keep their authors; a patch that does not fit stops in "Applying patches" with
   Continue and Abort, and the message names the conflicting files.
 - Any local branch without an upstream can be published to a remote from its context menu in the

@@ -1553,6 +1553,19 @@ const PULL_SETTINGS: &[&[&str]] = &[
     &["branch.other.rebase=true", "pull.rebase=false"],
 ];
 
+/// Runs `check` on every combination in [`PULL_SETTINGS`], spread over the machine's cores. Each
+/// combination pulls copies of its own; one after another, the matrices took minutes on Windows,
+/// where starting git is slow.
+fn for_each_pull_setting(check: impl Fn(&[&str]) + Sync) {
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    std::thread::scope(|scope| {
+        for chunk in PULL_SETTINGS.chunks(PULL_SETTINGS.len().div_ceil(threads)) {
+            let check = &check;
+            scope.spawn(move || chunk.iter().for_each(|settings| check(settings)));
+        }
+    });
+}
+
 #[test]
 fn pull_config_matches_what_git_pull_does() {
     // For every combination of settings: a pull with the strategy the configuration asks for
@@ -1562,7 +1575,7 @@ fn pull_config_matches_what_git_pull_does() {
         return;
     }
     let templates = pull_templates();
-    for settings in PULL_SETTINGS {
+    for_each_pull_setting(|settings| {
         for &(diverged, ref up_dir, ref clone_dir, _) in &templates {
             let (_copy_dir, copy) = pull_copy(clone_dir.path(), settings);
             let before = copy.head().expect("head").oid;
@@ -1594,7 +1607,7 @@ fn pull_config_matches_what_git_pull_does() {
                 None => {}
             }
         }
-    }
+    });
     assert_upstreams_unchanged(&templates);
 }
 
@@ -1629,7 +1642,7 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
     ];
     assert_eq!(expected.len(), PullStrategy::ALL.len());
     let templates = pull_templates();
-    for settings in PULL_SETTINGS {
+    for_each_pull_setting(|settings| {
         for (strategy, on_diverged, on_behind) in expected {
             for &(diverged, ref up_dir, ref clone_dir, _) in &templates {
                 let want = if diverged { on_diverged } else { on_behind };
@@ -1660,7 +1673,7 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
                 );
             }
         }
-    }
+    });
     assert_upstreams_unchanged(&templates);
 }
 
@@ -2914,6 +2927,18 @@ fn worktrees_list_every_working_folder_main_first() {
         ]
     );
 
+    let common = repo.snapshot(1).expect("main snapshot").common_dir;
+    let linked_common = from_linked.snapshot(1).expect("linked snapshot").common_dir;
+    assert_eq!(
+        common, linked_common,
+        "a linked worktree has the same repository identity"
+    );
+    let git_common = git(
+        &wt,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    );
+    assert_eq!(canonical(&common), canonical(Path::new(git_common.trim())));
+
     // A plain repository has only its own folder.
     let (_plain_dir, plain) = fixture();
     assert_eq!(plain.snapshot(1).expect("snapshot").worktrees.len(), 1);
@@ -3783,6 +3808,7 @@ fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
     stale_commit(&unique, STALE_OLD_DATE);
     let candidates = repo.stale_candidates(STALE_DAYS, STALE_NOW).expect("scan");
     assert_eq!(candidates.len(), 3);
+    let canonical = |path: &Path| fs::canonicalize(path).expect("canonical");
     assert!(
         candidates
             .iter()
@@ -3790,17 +3816,17 @@ fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
     );
     let clean_row = candidates
         .iter()
-        .find(|c| c.path.as_ref() == Some(&clean))
+        .find(|c| c.path.as_deref().map(canonical) == Some(canonical(&clean)))
         .expect("clean row");
     assert!(clean_row.protected.is_none());
     let dirty_row = candidates
         .iter()
-        .find(|c| c.path.as_ref() == Some(&dirty))
+        .find(|c| c.path.as_deref().map(canonical) == Some(canonical(&dirty)))
         .expect("dirty row");
     assert!(dirty_row.dirty && dirty_row.protected.is_some());
     let unique_row = candidates
         .iter()
-        .find(|c| c.path.as_ref() == Some(&unique))
+        .find(|c| c.path.as_deref().map(canonical) == Some(canonical(&unique)))
         .expect("unique row");
     assert_eq!(unique_row.unmerged, 1);
     assert!(unique_row.protected.is_some());
@@ -3810,7 +3836,7 @@ fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
             .stale_candidates(STALE_DAYS, STALE_NOW)
             .expect("linked scan")
             .iter()
-            .any(|c| c.path.as_ref() == Some(&clean))
+            .any(|c| c.path.as_deref().map(canonical) == Some(canonical(&clean)))
     );
     repo.remove_stale_candidates(std::slice::from_ref(clean_row), STALE_DAYS, STALE_NOW)
         .expect("remove worktree");
@@ -4157,4 +4183,52 @@ fn stale_candidates_skip_unavailable_locked_worktree_but_keep_its_branch_exclude
         .expect("linked scan");
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].name, "eligible");
+}
+
+#[test]
+fn pull_autostash_overrides_strategy_settings_and_matches_fetched_pull() {
+    if !in_isolated_git_env("pull_autostash_overrides_strategy_settings_and_matches_fetched_pull") {
+        return;
+    }
+    for fetched in [false, true] {
+        for autostash in [false, true] {
+            let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+            let path = copy.workdir();
+            diverge(up_dir.path(), &copy);
+            git(
+                path,
+                &[
+                    "config",
+                    "pull.autoStash",
+                    if autostash { "true" } else { "false" },
+                ],
+            );
+            git(
+                path,
+                &[
+                    "config",
+                    "rebase.autoStash",
+                    if autostash { "false" } else { "true" },
+                ],
+            );
+            copy.set_options(GitOptions::default());
+            fs::write(path.join("a.txt"), "dirty\n").expect("dirty file");
+            let result = if fetched {
+                copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+                copy.pull_fetched(PullStrategy::Rebase, None, |_| {})
+            } else {
+                copy.pull(PullStrategy::Rebase, |_| {})
+            };
+            assert_eq!(
+                result.is_ok(),
+                autostash,
+                "fetched={fetched} autostash={autostash}: {result:?}"
+            );
+            assert_eq!(
+                fs::read_to_string(path.join("a.txt")).expect("dirty file"),
+                "dirty\n"
+            );
+            assert_eq!(path.join("up.txt").exists(), autostash);
+        }
+    }
 }

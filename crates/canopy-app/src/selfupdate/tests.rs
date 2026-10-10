@@ -686,6 +686,30 @@ fn an_unregistered_svg_is_preserved_even_for_a_registered_png() {
     assert_eq!(read(&svg), "not ours");
 }
 
+#[test]
+fn an_orphaned_scalable_icon_is_removed_only_when_its_content_was_shipped() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let png = tmp
+        .path()
+        .join("data/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = tmp
+        .path()
+        .join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    write(&png, "png");
+    let shipped = [updates::sha256_hex(b"an icon Canopy shipped")];
+    let shipped: Vec<&str> = shipped.iter().map(String::as_str).collect();
+    write(&svg, "an icon Canopy shipped");
+    remove_shipped_svg_beside(&png, &shipped);
+    assert!(!exists(&svg), "an icon Canopy shipped is ours to remove");
+    write(&svg, "an icon Canopy shipped, edited");
+    remove_shipped_svg_beside(&png, &shipped);
+    assert!(exists(&svg), "an edited copy is the user's");
+    assert!(
+        SHIPPED_SVG_SHA256.iter().all(|h| h.len() == 64),
+        "the real list holds SHA-256 digests"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn an_unregistered_symlinked_legacy_svg_is_left_alone() {

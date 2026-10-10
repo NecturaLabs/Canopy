@@ -19,26 +19,29 @@ use canopy_hosting::{
 };
 
 use crate::action::Action;
-use crate::hosting::{HostJob, TokenSource};
+use crate::hosting::HostJob;
 use crate::keymap::Command;
+use crate::request_view::{
+    self, ChecksChoice, DraftChoice, RequestSort, RequestView, ReviewChoice, Standing,
+};
 use crate::tab::RepoTab;
 use crate::ui::art;
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
-use crate::ui::kit::button::LinkButton;
-use crate::ui::kit::chip::{Badge, RefPill};
+use crate::ui::kit::button::{LinkButton, icon_button_side};
+use crate::ui::kit::chip::{Badge, DiffStat, RefPill};
 use crate::ui::kit::choice::Segmented;
-use crate::ui::kit::field::TextArea;
-use crate::ui::kit::overlay::TooltipExt;
+use crate::ui::kit::field::{SearchField, TextArea};
+use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::{Skeleton, Spinner};
-use crate::ui::kit::row::{Disclosure, ListRow, RowKind, SectionHeader};
+use crate::ui::kit::row::{self, Disclosure, ListRow, Roving, RowKind, SectionHeader};
 use crate::ui::kit::select::{self, Select};
 use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
 use crate::ui::kit::surface::{Callout, EmptyAction, EmptyState, InsetBox, NoticeAction};
-use crate::ui::kit::{self, Button, IconButton, Size, Tone, paint};
+use crate::ui::kit::{self, Button, IconButton, Size, Tone, a11y, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::widgets::{self, forge_icon};
 use crate::views::dialogs::Dialog;
-use crate::views::{commit_detail, state_banner};
+use crate::views::state_banner;
 
 /// Why an action waits.
 const WAIT: &str = "Wait for the current operation";
@@ -105,18 +108,31 @@ pub fn show(
     } else {
         0
     };
-    let pane_max = (ui.available_width() * 0.4).max(160.0);
-    let (lo, hi, default_width) = (
-        pane_max.min(220.0),
-        pane_max.min(640.0),
-        pane_max.min(380.0),
-    );
-    // The list's width: where its handle is being dragged to, else the panel's own (kept across
-    // restarts).
+    // The list takes a share of the pane that grows with the window, up to a limit; the user's own
+    // width, once they set one, replaces it.
+    let room = ui.available_width();
+    let pane_max = (room * LIST_MAX_SHARE).max(LIST_FLOOR);
+    let (lo, hi) = (pane_max.min(LIST_MIN), pane_max.min(LIST_MAX));
+    let default_width = (room * LIST_SHARE)
+        .clamp(LIST_DEFAULT_MIN, LIST_DEFAULT_MAX)
+        .clamp(lo, hi);
+    // The list's width: where its handle is being dragged to, else the user's saved one (the
+    // panel's own state, kept across restarts), else the default.
     let panel_id = Id::new(LIST_PANEL);
     let handle_id = SplitHandle::id_in(ui, LIST_SPLIT);
-    let stored = egui::containers::panel::PanelState::load(ui.ctx(), panel_id)
-        .map_or(default_width, |state| state.size().x);
+    let saved = egui::containers::panel::PanelState::load(ui.ctx(), panel_id);
+    let own_id = Id::new(LIST_OWN_WIDTH);
+    // A width saved before this was recorded is the user's own, unless it is the old default,
+    // which every list that was never resized carries; a first run is on the default.
+    let own: bool = ui.ctx().data_mut(|d| {
+        *d.get_persisted_mut_or_insert_with(own_id, || {
+            saved.is_some_and(|s| (s.size().x - LIST_OLD_DEFAULT).abs() > 0.5)
+        })
+    });
+    let stored = match saved {
+        Some(state) if own => state.size().x,
+        _ => default_width,
+    };
     let mut width = split::dragged_size(ui.ctx(), handle_id, SplitAxis::Columns, false, lo..=hi)
         .unwrap_or(stored)
         .clamp(lo, hi);
@@ -152,8 +168,11 @@ pub fn show(
         && let Some(mut state) = egui::containers::panel::PanelState::load(ui.ctx(), panel_id)
     {
         state.outer_rect.max.x = state.outer_rect.min.x + width;
-        ui.ctx()
-            .data_mut(|data| data.insert_persisted(panel_id, state));
+        ui.ctx().data_mut(|data| {
+            data.insert_persisted(panel_id, state);
+            // Back at the default (a double click or Home), the list follows the window again.
+            data.insert_persisted(own_id, (width - default_width).abs() > f32::EPSILON);
+        });
         ui.ctx().request_repaint();
     }
     Some((rect, handle.id))
@@ -163,6 +182,20 @@ pub fn show(
 const LIST_PANEL: &str = "requests-list";
 /// The salt of the handle between the request list and the details.
 const LIST_SPLIT: &str = "requests-list";
+/// Whether the list's saved width is one the user set (else it follows the window).
+const LIST_OWN_WIDTH: &str = "requests-list-own-width";
+/// The list's default share of the pane, and the narrowest and widest that default is.
+const LIST_SHARE: f32 = 0.45;
+const LIST_DEFAULT_MIN: f32 = 320.0;
+const LIST_DEFAULT_MAX: f32 = 560.0;
+/// The default width before the list took a share of the pane.
+const LIST_OLD_DEFAULT: f32 = 380.0;
+/// The most of the pane the list can be dragged to, its widest and its narrowest, and the least
+/// room a small window leaves it.
+const LIST_MAX_SHARE: f32 = 0.6;
+const LIST_MAX: f32 = 800.0;
+const LIST_MIN: f32 = 220.0;
+const LIST_FLOOR: f32 = 160.0;
 
 /// The checks' disclosure line, its glyph and its tone (V22): red when any failed, amber while
 /// any run, green when all passed.
@@ -326,6 +359,30 @@ impl Signals {
         Self { ci, review }
     }
 
+    /// Where the checks and the review stand, for the list's filters.
+    fn standing(self) -> Standing {
+        Standing {
+            checks: match self.ci {
+                Some(Ci::Passing { .. } | Ci::Overall(CheckState::Success)) => {
+                    Some(ChecksChoice::Passed)
+                }
+                Some(Ci::Failing { .. } | Ci::Overall(CheckState::Failure)) => {
+                    Some(ChecksChoice::Failed)
+                }
+                Some(Ci::Running { .. } | Ci::Overall(CheckState::Pending)) => {
+                    Some(ChecksChoice::Running)
+                }
+                Some(Ci::Overall(CheckState::Neutral)) | None => None,
+            },
+            review: match self.review {
+                Some(Verdict::Approved) => Some(ReviewChoice::Approved),
+                Some(Verdict::ChangesRequested) => Some(ReviewChoice::ChangesRequested),
+                Some(Verdict::Required) => Some(ReviewChoice::Required),
+                Some(Verdict::Commented) | None => None,
+            },
+        }
+    }
+
     /// The glyphs of the row, in order, with their colour tone and what they say.
     fn glyphs(self) -> Vec<(&'static str, Tone, String)> {
         let mut out = Vec::new();
@@ -419,7 +476,30 @@ fn row_signals(ctx: &egui::Context, tab: &RepoTab, r: &RequestSummary) -> Option
     })
 }
 
+/// Where row `r`'s checks and review stand as the row shows them, for the filters and for the
+/// request a list opens on.
+pub(crate) fn row_standing(ctx: &egui::Context, tab: &RepoTab, r: &RequestSummary) -> Standing {
+    row_signals(ctx, tab, r)
+        .map(Signals::standing)
+        .unwrap_or_default()
+}
+
 // ------------------------------------------------------------------------------------- the list
+
+/// The id of the filter field, which the filter command focuses.
+const FILTER_FIELD: &str = "request-filter";
+/// The popover with the filters other than the text.
+const FILTERS_POPUP: &str = "request-filters";
+/// Its width.
+const FILTERS_WIDTH: f32 = 280.0;
+/// The filter field's narrowest, beside the two buttons.
+const FILTER_FIELD_MIN: f32 = 96.0;
+/// How many lines a row's title wraps to before it is cut.
+const TITLE_ROWS: usize = 2;
+/// How many lines of the description a row shows.
+const DESCRIPTION_ROWS: usize = 2;
+/// How much of the description a screen reader hears; the rest is in the details.
+const DESCRIPTION_SPOKEN: usize = 200;
 
 fn list(
     ui: &mut Ui,
@@ -476,6 +556,15 @@ fn list(
                     }
                 });
             });
+            if let Some(Ok(items)) = &tab.requests.list.clone()
+                && !items.is_empty()
+            {
+                ui.add_space(theme::XS);
+                filter_bar(ui, tab, items, actions);
+            } else {
+                // No field to take the caret: the request must not wait for a later list's.
+                tab.requests.focus_filter = false;
+            }
         });
     let r = ui.available_rect_before_wrap();
     paint::seam_h(ui.painter(), r.x_range(), r.min.y + 0.5, s.border);
@@ -518,40 +607,382 @@ fn list(
             .compact(true)
             .show(ui);
         }
-        Some(Ok(items)) => {
-            let now = chrono::Utc::now().timestamp();
-            let out = egui::ScrollArea::vertical()
+        Some(Ok(items)) => rows(ui, tab, kind, &items, ground, actions),
+    }
+}
+
+/// The filter field, the filters' popover and the sort menu, and what the filters have left.
+fn filter_bar(ui: &mut Ui, tab: &mut RepoTab, items: &[RequestSummary], actions: &mut Vec<Action>) {
+    let m = theme::metrics();
+    let p = palette(ui.ctx());
+    let before = tab.request_view.clone();
+    let mut view = before.clone();
+    ui.horizontal(|ui| {
+        let spacing = ui.spacing().item_spacing.x;
+        let buttons = 2.0 * (icon_button_side(Size::Sm) + spacing);
+        let field = SearchField::new(&mut view.text)
+            .placeholder(format!("Filter {}s…", tab_noun(tab)))
+            .name(format!("Filter {}s", tab_noun(tab)))
+            .shortcut(Command::Filter)
+            .width((ui.available_width() - buttons).max(FILTER_FIELD_MIN))
+            .id_salt(FILTER_FIELD)
+            .show(ui);
+        if tab.requests.focus_filter {
+            field.request_focus();
+            tab.requests.focus_filter = false;
+        }
+        let narrowing = view.menu_filters();
+        let name = if narrowing == 0 {
+            "Filter by draft, checks, review or author".to_owned()
+        } else {
+            format!("Filters: {narrowing} on")
+        };
+        let anchor = IconButton::new(icon::FUNNEL, name)
+            .size(Size::Sm)
+            .active(narrowing > 0)
+            .id_salt("request-filters-button")
+            .show(ui);
+        // The open state is kept here, not in egui's one popup slot: a choice's own list opens
+        // in that slot and would close the popover under it.
+        let open_id = Id::new((FILTERS_POPUP, "open"));
+        let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+        if anchor.clicked() {
+            open = !open;
+        }
+        let authors = if open {
+            request_view::authors(items)
+        } else {
+            Vec::new()
+        };
+        let list_was_open = egui::Popup::is_any_open(ui.ctx());
+        let was_open = open;
+        Popover::new(FILTERS_POPUP, &anchor)
+            .width(FILTERS_WIDTH)
+            .open(&mut open)
+            .show(|ui| filter_choices(ui, &mut view, &authors));
+        // A click on an option of a choice's list is outside the popover for egui, and so is the
+        // Esc that closes the list: the list takes it, and the popover stays for the next filter.
+        if was_open && !open && list_was_open {
+            open = true;
+        }
+        ui.data_mut(|d| d.insert_temp(open_id, open));
+        let sort = IconButton::new(
+            icon::ARROWS_DOWN_UP,
+            format!("Sort requests: {}", view.sort.label()),
+        )
+        .size(Size::Sm)
+        .active(view.sort != RequestSort::default())
+        .id_salt("request-sort-button")
+        .show(ui);
+        let _ = kit::menu::menu(&sort, |menu| {
+            menu.heading("Sort by");
+            for choice in RequestSort::ALL {
+                if menu
+                    .item("", choice.label())
+                    .checked(view.sort == choice)
+                    .show(menu.ui)
+                    .clicked()
+                {
+                    view.sort = choice;
+                }
+            }
+        });
+    });
+    let shown = tab.requests.shown.as_ref().map(Vec::len);
+    // With nothing left the empty state below carries the same way out.
+    if view.filters() > 0
+        && let Some(shown) = shown.filter(|&n| n > 0)
+    {
+        ui.add_space(theme::XS);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{shown} of {} shown", items.len()))
+                    .size(m.meta_size)
+                    .color(p.text_faint),
+            );
+            if LinkButton::new("Clear filters").show(ui).clicked() {
+                view.clear_filters();
+            }
+        });
+    }
+    if view != before {
+        tab.request_view = view;
+        remember_view(tab, actions);
+    }
+}
+
+/// "pull request" or "merge request", for the filter's words.
+fn tab_noun(tab: &RepoTab) -> &'static str {
+    tab.forge()
+        .map_or("request", |(_, forge)| forge.kind.request_noun())
+}
+
+/// Queues the request view for the repository's saved settings.
+fn remember_view(tab: &RepoTab, actions: &mut Vec<Action>) {
+    if let Some(repo) = tab.sidebar_key() {
+        actions.push(Action::RememberRequestView {
+            repo: repo.to_path_buf(),
+            view: tab.request_view.clone(),
+        });
+    }
+}
+
+/// The popover's choices: draft, checks, review and author, each from a list, and the way out.
+fn filter_choices(ui: &mut Ui, view: &mut RequestView, authors: &[String]) {
+    let m = theme::metrics();
+    let p = palette(ui.ctx());
+    ui.spacing_mut().item_spacing.y = theme::SM;
+    ui.label(
+        RichText::new("Filters")
+            .font(FontId::new(m.body_size, theme::semibold()))
+            .color(p.text),
+    );
+    let width = ui.available_width();
+    let any = "Any";
+    let drafts = [
+        (None, any),
+        (Some(DraftChoice::Drafts), DraftChoice::Drafts.label()),
+        (Some(DraftChoice::Ready), DraftChoice::Ready.label()),
+    ];
+    Select::new(&mut view.draft, &drafts)
+        .label("Draft")
+        .size(Size::Md)
+        .width(width)
+        .id_salt("request-filter-draft")
+        .show(ui);
+    let checks = [
+        (None, any),
+        (Some(ChecksChoice::Passed), ChecksChoice::Passed.label()),
+        (Some(ChecksChoice::Failed), ChecksChoice::Failed.label()),
+        (Some(ChecksChoice::Running), ChecksChoice::Running.label()),
+    ];
+    Select::new(&mut view.checks, &checks)
+        .label("Checks")
+        .size(Size::Md)
+        .width(width)
+        .id_salt("request-filter-checks")
+        .show(ui);
+    let reviews = [
+        (None, any),
+        (Some(ReviewChoice::Approved), ReviewChoice::Approved.label()),
+        (
+            Some(ReviewChoice::ChangesRequested),
+            ReviewChoice::ChangesRequested.label(),
+        ),
+        (Some(ReviewChoice::Required), ReviewChoice::Required.label()),
+    ];
+    Select::new(&mut view.review, &reviews)
+        .label("Review")
+        .size(Size::Md)
+        .width(width)
+        .id_salt("request-filter-review")
+        .show(ui);
+    // A chosen author who is no longer in the list (it was reloaded) stays choosable.
+    let mut names = authors.to_vec();
+    if let Some(chosen) = &view.author
+        && !names.iter().any(|n| n.eq_ignore_ascii_case(chosen))
+    {
+        names.push(chosen.clone());
+    }
+    let people: Vec<(Option<String>, &str)> = std::iter::once((None, "Anyone"))
+        .chain(names.iter().map(|n| (Some(n.clone()), n.as_str())))
+        .collect();
+    Select::new(&mut view.author, &people)
+        .label("Author")
+        .size(Size::Md)
+        .width(width)
+        .id_salt("request-filter-author")
+        .show(ui);
+    if view.menu_filters() > 0
+        && Button::new("Clear filters")
+            .ghost()
+            .id_salt("request-filters-clear")
+            .show(ui)
+            .clicked()
+    {
+        let (text, sort) = (std::mem::take(&mut view.text), view.sort);
+        view.clear_filters();
+        view.text = text;
+        view.sort = sort;
+    }
+}
+
+/// The rows of the list: the requests that pass the view's filters, in its order, each as tall
+/// as its text needs.
+fn rows(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    kind: ForgeKind,
+    items: &Arc<[RequestSummary]>,
+    ground: Color32,
+    actions: &mut Vec<Action>,
+) {
+    let m = theme::metrics();
+    let ctx = ui.ctx().clone();
+    let order = tab
+        .request_view
+        .visible(items, |r| row_standing(&ctx, tab, r));
+    let numbers: Vec<u64> = order.iter().map(|&i| items[i].number).collect();
+    if tab.requests.shown.as_ref() != Some(&numbers) {
+        tab.requests.shown = Some(numbers);
+    }
+    if order.is_empty() {
+        let clicked = EmptyState::filtered("No requests match these filters")
+            .compact(true)
+            .id_salt("request-list-filtered")
+            .show(ui)
+            .value;
+        if clicked == Some(EmptyAction::Primary) {
+            tab.request_view.clear_filters();
+            remember_view(tab, actions);
+        }
+        return;
+    }
+    let now = chrono::Utc::now().timestamp();
+    let selected = tab.requests.selected;
+    let roving = Roving::new(
+        &ctx,
+        ("request-rows", &tab.path),
+        order.len(),
+        selected.and_then(|n| order.iter().position(|&i| items[i].number == n)),
+    );
+    let scroll_to = scroll_target(&ctx, tab, selected);
+    // The bar is always visible and keeps its own lane beside the rows (`solid_scroll`), so the
+    // handle never covers a status glyph or a label chip, as in the notification center.
+    let out = ui
+        .scope(|ui| {
+            ui.spacing_mut().scroll = theme::solid_scroll();
+            egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
+                .id_salt("requests-rows")
                 .show(ui, |ui| {
                     egui::Frame::new()
-                        .inner_margin(Margin::symmetric(
-                            crate::ui::points_i8(m.sidebar_pad),
-                            crate::ui::points_i8(theme::XS),
-                        ))
+                        .inner_margin(Margin {
+                            left: crate::ui::points_i8(m.sidebar_pad),
+                            right: crate::ui::points_i8(m.sidebar_pad),
+                            top: crate::ui::points_i8(theme::XS),
+                            // The last row scrolls clear of the edge (design.md, Scroll edges).
+                            bottom: crate::ui::points_i8(theme::SM),
+                        })
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
-                            commit_detail::virtual_rows(
-                                ui,
-                                items.len(),
-                                RowKind::Request.height(),
-                                |ui, i| {
+                            a11y::group(ui, egui::accesskit::Role::List, "Requests");
+                            let content = ui.available_width() - 2.0 * row::PAD;
+                            let laid: Vec<RowLayout> = order
+                                .iter()
+                                .map(|&i| {
                                     let r = &items[i];
-                                    let selected = tab.requests.selected == Some(r.number);
-                                    let signals = row_signals(ui.ctx(), tab, r);
-                                    if row(ui, r, kind, signals, selected, now, ground).clicked() {
-                                        tab.select_request(r.number);
-                                    }
-                                },
-                            );
+                                    let glyphs =
+                                        row_signals(&ctx, tab, r).map_or(1, |s| s.glyphs().len());
+                                    RowLayout::new(ui.painter(), r, kind, glyphs, content, now)
+                                })
+                                .collect();
+                            let heights: Vec<f32> = laid.iter().map(|l| l.height).collect();
+                            let top = ui.cursor().min.y;
+                            if let Some(at) = scroll_to.filter(|&at| at < heights.len()) {
+                                let (y, h) = (heights[..at].iter().sum::<f32>(), heights[at]);
+                                let width = ui.available_width();
+                                ui.scroll_to_rect(
+                                    Rect::from_min_size(pos2(0.0, top + y), vec2(width, h)),
+                                    None,
+                                );
+                            }
+                            let span = visible_span(&heights, top, ui.clip_rect().y_range());
+                            let width = ui.available_width();
+                            if span.before > 0.0 {
+                                ui.allocate_space(vec2(width, span.before));
+                            }
+                            for at in span.range.clone() {
+                                let r = &items[order[at]];
+                                let is_selected = selected == Some(r.number);
+                                if is_selected {
+                                    roving.follow(&ctx, at);
+                                }
+                                let signals = row_signals(&ctx, tab, r);
+                                let response = row(
+                                    ui,
+                                    r,
+                                    RowDraw {
+                                        kind,
+                                        layout: &laid[at],
+                                        signals,
+                                        selected: is_selected,
+                                        ground,
+                                        index: at,
+                                        list: roving,
+                                        now,
+                                    },
+                                );
+                                if response.clicked() {
+                                    tab.select_request(r.number);
+                                }
+                            }
+                            if span.after > 0.0 {
+                                ui.allocate_space(vec2(width, span.after));
+                            }
                         });
-                });
-            paint::scroll_fade(ui, &out, ground);
-        }
+                })
+        })
+        .inner;
+    paint::scroll_fade(ui, &out, ground);
+    // An arrow on a focused row moves the selection; focus follows it next frame.
+    if let Some((from, to)) = roving.moved(&ctx) {
+        let delta = if to >= from {
+            isize::try_from(to - from).unwrap_or(isize::MAX)
+        } else {
+            -isize::try_from(from - to).unwrap_or(isize::MAX)
+        };
+        tab.move_request(delta);
     }
+}
+
+/// The row to scroll into view because the selection moved since the last frame (a key or a
+/// reload, not a click on a row that is already in view); remembers the selection.
+fn scroll_target(ctx: &egui::Context, tab: &RepoTab, selected: Option<u64>) -> Option<usize> {
+    let id = Id::new(("request-scrolled-to", tab.path.as_path()));
+    let last: Option<Option<u64>> = ctx.data(|d| d.get_temp(id));
+    ctx.data_mut(|d| d.insert_temp(id, selected));
+    let (Some(old), Some(new)) = (last, selected) else {
+        return None;
+    };
+    if old == Some(new) {
+        return None;
+    }
+    tab.requests
+        .shown
+        .as_ref()
+        .and_then(|shown| shown.iter().position(|&n| n == new))
 }
 
 /// How many placeholder rows a loading list shows.
 const LOADING_ROWS: usize = 7;
+
+/// Which rows of a list of `heights` (no spacing, its top at `top`) intersect `y`, and the room
+/// of the rows before and after them.
+#[derive(Debug, PartialEq)]
+struct Span {
+    range: std::ops::Range<usize>,
+    before: f32,
+    after: f32,
+}
+
+fn visible_span(heights: &[f32], top: f32, y: egui::Rangef) -> Span {
+    let (mut first, mut before) = (0, 0.0);
+    while first < heights.len() && top + before + heights[first] <= y.min {
+        before += heights[first];
+        first += 1;
+    }
+    let (mut end, mut at) = (first, top + before);
+    while end < heights.len() && at < y.max {
+        at += heights[end];
+        end += 1;
+    }
+    Span {
+        range: first..end,
+        before,
+        after: heights[end..].iter().sum(),
+    }
+}
 
 /// `text` on one line, cut at `width`.
 fn line_galley(
@@ -567,84 +998,142 @@ fn line_galley(
     painter.layout_job(job)
 }
 
-/// `text` as it is, or with its middle left out when it is wider than `width`: a branch name
-/// keeps the start that names its kind (`feature/`) and the end that names the work.
-fn middle_galley(
-    painter: &Painter,
-    text: &str,
-    font: &FontId,
-    color: Color32,
-    width: f32,
-) -> Arc<Galley> {
-    let whole = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
-    if whole.size().x <= width {
-        return whole;
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let mut best = painter.layout_no_wrap("…".to_owned(), font.clone(), color);
-    let (mut low, mut high) = (1, chars.len().saturating_sub(1));
-    while low <= high {
-        let keep = usize::midpoint(low, high);
-        let galley = painter.layout_no_wrap(elide_middle(&chars, keep), font.clone(), color);
-        if galley.size().x <= width {
-            best = galley;
-            low = keep + 1;
+/// A request's text laid out for the width its row has: the number and title (up to
+/// [`TITLE_ROWS`] lines), the author and age, and the description (up to [`DESCRIPTION_ROWS`]),
+/// and the height they make.
+struct RowLayout {
+    title: Arc<Galley>,
+    meta: Arc<Galley>,
+    description: Option<Arc<Galley>>,
+    /// The text's height, blocks and the gaps between them.
+    text_height: f32,
+    /// The row's height: the text's with its padding, never less than a row of the kind.
+    height: f32,
+}
+
+impl RowLayout {
+    /// `glyphs` is how many checks and review glyphs the row has at the right of its title;
+    /// `content` the row's width inside its padding.
+    fn new(
+        painter: &Painter,
+        r: &RequestSummary,
+        kind: ForgeKind,
+        glyphs: usize,
+        content: f32,
+        now: i64,
+    ) -> Self {
+        let p = palette(painter.ctx());
+        let m = theme::metrics();
+        let text_width = (content - m.icon_md - theme::SM).max(0.0);
+        let signals = if glyphs == 0 {
+            0.0
         } else {
-            high = keep - 1;
+            crate::ui::count_f32(glyphs) * (m.icon_md + theme::XS) + theme::XS
+        };
+        let title_width = (text_width - signals).max(0.0);
+        let font = FontId::new(m.body_size, theme::medium());
+        let mut job = LayoutJob::default();
+        job.wrap.max_width = title_width;
+        job.wrap.max_rows = TITLE_ROWS;
+        for (text, color) in [
+            (number_text(kind, r.number), p.text_faint),
+            (format!(" {}", r.title), Color32::PLACEHOLDER),
+        ] {
+            job.append(
+                &text,
+                0.0,
+                egui::TextFormat {
+                    font_id: font.clone(),
+                    color,
+                    ..Default::default()
+                },
+            );
+        }
+        let title = painter.layout_job(job);
+        let small = FontId::proportional(m.small_size);
+        let meta = line_galley(
+            painter,
+            format!(
+                "{}  ·  {}",
+                r.author,
+                widgets::relative_time(r.updated_at, now)
+            ),
+            small.clone(),
+            p.text_faint,
+            text_width,
+        );
+        let description = (!r.description.is_empty()).then(|| {
+            let mut job = LayoutJob::simple(r.description.clone(), small, p.text_dim, text_width);
+            job.wrap.max_rows = DESCRIPTION_ROWS;
+            painter.layout_job(job)
+        });
+        let text_height = title.size().y
+            + theme::XS
+            + meta.size().y
+            + description.as_ref().map_or(0.0, |d| theme::XS + d.size().y);
+        Self {
+            title,
+            meta,
+            description,
+            text_height,
+            height: (text_height + 2.0 * theme::SM).max(RowKind::Request.height()),
         }
     }
-    best
 }
 
-/// The first and last of `keep` characters of `chars` around an ellipsis, the start a letter
-/// longer when `keep` is odd.
-fn elide_middle(chars: &[char], keep: usize) -> String {
-    let head = keep.div_ceil(2).min(chars.len());
-    let tail = (keep / 2).min(chars.len() - head);
-    let start: String = chars[..head].iter().collect();
-    let end: String = chars[chars.len() - tail..].iter().collect();
-    format!("{start}…{end}")
-}
-
-/// How `room` is shared by two texts of natural widths `a` and `b`: both whole when they fit,
-/// else the shorter one whole and the other the rest, else half each.
-fn fit_pair(a: f32, b: f32, room: f32) -> (f32, f32) {
-    let room = room.max(0.0);
-    if a + b <= room {
-        return (a, b);
-    }
-    let half = room / 2.0;
-    if a <= half {
-        (a, room - a)
-    } else if b <= half {
-        (room - b, b)
-    } else {
-        (half, half)
-    }
-}
-
-/// A request in the list: state glyph, title, number, author and age, its branches, its labels,
-/// and at the right of the title the checks and reviews when they are known.
-fn row(
-    ui: &mut Ui,
-    r: &RequestSummary,
+/// What a row is drawn with besides the request.
+#[derive(Clone, Copy)]
+struct RowDraw<'a> {
     kind: ForgeKind,
+    layout: &'a RowLayout,
     signals: Option<Signals>,
     selected: bool,
-    now: i64,
     ground: Color32,
-) -> Response {
+    index: usize,
+    list: Roving,
+    now: i64,
+}
+
+/// A request in the list: state glyph, number and title, author and age with its labels at the
+/// right, the start of its description, and at the right of the title the checks and reviews when
+/// they are known.
+fn row(ui: &mut Ui, r: &RequestSummary, d: RowDraw<'_>) -> Response {
+    let RowDraw {
+        kind,
+        layout,
+        signals,
+        selected,
+        ground,
+        index,
+        list,
+        now,
+    } = d;
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let (glyph, tone, state) = state_style(r);
     let color = tone.color(p);
     let number = number_text(kind, r.number);
-    let glyphs = signals.map(Signals::glyphs).unwrap_or_default();
+    // Nothing known (no rollup yet or at all, and never opened): said, rather than left to look
+    // like a request without checks.
+    let glyphs = signals.map_or_else(
+        || {
+            vec![(
+                icon::QUESTION,
+                Tone::Neutral,
+                "Checks and reviews not loaded".to_owned(),
+            )]
+        },
+        Signals::glyphs,
+    );
+    let when = widgets::relative_time(r.updated_at, now);
     let mut tooltip = format!(
-        "{state} · {}\n{number} · {}\n{} → {}",
+        "{state} · {}\n{number} · {} · {when}\n{} → {}",
         r.title, r.author, r.source_branch, r.target_branch
     );
-    let mut info = format!("{state} request {number} {} by {}", r.title, r.author);
+    let mut info = format!(
+        "{state} request {number} {} by {}, {when}",
+        r.title, r.author
+    );
     for (_, _, said) in &glyphs {
         tooltip = format!("{tooltip}\n{said}");
         info = format!("{info}, {said}");
@@ -652,17 +1141,27 @@ fn row(
     if !r.labels.is_empty() {
         tooltip = format!("{tooltip}\nLabels: {}", r.labels.join(", "));
     }
+    if !r.description.is_empty() {
+        let spoken: String = r.description.chars().take(DESCRIPTION_SPOKEN).collect();
+        info = format!("{info}. {spoken}");
+    }
     let response = ListRow::new(("request", r.number))
         .kind(RowKind::Request)
+        .height(layout.height)
+        .roving(list, index)
         .selected(selected)
         .ground(ground)
         .tooltip(tooltip)
         .show_with(ui, |rc, painter| {
             let c = rc.content;
-            let h = rc.rect.height();
-            // Three lines: title, then number, author and age, then the branches and labels.
-            let line = |k: f32| rc.rect.top() + h * k;
-            let (title_y, meta_y, branch_y) = (line(0.27), line(0.52), line(0.76));
+            let x = c.left() + m.icon_md + theme::SM;
+            let mut y = rc.rect.top() + (rc.rect.height() - layout.text_height) / 2.0;
+            let first_line = layout
+                .title
+                .rows
+                .first()
+                .map_or(layout.title.size().y, |row| row.height());
+            let title_y = y + first_line / 2.0;
             painter.text(
                 pos2(c.left() + m.icon_md / 2.0, title_y),
                 Align2::CENTER_CENTER,
@@ -670,9 +1169,6 @@ fn row(
                 FontId::proportional(m.icon_md),
                 color,
             );
-            let x = c.left() + m.icon_md + theme::SM;
-            let width = (c.right() - x).max(0.0);
-            let at = |g: &Arc<Galley>, x: f32, y: f32| pos2(x, y - g.size().y / 2.0);
             // The checks and the reviews at the right of the title line.
             let mut right = c.right();
             for (glyph, tone, _) in glyphs.iter().rev() {
@@ -685,74 +1181,26 @@ fn row(
                 );
                 right -= m.icon_md + theme::XS;
             }
-            let title_width = if glyphs.is_empty() {
-                width
-            } else {
-                (right - x - theme::XS).max(0.0)
-            };
-            let title = line_galley(
-                painter,
-                r.title.clone(),
-                FontId::new(m.body_size, theme::medium()),
-                rc.text,
-                title_width,
-            );
-            painter.galley(at(&title, x, title_y), title, rc.text);
-            let meta = line_galley(
-                painter,
-                format!(
-                    "{number}  ·  {}  ·  {}",
-                    r.author,
-                    widgets::relative_time(r.updated_at, now)
-                ),
-                FontId::proportional(m.small_size),
-                p.text_faint,
-                width,
-            );
-            painter.galley(at(&meta, x, meta_y), meta, p.text_faint);
-
-            // Both branch names whole when the row has the room, else shared fairly.
+            let title_height = layout.title.size().y;
+            painter.galley(pos2(x, y), Arc::clone(&layout.title), rc.text);
+            y += title_height + theme::XS;
+            let meta_height = layout.meta.size().y;
+            painter.galley(pos2(x, y), Arc::clone(&layout.meta), p.text_faint);
+            // Labels take what the author and age leave.
             let small = FontId::proportional(m.small_size);
-            let medium = FontId::new(m.small_size, theme::medium());
-            let natural = |text: &str, font: &FontId| {
-                painter
-                    .layout_no_wrap(text.to_owned(), font.clone(), p.text_dim)
-                    .size()
-                    .x
-            };
-            let (source_natural, target_natural) = (
-                natural(&r.source_branch, &small),
-                natural(&r.target_branch, &medium),
-            );
-            let (source_room, target_room) =
-                fit_pair(source_natural, target_natural, (width - theme::XL).max(0.0));
-            let source = middle_galley(painter, &r.source_branch, &small, p.text_dim, source_room);
-            let source_width = source.size().x;
-            painter.galley(at(&source, x, branch_y), source, p.text_dim);
-            painter.text(
-                pos2(x + source_width + theme::SM, branch_y),
-                Align2::LEFT_CENTER,
-                "→",
-                small.clone(),
-                p.text_faint,
-            );
-            let target = middle_galley(painter, &r.target_branch, &medium, p.text_dim, target_room);
-            let target_width = target.size().x;
-            painter.galley(
-                at(&target, x + source_width + theme::XL, branch_y),
-                target,
-                p.text_dim,
-            );
-            // Labels take what the branches leave.
-            let used = source_width + theme::XL + target_width + theme::MD;
+            let used = layout.meta.size().x + theme::MD;
             paint_labels(
                 painter,
                 &r.labels,
                 &small,
-                (width - used).max(0.0),
+                (c.right() - x - used).max(0.0),
                 c.right(),
-                branch_y,
+                y + meta_height / 2.0,
             );
+            y += meta_height + theme::XS;
+            if let Some(description) = &layout.description {
+                painter.galley(pos2(x, y), Arc::clone(description), p.text_dim);
+            }
         });
     name_row(ui, &response, selected, &info);
     response
@@ -1154,24 +1602,57 @@ fn action_bar(
     } else {
         (false, WAIT)
     };
+    // One primary for the state: Check out while the request is open, else Open on the host.
+    // The rest follow as one group of secondary buttons of the same size and spacing.
+    let open = r.state == RequestState::Open;
     ui.horizontal_wrapped(|ui| {
-        if Button::new("Check out")
-            .icon(icon::DOWNLOAD_SIMPLE)
-            .enabled(!checkout_off)
-            .tooltip("Fetch the request's branch and check it out locally")
-            .disabled_reason(checkout_reason)
+        ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+        let check_out = |ui: &mut Ui, actions: &mut Vec<Action>| {
+            let button = Button::new("Check out")
+                .icon(icon::DOWNLOAD_SIMPLE)
+                .enabled(!checkout_off)
+                .tooltip("Fetch the request's branch and check it out locally")
+                .disabled_reason(checkout_reason);
+            let button = if open {
+                button.primary()
+            } else {
+                button.secondary()
+            };
+            if button.show(ui).clicked() {
+                actions.push(Action::CheckoutRequest(r.clone()));
+            }
+        };
+        let open_on_host = |ui: &mut Ui, actions: &mut Vec<Action>| {
+            let button = Button::new(format!("Open on {}", kind.name()))
+                .icon(forge_icon(kind))
+                .shortcut(Command::OpenOnForge)
+                .tooltip(format!(
+                    "Open this {} on {}",
+                    kind.request_noun(),
+                    kind.name()
+                ));
+            let button = if open {
+                button.secondary()
+            } else {
+                button.primary()
+            };
+            if button.show(ui).clicked() {
+                actions.push(Action::OpenUrl(r.web_url.clone()));
+            }
+        };
+        if open {
+            check_out(ui, actions);
+            open_on_host(ui, actions);
+        } else {
+            open_on_host(ui, actions);
+            check_out(ui, actions);
+        }
+        if Button::new("Copy link")
+            .icon(icon::LINK)
+            .tooltip(format!("Copy the address of this {}", kind.request_noun()))
             .show(ui)
             .clicked()
         {
-            actions.push(Action::CheckoutRequest(r.clone()));
-        }
-        if Button::new(format!("{}  Open on {}", forge_icon(kind), kind.name()))
-            .show(ui)
-            .clicked()
-        {
-            actions.push(Action::OpenUrl(r.web_url.clone()));
-        }
-        if IconButton::new(icon::LINK, "Copy link").show(ui).clicked() {
             actions.push(Action::Copy(r.web_url.clone()));
         }
         let more = Button::new("More").caret().show(ui);
@@ -1314,16 +1795,52 @@ fn action_bar(
             ui.label(RichText::new(b).size(m.meta_size).color(p.accent));
         });
     }
-    if let Some(Some(source)) = tab.requests.token
-        && source != TokenSource::Saved
-    {
-        commit_detail::without_icons(
-            ui.label(
-                RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
-                    .size(m.small_size)
-                    .color(p.text_faint),
+    if let Some(problem) = credential_problem(tab) {
+        ui.add_space(theme::SM);
+        let fix = Callout::new(Tone::Warning, problem.text)
+            .title(problem.title)
+            .action(NoticeAction::new(problem.fix).icon(icon::KEY))
+            .id_salt("credential-problem")
+            .show_actions(ui)
+            .value;
+        if fix.is_some() {
+            actions.push(Action::Settings);
+        }
+    }
+}
+
+/// A credential that cannot do what the request's actions need, and what fixes it.
+struct CredentialProblem {
+    title: &'static str,
+    text: String,
+    fix: &'static str,
+}
+
+/// The credential problem to show under the request's actions: none while the credential works
+/// (its source is Settings' to say), else no token or a token the host refused. Without a token
+/// nothing was refused, whatever the host answered (a GitLab that wants a sign-in answers 401).
+fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
+    if tab.requests.token == Some(None) {
+        Some(CredentialProblem {
+            title: "No token",
+            text: "Without one Canopy can only read this request. Approving, merging and commenting need a token.".into(),
+            fix: "Add a token…",
+        })
+    } else if tab.requests.token_rejected {
+        Some(CredentialProblem {
+            title: "The host refused the token",
+            // Which one, so the fix goes to the right place.
+            text: format!(
+                "The token {} is expired, revoked or lacks the scope this needs. Replace it to approve, merge or comment.",
+                tab.requests
+                    .token
+                    .flatten()
+                    .map_or("Canopy sends", |source| source.label()),
             ),
-        );
+            fix: "Replace the token…",
+        })
+    } else {
+        None
     }
 }
 
@@ -1410,33 +1927,61 @@ pub(crate) fn merge_confirmation(
     })
 }
 
+/// One part of the summary line under a request's header.
+#[derive(Debug, PartialEq, Eq)]
+enum Stat {
+    Text(String),
+    /// Lines added and removed, drawn as the app's other diff stats.
+    Lines(usize, usize),
+}
+
+/// The summary line's parts: commits, files, lines and the conflict state, as far as known.
+fn summary_stats(d: &RequestDetails) -> Vec<Stat> {
+    let plural = |n: u32| if n == 1 { "" } else { "s" };
+    let mut stats = Vec::new();
+    if let Some(c) = d.commits {
+        stats.push(Stat::Text(format!("{c} commit{}", plural(c))));
+    }
+    if let Some(f) = d.changed_files {
+        stats.push(Stat::Text(format!("{f} file{} changed", plural(f))));
+    }
+    if let (Some(a), Some(r)) = (d.additions, d.deletions) {
+        let count = |n: u32| usize::try_from(n).unwrap_or(usize::MAX);
+        stats.push(Stat::Lines(count(a), count(r)));
+    }
+    if let Some(m) = d.mergeable {
+        stats.push(Stat::Text(
+            if m { "no conflicts" } else { "has conflicts" }.into(),
+        ));
+    }
+    stats
+}
+
 fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    // Stats.
-    let mut stats = Vec::new();
-    if let Some(c) = d.commits {
-        stats.push(format!("{c} commit{}", if c == 1 { "" } else { "s" }));
-    }
-    if let Some(f) = d.changed_files {
-        stats.push(format!("{f} file{} changed", if f == 1 { "" } else { "s" }));
-    }
-    if let (Some(a), Some(r)) = (d.additions, d.deletions) {
-        stats.push(format!("+{a} −{r}"));
-    }
-    if let Some(m) = d.mergeable {
-        stats.push(if m {
-            "no conflicts".into()
-        } else {
-            "has conflicts".into()
-        });
-    }
+    // Stats: the counts in the dim text, the lines in the added and removed colours.
+    let stats = summary_stats(d);
     if !stats.is_empty() {
-        ui.label(
-            RichText::new(stats.join("  ·  "))
-                .size(m.meta_size)
-                .color(p.text_dim),
-        );
+        ui.scope(|ui| {
+            // As tall as its text, like the commit details' summary.
+            ui.spacing_mut().interact_size.y = 0.0;
+            ui.horizontal_wrapped(|ui| {
+                for (i, stat) in stats.iter().enumerate() {
+                    if i > 0 {
+                        ui.label(RichText::new("·").size(m.meta_size).color(p.text_faint));
+                    }
+                    match stat {
+                        Stat::Text(text) => {
+                            ui.label(RichText::new(text).size(m.meta_size).color(p.text_dim));
+                        }
+                        Stat::Lines(added, removed) => {
+                            DiffStat::new(*added, *removed).show(ui);
+                        }
+                    }
+                }
+            });
+        });
         ui.add_space(theme::MD);
     }
 
@@ -1619,6 +2164,7 @@ mod tests {
             updated_at: 0,
             web_url: "https://github.com/example/project/pull/7".into(),
             labels: vec![],
+            description: String::new(),
             rollup: None,
         }
     }
@@ -1722,6 +2268,80 @@ mod tests {
         tab.requests.list = Some(Ok(Arc::from([summary(state)])));
         tab.requests.details = Some(Ok(Arc::new(details(state))));
         tab
+    }
+
+    /// #143: the summary line reads "8 commits · 8 files changed · +607 −98", with the lines in
+    /// the theme's added and removed colours and the rest in the dim text.
+    #[test]
+    fn the_summary_line_colours_the_lines_like_other_diff_stats() {
+        let mut d = details(RequestState::Open);
+        d.commits = Some(8);
+        d.changed_files = Some(1);
+        d.additions = Some(607);
+        d.deletions = Some(98);
+        assert_eq!(
+            summary_stats(&d),
+            [
+                Stat::Text("8 commits".into()),
+                Stat::Text("1 file changed".into()),
+                Stat::Lines(607, 98),
+                Stat::Text("no conflicts".into()),
+            ]
+        );
+        for theme_id in theme::ThemeId::ALL {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme_id, theme::Appearance::STILL);
+            let mut p = None;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, SCREEN)),
+                    ..Default::default()
+                },
+                |ui| {
+                    p = Some(palette(ui.ctx()));
+                    body(ui, &d, 0, &mut Vec::new());
+                },
+            );
+            out.textures_delta.clear();
+            let p = p.expect("palette");
+            // Each painted text with the colour of each of its sections.
+            let mut inks = Vec::new();
+            for c in &out.shapes {
+                colours_of(&c.shape, &mut inks);
+            }
+            let colours = |text: &str| {
+                let (_, colours) = inks
+                    .iter()
+                    .find(|(t, _)| t == text)
+                    .unwrap_or_else(|| panic!("{text} not painted: {inks:?}"));
+                colours.clone()
+            };
+            assert_eq!(
+                colours("+607\u{2212}98"),
+                [p.success, p.danger.gamma_multiply(0.85)],
+                "{theme_id:?}"
+            );
+            assert_eq!(colours("8 commits"), [p.text_dim], "{theme_id:?}");
+            assert_eq!(colours("1 file changed"), [p.text_dim], "{theme_id:?}");
+        }
+    }
+
+    /// Each text in `shape` with the colour of each of its sections.
+    fn colours_of(shape: &egui::Shape, out: &mut Vec<(String, Vec<Color32>)>) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| colours_of(s, out)),
+            egui::Shape::Text(t) => out.push((
+                t.galley.text().to_owned(),
+                t.galley
+                    .job
+                    .sections
+                    .iter()
+                    .map(|s| s.format.color)
+                    .collect(),
+            )),
+            _ => {}
+        }
     }
 
     /// F3: a GitLab merge request is `!7` everywhere it is numbered; a GitHub pull request `#7`.
@@ -1836,6 +2456,215 @@ mod tests {
                 .find(|(t, _)| t == method.label())
                 .unwrap_or_else(|| panic!("{} not shown: {:?}", method.label(), frame.texts));
             assert!(!shown.1, "{} is cut short at {width}", method.label());
+        }
+    }
+
+    /// The shapes one frame of `f` paints on a pane of `size`.
+    fn painted(
+        theme_id: theme::ThemeId,
+        size: egui::Vec2,
+        mut f: impl FnMut(&mut Ui),
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme_id, theme::Appearance::STILL);
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            },
+            |ui| f(ui),
+        );
+        out.textures_delta.clear();
+        out.shapes
+    }
+
+    /// The colour `text` is painted in, and the left edge it starts at.
+    fn ink(shapes: &[egui::epaint::ClippedShape], text: &str) -> (Color32, f32) {
+        fn find(shape: &egui::Shape, text: &str) -> Option<(Color32, f32)> {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                egui::Shape::Text(t) if t.galley.text() == text => Some((
+                    t.override_text_color.unwrap_or(t.fallback_color),
+                    t.visual_bounding_rect().left(),
+                )),
+                _ => None,
+            }
+        }
+        shapes
+            .iter()
+            .find_map(|c| find(&c.shape, text))
+            .unwrap_or_else(|| panic!("{text:?} not painted"))
+    }
+
+    fn action_row(
+        theme_id: theme::ThemeId,
+        kind: ForgeKind,
+        state: RequestState,
+        width: f32,
+        tab: &mut RepoTab,
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let details = details(state);
+        painted(theme_id, vec2(width, 400.0), |ui| {
+            action_bar(
+                ui,
+                tab,
+                kind,
+                &details.summary,
+                Some(&details),
+                &mut Vec::new(),
+            );
+        })
+    }
+
+    /// #142: the header actions are one group of kit buttons with a single primary for the
+    /// state: Check out while the request is open, Open on the host otherwise.
+    #[test]
+    fn the_action_row_has_one_primary_for_the_state() {
+        for theme_id in theme::ThemeId::ALL {
+            let mut tab = test_tab();
+            let open = action_row(
+                theme_id,
+                ForgeKind::GitHub,
+                RequestState::Open,
+                560.0,
+                &mut tab,
+            );
+            let merged = action_row(
+                theme_id,
+                ForgeKind::GitHub,
+                RequestState::Merged,
+                560.0,
+                &mut tab,
+            );
+            let (check_out_open, _) = ink(&open, "Check out");
+            let (host_open, _) = ink(&open, "Open on GitHub");
+            let (check_out_merged, _) = ink(&merged, "Check out");
+            let (host_merged, _) = ink(&merged, "Open on GitHub");
+            let (copy, _) = ink(&open, "Copy link");
+            let (more, _) = ink(&open, "More");
+            assert_ne!(
+                check_out_open, host_open,
+                "{theme_id:?}: a primary and a secondary"
+            );
+            assert_eq!(check_out_open, host_merged, "{theme_id:?}: the primary");
+            assert_eq!(host_open, check_out_merged, "{theme_id:?}: the secondary");
+            assert_eq!(
+                [host_open, copy, more],
+                [host_open; 3],
+                "{theme_id:?}: one group"
+            );
+            // Left to right: the primary first.
+            assert!(ink(&open, "Check out").1 < ink(&open, "Open on GitHub").1);
+            assert!(ink(&merged, "Open on GitHub").1 < ink(&merged, "Check out").1);
+            assert!(ink(&open, "Open on GitHub").1 < ink(&open, "Copy link").1);
+            assert!(ink(&open, "Copy link").1 < ink(&open, "More").1);
+        }
+    }
+
+    /// #142: nothing says where the token came from while the credential works.
+    #[test]
+    fn no_credential_line_while_the_token_works() {
+        for source in [
+            crate::hosting::TokenSource::Saved,
+            crate::hosting::TokenSource::Environment,
+            crate::hosting::TokenSource::GitCredentials,
+        ] {
+            let mut tab = test_tab();
+            tab.requests.token = Some(Some(source));
+            let frame = render(theme::ThemeId::Midnight, vec2(560.0, 400.0), |ui| {
+                let details = details(RequestState::Open);
+                action_bar(
+                    ui,
+                    &mut tab,
+                    ForgeKind::GitHub,
+                    &details.summary,
+                    Some(&details),
+                    &mut Vec::new(),
+                );
+            });
+            for word in ["token", "credential", "Using"] {
+                assert!(
+                    !frame.mentions(word),
+                    "{source:?} shows {word}: {:?}",
+                    frame.texts
+                );
+            }
+        }
+    }
+
+    /// #142: a missing or refused token shows as a warning with its fix, and the fix opens
+    /// Settings.
+    #[test]
+    fn a_missing_or_refused_token_is_shown_with_its_fix() {
+        for (rejected, token, fix) in [
+            (false, Some(None), "Add a token…"),
+            // A host that wants a sign-in refuses a tokenless read; there is nothing to replace.
+            (true, Some(None), "Add a token…"),
+            (
+                true,
+                Some(Some(crate::hosting::TokenSource::Saved)),
+                "Replace the token…",
+            ),
+        ] {
+            let mut tab = test_tab();
+            tab.requests.token = token;
+            tab.requests.token_rejected = rejected;
+            let details = details(RequestState::Open);
+            let mut actions = Vec::new();
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+            ctx.enable_accesskit();
+            let mut run = |events: Vec<egui::Event>, actions: &mut Vec<Action>| {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(560.0, 700.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        action_bar(
+                            ui,
+                            &mut tab,
+                            ForgeKind::GitHub,
+                            &details.summary,
+                            Some(&details),
+                            actions,
+                        );
+                    },
+                );
+                out.textures_delta.clear();
+                out.platform_output.accesskit_update
+            };
+            let _ = run(Vec::new(), &mut actions);
+            let nodes = run(Vec::new(), &mut actions).expect("accesskit").nodes;
+            let button = nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some(fix))
+                .unwrap_or_else(|| panic!("no {fix:?} button"));
+            let b = button.1.bounds().expect("bounds");
+            let at = pos2(
+                crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+                crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+            );
+            let mut events = vec![egui::Event::PointerMoved(at)];
+            for pressed in [true, false] {
+                events.push(egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+            let _ = run(events, &mut actions);
+            assert!(
+                actions.iter().any(|a| matches!(a, Action::Settings)),
+                "{fix}: {actions:?}"
+            );
         }
     }
 
@@ -1982,23 +2811,6 @@ mod tests {
 
     /// F11: the two branch names keep their whole width while the row has it, and share the
     /// room fairly when it does not.
-    #[test]
-    fn branch_names_share_the_room_fairly() {
-        assert_eq!(fit_pair(100.0, 50.0, 200.0), (100.0, 50.0));
-        assert_eq!(fit_pair(300.0, 50.0, 200.0), (150.0, 50.0));
-        assert_eq!(fit_pair(50.0, 300.0, 200.0), (50.0, 150.0));
-        assert_eq!(fit_pair(300.0, 300.0, 200.0), (100.0, 100.0));
-        assert_eq!(fit_pair(300.0, 300.0, -4.0), (0.0, 0.0));
-    }
-
-    #[test]
-    fn a_cut_branch_name_keeps_both_its_ends() {
-        let name: Vec<char> = "feature/graph-lane-allocator".chars().collect();
-        assert_eq!(elide_middle(&name, 10), "featu…cator");
-        assert_eq!(elide_middle(&name, 9), "featu…ator");
-        assert_eq!(elide_middle(&name, 0), "…");
-    }
-
     /// F9: a row shows its labels and, once the request has been opened, its checks and review.
     #[test]
     fn a_row_carries_labels_checks_and_review() {
@@ -2157,6 +2969,24 @@ mod tests {
         assert!(frame.has(icon::CHECK_CIRCLE), "{:?}", frame.texts);
         assert!(frame.has(icon::THUMBS_UP), "{:?}", frame.texts);
         assert!(!frame.has(icon::X_CIRCLE), "{:?}", frame.texts);
+        // A request nothing is known about (no rollup, never opened) says so instead of showing
+        // what a request without checks shows.
+        let mut nine = summary(RequestState::Open);
+        nine.number = 9;
+        let frame = draw(vec![nine]);
+        assert!(frame.has(icon::QUESTION), "{:?}", frame.texts);
+        let mut ten = summary(RequestState::Open);
+        ten.number = 10;
+        ten.rollup = Some(Rollup {
+            checks: None,
+            review: None,
+        });
+        let frame = draw(vec![ten]);
+        assert!(
+            !frame.has(icon::QUESTION),
+            "a rollup of nothing is known: {:?}",
+            frame.texts
+        );
     }
 
     /// F6: with the list failed, the list pane stays short and leaves the way out to the details
@@ -2363,5 +3193,715 @@ mod tests {
         assert!((list.width() - wanted).abs() < 1.0, "{list:?}");
         let saved = egui::containers::panel::PanelState::load(&ctx, panel).expect("saved");
         assert!((saved.size().x - wanted).abs() < 1.0, "{saved:?}");
+    }
+
+    // ---------------------------------------------------------------------- number, preview, view
+
+    fn request(number: u64, title: &str, author: &str, description: &str) -> RequestSummary {
+        RequestSummary {
+            number,
+            title: title.into(),
+            author: author.into(),
+            source_branch: format!("topic-{number}"),
+            target_branch: "release-branch".into(),
+            updated_at: 1_000 - i64::try_from(number).unwrap_or(0),
+            created_at: i64::try_from(number).unwrap_or(0),
+            description: description.into(),
+            ..summary(RequestState::Open)
+        }
+    }
+
+    fn tab_with(rows: Vec<RequestSummary>) -> RepoTab {
+        let mut tab = test_tab();
+        tab.requests.list = Some(Ok(rows.into()));
+        tab
+    }
+
+    #[test]
+    fn a_row_leads_with_its_number_shows_a_preview_and_no_branches() {
+        let mut tab = tab_with(vec![
+            request(
+                7,
+                "Add keyboard help",
+                "ann",
+                "Explains the single-key shortcuts.",
+            ),
+            request(8, "Tidy settings", "bob", ""),
+        ]);
+        let frame = render(theme::ThemeId::Midnight, SCREEN, |ui| {
+            list(
+                ui,
+                &mut tab,
+                ForgeKind::GitHub,
+                Color32::BLACK,
+                &mut Vec::new(),
+            );
+        });
+        assert!(frame.has("#7 Add keyboard help"), "{:?}", frame.texts);
+        assert!(frame.has("#8 Tidy settings"), "{:?}", frame.texts);
+        assert!(
+            frame.has("Explains the single-key shortcuts."),
+            "{:?}",
+            frame.texts
+        );
+        assert!(
+            frame.mentions("ann  ·  "),
+            "author and age on the second line"
+        );
+        assert!(
+            !frame.mentions("topic-7") && !frame.mentions("release-branch") && !frame.mentions("→"),
+            "the branch line is gone from the row: {:?}",
+            frame.texts
+        );
+        let described = frame
+            .nodes
+            .iter()
+            .find(|(name, _)| name.starts_with("Open request #7 Add keyboard help by ann"))
+            .unwrap_or_else(|| panic!("no row named for #7: {:?}", frame.nodes));
+        assert!(described.0.contains("Explains the single-key shortcuts."));
+        let plain = frame
+            .nodes
+            .iter()
+            .find(|(name, _)| name.starts_with("Open request #8"))
+            .expect("a row for #8");
+        assert!(
+            !plain.0.contains(". "),
+            "no description, nothing extra: {}",
+            plain.0
+        );
+    }
+
+    #[test]
+    fn a_long_title_wraps_to_two_lines_before_it_is_cut_and_a_description_adds_height() {
+        let ctx = kit::testkit::ctx();
+        let kinds = ForgeKind::GitHub;
+        let long_title =
+            "Stream large diffs through the virtual list without materialising every hunk";
+        let very_long = "word ".repeat(80);
+        let measure = |title: &str, description: &str, width: f32| {
+            let mut out = None;
+            let r = request(12, title, "ann", description);
+            kit::testkit::frame(&ctx, Vec::new(), |ui| {
+                out = Some(RowLayout::new(ui.painter(), &r, kinds, 2, width, 0));
+            });
+            out.expect("laid out")
+        };
+        let base = RowKind::Request.height();
+        let short = measure("Fix it", "", 480.0);
+        assert_eq!(short.title.rows.len(), 1);
+        assert!(!short.title.elided);
+        assert!(
+            (short.height - base).abs() < f32::EPSILON,
+            "a plain row keeps its height"
+        );
+        assert!(short.description.is_none());
+
+        let wide = measure(long_title, "", 700.0);
+        assert_eq!(
+            wide.title.rows.len(),
+            1,
+            "it fits on one line when there is room"
+        );
+        let narrow = measure(long_title, "", 400.0);
+        assert_eq!(narrow.title.rows.len(), 2, "else it takes a second line");
+        assert!(!narrow.title.elided, "and is not cut while it fits in two");
+        assert!(narrow.height > wide.height);
+        let cut = measure(&very_long, "", 400.0);
+        assert_eq!(cut.title.rows.len(), 2);
+        assert!(
+            cut.title.elided,
+            "only a title that fills both lines is cut"
+        );
+
+        let described = measure("Fix it", &"Explains why. ".repeat(40), 480.0);
+        let description = described.description.as_ref().expect("a description");
+        assert_eq!(description.rows.len(), 2, "at most two lines of it");
+        assert!(description.elided, "with an ellipsis at the end");
+        assert!(described.height > base, "the row grows to hold it");
+    }
+
+    #[test]
+    fn the_visible_rows_follow_the_heights_they_have() {
+        let heights = [64.0, 100.0, 64.0, 64.0, 100.0];
+        let span = |top, min, max| visible_span(&heights, top, egui::Rangef::new(min, max));
+        let all = span(0.0, 0.0, 1_000.0);
+        assert_eq!((all.range.clone(), all.before, all.after), (0..5, 0.0, 0.0));
+        // Rows 1 and 2 are in a window of 70..200; the first is above, the rest below.
+        let middle = span(0.0, 70.0, 200.0);
+        assert_eq!(middle.range, 1..3);
+        assert_eq!((middle.before, middle.after), (64.0, 164.0));
+        // The list's top is above the window by what has scrolled.
+        let scrolled = span(-300.0, 0.0, 100.0);
+        assert_eq!(
+            scrolled.range.start, 4,
+            "only the last row is still in view"
+        );
+        assert!(span(0.0, 0.0, 0.0).range.is_empty());
+        assert!(
+            visible_span(&[], 0.0, egui::Rangef::new(0.0, 100.0))
+                .range
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_list_shows_what_the_view_keeps_in_the_order_it_asks_for() {
+        let mut rows = vec![
+            request(
+                31,
+                "Stream large diffs",
+                "lucia",
+                "Large diffs no longer allocate.",
+            ),
+            request(12, "Add keyboard help", "maya", ""),
+            request(27, "Fix the graph lanes", "sam", "Closes #12"),
+        ];
+        // The host lists them most recently updated first.
+        for (row, updated) in rows.iter_mut().zip([900, 800, 700]) {
+            row.updated_at = updated;
+        }
+        let mut tab = tab_with(rows);
+        let numbers_shown = |tab: &mut RepoTab| {
+            let frame = render(theme::ThemeId::Midnight, SCREEN, |ui| {
+                list(ui, tab, ForgeKind::GitHub, Color32::BLACK, &mut Vec::new());
+            });
+            let order: Vec<String> = frame
+                .texts
+                .iter()
+                .filter(|(t, _)| t.starts_with('#'))
+                .map(|(t, _)| t.split(' ').next().unwrap_or_default().to_owned())
+                .collect();
+            (order, tab.requests.shown.clone())
+        };
+        let (order, shown) = numbers_shown(&mut tab);
+        assert_eq!(order, ["#31", "#12", "#27"]);
+        assert_eq!(shown, Some(vec![31, 12, 27]), "the host's order by default");
+
+        tab.request_view.sort = RequestSort::Number;
+        let (order, shown) = numbers_shown(&mut tab);
+        assert_eq!(order, ["#12", "#27", "#31"]);
+        assert_eq!(
+            shown,
+            Some(vec![12, 27, 31]),
+            "the arrow keys walk this order"
+        );
+
+        tab.request_view.text = "allocate".into();
+        let (order, shown) = numbers_shown(&mut tab);
+        assert_eq!(order, ["#31"], "the description is searched");
+        assert_eq!(shown, Some(vec![31]));
+
+        tab.request_view.text.clear();
+        tab.request_view.author = Some("sam".into());
+        let (order, _) = numbers_shown(&mut tab);
+        assert_eq!(order, ["#27"]);
+    }
+
+    #[test]
+    fn a_request_to_focus_the_filter_does_not_wait_for_a_field() {
+        let draw = |tab: &mut RepoTab| {
+            render(theme::ThemeId::Midnight, SCREEN, |ui| {
+                list(ui, tab, ForgeKind::GitHub, Color32::BLACK, &mut Vec::new());
+            });
+        };
+        let mut tab = tab_with(Vec::new());
+        tab.requests.focus_filter = true;
+        draw(&mut tab);
+        assert!(!tab.requests.focus_filter, "no field was drawn to take it");
+
+        tab.requests.list = Some(Ok(vec![request(1, "Add help", "ann", "")].into()));
+        draw(&mut tab);
+        assert!(
+            !tab.requests.focus_filter,
+            "a later list's field is not stolen"
+        );
+    }
+
+    #[test]
+    fn the_arrow_keys_walk_the_shown_order() {
+        let mut tab = tab_with(vec![
+            request(31, "Stream", "lucia", ""),
+            request(12, "Help", "maya", ""),
+            request(27, "Lanes", "sam", ""),
+        ]);
+        tab.request_view.sort = RequestSort::Number;
+        render(theme::ThemeId::Midnight, SCREEN, |ui| {
+            list(
+                ui,
+                &mut tab,
+                ForgeKind::GitHub,
+                Color32::BLACK,
+                &mut Vec::new(),
+            );
+        });
+        tab.requests.selected = Some(12);
+        tab.move_request(1);
+        assert_eq!(
+            tab.requests.selected,
+            Some(27),
+            "the next row, not the next loaded"
+        );
+        tab.move_request(isize::MAX);
+        assert_eq!(tab.requests.selected, Some(31));
+        tab.move_request(isize::MIN);
+        assert_eq!(tab.requests.selected, Some(12));
+    }
+
+    #[test]
+    fn the_status_of_a_request_follows_the_rollup_for_the_filters() {
+        let ctx = egui::Context::default();
+        let tab = test_tab();
+        let mut r = request(5, "Checked", "ann", "");
+        r.rollup = Some(Rollup {
+            checks: Some(CheckState::Failure),
+            review: Some(ReviewDecision::Required),
+        });
+        let standing = row_signals(&ctx, &tab, &r)
+            .map(Signals::standing)
+            .expect("the rollup is known");
+        assert_eq!(standing.checks, Some(ChecksChoice::Failed));
+        assert_eq!(standing.review, Some(ReviewChoice::Required));
+        r.rollup = Some(Rollup {
+            checks: Some(CheckState::Neutral),
+            review: None,
+        });
+        let standing = row_signals(&ctx, &tab, &r)
+            .map(Signals::standing)
+            .expect("known");
+        assert_eq!(standing, Standing::default(), "neutral checks say nothing");
+        r.rollup = None;
+        assert!(
+            row_signals(&ctx, &tab, &r).is_none(),
+            "unknown stays unknown"
+        );
+    }
+
+    #[test]
+    fn an_empty_result_says_so_and_clearing_the_filters_brings_the_rows_back() {
+        let mut tab = tab_with(vec![request(7, "Add keyboard help", "ann", "")]);
+        tab.request_view.text = "zzz".into();
+        tab.request_view.sort = RequestSort::Title;
+        tab.forges = vec![(
+            "origin".to_owned(),
+            canopy_core::forge::Forge::parse("https://github.com/acme/widgets.git", &[])
+                .expect("a GitHub remote"),
+        )];
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot {
+            common_dir: "/fixture/.git".into(),
+            ..Default::default()
+        }));
+        let ctx = kit::testkit::ctx();
+        let mut actions = Vec::new();
+        let draw = |tab: &mut RepoTab, actions: &mut Vec<Action>, events| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, SCREEN)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| list(ui, tab, ForgeKind::GitHub, Color32::BLACK, actions),
+            );
+            out.textures_delta.clear();
+        };
+        ctx.enable_accesskit();
+        draw(&mut tab, &mut actions, Vec::new());
+        let spoken_now = |ctx: &egui::Context, tab: &mut RepoTab, actions: &mut Vec<Action>| {
+            kit::testkit::spoken(ctx, |ui| {
+                list(ui, tab, ForgeKind::GitHub, Color32::BLACK, actions);
+            })
+        };
+        let nodes = spoken_now(&ctx, &mut tab, &mut actions);
+        let texts: Vec<_> = nodes.iter().filter_map(|n| n.label.clone()).collect();
+        assert!(
+            texts.iter().any(|t| t == "Clear filters"),
+            "the empty state offers the way out: {texts:?}"
+        );
+        let target = nodes
+            .iter()
+            .filter(|n| n.label.as_deref() == Some("Clear filters"))
+            .find_map(|n| n.bounds)
+            .expect("the button has a place");
+        draw(&mut tab, &mut actions, kit::testkit::press(target.center()));
+        draw(
+            &mut tab,
+            &mut actions,
+            kit::testkit::release(target.center()),
+        );
+        assert!(tab.request_view.text.is_empty(), "{:?}", tab.request_view);
+        assert_eq!(
+            tab.request_view.sort,
+            RequestSort::Title,
+            "the sort is a choice of its own and stays"
+        );
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                Action::RememberRequestView { view, .. } if view.filters() == 0
+            )),
+            "the cleared view is queued for saving: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn the_filter_controls_are_named_and_reachable() {
+        let mut tab = tab_with(vec![request(7, "Add keyboard help", "ann", "")]);
+        tab.forges = vec![(
+            "origin".to_owned(),
+            canopy_core::forge::Forge::parse("https://github.com/acme/widgets.git", &[])
+                .expect("a GitHub remote"),
+        )];
+        let ctx = kit::testkit::ctx();
+        let nodes = kit::testkit::spoken(&ctx, |ui| {
+            list(
+                ui,
+                &mut tab,
+                ForgeKind::GitHub,
+                Color32::BLACK,
+                &mut Vec::new(),
+            );
+        });
+        let named = |part: &str| {
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref().is_some_and(|l| l.contains(part)))
+        };
+        assert!(named("Filter pull requests"), "the text field");
+        assert!(
+            named("Filter by draft, checks, review or author"),
+            "the filters"
+        );
+        assert!(
+            named("Sort requests: Recently updated"),
+            "the sort, with its choice"
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.role == egui::accesskit::Role::List
+                    && n.label.as_deref() == Some("Requests")),
+            "the rows are a named list"
+        );
+        tab.request_view.draft = Some(DraftChoice::Drafts);
+        tab.request_view.sort = RequestSort::Author;
+        let nodes = kit::testkit::spoken(&ctx, |ui| {
+            list(
+                ui,
+                &mut tab,
+                ForgeKind::GitHub,
+                Color32::BLACK,
+                &mut Vec::new(),
+            );
+        });
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref() == Some("Filters: 1 on")),
+            "the active filters are counted in the button's name"
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref() == Some("Sort requests: Author")),
+        );
+    }
+
+    #[test]
+    fn a_filter_chosen_in_the_popover_narrows_the_list_and_keeps_the_popover_open() {
+        let mut tab = tab_with(vec![
+            request(31, "Stream large diffs", "lucia", ""),
+            request(12, "Add keyboard help", "maya", ""),
+        ]);
+        tab.requests.list = Some(Ok(Arc::from([
+            request(31, "Stream large diffs", "lucia", ""),
+            RequestSummary {
+                draft: true,
+                ..request(12, "Add keyboard help", "maya", "")
+            },
+        ])));
+        tab.forges = vec![(
+            "origin".to_owned(),
+            canopy_core::forge::Forge::parse("https://github.com/acme/widgets.git", &[])
+                .expect("a GitHub remote"),
+        )];
+        let ctx = kit::testkit::ctx();
+        ctx.enable_accesskit();
+        let mut actions = Vec::new();
+        let mut draw = |tab: &mut RepoTab, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, SCREEN)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| list(ui, tab, ForgeKind::GitHub, Color32::BLACK, &mut actions),
+            );
+            out.textures_delta.clear();
+            out.platform_output
+                .accesskit_update
+                .map(|u| {
+                    u.nodes
+                        .into_iter()
+                        .filter_map(|(_, n)| {
+                            let at = n.bounds()?;
+                            let at = Rect::from_min_max(
+                                pos2(crate::ui::to_f32(at.x0), crate::ui::to_f32(at.y0)),
+                                pos2(crate::ui::to_f32(at.x1), crate::ui::to_f32(at.y1)),
+                            );
+                            Some((n.label()?.to_owned(), at))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        let click = |nodes: &[(String, Rect)], name: &str| {
+            let (_, at) = nodes
+                .iter()
+                .find(|(label, _)| label == name)
+                .unwrap_or_else(|| panic!("no {name}: {nodes:?}"));
+            at.center()
+        };
+        let nodes = draw(&mut tab, Vec::new());
+        let at = click(&nodes, "Filter by draft, checks, review or author");
+        draw(&mut tab, kit::testkit::press(at));
+        draw(&mut tab, kit::testkit::release(at));
+        let nodes = draw(&mut tab, Vec::new());
+        let nodes = if nodes.iter().any(|(l, _)| l == "Draft") {
+            nodes
+        } else {
+            draw(&mut tab, Vec::new())
+        };
+        let at = click(&nodes, "Draft");
+        draw(&mut tab, kit::testkit::press(at));
+        draw(&mut tab, kit::testkit::release(at));
+        let nodes = draw(&mut tab, Vec::new());
+        let at = click(&nodes, "Drafts only");
+        draw(&mut tab, kit::testkit::press(at));
+        draw(&mut tab, kit::testkit::release(at));
+        draw(&mut tab, Vec::new());
+        let nodes = draw(&mut tab, Vec::new());
+        assert_eq!(tab.request_view.draft, Some(DraftChoice::Drafts));
+        assert_eq!(tab.requests.shown, Some(vec![12]), "only the draft is left");
+        assert!(
+            nodes.iter().any(|(l, _)| l == "Review"),
+            "the popover is still open after a choice: {nodes:?}"
+        );
+        // Esc closes the popover (no list is open to take it).
+        draw(&mut tab, kit::testkit::key(egui::Key::Escape));
+        let nodes = draw(&mut tab, Vec::new());
+        assert!(!nodes.iter().any(|(l, _)| l == "Review"), "{nodes:?}");
+    }
+
+    // ---------------------------------------------------------------------------- the scroll bar
+
+    /// `count` requests with the busiest right edge a row has: a title that wraps, a description,
+    /// three labels, and a checks glyph and a review glyph.
+    fn overflowing(count: u64) -> RepoTab {
+        let rows = (1..=count)
+            .map(|n| RequestSummary {
+                labels: vec!["bug".into(), "accessibility".into(), "needs design".into()],
+                rollup: Some(Rollup {
+                    checks: Some(CheckState::Failure),
+                    review: Some(ReviewDecision::ChangesRequested),
+                }),
+                ..request(
+                    n,
+                    "A title that is long enough to wrap onto a second line in a narrow list",
+                    "maya-chen",
+                    "What the change does, in a sentence or two of plain text.",
+                )
+            })
+            .collect();
+        tab_with(rows)
+    }
+
+    /// What `list` paints at `size` after a few frames (the bar needs one to know the rows
+    /// overflow), with the pointer over the rows and, when `to_the_end`, the wheel turned far
+    /// enough to reach the last row; and the right edge of the panel it ran in.
+    fn list_painted(
+        tab: &mut RepoTab,
+        size: egui::Vec2,
+        to_the_end: bool,
+    ) -> (Vec<egui::epaint::ClippedShape>, f32) {
+        let ctx = kit::testkit::ctx();
+        let (mut right, mut shapes) = (0.0, Vec::new());
+        for step in 0..6_u8 {
+            let mut events = Vec::new();
+            if step == 1 {
+                events.push(egui::Event::PointerMoved(pos2(size.x / 2.0, size.y / 2.0)));
+            }
+            if to_the_end && step == 2 {
+                events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(0.0, -1.0e6),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(f64::from(step) * 0.05),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    right = ui.max_rect().right();
+                    list(ui, tab, ForgeKind::GitHub, Color32::BLACK, &mut Vec::new());
+                },
+            );
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        (shapes, right)
+    }
+
+    /// The owner's report: the bar must be visible and must never sit over a status glyph or a
+    /// label chip. The bar keeps its own lane (`solid_scroll`), the handle is the kit's, and
+    /// every part of a row ends at least a handle, its margin and a gutter short of it.
+    #[test]
+    fn the_scroll_bar_is_visible_and_keeps_its_lane_clear_of_every_row() {
+        let solid = theme::solid_scroll();
+        // The handle at its widest (hovered), its margin and a gutter: the least a row may leave.
+        let clear = solid.bar_width + solid.bar_inner_margin + theme::XS;
+        for size in [vec2(420.0, 600.0), vec2(320.0, 480.0), vec2(800.0, 900.0)] {
+            let mut tab = overflowing(40);
+            let (shapes, right) = list_painted(&mut tab, size, false);
+            let lane = right - solid.floating_allocated_width;
+            let (fills, inks) = kit::testkit::painted_colors(&shapes);
+            let handle = fills
+                .iter()
+                .map(|(rect, _)| *rect)
+                .find(|r| r.left() >= lane - 0.5 && r.width() <= solid.bar_width + 0.5)
+                .unwrap_or_else(|| panic!("no scroll bar handle in the lane at {size:?}"));
+            assert!(
+                handle.height() >= theme::SCROLL_HANDLE_MIN,
+                "{size:?}: a handle of {} is hard to grab",
+                handle.height()
+            );
+            // What a row paints: its text, and its label chips (the row's own band, a hover or a
+            // selection, is taller than a line and ends at the list's edge by design).
+            let rows = |r: &Rect| r.top() >= handle.top() - 0.5 && r.left() < lane;
+            let furthest = inks
+                .iter()
+                .map(|(r, _)| *r)
+                .chain(fills.iter().map(|(r, _)| *r).filter(|r| r.height() < 24.0))
+                .filter(rows)
+                .map(|r| r.right())
+                .fold(f32::MIN, f32::max);
+            assert!(
+                lane - furthest >= clear,
+                "{size:?}: a row reaches {furthest}, {} short of the lane at {lane}; needs {clear}",
+                lane - furthest
+            );
+        }
+    }
+
+    /// The last row scrolls clear of the bottom edge: its last line of text ends the row's own
+    /// padding and the list's room short of it.
+    /// The filter bar fits the panel it is in: its buttons took room the field did not leave, and
+    /// the overflow widened the list, so the scroll bar's lane sat 4 points past the panel's edge.
+    #[test]
+    fn the_filter_bar_does_not_outgrow_its_panel() {
+        let ctx = kit::testkit::ctx();
+        for width in [220.0_f32, 320.0, 560.0, 800.0] {
+            let mut tab = overflowing(3);
+            let items = match &tab.requests.list {
+                Some(Ok(rows)) => Arc::clone(rows),
+                _ => unreachable!("the tab has a list"),
+            };
+            let mut used = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    filter_bar(ui, &mut tab, &items, &mut Vec::new());
+                    used = ui.min_rect().right();
+                },
+            );
+            output.textures_delta.clear();
+            assert!(
+                used <= width + 0.5,
+                "the filter bar is {used} wide in a panel {width} wide"
+            );
+        }
+    }
+
+    #[test]
+    fn the_last_row_scrolls_clear_of_the_bottom_edge() {
+        let size = vec2(420.0, 600.0);
+        let mut tab = overflowing(40);
+        let (shapes, _) = list_painted(&mut tab, size, true);
+        let (_, inks) = kit::testkit::painted_colors(&shapes);
+        let lowest = inks
+            .iter()
+            .map(|(r, _)| r.bottom())
+            .fold(f32::MIN, f32::max);
+        assert!(
+            lowest <= size.y - 2.0 * theme::SM,
+            "the last line ends at {lowest} in a list {} high",
+            size.y
+        );
+    }
+
+    #[test]
+    fn the_list_follows_the_window_until_the_user_sets_a_width() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut tab = test_tab();
+        tab.forges = vec![(
+            "origin".to_owned(),
+            canopy_core::forge::Forge::parse("https://github.com/acme/widgets.git", &[])
+                .expect("a GitHub remote"),
+        )];
+        let mut t = 0.0;
+        let mut frame = |width: f32, events: Vec<egui::Event>, tab: &mut RepoTab| {
+            t += 0.05;
+            let mut shown = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 700.0))),
+                    time: Some(t),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    shown = show(ui, tab, true, &mut Vec::new())
+                        .map(|(list, handle)| (list, ui.ctx().read_response(handle)));
+                },
+            );
+            output.textures_delta.clear();
+            shown.expect("the list is shown")
+        };
+        let width_at = |room: f32| (room * LIST_SHARE).clamp(LIST_DEFAULT_MIN, LIST_DEFAULT_MAX);
+        for room in [1200.0, 1000.0, 1400.0] {
+            let (list, _) = frame(room, Vec::new(), &mut tab);
+            let (list_again, _) = frame(room, Vec::new(), &mut tab);
+            assert!(
+                (list.width() - width_at(room)).abs() < 1.0
+                    && (list_again.width() - list.width()).abs() < 1.0,
+                "an unset width follows the window: {room} gave {}",
+                list.width()
+            );
+        }
+        // The user sets one: it stays when the window changes.
+        let (_, handle) = frame(1200.0, Vec::new(), &mut tab);
+        let handle = handle.expect("the handle is shown");
+        ctx.memory_mut(|m| m.request_focus(handle.id));
+        let right = vec![egui::Event::Key {
+            key: egui::Key::ArrowRight,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+        frame(1200.0, right, &mut tab);
+        let (own, _) = frame(1200.0, Vec::new(), &mut tab);
+        let wanted = width_at(1200.0) + split::KEY_STEP;
+        assert!((own.width() - wanted).abs() < 1.0, "{own:?}");
+        let (smaller, _) = frame(1000.0, Vec::new(), &mut tab);
+        assert!((smaller.width() - wanted).abs() < 1.0, "{smaller:?}");
     }
 }

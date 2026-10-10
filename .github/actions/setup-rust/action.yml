@@ -65,10 +65,16 @@ runs:
           root="$RUNNER_TOOL_CACHE/rust"
         fi
         export CARGO_HOME="$root/cargo" RUSTUP_HOME="$root/rustup"
-        if [[ ! -x "$CARGO_HOME/bin/rustup" ]]; then
-          curl --proto '=https' --tlsv1.2 --retry 10 --location --silent --show-error --fail https://sh.rustup.rs \
-            | sh -s -- --default-toolchain none --no-modify-path -y
-        fi
+        # The installer script downloads rustup-init with no time limit, and one such download
+        # stalled for an hour (#144): each try gets five minutes where `timeout` exists.
+        limited() { if command -v timeout > /dev/null; then timeout -k 10 300 "$@"; else "$@"; fi; }
+        for try in 1 2 3; do
+          [[ -x "$CARGO_HOME/bin/rustup" ]] && break
+          (( try == 1 )) || echo "::warning::Installing rustup failed or stalled; try $try of 3."
+          limited bash -c "set -o pipefail; curl --proto '=https' --tlsv1.2 --retry 10 --connect-timeout 30 --location --silent --show-error --fail https://sh.rustup.rs \
+            | sh -s -- --default-toolchain none --no-modify-path -y" || true
+        done
+        [[ -x "$CARGO_HOME/bin/rustup" ]] || { echo "::error::Installing rustup failed three times."; exit 1; }
         echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
         echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
         echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
@@ -150,7 +156,7 @@ runs:
         echo "Toolchain: $channel"
         echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
-    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+    - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
       with:
         toolchain: ${{ steps.toolchain.outputs.channel }}
         components: ${{ inputs.components }}

@@ -8,7 +8,7 @@ use egui::{
 use egui_phosphor::regular as icon;
 
 use canopy_core::forge::Forge;
-use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, Signer, short_id};
+use canopy_core::{CommitDetails, DiffSource, FileEntry, SignatureStatus, short_id};
 
 use crate::action::Action;
 use crate::tab::{DetailsError, FileSelection, RepoTab};
@@ -17,7 +17,7 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{ChangeBadge, DiffStat};
 use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{ListRow, RowKind};
+use crate::ui::kit::row::{ListRow, RowKind, SectionHeader};
 use crate::ui::kit::{Button, IconButton, Size, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
@@ -33,7 +33,7 @@ pub fn show(
     let p = palette(ui.ctx());
     let s = p.s();
     let m = theme::metrics();
-    let headed = header(ui, tab);
+    let headed = header(ui, tab, settings, actions);
     let Some(d) = tab.details.clone() else {
         // A failed load stays on screen with its reason, so selecting the same commit again is
         // not the only way out.
@@ -77,52 +77,11 @@ pub fn show(
             } else {
                 theme::XS
             };
-            let note = crate::avatars::explain_tab(settings, tab).map(PictureNote::from);
-            author(ui, &d, tab, note.as_ref(), actions);
-            ui.horizontal_wrapped(|ui| {
-                if !d.parents.is_empty() {
-                    ui.label(
-                        RichText::new(if d.parents.len() == 1 {
-                            "Parent"
-                        } else {
-                            "Parents"
-                        })
-                        .size(m.meta_size)
-                        .color(p.text_dim),
-                    );
-                    for parent in &d.parents {
-                        let link = LinkButton::new(short_id(*parent))
-                            .text_size(m.sha_size)
-                            .show(ui)
-                            .kit_tooltip("Show this commit")
-                            .detail(parent.to_string())
-                            .show();
-                        if link.clicked() {
-                            tab.select_commit(*parent);
-                            tab.scroll_to_selected = true;
-                        }
-                    }
-                }
-                let id = LinkButton::new(short_id(d.oid))
-                    .text_size(m.sha_size)
-                    .show(ui)
-                    .kit_tooltip("Copy the commit id")
-                    .detail(d.oid.to_string())
-                    .show();
-                if id.clicked() {
-                    actions.push(Action::Copy(d.oid.to_string()));
-                }
-                ui.label(
-                    RichText::new(widgets::absolute_date_format(
-                        d.author.time,
-                        settings.iso_dates,
-                    ))
-                    .size(m.meta_size)
-                    .color(p.text_dim),
-                )
-                .kit_tooltip(widgets::full_date(d.author.time, d.author.offset_minutes))
-                .show();
-            });
+            if !headed {
+                let note = crate::avatars::explain_tab(settings, tab).map(PictureNote::from);
+                commit_facts(ui, &d, tab, note.as_ref(), actions);
+                ui.add_space(theme::SM);
+            }
             // Up to two whole file rows, the "N files changed" line above them (as tall as it
             // was last frame, at first one line of its text) and the gaps between them.
             let stats_key = ui.id().with("commit-file-stats-height");
@@ -131,6 +90,7 @@ pub fn show(
                 .unwrap_or_else(|| text_row(ui, m.meta_size));
             let files_min = file_row_height() * crate::ui::count_f32(d.files.len().min(2))
                 + stats_h
+                + m.section_header_height
                 + theme::XS * 2.0
                 + ui.spacing().item_spacing.y * 3.0;
             // What is left for the message, less the gaps around it.
@@ -139,8 +99,7 @@ pub fn show(
                 - theme::XS * 2.0
                 - ui.spacing().item_spacing.y * 2.0)
                 .max(0.0);
-            // The pane header already shows a summary that fits it; the column then shows the
-            // rest of the message.
+            // The pane header owns the summary; compact windows render it here.
             let summary = !headed;
             if summary || !body_of(&d).is_empty() {
                 let first_line = if summary {
@@ -153,6 +112,7 @@ pub fn show(
                 message_block(ui, room.max(first_line), |ui| message(ui, &d, summary));
             }
             ui.add_space(theme::XS);
+            SectionHeader::new("Changed files").first(true).show(ui);
             let measured = file_stats(ui, &d);
             if (measured - stats_h).abs() > 0.5 {
                 ui.data_mut(|data| data.insert_temp(stats_key, measured));
@@ -175,31 +135,40 @@ pub fn show(
 /// body scrolls in its block.
 const BODY_LINES: usize = 2;
 
-/// The least height History gives the details pane when it sizes the pane itself: the pane header
-/// and the commit column as [`show`] lays it out for `d` (any commit while it loads): the author
-/// and SHA rows, the first lines of the message's body, the changed-files line and the file rows
-/// it keeps in view. A longer body scrolls in its block.
+/// The header, description's first lines and two file rows kept visible by History's automatic
+/// pane sizing. Long descriptions and additional files scroll independently.
 pub fn natural_height(ui: &Ui, d: Option<&CommitDetails>) -> f32 {
     let m = theme::metrics();
-    let gap = theme::XS;
-    let row = ui.spacing().interact_size.y;
-    let author = row.max(m.avatar_detail);
-    let sha = row.max(Size::Xs.height());
-    let fact = text_row(ui, m.meta_size);
     let (body_lines, files) = d.map_or((0, 2), |d| {
-        let body = body_of(d).lines().filter(|l| !l.trim().is_empty());
-        (body.take(BODY_LINES).count(), d.files.len().min(2))
+        (
+            body_of(d)
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .take(BODY_LINES)
+                .count(),
+            d.files.len().min(2),
+        )
     });
     let body = if body_lines > 0 {
-        crate::ui::count_f32(body_lines) * fact + theme::XS + gap
+        crate::ui::count_f32(body_lines) * text_row(ui, m.meta_size) + theme::XS * 2.0
     } else {
         0.0
     };
-    let files = file_row_height() * crate::ui::count_f32(files)
+    let header = d.map_or(m.pane_header_height, |d| header_height(ui, d));
+    header
+        + m.detail_pad.y * 2.0
+        + body
+        + m.section_header_height
         + text_row(ui, m.meta_size)
+        + file_row_height() * crate::ui::count_f32(files)
         + theme::XS * 2.0
-        + gap * 3.0;
-    m.pane_header_height + m.detail_pad.y * 2.0 + author + gap + sha + gap + body + files
+        + ui.spacing().item_spacing.y * 3.0
+}
+
+fn header_height(ui: &Ui, d: &CommitDetails) -> f32 {
+    ui.ctx()
+        .data(|data| data.get_temp::<f32>(egui::Id::new(("commit-header-height", d.oid))))
+        .unwrap_or(theme::metrics().pane_header_height)
 }
 
 /// The height of one line of text at `size` (an icon row of the same size included).
@@ -211,29 +180,39 @@ fn text_row(ui: &Ui, size: f32) -> f32 {
     })
 }
 
-/// Pane navigation belongs to the commit, including when its files have not loaded: the commit's
-/// summary and the Expand / Back to history button on one header row. Returns whether it showed
-/// the whole summary (false in a compact window, which has no header, or when it was cut).
-fn header(ui: &mut Ui, tab: &mut RepoTab) -> bool {
+/// The summary and navigation lead the header; identity and ids share its row when they fit,
+/// otherwise they wrap on a second row. Compact windows move these facts into the card.
+fn header(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    settings: &crate::settings::Settings,
+    actions: &mut Vec<Action>,
+) -> bool {
     if tab.history_layout.compact {
         return false;
     }
     let p = palette(ui.ctx());
     let m = theme::metrics();
+    let details = tab.details.clone();
+    let height = details
+        .as_deref()
+        .map_or(m.pane_header_height, |d| header_height(ui, d));
     egui::Panel::top("commit-pane-header")
-        .exact_size(m.pane_header_height)
+        .exact_size(height)
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            let font = FontId::new(m.body_size, theme::semibold());
             let row = ui.max_rect();
             paint_header_strip(ui, row);
-            let inner = Rect::from_min_max(
+            let top = Rect::from_min_max(
                 pos2(row.left() + PANE_HEADER_PAD.0, row.top()),
-                pos2(row.right() - PANE_HEADER_PAD.1, row.bottom()),
+                pos2(
+                    row.right() - PANE_HEADER_PAD.1,
+                    row.top() + m.pane_header_height,
+                ),
             );
             let mut buttons = ui.new_child(
                 UiBuilder::new()
-                    .max_rect(inner)
+                    .max_rect(top)
                     .layout(Layout::right_to_left(Align::Center)),
             );
             let (glyph, label) = if tab.history_layout.expanded {
@@ -248,39 +227,142 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) -> bool {
                 .id_salt("commit-pane-expand")
                 .enabled(tab.selected_commit.is_some())
                 .show(&mut buttons);
-            let summary_rect = Rect::from_min_max(
-                inner.min,
-                pos2(toggle.rect.left() - theme::SM, inner.bottom()),
-            );
+            let mut summary_end = toggle.rect.left() - theme::SM;
+            let mut measured = m.pane_header_height;
+            if let Some(d) = details.as_deref() {
+                let width = facts_width(ui, d);
+                let inline = width + m.body_size * 4.0 <= summary_end - top.left();
+                let facts = if inline {
+                    summary_end -= width + theme::SM;
+                    Rect::from_min_max(
+                        pos2(summary_end + theme::SM, top.top()),
+                        pos2(toggle.rect.left() - theme::SM, top.bottom()),
+                    )
+                } else {
+                    Rect::from_min_max(
+                        pos2(top.left(), top.bottom()),
+                        pos2(top.right(), row.bottom().max(top.bottom())),
+                    )
+                };
+                let mut facts_ui = ui.new_child(
+                    UiBuilder::new()
+                        .max_rect(facts)
+                        .layout(Layout::left_to_right(Align::Center)),
+                );
+                let note = crate::avatars::explain_tab(settings, tab).map(PictureNote::from);
+                let used = commit_facts(&mut facts_ui, d, tab, note.as_ref(), actions);
+                if !inline {
+                    measured += used.height() + theme::XS;
+                }
+                let id = egui::Id::new(("commit-header-height", d.oid));
+                if (measured - height).abs() > 0.5 {
+                    ui.ctx().data_mut(|data| data.insert_temp(id, measured));
+                    ui.ctx().request_repaint();
+                }
+            }
+            let summary_rect =
+                Rect::from_min_max(top.min, pos2(summary_end.max(top.left()), top.bottom()));
             let mut summary_ui = ui.new_child(
                 UiBuilder::new()
                     .max_rect(summary_rect)
                     .layout(Layout::left_to_right(Align::Center)),
             );
             summary_ui.set_clip_rect(summary_rect.intersect(ui.clip_rect()));
-            let summary = tab.details.as_ref().map_or("Commit details", |d| {
+            let summary = details.as_ref().map_or("Commit details", |d| {
                 d.message.lines().next().unwrap_or("").trim()
             });
-            let whole = ui
-                .fonts_mut(|f| f.layout_no_wrap(summary.to_owned(), font.clone(), p.text))
-                .size()
-                .x
-                <= summary_rect.width();
-            let shown = summary_ui.add(
-                egui::Label::new(RichText::new(summary).font(font).color(p.text))
-                    .truncate()
-                    .show_tooltip_when_elided(false),
-            );
-            if !whole {
-                shown.kit_tooltip(summary).show();
-            }
+            let font = FontId::new(m.body_size, theme::semibold());
+            summary_ui
+                .add(egui::Label::new(RichText::new(summary).font(font).color(p.text)).truncate())
+                .kit_tooltip(summary)
+                .show();
             if toggle.clicked() {
                 tab.history_layout.expanded = !tab.history_layout.expanded;
                 tab.history_layout.compact_details = true;
             }
-            whole && tab.details.is_some()
-        })
-        .inner
+        });
+    details.is_some()
+}
+
+fn facts_width(ui: &Ui, d: &CommitDetails) -> f32 {
+    let m = theme::metrics();
+    let ink = palette(ui.ctx()).text;
+    ui.fonts_mut(|fonts| {
+        let mut width = |text: String, size| {
+            fonts
+                .layout_no_wrap(text, FontId::new(size, theme::medium()), ink)
+                .size()
+                .x
+        };
+        let name = width(d.committer.name.clone(), m.body_size).min(m.detail_info_width / 3.0);
+        let ids = width(format!("Commit {}", short_id(d.oid)), m.body_size)
+            + m.button_pad_x_sm * 2.0
+            + d.parents
+                .iter()
+                .map(|oid| width(format!("Parent {}", short_id(*oid)), m.sha_size))
+                .sum::<f32>();
+        m.avatar_detail
+            + name
+            + m.icon_md
+            + ids
+            + theme::SM * crate::ui::count_f32(d.parents.len() + 4)
+    })
+}
+
+fn commit_facts(
+    ui: &mut Ui,
+    d: &CommitDetails,
+    tab: &mut RepoTab,
+    note: Option<&PictureNote>,
+    actions: &mut Vec<Action>,
+) -> Rect {
+    let m = theme::metrics();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = theme::SM;
+        committer(ui, d, tab, note, actions);
+        let copy = Button::new(format!("Commit {}", short_id(d.oid)))
+            .ghost()
+            .size(Size::Xs)
+            .show(ui)
+            .kit_tooltip("Copy the commit id")
+            .detail(d.oid.to_string())
+            .show();
+        copy.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("Copy commit {}", d.oid),
+            )
+        });
+        if copy.clicked() {
+            actions.push(Action::Copy(d.oid.to_string()));
+        }
+        for (i, parent) in d.parents.iter().enumerate() {
+            let link = ui
+                .push_id(("parent", i, parent), |ui| {
+                    LinkButton::new(format!("Parent {}", short_id(*parent)))
+                        .text_size(m.sha_size)
+                        .show(ui)
+                })
+                .inner
+                .kit_tooltip("Show this parent commit")
+                .detail(parent.to_string())
+                .show();
+            link.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    true,
+                    format!("Show parent {} commit {parent}", i + 1),
+                )
+            });
+            if link.clicked() {
+                tab.select_commit(*parent);
+                tab.scroll_to_selected = true;
+            }
+        }
+    })
+    .response
+    .rect
 }
 
 /// Left and right insets of the detail header's content (concept 1's `.dh`).
@@ -307,7 +389,7 @@ pub(super) fn paint_header_strip(ui: &Ui, rect: Rect) {
     );
 }
 
-/// The commit message under the author and SHA rows, flush with them: its natural height up to
+/// The description above the file section, flush with the column: its natural height up to
 /// `room` (what the changed files' reserved rows leave, at least one line), scrolling past it
 /// behind a faded edge so no line is cut through its glyphs.
 fn message_block(ui: &mut Ui, room: f32, body: impl FnOnce(&mut Ui) -> bool) {
@@ -333,8 +415,7 @@ fn body_of(d: &CommitDetails) -> &str {
         .map_or("", |(_, rest)| rest.trim())
 }
 
-/// The commit message: its summary as a headline when `summary` (the pane header does not show
-/// it whole), then the rest of the message. Returns whether it drew anything.
+/// The commit message: its summary as a headline in compact mode, then the rest of the message. Returns whether it drew anything.
 fn message(ui: &mut Ui, d: &CommitDetails, summary: bool) -> bool {
     let p = palette(ui.ctx());
     let m = theme::metrics();
@@ -389,7 +470,7 @@ impl From<crate::avatars::Explanation> for PictureNote {
     }
 }
 
-fn author(
+fn committer(
     ui: &mut Ui,
     d: &CommitDetails,
     tab: &mut RepoTab,
@@ -397,48 +478,49 @@ fn author(
     actions: &mut Vec<Action>,
 ) {
     let forge = tab.forge().map(|(_, forge)| forge.clone());
-    ui.horizontal(|ui| {
-        tab.request_avatar(d.oid, &d.author.email);
+    {
+        tab.request_avatar(d.oid, &d.committer.email);
         let picture = tab
             .avatars
-            .get(&d.author.email)
+            .get(&d.committer.email)
             .map(egui::TextureHandle::id);
-        Avatar::new(Person::new(&d.author.name, &d.author.email).picture(picture))
+        Avatar::new(Person::new(&d.committer.name, &d.committer.email).picture(picture))
             .size(AvatarSize::Detail)
-            .id_salt(("commit-author", &d.author.email))
+            .id_salt(("commit-committer", &d.committer.email))
             .show(ui);
-        let name = LinkButton::new(&d.author.name).show(ui);
+        let name = LinkButton::new(&d.committer.name)
+            .max_text_width(theme::metrics().detail_info_width / 3.0)
+            .show(ui)
+            .kit_tooltip(&d.committer.name)
+            .show();
         name.widget_info(|| {
             egui::WidgetInfo::labeled(
                 egui::WidgetType::Button,
                 true,
-                format!("{} (author card)", d.author.name),
+                format!("{} (commit identity card)", d.committer.name),
             )
         });
-        let verified = tab
+        let status = tab
             .signature
             .as_ref()
             .filter(|(oid, _)| *oid == d.oid)
-            .and_then(|(_, status)| match status {
-                SignatureStatus::Verified(signer) => Some(signer.clone()),
-                _ => None,
-            });
-        if let Some(signer) = &verified {
-            verified_mark(ui, signer);
+            .map(|(_, status)| status.clone());
+        if let Some(status) = &status {
+            signature_mark(ui, status, false);
         }
-        Popover::new("commit-author", &name)
-            .width(AUTHOR_CARD_WIDTH)
-            .show(|ui| author_card(ui, d, forge.as_ref(), verified.as_ref(), note, actions));
-    });
+        Popover::new("commit-identity", &name)
+            .width(IDENTITY_CARD_WIDTH)
+            .show(|ui| identity_card(ui, d, forge.as_ref(), status.as_ref(), note, actions));
+    }
 }
 
-/// The card the author's name opens: who they are, whether the commit is verified, where to find
-/// them on the forge and, when pictures are kept away, why and how to turn them on.
-fn author_card(
+/// The committer's identity, the original author when different, signature verification and
+/// profile link, plus the explanation and settings action when pictures are kept away.
+fn identity_card(
     ui: &mut Ui,
     d: &CommitDetails,
     forge: Option<&Forge>,
-    verified: Option<&Signer>,
+    status: Option<&SignatureStatus>,
     note: Option<&PictureNote>,
     actions: &mut Vec<Action>,
 ) {
@@ -447,14 +529,14 @@ fn author_card(
     ui.spacing_mut().item_spacing.y = theme::XS;
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(&d.author.name)
+            RichText::new(&d.committer.name)
                 .font(FontId::new(m.body_size, theme::semibold()))
                 .color(p.text),
         );
     });
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(&d.author.email)
+            RichText::new(&d.committer.email)
                 .size(m.meta_size)
                 .color(p.text_dim),
         );
@@ -463,28 +545,22 @@ fn author_card(
             .show(ui)
             .clicked()
         {
-            actions.push(Action::Copy(d.author.email.clone()));
+            actions.push(Action::Copy(d.committer.email.clone()));
         }
     });
-    if let Some(by) = committed_by(d) {
+    if let Some(by) = authored_by(d) {
         ui.label(RichText::new(by).size(m.meta_size).color(p.text_dim));
     }
-    if let Some(signer) = verified {
-        ui.label(
-            RichText::new(format!("{} Signature verified", icon::SEAL_CHECK))
-                .size(m.meta_size)
-                .color(p.success),
-        );
-        for line in [signer.name.as_str(), signer.key.as_str()]
-            .into_iter()
-            .filter(|t| !t.is_empty())
-        {
-            ui.label(RichText::new(line).size(m.meta_size).color(p.text_dim));
-        }
+    if let Some(status) = status {
+        signature_mark(ui, status, true);
     }
     if let Some(forge) = forge {
-        let page = forge.author_page(&d.author.email);
-        let name = forge.kind.name();
+        let page = forge.author_page(&d.committer.email);
+        let name = if matches!(forge.host.as_str(), "github.com" | "gitlab.com") {
+            forge.kind.name().to_owned()
+        } else {
+            forge.host.clone()
+        };
         let label = if page.profile {
             format!("View profile on {name}")
         } else {
@@ -510,28 +586,67 @@ fn author_card(
     }
 }
 
-/// The check after the author's name for a commit whose signature git trusts. Nothing is drawn for
-/// any other signature: only a verified one is a claim worth a mark. The tooltip names the signer.
-fn verified_mark(ui: &mut Ui, signer: &Signer) {
+/// Signature results use different glyphs, tones and spoken names; only Verified is trusted.
+fn signature_mark(ui: &mut Ui, status: &SignatureStatus, text: bool) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
+    let (glyph, label, color, signer) = match status {
+        SignatureStatus::Unsigned => return,
+        SignatureStatus::Verified(signer) => (
+            icon::SEAL_CHECK,
+            "Signature verified",
+            p.success,
+            Some(signer),
+        ),
+        SignatureStatus::Invalid(signer) => {
+            (icon::X_CIRCLE, "Signature invalid", p.danger, Some(signer))
+        }
+        SignatureStatus::Unavailable => (
+            icon::QUESTION,
+            "Signature verification unavailable",
+            p.text_dim,
+            None,
+        ),
+        SignatureStatus::Untrusted(signer) => (
+            icon::WARNING_CIRCLE,
+            "Signature signer not trusted",
+            p.warning,
+            Some(signer),
+        ),
+        SignatureStatus::Expired(signer) => (
+            icon::WARNING_CIRCLE,
+            "Signature expired or revoked",
+            p.warning,
+            Some(signer),
+        ),
+    };
+    let content = if text {
+        format!("{glyph} {label}")
+    } else {
+        glyph.to_owned()
+    };
     let response = ui.add(
         egui::Label::new(
-            RichText::new(icon::SEAL_CHECK)
-                .size(m.icon_md)
-                .color(p.success),
+            RichText::new(content)
+                .size(if text { m.meta_size } else { m.icon_md })
+                .color(color),
         )
         .sense(egui::Sense::hover()),
     );
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Signature verified")
-    });
-    let detail = [signer.name.as_str(), signer.key.as_str()]
-        .into_iter()
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let tip = response.kit_tooltip("Signature verified");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    let detail = signer
+        .map(|s| {
+            [s.name.as_str(), s.key.as_str()]
+                .into_iter()
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    if text && !detail.is_empty() {
+        ui.label(RichText::new(&detail).size(m.meta_size).color(p.text_dim));
+    }
+    let tip = response.kit_tooltip(label);
     if detail.is_empty() {
         tip.show();
     } else {
@@ -539,14 +654,13 @@ fn verified_mark(ui: &mut Ui, signer: &Signer) {
     }
 }
 
-/// The width of the author card.
-const AUTHOR_CARD_WIDTH: f32 = 280.0;
+/// The width of the commit identity card.
+const IDENTITY_CARD_WIDTH: f32 = 280.0;
 
-/// "Committed by …" when someone other than the author made the commit (a cherry-pick, a rebase,
-/// an applied patch).
-fn committed_by(d: &CommitDetails) -> Option<String> {
+/// The author when someone else committed their work.
+fn authored_by(d: &CommitDetails) -> Option<String> {
     (d.committer.email != d.author.email || d.committer.name != d.author.name)
-        .then(|| format!("Committed by {} <{}>", d.committer.name, d.committer.email))
+        .then(|| format!("Authored by {} <{}>", d.author.name, d.author.email))
 }
 
 /// The "N files changed" line and its line counts; returns the height it took.
@@ -1003,6 +1117,119 @@ mod tests {
     }
 
     #[test]
+    fn the_header_exposes_commit_parent_and_committer_controls() {
+        let ctx = ctx(Density::Comfortable);
+        let root = tempfile::tempdir().expect("tab directory");
+        let mut tab = crate::tab::RepoTab::new(
+            root.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        let sig = |name: &str, email: &str| canopy_core::Signature {
+            name: name.into(),
+            email: email.into(),
+            time: 0,
+            offset_minutes: 0,
+        };
+        let oid = canopy_core::Oid::from_bytes(&[1; 20]).expect("oid");
+        let parent = canopy_core::Oid::from_bytes(&[2; 20]).expect("parent");
+        tab.details = Some(std::sync::Arc::new(canopy_core::CommitDetails {
+            oid,
+            message: "A commit summary".into(),
+            author: sig("Author", "author@example.com"),
+            committer: sig("Committer", "committer@example.com"),
+            parents: vec![parent],
+            files: Vec::new(),
+            stats_known: true,
+        }));
+        tab.selected_commit = Some(oid);
+        let settings = crate::settings::Settings::default();
+        let mut actions = Vec::new();
+        ctx.enable_accesskit();
+        let mut last = None;
+        for width in [360.0, 600.0, 900.0, 1200.0] {
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 400.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        super::header(ui, &mut tab, &settings, &mut actions);
+                    },
+                );
+                out.textures_delta.clear();
+                last = out.platform_output.accesskit_update;
+            }
+            let nodes = &last.as_ref().expect("accessible tree").nodes;
+            for name in [
+                format!("Copy commit {oid}"),
+                format!("Show parent 1 commit {parent}"),
+                "Committer (commit identity card)".into(),
+            ] {
+                let matching: Vec<_> = nodes
+                    .iter()
+                    .filter(|(_, node)| node.label() == Some(name.as_str()))
+                    .collect();
+                assert_eq!(matching.len(), 1, "unique {name} at {width}");
+                let bounds = matching[0].1.bounds().expect("bounds");
+                assert!(
+                    bounds.x0 >= 0.0 && bounds.x1 <= f64::from(width),
+                    "{name}: {bounds:?}"
+                );
+            }
+        }
+        // Reach the controls through ordinary Tab navigation; Enter performs their actual actions.
+        for target in [
+            format!("Copy commit {oid}"),
+            format!("Show parent 1 commit {parent}"),
+        ] {
+            let mut reached = false;
+            for _ in 0..20 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        events: crate::ui::kit::testkit::key(egui::Key::Tab),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        super::header(ui, &mut tab, &settings, &mut actions);
+                    },
+                );
+                out.textures_delta.clear();
+                let update = out
+                    .platform_output
+                    .accesskit_update
+                    .expect("accessible tree");
+                if update
+                    .nodes
+                    .iter()
+                    .any(|(id, node)| *id == update.focus && node.label() == Some(target.as_str()))
+                {
+                    reached = true;
+                    let mut activated = ctx.run_ui(
+                        egui::RawInput {
+                            events: crate::ui::kit::testkit::key(egui::Key::Enter),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            super::header(ui, &mut tab, &settings, &mut actions);
+                        },
+                    );
+                    activated.textures_delta.clear();
+                    break;
+                }
+            }
+            assert!(reached, "keyboard reaches {target}");
+        }
+        assert!(actions.iter().any(|action| matches!(action, crate::action::Action::Copy(value) if value == &oid.to_string())));
+        assert_eq!(tab.selected_commit, Some(parent));
+    }
+
+    #[test]
     fn a_selected_file_row_reveals_its_actions() {
         let ctx = ctx(Density::Comfortable);
         let f = entry();
@@ -1030,6 +1257,7 @@ mod tests {
     fn author_line(
         note: Option<&super::PictureNote>,
         keys: &[egui::Key],
+        status: Option<canopy_core::SignatureStatus>,
     ) -> (Vec<crate::action::Action>, Vec<String>) {
         let ctx = ctx(Density::Comfortable);
         ctx.enable_accesskit();
@@ -1055,6 +1283,7 @@ mod tests {
             files: Vec::new(),
             stats_known: true,
         };
+        tab.signature = status.map(|status| (d.oid, status));
         let mut actions = Vec::new();
         let mut labels = Vec::new();
         let frames = std::iter::once(None).chain(keys.iter().copied().map(Some));
@@ -1075,7 +1304,9 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ui| super::author(ui, &d, &mut tab, note, &mut actions),
+                |ui| {
+                    ui.horizontal(|ui| super::committer(ui, &d, &mut tab, note, &mut actions));
+                },
             );
             out.textures_delta.clear();
             labels = out
@@ -1084,12 +1315,47 @@ mod tests {
                 .map(|u| {
                     u.nodes
                         .iter()
-                        .filter_map(|(_, n)| n.label().map(str::to_owned))
+                        .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
                         .collect()
                 })
                 .unwrap_or_default();
         }
         (actions, labels)
+    }
+
+    #[test]
+    fn signature_badges_distinguish_verification_outcomes() {
+        use canopy_core::{SignatureStatus, Signer};
+        for (status, expected) in [
+            (
+                SignatureStatus::Verified(Signer::default()),
+                "Signature verified",
+            ),
+            (
+                SignatureStatus::Invalid(Signer::default()),
+                "Signature invalid",
+            ),
+            (
+                SignatureStatus::Unavailable,
+                "Signature verification unavailable",
+            ),
+            (
+                SignatureStatus::Untrusted(Signer::default()),
+                "Signature signer not trusted",
+            ),
+            (
+                SignatureStatus::Expired(Signer::default()),
+                "Signature expired or revoked",
+            ),
+        ] {
+            let (_, labels) = author_line(None, &[], Some(status));
+            assert!(
+                labels.iter().any(|label| label == expected),
+                "{expected}: {labels:?}"
+            );
+        }
+        let (_, labels) = author_line(None, &[], Some(SignatureStatus::Unsigned));
+        assert!(!labels.iter().any(|label| label.starts_with("Signature")));
     }
 
     fn note(fix: Option<crate::action::Action>) -> super::PictureNote {
@@ -1134,9 +1400,9 @@ mod tests {
     #[test]
     fn the_author_card_opens_the_fix_for_missing_pictures() {
         let fix = Some(crate::action::Action::Settings);
-        let (_, labels) = author_line(Some(&note(fix.clone())), &[]);
+        let (_, labels) = author_line(Some(&note(fix.clone())), &[], None);
         assert!(
-            labels.iter().any(|l| l == "Author (author card)"),
+            labels.iter().any(|l| l == "Author (commit identity card)"),
             "{labels:?}"
         );
         assert!(!labels.iter().any(|l| l == "Profile pictures are off"));
@@ -1144,13 +1410,13 @@ mod tests {
 
         // Tab to the name, Enter opens the card, a frame later it is drawn.
         let open = [egui::Key::Tab, egui::Key::Enter, egui::Key::F13];
-        let (_, labels) = author_line(Some(&note(fix)), &open);
+        let (_, labels) = author_line(Some(&note(fix)), &open, None);
         assert!(labels.iter().any(|l| l == "Copy email"), "{labels:?}");
         assert!(labels.iter().any(|l| l == "Open settings"), "{labels:?}");
 
-        let (_, labels) = author_line(Some(&note(None)), &open);
+        let (_, labels) = author_line(Some(&note(None)), &open, None);
         assert!(!labels.iter().any(|l| l == "Open settings"), "{labels:?}");
-        let (_, labels) = author_line(None, &open);
+        let (_, labels) = author_line(None, &open, None);
         assert!(!labels.iter().any(|l| l == "Open settings"), "{labels:?}");
     }
 

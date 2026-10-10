@@ -11,6 +11,7 @@
 //! them off the UI thread.
 
 pub mod cli;
+pub mod config;
 pub mod conflict;
 pub mod diff;
 mod error;
@@ -22,6 +23,7 @@ pub mod ignore;
 pub mod lfs;
 mod lines;
 mod merged;
+pub mod message;
 mod metrics;
 pub mod model;
 pub mod ops;
@@ -58,7 +60,9 @@ pub use metrics::{
     AuthorActivity, BranchMetrics, Divergence, MetricCommit, RepositoryMetrics, WeekActivity,
 };
 pub use model::*;
-pub use ops::{HunkAction, MergeMode, PullStrategy, PushTarget, ResetMode};
+pub use ops::{
+    HunkAction, MAX_PATCH_SERIES, MergeMode, PatchSeries, PullStrategy, PushTarget, ResetMode,
+};
 pub use options::{Cleanup, ConflictStyle, GitOptions, PushDefault};
 pub use partial::{MissingObjects, convert_legacy_partial_clone};
 pub use pull::{ConfigScope, ConfigSource, PullConfig, global_pull_config};

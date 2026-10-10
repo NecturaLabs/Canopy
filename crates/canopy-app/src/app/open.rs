@@ -23,9 +23,19 @@ pub(super) struct OpenRequest {
     /// Switch to the tab when it opens (a session restore focuses only its first tab).
     pub(super) focus: bool,
     /// Tab path to replace after the target worktree opens successfully.
-    pub(super) replace: Option<PathBuf>,
+    pub(super) replace: Option<WorktreeSwitch>,
     /// Convert an old-style partial clone first (the user confirmed it).
     pub(super) convert_legacy: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct WorktreeSwitch {
+    from: PathBuf,
+    serial: u64,
+}
+
+fn switch_id(from: &std::path::Path) -> egui::Id {
+    egui::Id::new(("pending-worktree-switch", from))
 }
 
 /// What the opener thread found.
@@ -99,6 +109,8 @@ fn open(
 struct RepositoryDraft {
     summary: String,
     body: String,
+    merge_prefill: Option<(String, String)>,
+    template_prefill: Option<(String, String)>,
     resolution: Option<(Option<crate::tab::FileSelection>, crate::tab::Resolver)>,
     comments: Vec<crate::tab::RequestCommentDraft>,
 }
@@ -128,6 +140,8 @@ pub(super) fn keep_draft(ctx: &egui::Context, tab: &RepoTab) {
         let draft = RepositoryDraft {
             summary: tab.commit_summary.clone(),
             body: tab.commit_body.clone(),
+            merge_prefill: tab.merge_prefill.clone(),
+            template_prefill: tab.template_prefill.clone(),
             resolution,
             comments,
         };
@@ -145,6 +159,8 @@ fn restore_draft(ctx: &egui::Context, tab: &mut RepoTab) {
     }) {
         tab.commit_summary = draft.summary;
         tab.commit_body = draft.body;
+        tab.merge_prefill = draft.merge_prefill;
+        tab.template_prefill = draft.template_prefill;
         tab.request_comments = draft.comments;
         if let Some((file, resolver)) = draft.resolution {
             tab.file = file;
@@ -173,13 +189,20 @@ impl CanopyApp {
         let Some(from) = self.tab().map(|t| t.path.clone()) else {
             return;
         };
+        let serial = ctx.data_mut(|data| {
+            let counter = egui::Id::new("worktree-switch-serial");
+            let next = data.get_temp::<u64>(counter).unwrap_or(0).wrapping_add(1);
+            data.insert_temp(counter, next);
+            data.insert_temp(switch_id(&from), next);
+            next
+        });
         self.request_open(
             ctx,
             OpenRequest {
                 path,
                 create: None,
                 focus: true,
-                replace: Some(from),
+                replace: Some(WorktreeSwitch { from, serial }),
                 convert_legacy: false,
             },
         );
@@ -245,6 +268,19 @@ impl CanopyApp {
         let done: Vec<Opened> = rx.try_iter().collect();
         for Opened { request, result } in done {
             self.pending_opens = self.pending_opens.saturating_sub(1);
+            if let Some(replacement) = &request.replace {
+                let current = ctx.data_mut(|data| {
+                    let id = switch_id(&replacement.from);
+                    let current = data.get_temp::<u64>(id) == Some(replacement.serial);
+                    if current {
+                        data.remove::<u64>(id);
+                    }
+                    current
+                });
+                if !current {
+                    continue;
+                }
+            }
             if let Err(e) = &result {
                 tracing::warn!(path = %request.path.display(), create = request.create.is_some(), "could not open the repository: {}", e.message);
             }
@@ -265,8 +301,8 @@ impl CanopyApp {
                             root.display().to_string(),
                         );
                     }
-                    if let Some(from) = request.replace {
-                        self.replace_tab(ctx, &from, root);
+                    if let Some(replacement) = request.replace {
+                        self.replace_tab(ctx, &replacement.from, root);
                     } else {
                         self.add_tab(ctx, root, request.focus);
                     }
@@ -311,7 +347,7 @@ impl CanopyApp {
 
     /// Starts reading the repository's git configuration, to report what goes against
     /// Canopy's recommendation. A screenshot run reads nothing.
-    fn read_config_for(&mut self, ctx: &egui::Context, root: &std::path::Path) {
+    pub(super) fn read_config_for(&mut self, ctx: &egui::Context, root: &std::path::Path) {
         if self.screenshot.is_none() {
             let rx = crate::repo_config::read_async(ctx, Some(root.to_path_buf()));
             self.config_reads.push((root.to_path_buf(), rx));
@@ -497,6 +533,271 @@ mod tests {
     /// Switching a worktree replaces the source tab, preserves its current view and draft,
     /// and never redirects focus away from a tab chosen while the opener was busy.
     #[test]
+    fn switching_worktrees_keeps_generated_message_provenance() {
+        use crate::worker::{Event, Worker};
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("folder");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        for path in [&a, &b] {
+            std::fs::create_dir(path).expect("folder");
+        }
+        let mut app = test_app();
+        app.add_tab(&ctx, a.clone(), true);
+        let (worker, events, _jobs) = Worker::detached();
+        app.tabs[0].worker = worker;
+        let merge = canopy_core::RepoSnapshot {
+            state: canopy_core::RepoState::Merge,
+            ..Default::default()
+        };
+        events
+            .send(Event::Snapshot(std::sync::Arc::new(merge)))
+            .expect("snapshot");
+        events
+            .send(Event::MergeMessage("Merge branch topic".into()))
+            .expect("message");
+        let _ = app.tabs[0].poll(&[]);
+        assert_ne!(app.tabs[0].commit_summary, "");
+        app.replace_tab(&ctx, &a, b.clone());
+        app.replace_tab(&ctx, &b, a.clone());
+        let (worker, events, _jobs) = Worker::detached();
+        app.tabs[0].worker = worker;
+        events
+            .send(Event::Snapshot(std::sync::Arc::default()))
+            .expect("aborted merge snapshot");
+        let _ = app.tabs[0].poll(&[]);
+        assert!(
+            app.tabs[0].commit_summary.is_empty(),
+            "an untouched aborted merge message is removed"
+        );
+        events
+            .send(Event::CommitTemplate(Ok(Some(
+                "Template summary\nTemplate body".into(),
+            ))))
+            .expect("template");
+        let _ = app.tabs[0].poll(&[]);
+        assert!(app.tabs[0].message_is_unwritten());
+        app.replace_tab(&ctx, &a, b.clone());
+        app.replace_tab(&ctx, &b, a);
+        assert!(
+            app.tabs[0].message_is_unwritten(),
+            "Amend can replace the untouched restored template"
+        );
+        app.tabs[0].commit_summary.push_str(" edited");
+        assert!(
+            !app.tabs[0].message_is_unwritten(),
+            "user edits remain drafts"
+        );
+    }
+
+    #[test]
+    fn the_latest_pending_worktree_switch_wins() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("folders");
+        let source = dir.path().join("source");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        for path in [&source, &a, &b] {
+            std::fs::create_dir(path).expect("folder");
+        }
+        let mut app = test_app();
+        app.add_tab(&ctx, source.clone(), true);
+        app.tabs[0].commit_summary = "Keep this draft".into();
+        let (requests, queued) = unbounded();
+        let (replies, opened) = unbounded();
+        app.opener = Some((requests, opened));
+        app.switch_worktree(&ctx, a.clone());
+        app.switch_worktree(&ctx, b.clone());
+        let first = queued.recv().expect("first request");
+        let second = queued.recv().expect("second request");
+        replies
+            .send(Opened {
+                request: first,
+                result: Ok(a),
+            })
+            .expect("first reply");
+        app.poll_opened(&ctx);
+        assert_eq!(
+            app.tabs[0].path, source,
+            "obsolete reply must not replace the source"
+        );
+        replies
+            .send(Opened {
+                request: second,
+                result: Ok(b.clone()),
+            })
+            .expect("latest reply");
+        app.poll_opened(&ctx);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.tabs[0].path, b);
+        assert_eq!(app.pending_opens, 0);
+        app.replace_tab(&ctx, &b, source);
+        assert_eq!(app.tabs[0].commit_summary, "Keep this draft");
+    }
+
+    #[test]
+    fn sidebar_sections_survive_saving_and_reopening_a_repository() {
+        #[derive(Default)]
+        struct Stored(std::collections::HashMap<String, String>);
+        impl eframe::Storage for Stored {
+            fn get_string(&self, key: &str) -> Option<String> {
+                self.0.get(key).cloned()
+            }
+            fn set_string(&mut self, key: &str, value: String) {
+                self.0.insert(key.to_owned(), value);
+            }
+            fn remove_string(&mut self, key: &str) {
+                self.0.remove(key);
+            }
+            fn flush(&mut self) {}
+        }
+        let ctx = egui::Context::default();
+        let snap = canopy_core::RepoSnapshot {
+            workdir: PathBuf::from("/fixture/main"),
+            common_dir: PathBuf::from("/fixture/main/.git"),
+            ..Default::default()
+        };
+        let mut app = test_app();
+        let mut tab = test_tab(snap.clone());
+        tab.collapsed.clear();
+        tab.collapsed.insert("branches".into());
+        tab.collapsed.insert("remote:origin".into());
+        let wanted = tab.collapsed.clone();
+        tab.sidebar_restored = true;
+        app.tabs.push(tab);
+        let other_snap = canopy_core::RepoSnapshot {
+            workdir: PathBuf::from("/fixture/other"),
+            common_dir: PathBuf::from("/fixture/other/.git"),
+            ..Default::default()
+        };
+        let mut other = test_tab(other_snap.clone());
+        other.sidebar_restored = true;
+        other.collapsed.clear();
+        app.tabs.push(other);
+        let mut untouched = test_tab(canopy_core::RepoSnapshot {
+            workdir: PathBuf::from("/fixture/untouched"),
+            common_dir: PathBuf::from("/fixture/untouched/.git"),
+            ..Default::default()
+        });
+        untouched.sidebar_restored = true;
+        app.tabs.push(untouched);
+        let mut storage = Stored::default();
+        eframe::App::save(&mut app, &mut storage);
+        assert!(
+            !app.settings
+                .repo_sidebar
+                .contains_key(&PathBuf::from("/fixture/untouched/.git")),
+            "a sidebar left as it opened stores nothing"
+        );
+        let mut reopened = test_app();
+        reopened.settings = eframe::get_value(&storage, settings::KEY).expect("saved settings");
+        let mut linked = snap.clone();
+        linked.workdir = PathBuf::from("/fixture/linked");
+        reopened.tabs.push(test_tab(snap));
+        reopened.tabs.push(test_tab(linked));
+        reopened.tabs.push(test_tab(other_snap));
+        eframe::App::save(&mut reopened, &mut Stored::default());
+        assert_eq!(
+            reopened.settings.repo_sidebar[&PathBuf::from("/fixture/main/.git")],
+            wanted
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "saving before the first snapshot keeps the stored state"
+        );
+        reopened.poll(&ctx);
+        assert_eq!(reopened.tabs[0].collapsed, wanted);
+        assert_eq!(
+            reopened.tabs[1].collapsed, wanted,
+            "worktrees share the repository's state"
+        );
+        assert!(
+            reopened.tabs[2].collapsed.is_empty(),
+            "all-open state survives independently"
+        );
+        let closed = std::collections::BTreeSet::from(["tags".to_owned()]);
+        reopened.apply(
+            &ctx,
+            vec![Action::RememberSidebar {
+                repo: PathBuf::from("/fixture/main/.git"),
+                closed: closed.clone(),
+            }],
+        );
+        assert_eq!(reopened.tabs[0].collapsed, closed.iter().cloned().collect());
+        assert_eq!(reopened.tabs[1].collapsed, reopened.tabs[0].collapsed);
+        assert!(reopened.tabs[2].collapsed.is_empty());
+        assert_eq!(
+            reopened.settings.repo_sidebar[&PathBuf::from("/fixture/main/.git")],
+            closed
+        );
+        reopened.poll(&ctx);
+        assert_eq!(
+            reopened.tabs[0].collapsed, reopened.tabs[1].collapsed,
+            "refresh does not restore old state"
+        );
+    }
+
+    #[test]
+    fn request_filters_and_sort_are_kept_per_repository() {
+        use crate::request_view::{ChecksChoice, RequestSort, RequestView};
+        let ctx = egui::Context::default();
+        let snap = |name: &str| canopy_core::RepoSnapshot {
+            workdir: PathBuf::from(format!("/fixture/{name}")),
+            common_dir: PathBuf::from(format!("/fixture/{name}/.git")),
+            ..Default::default()
+        };
+        let mut app = test_app();
+        app.tabs.push(test_tab(snap("main")));
+        let mut linked = snap("main");
+        linked.workdir = PathBuf::from("/fixture/linked");
+        app.tabs.push(test_tab(linked.clone()));
+        app.tabs.push(test_tab(snap("other")));
+        app.poll(&ctx);
+        let wanted = RequestView {
+            text: "graph".into(),
+            checks: Some(ChecksChoice::Failed),
+            author: Some("sam".into()),
+            sort: RequestSort::Oldest,
+            ..RequestView::default()
+        };
+        let main = PathBuf::from("/fixture/main/.git");
+        app.apply(
+            &ctx,
+            vec![Action::RememberRequestView {
+                repo: main.clone(),
+                view: wanted.clone(),
+            }],
+        );
+        assert_eq!(app.tabs[0].request_view, wanted);
+        assert_eq!(
+            app.tabs[1].request_view, wanted,
+            "worktrees share the repository's view"
+        );
+        assert!(app.tabs[2].request_view.is_default());
+
+        // Across a restart: the settings round-trip, and a tab opened later restores its view.
+        let saved = serde_json::to_string(&app.settings).expect("settings serialize");
+        let mut reopened = test_app();
+        reopened.settings = serde_json::from_str(&saved).expect("settings deserialize");
+        reopened.tabs.push(test_tab(linked));
+        reopened.tabs.push(test_tab(snap("other")));
+        reopened.poll(&ctx);
+        assert_eq!(reopened.tabs[0].request_view, wanted);
+        assert!(reopened.tabs[1].request_view.is_default());
+
+        // Back at the defaults, the repository stores nothing.
+        reopened.apply(
+            &ctx,
+            vec![Action::RememberRequestView {
+                repo: main.clone(),
+                view: RequestView::default(),
+            }],
+        );
+        assert!(!reopened.settings.repo_requests.contains_key(&main));
+        assert!(reopened.tabs[0].request_view.is_default());
+    }
+
+    #[test]
     fn switching_worktrees_reuses_the_source_tab() {
         let ctx = egui::Context::default();
         let dir = tempfile::tempdir().expect("a folder");
@@ -670,6 +971,7 @@ mod tests {
             updated_at: 0,
             web_url: String::new(),
             labels: Vec::new(),
+            description: String::new(),
             rollup: None,
         };
         let mut app = test_app();

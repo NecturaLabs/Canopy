@@ -180,7 +180,7 @@ PowerShell 7, argument handling, the malformed test feeds with `CANOPY_INSTALL_D
 `RUNNER_TEMP`, an unchanged Start Menu, Apps & features and user `PATH`, a run through `iex` that
 leaves nothing in the session, PSScriptAnalyzer) was dropped from `ci.yml`. Run those checks by
 hand on Windows before publishing a change to it; the installer fixes made to `install.sh` are not
-yet in `install.ps1` (`docs/backlog.md`).
+yet in `install.ps1` ([#39](https://github.com/NecturaLabs/Canopy/issues/39)).
 
 ## Release archives
 
@@ -225,7 +225,7 @@ Tools' git there.
 
 ## Planned
 
-Tracked in `docs/backlog.md`: Flatpak (Flathub manifest with `--filesystem=home` and host `git`
+Tracked in GitHub Issues ([#95](https://github.com/NecturaLabs/Canopy/issues/95), [#97](https://github.com/NecturaLabs/Canopy/issues/97)): Flatpak (Flathub manifest with `--filesystem=home` and host `git`
 via `flatpak-spawn` or a bundled git), AUR (`canopy-bin` and a source package), `.deb` with
 `cargo-deb`, `.rpm` with `cargo-generate-rpm`, AppImage, a signed and notarised macOS app, and a
 signed Windows binary.

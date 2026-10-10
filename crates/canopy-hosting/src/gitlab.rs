@@ -12,6 +12,7 @@ use crate::model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
 };
+use crate::preview::description_preview;
 
 /// How often a rebase is polled for completion, and how long Canopy waits for it.
 const REBASE_POLL: Duration = Duration::from_secs(1);
@@ -55,8 +56,9 @@ struct Mr {
     web_url: String,
     /// Names, or objects with a `name` when `with_labels_details` is set.
     labels: Vec<Value>,
-    // Single-MR fields only.
+    /// The description; the list carries it too.
     description: Option<String>,
+    // Single-MR fields only.
     sha: Option<String>,
     has_conflicts: bool,
     detailed_merge_status: Option<String>,
@@ -103,6 +105,7 @@ impl Mr {
                     _ => None,
                 })
                 .collect(),
+            description: description_preview(self.description.as_deref().unwrap_or_default()),
             rollup: None,
         }
     }

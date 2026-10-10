@@ -101,7 +101,7 @@ or how flows feel end to end.
 2. Lay out a fake feed folder like `packaging/test-install.sh` does: `canopy/latest.json` (`version`
    `1001`, the platform URL and its SHA-256), `releases/download/canopy-build-N/` holding
    `canopy-build-N-x86_64-unknown-linux-gnu.tar.gz` (a folder of that name with `canopy`, README,
-   LICENSE, `legal/`, the desktop entry, metainfo, icon svg and png), `install.sh` and `SHA256SUMS`.
+   LICENSE, `legal/`, the desktop entry, metainfo, icon png), `install.sh` and `SHA256SUMS`.
    Serve it with `python3 -m http.server 8765 --bind 127.0.0.1`.
 3. Install build 1000 with the real installer: `CANOPY_INSTALL_BASE_URL=http://127.0.0.1:8765 HOME=...
    XDG_DATA_HOME=... sh packaging/install.sh --version 1000`. Run it on a private Xvfb (see
@@ -115,15 +115,30 @@ or how flows feel end to end.
 
 ## Releasing, and the app-updates repository
 
+- Release enforcement uses mandatory Linux workspace tests on the exact commit, in a read-only
+  GitHub-hosted job. Create release waits for them before tagging; Release runs them again before
+  publishing, including a direct dispatch or rebuild of an existing tag. Failed or cancelled tests
+  prevent the tag or publication. Dry runs do not run these tests and cannot tag.
+- Push CI's platform test job remains opt-in with repository variable `CI_TESTS=1`
+  (`gh variable set CI_TESTS --body 1`); unset or `0` skips it. Its per-platform toggles still
+  apply. This toggle never disables release tests. The local pre-commit hook is an early check,
+  while the mandatory release job is the enforced publication gate.
 - Read the `release` skill first. A release publishes to users: confirm the build and channel with
   the owner, then `gh workflow run create-release.yml --ref main -f channel=beta -f dry-run=true`,
-  and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`.
+  and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`. It can
+  be dispatched right after a merge: it waits for main's CI run (under a minute when the merged
+  branch was up to date with `main`, since that run reuses the branch's).
+- The experimental builds (aarch64 Linux, Intel macOS) never hold back a release: it is published
+  from the other builds, and "Add the experimental builds" adds their archives to the releases
+  and the feed when they finish. Build 1116 was stuck for an hour on a hung aarch64 job before
+  that (#144).
 - `NecturaLabs/app-updates` (public) holds `canopy/latest.json`, `beta.json`, `install.sh`,
   `install.ps1` and the releases `canopy-build-<n>`. The build each channel serves is the `version`
   in its manifest: `gh api -H 'Accept: application/vnd.github.raw'
   repos/NecturaLabs/app-updates/contents/canopy/latest.json` (and `beta.json`). A stable release
-  updates only `latest.json` and the installers: to keep the beta channel level with it, commit the
-  same manifest as `canopy/beta.json` afterwards.
+  updates `latest.json`, the installers and, unless it already offers a newer build, `beta.json`
+  with the same manifest, so both channels name the same feed release. A beta release updates
+  only `beta.json`.
 - Copies of Canopy older than the first numbered build cannot read the numbered manifest and report
   an update-check error until reinstalled with the one-line installer.
 - The Release workflow's Linux builds run as root in an Ubuntu 22.04 container: the first run of
@@ -131,3 +146,16 @@ or how flows feel end to end.
   as build 120. A release job's composite actions come from the tag's own commit, so a workflow fix
   needs a new build, not a rerun of the old tag.
 - `APP_UPDATES_TOKEN` must exist in the Canopy repository's secrets or the feed step is skipped.
+
+For the expanded commit-details layout, render with `--overlay commit-expanded`; it activates
+the header’s Expand button by its accessible name. Use `--size 960x640` for compact details.
+
+Use `--overlay commit-compact --size 960x400` to select Commit details in the compact
+History layout through its accessible control.
+
+Use `--overlay amend-commit` with a clean fixture to open the amend composer through its
+secondary action and capture the message read by the worker.
+
+Use `--overlay settings-git-pull` or `--overlay settings-repository-pull` to capture the
+Pull strategy option list through its accessible control. `--overlay settings-repository-diffs`
+opens the repository's Diffs group.

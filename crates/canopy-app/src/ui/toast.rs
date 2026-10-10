@@ -26,7 +26,7 @@ use super::kit::button::IconButton;
 use super::kit::chip::Badge;
 use super::kit::overlay::{self, Popover, TooltipExt};
 use super::kit::toast::{ACTIONS_GAP, BODY_LEADING, COLUMN_GAP, Choice, TITLE_GAP, ToastCard};
-use super::kit::{Button, KitResponse, Size};
+use super::kit::{Button, KitResponse, Size, paint};
 use super::motion;
 use super::theme;
 use crate::settings::NotificationPrefs;
@@ -195,8 +195,36 @@ fn card_text<'a>(kind: ToastKind, body: &'a str, help: Option<&'static str>) -> 
             details: Some(body),
         };
     }
-    // No hint: git's own first line says why, and the details hold the rest.
-    let first = body.lines().map(str::trim).find(|l| !l.is_empty());
+    // No hint: git's own words say why, and the details hold the rest. Git opens some commands
+    // with progress. A remote hook's explanation is more useful than git's generic push error.
+    let lines = || body.lines().map(str::trim);
+    let first = lines()
+        .find(|l| {
+            l.starts_with("fatal:")
+                || l.starts_with("remote: fatal:")
+                || l.starts_with("remote: error:")
+        })
+        .or_else(|| {
+            lines().find(|l| {
+                l.strip_prefix("remote:").is_some_and(|text| {
+                    let text = text.trim();
+                    !text.is_empty()
+                        && ![
+                            "Enumerating objects:",
+                            "Counting objects:",
+                            "Compressing objects:",
+                            "Total ",
+                            "Resolving deltas:",
+                            "Receiving objects:",
+                            "Writing objects:",
+                        ]
+                        .iter()
+                        .any(|prefix| text.starts_with(prefix))
+                })
+            })
+        })
+        .or_else(|| lines().find(|l| l.starts_with("error:")))
+        .or_else(|| lines().find(|l| !l.is_empty()));
     let more = first.is_some_and(|f| body.trim() != f);
     CardText {
         body: first,
@@ -269,6 +297,10 @@ struct Entry {
     /// What an error means, before git's own words.
     help: Option<&'static str>,
     offer: Option<Offer>,
+    unread: bool,
+    /// How many identical notices from the same repository, one after another, this row stands
+    /// for; `at` is the latest.
+    count: u32,
 }
 
 /// The stack of live toasts, and the notification center's history.
@@ -334,6 +366,15 @@ struct Saved {
     at: i64,
     source: Option<String>,
     offer: Option<SavedOffer>,
+    #[serde(default)]
+    unread: bool,
+    #[serde(default = "one")]
+    count: u32,
+}
+
+/// The count of an entry kept before notices were grouped.
+fn one() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -368,6 +409,12 @@ impl Toasts {
                 body: e.body.clone(),
                 at: e.at,
                 source: e.source.clone(),
+                count: e.count,
+                unread: e.unread
+                    || (matches!(
+                        e.offer,
+                        Some(Offer::Pull(_) | Offer::Accounts | Offer::GitSettings)
+                    ) && self.items.iter().any(|t| t.id == e.id)),
                 offer: match &e.offer {
                     Some(Offer::Pull(path)) => Some(SavedOffer::Pull(path.clone())),
                     Some(Offer::Accounts) => Some(SavedOffer::Accounts),
@@ -379,12 +426,13 @@ impl Toasts {
         serde_json::to_string(&saved).unwrap_or_default()
     }
 
-    /// Puts back what [`Self::to_json`] kept, newest first and already read; text that does not
-    /// parse is ignored.
+    /// Puts back the center and its unread state. Legacy entries without that state are read;
+    /// text that does not parse is ignored.
     pub fn restore_json(&mut self, json: &str) {
         let Ok(saved) = serde_json::from_str::<Vec<Saved>>(json) else {
             return;
         };
+        self.history.clear();
         for s in saved.into_iter().take(HISTORY) {
             self.next += 1;
             self.history.push_back(Entry {
@@ -398,6 +446,8 @@ impl Toasts {
                 body: s.body,
                 at: s.at,
                 source: s.source,
+                unread: s.unread,
+                count: s.count.max(1),
                 help: None,
                 offer: s.offer.map(|o| match o {
                     SavedOffer::Pull(path) => Offer::Pull(path),
@@ -406,6 +456,23 @@ impl Toasts {
                 }),
             });
         }
+        self.count_unread();
+    }
+
+    fn count_unread(&mut self) {
+        self.unread = self.history.iter().filter(|e| e.unread).count();
+        self.unread_errors = self
+            .history
+            .iter()
+            .filter(|e| e.unread && e.kind == ToastKind::Error)
+            .count();
+    }
+
+    fn mark_unread(&mut self, id: u64) {
+        if let Some(entry) = self.history.iter_mut().find(|e| e.id == id) {
+            entry.unread = true;
+        }
+        self.count_unread();
     }
 
     /// Applies new card filters immediately; hidden cards remain in the notification center.
@@ -476,7 +543,8 @@ impl Toasts {
     }
 
     /// Like [`Self::push_offer`] (an Info notice), about `repo`, and only when the center does not already hold
-    /// the same notice for it (one kept from an earlier run included).
+    /// the same notice (one kept from an earlier run included): the same words from several
+    /// repositories, as one global git setting makes, are one notice.
     pub fn push_offer_for(
         &mut self,
         ctx: &egui::Context,
@@ -489,11 +557,15 @@ impl Toasts {
         let source = repo
             .file_name()
             .map(|name| name.to_string_lossy().into_owned());
-        if self
+        if let Some(held) = self
             .history
-            .iter()
-            .any(|e| e.title == title && e.source == source)
+            .iter_mut()
+            .find(|e| e.title == title && e.body == body)
         {
+            // The same words from another repository are about none of them in particular.
+            if held.source != source {
+                held.source = None;
+            }
             return;
         }
         self.notify(
@@ -530,23 +602,41 @@ impl Toasts {
             card_text(kind, &body, help).body,
         );
         self.next += 1;
-        self.history.push_front(Entry {
-            id: self.next,
-            kind,
-            title: title.clone(),
-            body: body.clone(),
-            at: chrono::Utc::now().timestamp(),
-            source,
-            help,
-            offer: offer.clone(),
-        });
-        self.history.truncate(HISTORY);
         let card = self.prefs.shows(topic) && !self.center_open;
+        let unread = !card && topic.counts() && !self.center_open;
+        let at = chrono::Utc::now().timestamp();
+        // The same notice again, straight after itself and from the same repository (a fetch
+        // that found nothing, ten times), is one row with a count and the latest time.
+        let repeated = self.history.front_mut().filter(|e| {
+            offer.is_none()
+                && e.offer.is_none()
+                && e.kind == kind
+                && e.title == title
+                && e.body == body
+                && e.source == source
+        });
+        if let Some(entry) = repeated {
+            entry.count = entry.count.saturating_add(1);
+            entry.at = at;
+            entry.id = self.next;
+            entry.unread |= unread;
+        } else {
+            self.history.push_front(Entry {
+                id: self.next,
+                kind,
+                title: title.clone(),
+                body: body.clone(),
+                at,
+                source,
+                help,
+                offer: offer.clone(),
+                unread,
+                count: 1,
+            });
+        }
+        self.history.truncate(HISTORY);
+        self.count_unread();
         if !card {
-            if topic.counts() && !self.center_open {
-                self.unread += 1;
-                self.unread_errors += usize::from(kind == ToastKind::Error);
-            }
             tracing::debug!(title = %title, ?topic, "notification kept for the center");
             ctx.request_repaint();
             return;
@@ -575,8 +665,7 @@ impl Toasts {
             if gone.offer.is_some() {
                 // Not made: it waits in the center, counted on the bell as when it runs out.
                 tracing::warn!(title = %gone.title, "a sixth decision pushed out the oldest card");
-                self.unread += 1;
-                self.unread_errors += usize::from(gone.kind == ToastKind::Error);
+                self.mark_unread(gone.id);
             }
         }
         ctx.request_repaint();
@@ -608,17 +697,15 @@ impl Toasts {
             }
         }
         // A decision nobody made waits in the center, counted on the bell.
-        let undecided = || {
-            self.items
-                .iter()
-                .filter(|t| t.left <= 0.0 && t.offer.is_some())
-        };
-        let (count, errors) = (
-            undecided().count(),
-            undecided().filter(|t| t.kind == ToastKind::Error).count(),
-        );
-        self.unread += count;
-        self.unread_errors += errors;
+        let undecided: Vec<_> = self
+            .items
+            .iter()
+            .filter(|t| t.left <= 0.0 && t.offer.is_some())
+            .map(|t| t.id)
+            .collect();
+        for id in undecided {
+            self.mark_unread(id);
+        }
         self.items.retain(|t| t.left > 0.0);
         self.focus_held = false;
         if self.items.is_empty() {
@@ -830,8 +917,10 @@ impl Toasts {
         }
         self.center_open = shown.is_some() && !leave;
         if self.center_open {
-            self.unread = 0;
-            self.unread_errors = 0;
+            for entry in &mut self.history {
+                entry.unread = false;
+            }
+            self.count_unread();
             // What is open in the center needs no card as well.
             self.items.clear();
         }
@@ -911,8 +1000,11 @@ impl Toasts {
         }
         let now = chrono::Utc::now().timestamp();
         let mut gone = None;
-        let divider = theme::mix(theme::surfaces(ui.ctx()).overlay, p.text, 0.08);
-        egui::ScrollArea::vertical()
+        let ground = theme::surfaces(ui.ctx()).overlay;
+        let divider = theme::mix(ground, p.text, 0.08);
+        // The bar keeps its own room beside the rows, so it never covers a dismiss button.
+        ui.spacing_mut().scroll = theme::solid_scroll();
+        let list = egui::ScrollArea::vertical()
             .id_salt("notification-center-list")
             .max_height(CENTER_LIST_HEIGHT)
             .min_scrolled_height(CENTER_LIST_HEIGHT)
@@ -954,21 +1046,8 @@ impl Toasts {
                                 // as on a card.
                                 ui.spacing_mut().interact_size.y = 0.0;
                                 ui.horizontal(|ui| {
-                                    let title = ui.label(
-                                        RichText::new(&e.title)
-                                            .size(m.body_size)
-                                            .family(theme::semibold())
-                                            .color(p.text),
-                                    );
-                                    painter.text(
-                                        egui::pos2(slot.center().x, title.rect.center().y),
-                                        Align2::CENTER_CENTER,
-                                        glyph,
-                                        egui::FontId::proportional(m.icon_toast),
-                                        color,
-                                    );
                                     ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        egui::Layout::right_to_left(egui::Align::TOP),
                                         |ui| {
                                             if IconButton::new(icon::X, "Dismiss notification")
                                                 .size(Size::Xs)
@@ -978,24 +1057,71 @@ impl Toasts {
                                             {
                                                 gone = Some(e.id);
                                             }
-                                            let when = super::widgets::relative_time(e.at, now);
-                                            let when = match &e.source {
-                                                Some(source) => format!("{source}  \u{b7}  {when}"),
-                                                None => when,
-                                            };
-                                            ui.label(
-                                                RichText::new(when)
-                                                    .size(m.meta_size)
-                                                    .color(p.text_faint),
-                                            )
-                                            .kit_tooltip(super::widgets::full_date(
-                                                e.at,
-                                                local_offset_minutes(e.at),
-                                            ))
-                                            .show();
+                                            let title = ui
+                                                .allocate_ui_with_layout(
+                                                    vec2(ui.available_width(), 0.0),
+                                                    egui::Layout::top_down(egui::Align::Min),
+                                                    |ui| {
+                                                        let mut job =
+                                                            egui::text::LayoutJob::default();
+                                                        job.append(
+                                                            &e.title,
+                                                            0.0,
+                                                            egui::TextFormat::simple(
+                                                                egui::FontId::new(
+                                                                    m.body_size,
+                                                                    theme::semibold(),
+                                                                ),
+                                                                p.text,
+                                                            ),
+                                                        );
+                                                        if e.count > 1 {
+                                                            // How many times it came, in the dim
+                                                            // text after the title.
+                                                            job.append(
+                                                                &format!("  {}\u{d7}", e.count),
+                                                                0.0,
+                                                                egui::TextFormat::simple(
+                                                                    egui::FontId::proportional(
+                                                                        m.meta_size,
+                                                                    ),
+                                                                    p.text_faint,
+                                                                ),
+                                                            );
+                                                        }
+                                                        ui.add(egui::Label::new(job).wrap())
+                                                    },
+                                                )
+                                                .inner;
+                                            painter.text(
+                                                egui::pos2(
+                                                    slot.center().x,
+                                                    title.rect.top() + m.body_size * 0.5,
+                                                ),
+                                                Align2::CENTER_CENTER,
+                                                glyph,
+                                                egui::FontId::proportional(m.icon_toast),
+                                                color,
+                                            );
                                         },
                                     );
                                 });
+                                let when = super::widgets::relative_time(e.at, now);
+                                let when = match &e.source {
+                                    Some(source) => format!("{source}  ·  {when}"),
+                                    None => when,
+                                };
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(when).size(m.meta_size).color(p.text_faint),
+                                    )
+                                    .wrap(),
+                                )
+                                .kit_tooltip(super::widgets::full_date(
+                                    e.at,
+                                    local_offset_minutes(e.at),
+                                ))
+                                .show();
                                 let body = e.body.trim();
                                 // What the card says (a hint before git's own words), the full
                                 // output in the tooltip.
@@ -1078,6 +1204,8 @@ impl Toasts {
                     });
                 }
             });
+        // A row cut by the list's edge fades out, so it reads as "scroll for more".
+        paint::scroll_fade(ui, &list, ground);
         if let Some(id) = gone {
             self.history.retain(|e| e.id != id);
         }
@@ -2150,34 +2278,264 @@ mod tests {
             ],
             "the update to review is gone, the rest is back, newest first"
         );
-        assert_eq!(after.unread, 0, "restored notifications are read");
+        assert_eq!(
+            after.unread, 1,
+            "the unanswered Git settings offer still needs attention"
+        );
         after.restore_json("not json");
         assert_eq!(after.history.len(), 3, "unreadable text is ignored");
     }
 
     #[test]
-    fn a_notice_about_a_repository_is_kept_once() {
+    fn unread_notifications_and_error_severity_survive_restart() {
+        let ctx = egui::Context::default();
+        let mut before = Toasts::default();
+        before.set_prefs(NotificationPrefs {
+            cards: false,
+            ..Default::default()
+        });
+        before.push(&ctx, ToastKind::Error, Topic::Error, "failure", "why");
+        before.push(&ctx, ToastKind::Info, Topic::Attention, "attention", "why");
+        before.push(&ctx, ToastKind::Success, Topic::Finished, "finished", "");
+        let mut after = Toasts::default();
+        after.restore_json(&before.to_json());
+        assert_eq!(after.unread, 2);
+        assert_eq!(after.unread_errors, 1);
+        assert!(after.items.is_empty(), "a restart does not replay cards");
+        let read = Toasts::default();
+        let mut empty = Toasts::default();
+        empty.restore_json(&read.to_json());
+        assert_eq!(empty.unread, 0);
+    }
+
+    #[test]
+    fn a_notice_with_the_same_words_is_kept_once() {
         let ctx = egui::Context::default();
         let mut toasts = Toasts::default();
-        for _ in 0..2 {
+        let push = |toasts: &mut Toasts, body: &str, repo: &str| {
             toasts.push_offer_for(
                 &ctx,
                 Topic::Attention,
                 "Git settings differ",
-                "Prune: x".into(),
+                body.into(),
                 Offer::GitSettings,
-                Path::new("/work/canopy"),
+                Path::new(repo),
+            );
+        };
+        push(&mut toasts, "Prune: x", "/work/canopy");
+        push(&mut toasts, "Prune: x", "/work/canopy");
+        push(&mut toasts, "Prune: x", "/work/other");
+        assert_eq!(
+            toasts.history.len(),
+            1,
+            "one global setting is one notice, not one per repository"
+        );
+        assert_eq!(
+            toasts.history[0].source, None,
+            "and it is about none of them in particular"
+        );
+        push(&mut toasts, "Prune: y", "/work/other");
+        assert_eq!(
+            toasts.history.len(),
+            2,
+            "different words are another notice"
+        );
+    }
+
+    fn fetched(toasts: &mut Toasts, ctx: &egui::Context, repo: &str, body: &str) {
+        toasts.push_for(
+            ctx,
+            ToastKind::Success,
+            Topic::Finished,
+            "Fetched",
+            body,
+            Some(Path::new(repo)),
+        );
+    }
+
+    /// #137: the same notice again straight after itself, from one repository, is one row with
+    /// a count and the latest time; another repository, other words or an interruption start a
+    /// new row.
+    #[test]
+    fn repeated_identical_notices_from_one_repository_are_one_row() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for _ in 0..10 {
+            fetched(
+                &mut toasts,
+                &ctx,
+                "/work/mote",
+                "Nothing new on any remote.",
             );
         }
-        toasts.push_offer_for(
+        assert_eq!(toasts.history.len(), 1, "ten fetches, one row");
+        assert_eq!(toasts.history[0].count, 10);
+        let first_id = toasts.history[0].id;
+        toasts.history[0].at -= 100;
+        fetched(
+            &mut toasts,
             &ctx,
-            Topic::Attention,
-            "Git settings differ",
-            "Prune: x".into(),
-            Offer::GitSettings,
-            Path::new("/work/other"),
+            "/work/mote",
+            "Nothing new on any remote.",
         );
-        assert_eq!(toasts.history.len(), 2, "once per repository");
+        assert_eq!(toasts.history[0].count, 11);
+        assert!(
+            toasts.history[0].at > chrono::Utc::now().timestamp() - 50,
+            "the latest time"
+        );
+        assert_ne!(toasts.history[0].id, first_id);
+
+        fetched(
+            &mut toasts,
+            &ctx,
+            "/work/other",
+            "Nothing new on any remote.",
+        );
+        fetched(
+            &mut toasts,
+            &ctx,
+            "/work/mote",
+            "Nothing new on any remote.",
+        );
+        fetched(&mut toasts, &ctx, "/work/mote", "2 new commits on origin.");
+        assert_eq!(
+            toasts.history.iter().map(|e| e.count).collect::<Vec<_>>(),
+            [1, 1, 1, 11],
+            "another repository, then the first again, then other words: each its own row"
+        );
+        // Errors are grouped the same way, and the group survives a restart.
+        for _ in 0..3 {
+            toasts.push(
+                &ctx,
+                ToastKind::Error,
+                Topic::Error,
+                "Push failed",
+                "denied",
+            );
+        }
+        assert_eq!(toasts.history[0].count, 3);
+        let mut restored = Toasts::default();
+        restored.restore_json(&toasts.to_json());
+        assert_eq!(
+            restored.history.iter().map(|e| e.count).collect::<Vec<_>>(),
+            [3, 1, 1, 1, 11]
+        );
+    }
+
+    /// A center kept before notices were grouped has no `count` (nor `unread`): each entry is
+    /// one notice and read, and a stored count of zero is never shown.
+    #[test]
+    fn an_entry_kept_before_grouping_restores_as_one_notice() {
+        let json = r#"[
+            {"kind":"Success","title":"Fetched","body":"Nothing new on any remote.",
+             "at":1700000000,"source":"/work/mote","offer":null},
+            {"kind":"Error","title":"Push failed","body":"denied","at":1700000100,
+             "source":null,"offer":null,"unread":true,"count":0}
+        ]"#;
+        let mut toasts = Toasts::default();
+        toasts.restore_json(json);
+        assert_eq!(
+            toasts
+                .history
+                .iter()
+                .map(|e| (e.title.as_str(), e.count, e.unread))
+                .collect::<Vec<_>>(),
+            [("Fetched", 1, false), ("Push failed", 1, true)]
+        );
+        assert_eq!(toasts.unread, 1);
+    }
+
+    /// A decision is never folded into the notice before it.
+    #[test]
+    fn a_decision_is_not_grouped() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for _ in 0..2 {
+            toasts.push_offer(
+                &ctx,
+                ToastKind::Info,
+                Topic::Attention,
+                "Pull?",
+                "behind",
+                Offer::Accounts,
+            );
+        }
+        assert_eq!(toasts.history.len(), 2);
+    }
+
+    /// #137: the list's scroll bar has its own room: no row's dismiss button reaches into it, at
+    /// any width, and the count shows after the title.
+    #[test]
+    fn the_scroll_bar_stays_clear_of_the_dismiss_buttons() {
+        for width in [CENTER_WIDTH, 260.0] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            crate::ui::fonts::install(&ctx);
+            let mut toasts = Toasts::default();
+            for i in 0..50 {
+                toasts.push_for(
+                    &ctx,
+                    ToastKind::Success,
+                    Topic::Finished,
+                    format!("Fetched {i}"),
+                    "Nothing new on any remote.",
+                    Some(Path::new("/work/mote")),
+                );
+            }
+            for _ in 0..3 {
+                fetched(&mut toasts, &ctx, "/work/mote", "again");
+            }
+            let mut right = 0.0_f32;
+            let mut dismiss = Vec::new();
+            let mut texts = Vec::new();
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(width, 700.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        right = ui.max_rect().right();
+                        let _ = toasts.center(ui);
+                    },
+                );
+                out.textures_delta.clear();
+                dismiss = out
+                    .platform_output
+                    .accesskit_update
+                    .into_iter()
+                    .flat_map(|u| u.nodes)
+                    .filter(|(_, n)| n.label() == Some("Dismiss notification"))
+                    .filter_map(|(_, n)| n.bounds())
+                    .collect();
+                texts = out
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            assert!(!dismiss.is_empty(), "no dismiss buttons at {width}");
+            let bar = theme::solid_scroll().floating_allocated_width;
+            for b in &dismiss {
+                assert!(
+                    crate::ui::to_f32(b.x1) <= right - bar + 0.5,
+                    "a dismiss button ends at {} but the bar starts at {} (width {width})",
+                    b.x1,
+                    right - bar
+                );
+            }
+            assert!(
+                texts.iter().any(|t| t == "  3\u{d7}")
+                    || texts.iter().any(|t| t.contains("3\u{d7}")),
+                "the count shows: {texts:?}"
+            );
+        }
     }
 
     /// The bell opens the center, which marks everything read and lists the notifications; while
@@ -2250,6 +2608,81 @@ mod tests {
         toasts.push(&ctx, ToastKind::Error, Topic::Error, "Push failed", "no");
         assert!(toasts.items.is_empty(), "no card while the center is open");
         assert_eq!(toasts.history.len(), 2);
+    }
+
+    /// Git opens a clone with a progress line; the card must say why it failed, not that.
+    #[test]
+    fn a_long_notification_title_leaves_room_for_its_source_and_time() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut toasts = Toasts::default();
+        let title = "Push failed for the feature branch with a long descriptive name";
+        toasts.push_for(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            title,
+            "denied",
+            Some(Path::new("/work/repository")),
+        );
+        let mut rects = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_max_width(CENTER_WIDTH);
+                let _ = toasts.center(ui);
+            });
+            out.textures_delta.clear();
+            rects = out
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t)
+                        if t.galley.text() == title
+                            || t.galley.text().starts_with("repository  ") =>
+                    {
+                        Some((t.galley.text().to_owned(), t.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        assert_eq!(rects.len(), 2, "{rects:?}");
+        assert!(!rects[0].1.intersects(rects[1].1), "{rects:?}");
+        assert!(
+            rects.iter().all(|(_, r)| r.right() <= CENTER_WIDTH),
+            "{rects:?}"
+        );
+    }
+
+    #[test]
+    fn a_failure_card_gives_the_remote_hook_reason_before_generic_push_errors() {
+        let raw = "Enumerating objects: 27, done.\nremote: Counting objects: 100% (27/27), done.\nremote: error: Changes must be made through a pull request.\n! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs";
+        let said = card_text(ToastKind::Error, raw, None);
+        assert_eq!(
+            said.body,
+            Some("remote: error: Changes must be made through a pull request.")
+        );
+        assert_eq!(said.details, Some(raw));
+        let raw = "Enumerating objects: 27, done.\nremote: Push denied by policy\nerror: failed to push some refs";
+        assert_eq!(
+            card_text(ToastKind::Error, raw, None).body,
+            Some("remote: Push denied by policy")
+        );
+    }
+
+    #[test]
+    fn a_failure_card_gives_gits_fatal_line_not_its_progress_line() {
+        let raw = "git submodule failed: Cloning into 'libs/three'...\n\
+                   fatal: unable to access 'https://127.0.0.1:9/o/r.git/': Failed to connect";
+        let said = card_text(ToastKind::Error, raw, None);
+        assert_eq!(
+            said.body,
+            Some("fatal: unable to access 'https://127.0.0.1:9/o/r.git/': Failed to connect")
+        );
+        assert_eq!(said.details, Some(raw), "the tooltip keeps all of it");
+
+        let plain = card_text(ToastKind::Error, "something went wrong\nand more", None);
+        assert_eq!(plain.body, Some("something went wrong"));
     }
 
     /// The center says what the card says: a known git failure as its hint, git's own output in

@@ -1,4 +1,4 @@
-//! Author account pictures, restricted to the repository's forge and GitHub's avatar CDN.
+//! Commit identity pictures, restricted to the repository's forge and GitHub's avatar CDN.
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -174,6 +174,36 @@ struct Account {
 struct Commit {
     sha: String,
     author: Option<Account>,
+    committer: Option<Account>,
+    #[serde(rename = "commit")]
+    people: Option<CommitPeople>,
+}
+
+#[derive(Deserialize)]
+struct CommitPeople {
+    author: Option<CommitPerson>,
+    committer: Option<CommitPerson>,
+}
+
+#[derive(Deserialize)]
+struct CommitPerson {
+    email: Option<String>,
+}
+
+impl Commit {
+    fn account(self, email: &str) -> Option<Account> {
+        let people = self.people?;
+        let matches = |person: &Option<CommitPerson>| {
+            person.as_ref().and_then(|p| p.email.as_deref()) == Some(email)
+        };
+        if matches(&people.author) {
+            self.author
+        } else if matches(&people.committer) {
+            self.committer
+        } else {
+            None
+        }
+    }
 }
 
 pub(crate) fn lookup(
@@ -193,12 +223,12 @@ pub(crate) fn lookup(
             // The list endpoint, not `commits/<sha>`: that one carries the changed files and, for a
             // large commit, outgrows the lookup's size limit.
             let commits: Vec<Commit> =
-                http.avatar_json(&format!("{project}/commits?sha={commit}&per_page=1"))?;
+                http.avatar_json(&format!("{project}/commits?sha={commit}&per_page=1"), &[])?;
             commits
                 .into_iter()
                 .next()
                 .filter(|c| c.sha.eq_ignore_ascii_case(commit))
-                .and_then(|c| c.author)
+                .and_then(|c| c.account(email))
                 .and_then(|a| a.avatar_url)
         }
         ForgeKind::GitLab => {
@@ -208,8 +238,11 @@ pub(crate) fn lookup(
             {
                 return Ok(None);
             }
-            let account: Account =
-                http.avatar_json(&format!("/avatar?email={}&size=64", encode(email)))?;
+            let encoded = encode(email);
+            let account: Account = http.avatar_json(
+                &format!("/avatar?email={encoded}&size=64"),
+                &[email, &encoded],
+            )?;
             account.avatar_url
         }
     };
@@ -243,13 +276,16 @@ pub fn is_unknown_commit(error: &Error) -> bool {
 pub(crate) fn repository(http: &Http, kind: ForgeKind, project: &str) -> Result<()> {
     match kind {
         ForgeKind::GitHub => http
-            .avatar_json::<serde::de::IgnoredAny>(project)
+            .avatar_json::<serde::de::IgnoredAny>(project, &[])
             .map(|_| ()),
         ForgeKind::GitLab => Err(Error::NotFound(
             "GitLab picture lookups name no repository".into(),
         )),
     }
 }
+
+#[cfg(test)]
+mod network_failures;
 
 #[cfg(test)]
 mod tests {

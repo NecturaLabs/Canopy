@@ -3431,7 +3431,7 @@ fn floating_scroll() -> egui::style::ScrollStyle {
 
 /// The shortest a scrollbar's handle gets, so a long document's handle is still easy to see and
 /// to grab (egui's default is 12).
-const SCROLL_HANDLE_MIN: f32 = 32.0;
+pub(crate) const SCROLL_HANDLE_MIN: f32 = 32.0;
 
 /// Always-visible scroll bars for code, diff and detail boxes, for position awareness (section
 /// 4.21): the floating bars' thin handle in the text colour at 45% (75% while hovered or dragged),

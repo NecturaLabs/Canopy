@@ -258,6 +258,9 @@ struct Ctx<'a> {
     one_sided: bool,
     /// Hunk and line actions are possible (working copy, whitespace shown).
     editable: bool,
+    /// The file changed type: only the whole file can be staged or discarded, so the hunks
+    /// offer no actions.
+    whole_file: bool,
     context: u32,
     highlights: Option<&'a Highlights>,
     mono: FontId,
@@ -357,7 +360,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
         return;
     };
-    if let Some(change) = &d.submodule {
+    if let Some(change) = &d.submodule
+        && d.kind != Some(ChangeKind::Typechange)
+    {
         submodule_card(ui, change);
         return;
     }
@@ -368,6 +373,15 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             ui.label(RichText::new(text).size(m.meta_size).color(p.text_dim));
         });
         ui.add_space(theme::SM);
+    }
+    if d.too_large {
+        empty(
+            ui,
+            icon::FILE_DASHED,
+            "Diff too large",
+            "One side exceeds the preview limit.",
+        );
+        return;
     }
     if d.binary {
         empty(
@@ -426,7 +440,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         // A whitespace-insensitive diff cannot be applied as a patch.
         editable: !sel.conflicted
             && !matches!(sel.source, DiffSource::Commit(_))
+            && d.kind != Some(ChangeKind::Typechange)
             && tab.diff_prefs.whitespace == WhitespaceMode::Show,
+        whole_file: d.kind == Some(ChangeKind::Typechange),
         context: tab.diff_prefs.context,
         highlights: highlights.as_deref(),
         mono,
@@ -550,7 +566,8 @@ fn header(
     let m = theme::metrics();
     let compact = ui.available_height() < theme::XL * 10.0;
     let single_row = ui.available_width() >= 720.0;
-    let gitlink = sel.entry.old_mode == Some(0o160_000) || sel.entry.new_mode == Some(0o160_000);
+    let gitlink = sel.entry.kind != ChangeKind::Typechange
+        && (sel.entry.old_mode == Some(0o160_000) || sel.entry.new_mode == Some(0o160_000));
     // One row of small controls fills `file_header_height`; wrapped rows get the usual gaps.
     let vertical_padding = if single_row {
         ((m.file_header_height - m.control_sm) / 2.0).max(0.0)
@@ -610,7 +627,9 @@ fn header(
                             .is_some_and(|d| gutters(d) != (true, true));
                         layout_toggle(ui, tab.split_diff, one_column, single_row, actions);
                     }
-                    if let Some(d) = &tab.diff {
+                    if let Some(d) = &tab.diff
+                        && !d.too_large
+                    {
                         DiffStat::new(d.additions, d.deletions).show(ui);
                     }
                 }
@@ -966,7 +985,16 @@ fn hunk_header(
         return;
     }
     if !cx.editable {
-        let note = "Actions are off while whitespace is ignored";
+        let note = if cx.whole_file {
+            // Said once, on the first hunk.
+            if h == 0 {
+                "Stage or discard the whole file"
+            } else {
+                ""
+            }
+        } else {
+            "Actions are off while whitespace is ignored"
+        };
         let note_width = ui
             .painter()
             .layout_no_wrap(note.into(), note_font.clone(), p.text_faint)
@@ -1283,7 +1311,8 @@ fn metadata_note(diff: &FileDiff) -> Option<&'static str> {
     // The empty state already explains mode-only changes. With content changes the mode needs
     // saying too, so an executable-bit change is not hidden by its hunks.
     if let Some((old, new)) = diff.mode_change() {
-        return (diff.binary || !diff.hunks.is_empty()).then(|| mode_note(old, new));
+        return (diff.binary || diff.too_large || !diff.hunks.is_empty())
+            .then(|| mode_note(old, new));
     }
     let old = diff.old_mode == Some(LINK);
     let new = diff.new_mode == Some(LINK);
@@ -1306,11 +1335,16 @@ fn mode_note(old: u32, new: u32) -> &'static str {
     const FILE: u32 = 0o100_644;
     const EXECUTABLE: u32 = 0o100_755;
     const LINK: u32 = 0o120_000;
+    const SUBMODULE: u32 = 0o160_000;
     match (old, new) {
         (FILE, EXECUTABLE) => "Now executable.",
         (EXECUTABLE, FILE) => "No longer executable.",
         (LINK, FILE | EXECUTABLE) => "Was a symbolic link, now a regular file.",
         (FILE | EXECUTABLE, LINK) => "Was a regular file, now a symbolic link.",
+        (FILE | EXECUTABLE, SUBMODULE) => "Was a regular file, now a submodule.",
+        (SUBMODULE, FILE | EXECUTABLE) => "Was a submodule, now a regular file.",
+        (LINK, SUBMODULE) => "Was a symbolic link, now a submodule.",
+        (SUBMODULE, LINK) => "Was a submodule, now a symbolic link.",
         _ => "Only the file mode changed.",
     }
 }
@@ -1561,6 +1595,155 @@ mod tests {
     }
 
     #[test]
+    fn an_omitted_typechange_preview_keeps_metadata_without_fake_counts() {
+        use crate::ui::kit::testkit::{ctx, spoken};
+        let ctx = ctx();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let d = Arc::new(FileDiff {
+            path: "large.txt".into(),
+            kind: Some(ChangeKind::Typechange),
+            too_large: true,
+            old_mode: Some(0o100_644),
+            new_mode: Some(0o120_000),
+            ..FileDiff::default()
+        });
+        assert!(
+            metadata_note(&d).is_some(),
+            "the mode is not omitted with the preview"
+        );
+        tab.file = Some(crate::tab::FileSelection {
+            source: DiffSource::Staged,
+            entry: canopy_core::FileEntry {
+                path: d.path.clone(),
+                kind: ChangeKind::Typechange,
+                old_path: None,
+                additions: 1,
+                deletions: 20_000,
+                lfs: false,
+                old_mode: d.old_mode,
+                new_mode: d.new_mode,
+            },
+            conflicted: false,
+        });
+        tab.diff = Some(d);
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = spoken(&ctx, |ui| show(ui, &mut tab, &mut Vec::new()));
+        }
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref() == Some("Unstage file"))
+        );
+        assert!(
+            nodes.iter().all(|n| n
+                .value
+                .as_deref()
+                .is_none_or(|value| { value != "0 additions, 0 deletions" })),
+            "omitted lines do not mean zero changes: {nodes:?}"
+        );
+    }
+
+    #[test]
+    fn file_submodule_type_changes_render_both_sides() {
+        use crate::ui::kit::testkit::{ctx, spoken};
+        for source in [
+            DiffSource::Staged,
+            DiffSource::Commit(canopy_core::Oid::ZERO_SHA1),
+        ] {
+            for split in [false, true] {
+                for reverse in [false, true] {
+                    let ctx = ctx();
+                    let (worker, _, _) = crate::worker::Worker::detached();
+                    let mut tab = RepoTab::with_worker(
+                        std::path::PathBuf::from("fixture"),
+                        100,
+                        crate::settings::DiffPrefs::default(),
+                        worker,
+                    );
+                    let id = canopy_core::Oid::from_bytes(&[2; 20]).expect("oid");
+                    let pointer = format!("Subproject commit {id}");
+                    let (old_mode, new_mode, old, new) = if reverse {
+                        (0o160_000, 0o100_644, pointer.as_str(), "replacement text")
+                    } else {
+                        (0o100_644, 0o160_000, "original text", pointer.as_str())
+                    };
+                    tab.split_diff = split;
+                    tab.file = Some(crate::tab::FileSelection {
+                        source,
+                        entry: canopy_core::FileEntry {
+                            path: "dependency".into(),
+                            old_path: None,
+                            kind: ChangeKind::Typechange,
+                            additions: 1,
+                            deletions: 1,
+                            lfs: false,
+                            old_mode: Some(old_mode),
+                            new_mode: Some(new_mode),
+                        },
+                        conflicted: false,
+                    });
+                    let mut old_hunk = hunk("-");
+                    old_hunk.lines[0].old_no = Some(1);
+                    old_hunk.lines[0].text = old.into();
+                    let mut new_hunk = hunk("+");
+                    new_hunk.lines[0].new_no = Some(1);
+                    new_hunk.lines[0].text = new.into();
+                    tab.diff = Some(Arc::new(FileDiff {
+                        path: "dependency".into(),
+                        kind: Some(ChangeKind::Typechange),
+                        hunks: vec![old_hunk, new_hunk],
+                        additions: 1,
+                        deletions: 1,
+                        old_mode: Some(old_mode),
+                        new_mode: Some(new_mode),
+                        submodule: Some(canopy_core::SubmoduleChange {
+                            old: reverse.then_some(id),
+                            new: (!reverse).then_some(id),
+                            old_present: false,
+                            new_present: false,
+                            log: canopy_core::SubmoduleLog::default(),
+                        }),
+                        ..FileDiff::default()
+                    }));
+                    let mut nodes = Vec::new();
+                    let mut actions = Vec::new();
+                    for _ in 0..3 {
+                        nodes = spoken(&ctx, |ui| show(ui, &mut tab, &mut actions));
+                    }
+                    for label in [
+                        format!("Removed line 1: {old}"),
+                        format!("Added line 1: {new}"),
+                        "Diff layout".into(),
+                        "3 lines".into(),
+                    ] {
+                        assert!(
+                            nodes.iter().any(|n| {
+                                n.label.as_deref().or(n.value.as_deref()) == Some(&label)
+                            }),
+                            "{source:?}, split={split}, reverse={reverse}: missing {label:?} in {nodes:?}"
+                        );
+                    }
+                    assert!(
+                        !nodes
+                            .iter()
+                            .any(|n| n.label.as_deref().is_some_and(|label| {
+                                label.starts_with("Stage hunk") || label.starts_with("Discard hunk")
+                            }))
+                    );
+                    assert!(actions.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn only_a_new_or_deleted_file_drops_a_line_number_column() {
         let diff = |kind| FileDiff {
             kind: Some(kind),
@@ -1607,6 +1790,7 @@ mod tests {
                     conflicted: false,
                     one_sided: false,
                     editable: true,
+                    whole_file: false,
                     context: 3,
                     highlights: None,
                     mono: FontId::monospace(theme::metrics().mono_size),
@@ -1751,6 +1935,66 @@ mod tests {
         assert!(unnamed.is_empty(), "unnamed operable nodes: {unnamed:?}");
     }
 
+    /// #44: a type change shows its lines, but its hunks offer no actions, and say why.
+    #[test]
+    fn a_type_changes_hunks_offer_no_actions_and_name_the_whole_file() {
+        let ctx = themed();
+        let d = FileDiff {
+            hunks: vec![Hunk {
+                header: "@@ -1 +0,0 @@".into(),
+                ..hunk("-")
+            }],
+            kind: Some(ChangeKind::Typechange),
+            old_mode: Some(0o100_644),
+            new_mode: Some(0o120_000),
+            ..Default::default()
+        };
+        assert_eq!(
+            metadata_note(&d),
+            Some("Was a regular file, now a symbolic link.")
+        );
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let cx = Ctx {
+                p: palette(ui.ctx()),
+                source: &DiffSource::Unstaged,
+                path: "file.rs",
+                conflicted: false,
+                one_sided: false,
+                editable: false,
+                whole_file: true,
+                context: 3,
+                highlights: None,
+                mono: FontId::monospace(theme::metrics().mono_size),
+            };
+            let rect = Rect::from_min_size(pos2(0.0, 40.0), vec2(900.0, row_heights().1));
+            hunk_header(
+                ui,
+                &cx,
+                &d,
+                0,
+                rect,
+                egui::Pos2::ZERO,
+                rect,
+                &mut None,
+                &mut Vec::new(),
+            );
+        });
+        output.textures_delta.clear();
+        let texts: Vec<String> = output
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            texts.iter().any(|t| t == "Stage or discard the whole file"),
+            "{texts:?}"
+        );
+        assert!(!texts.iter().any(|t| t.contains("Stage hunk")), "{texts:?}");
+    }
+
     /// QVIS-1: the "Click lines" hint never paints over a long hunk title; it shows only where
     /// the whole title leaves room for it.
     #[test]
@@ -1778,6 +2022,7 @@ mod tests {
                     conflicted: false,
                     one_sided: false,
                     editable: true,
+                    whole_file: false,
                     context: 3,
                     highlights: None,
                     mono: FontId::monospace(theme::metrics().mono_size),
@@ -1931,6 +2176,7 @@ mod tests {
                 conflicted: false,
                 one_sided: false,
                 editable: false,
+                whole_file: false,
                 context: 3,
                 highlights: None,
                 mono: FontId::monospace(theme::metrics().mono_size),

@@ -97,12 +97,12 @@ Works also while typing.
 | Ctrl+Shift+S | Stage all changes |
 | Ctrl+B | Create a branch |
 | Ctrl+Enter | Commit staged changes |
-| Ctrl+F | Show or hide History search (closing clears the query) |
+| Ctrl+F | Show or hide History search (closing clears the query); in Requests, focus the request filter |
 | Ctrl+Comma | Open settings |
 | Ctrl+= (also Ctrl++) / Ctrl+− | Zoom in / out |
 | Ctrl+0 | Reset zoom |
 | Ctrl+Q | Quit Canopy |
-| Esc | Close the dialog, palette, cheatsheet or History search |
+| Esc | Close the dialog, palette, cheatsheet or History search (in the request filter: clear it, then leave it) |
 
 ## Lists and views
 
@@ -118,7 +118,7 @@ Only when no text field has focus.
 | PgUp or Ctrl+U | Up a page |
 | gg (press G twice), also Home | Go to the top |
 | Shift+G, also End | Go to the bottom |
-| / | Show or hide History search |
+| / | Show or hide History search; in Requests, focus the request filter |
 | Shift+R | Refresh |
 | Shift+F10 | Open the menu of the focused row |
 

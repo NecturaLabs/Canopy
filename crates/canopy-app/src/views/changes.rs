@@ -9,16 +9,17 @@ use canopy_core::{DiffSource, FileEntry};
 use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::{FileSelection, RepoTab};
+use crate::ui::art;
 use crate::ui::kit::anim::Flip;
 use crate::ui::kit::chip::CountBadge;
 use crate::ui::kit::field::{Join, TextArea, TextField};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{RowKind, SectionHeader, Selection, caps_galley};
 use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
+use crate::ui::kit::surface::{EmptyAction, EmptyState};
 use crate::ui::kit::toggle::Checkbox;
 use crate::ui::kit::{Button, IconButton, Size, Tone, menu, paint};
 use crate::ui::theme::{self, palette};
-use crate::ui::{art, widgets};
 use crate::views::{commit_detail, diff, resolve, state_banner};
 use crate::worker::Op;
 
@@ -72,6 +73,18 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
         }
     }
 
+    if snap.status_unavailable.is_none()
+        && snap.state == canopy_core::RepoState::Clean
+        && snap.status.is_clean()
+        && !tab.amend
+    {
+        tab.focus_summary = false;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(s.pane))
+            .show(ui, |ui| clean_home(ui, tab, &snap, actions));
+        return None;
+    }
+
     let pane_max = (ui.available_width() * 0.4).max(160.0);
     let (lo, hi, default_width) = (
         pane_max.min(220.0),
@@ -100,7 +113,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
             let list_frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 8));
             // The composer follows the lists while both fit; once the lists would crowd it, it
             // pins to the bottom and the lists scroll above it.
-            let need = lists_height(&snap.status) + COMPOSER_GAP + composer_height(ui, tab, &snap);
+            let gap = if snap.status.is_clean() {
+                0.0
+            } else {
+                COMPOSER_GAP
+            };
+            let need = lists_height(&snap.status) + gap + composer_height(ui, tab);
             let follows = snap.status_unavailable.is_none() && need <= ui.available_height();
             if follows {
                 egui::CentralPanel::default()
@@ -113,10 +131,17 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
                                 lists(ui, tab, &snap, actions, &mut flip);
                                 // The composer follows the lists as they change.
                                 flip.item(ui, composer_key(), None, |ui| {
-                                    ui.add_space(COMPOSER_GAP / 2.0);
-                                    let rule = ui.max_rect().x_range();
-                                    paint::seam_h(ui.painter(), rule, ui.cursor().min.y, s.border);
-                                    ui.add_space(COMPOSER_GAP / 2.0);
+                                    if !snap.status.is_clean() {
+                                        ui.add_space(COMPOSER_GAP / 2.0);
+                                        let rule = ui.max_rect().x_range();
+                                        paint::seam_h(
+                                            ui.painter(),
+                                            rule,
+                                            ui.cursor().min.y,
+                                            s.border,
+                                        );
+                                        ui.add_space(COMPOSER_GAP / 2.0);
+                                    }
                                     egui::Frame::new()
                                         .inner_margin(egui::Margin::symmetric(4, 0))
                                         .show(ui, |ui| composer(ui, tab, &snap, actions, true));
@@ -209,15 +234,14 @@ const COMPOSER_GAP: f32 = 28.0;
 /// Gap between two file lists, and the height of an empty list's placeholder line.
 const LIST_GAP: f32 = theme::MD;
 const EMPTY_LIST: f32 = theme::XL;
-/// The clean tree's one call to action ("Push", "Pull", "Publish…") stays a proper button under
-/// the illustration however short its label.
+/// The clean state’s primary action stays a proper button even with a short label.
 const CTA_MIN_WIDTH: f32 = 120.0;
 
 /// Height of the sections `lists` draws, close enough to decide whether the composer fits
 /// below them. An overestimate only pins the composer; an underestimate scrolls.
 fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
     if st.is_clean() {
-        return 40.0;
+        return 0.0;
     }
     let (conflicts, unstaged, staged) = visible_lists(st);
     let header = theme::metrics().section_header_height;
@@ -244,16 +268,33 @@ fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
 }
 
 /// Height of the composer as `composer` lays it out in `follows` mode.
-fn composer_height(ui: &Ui, tab: &RepoTab, snap: &canopy_core::RepoSnapshot) -> f32 {
-    if composer_is_quiet(tab, snap) {
-        return 76.0;
-    }
+fn composer_height(ui: &Ui, tab: &RepoTab) -> f32 {
     let short = ui.ctx().content_rect().height() < 600.0;
     let mut h = if short { 224.0 } else { 262.0 };
     if identity_notice(tab.identity.as_ref(), tab.identity_error.is_some()).is_some() {
         h += 56.0;
     }
+    h += message_hints(tab)
+        .iter()
+        .map(|_| MESSAGE_HINT_HEIGHT)
+        .sum::<f32>();
     h + 24.0
+}
+
+/// What one message hint takes in the composer: a small line and the gap under it. A hint
+/// that wraps in a narrow column takes more; the composer scrolls, so none is cut off.
+const MESSAGE_HINT_HEIGHT: f32 = 20.0;
+
+/// The hints for the draft in the composer: none when the check is off. They only warn; the
+/// commit button and the draft are never touched.
+fn message_hints(tab: &RepoTab) -> Vec<String> {
+    if !tab.check_message {
+        return Vec::new();
+    }
+    canopy_core::message::check(&tab.commit_summary, &tab.commit_body)
+        .iter()
+        .map(canopy_core::message::Problem::describe)
+        .collect()
 }
 
 /// A list's header: the uppercase title, its count in a badge beside it, and `trailing`
@@ -323,21 +364,7 @@ fn lists(
                 }
             }
         });
-    } else if st.is_clean() {
-        // The illustration and the summary live in the main pane (`clean_home`); here the
-        // column only says there is nothing to list.
-        flip.item(ui, clean_key(), None, |ui| {
-            list_header(ui, "Changes", 0, Tone::Neutral, |ui| {
-                if IconButton::new(icon::EYE_SLASH, "Ignore rules…")
-                    .size(Size::Sm)
-                    .show(ui)
-                    .clicked()
-                {
-                    actions.push(ignore_rules(tab));
-                }
-            });
-        });
-    } else {
+    } else if !st.is_clean() {
         let (conflicts, unstaged, staged) = visible_lists(st);
         if conflicts {
             list(ui, tab, List::Conflicted, &st.conflicted, actions, flip);
@@ -481,123 +508,81 @@ fn ignore_rules(tab: &RepoTab) -> Action {
     )))
 }
 
-/// The main pane of a clean working tree: the illustration and where the branch stands, with
-/// the next step (Push, Pull, Publish) when there is one.
+/// A clean tree's next sync action and a quiet entry into the amend composer.
 fn clean_home(
     ui: &mut Ui,
-    tab: &RepoTab,
+    tab: &mut RepoTab,
     snap: &canopy_core::RepoSnapshot,
     actions: &mut Vec<Action>,
 ) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
-    let busy = tab.running.is_some();
     let branch = snap
         .head
         .branch
         .as_ref()
         .and_then(|name| snap.branches.iter().find(|b| b.is_head && &b.name == name));
-    let last = snap
-        .head
-        .oid
-        .and_then(|oid| snap.commits.iter().find(|c| c.oid == oid));
-    let top = ((ui.available_height() - 380.0) / 2.0).max(24.0);
-    egui::ScrollArea::vertical()
-        .id_salt("clean-summary")
-        .min_scrolled_height(0.0)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(top);
-                art::show(ui, art::empty_clean(), vec2(200.0, 150.0));
-                ui.add_space(theme::SM);
-                ui.label(RichText::new("Working tree clean").font(theme::heading(m.display_size)));
-                ui.add_space(2.0);
-                ui.label(
-                    RichText::new(format!("Nothing to commit on {}.", snap.head.label()))
-                        .color(p.text_dim)
-                        .size(m.meta_size),
-                );
-                ui.add_space(theme::LG);
-                let (status, next) = match (branch, snap.remotes.is_empty()) {
-                    (_, true) => (
-                        format!("{}  Local only, no remote", icon::HARD_DRIVES),
-                        Some(("Publish…", Action::Publish)),
+    let (status, label, action) = match (branch, snap.remotes.is_empty()) {
+        (_, true) => (
+            "Local only, no remote".to_owned(),
+            "Publish…",
+            Action::Publish,
+        ),
+        (Some(b), false) if b.upstream.is_some() => {
+            let upstream = b.upstream.as_deref().unwrap_or_default();
+            match (b.ahead, b.behind) {
+                (0, 0) => (
+                    format!("Up to date with {upstream}"),
+                    "Fetch",
+                    Action::Fetch,
+                ),
+                (a, 0) => (
+                    format!(
+                        "{a} commit{} to push to {upstream}",
+                        if a == 1 { "" } else { "s" }
                     ),
-                    (Some(b), false) if b.upstream.is_some() => {
-                        let upstream = b.upstream.as_deref().unwrap_or_default();
-                        match (b.ahead, b.behind) {
-                            (0, 0) => (
-                                format!("{}  Up to date with {upstream}", icon::CHECK_CIRCLE),
-                                None,
-                            ),
-                            (a, 0) => (
-                                format!(
-                                    "{}  {a} commit{} to push to {upstream}",
-                                    icon::ARROW_FAT_LINE_UP,
-                                    if a == 1 { "" } else { "s" }
-                                ),
-                                Some(("Push", Action::Push)),
-                            ),
-                            (0, n) => (
-                                format!(
-                                    "{}  {n} commit{} to pull from {upstream}",
-                                    icon::ARROW_FAT_LINE_DOWN,
-                                    if n == 1 { "" } else { "s" }
-                                ),
-                                Some(("Pull", Action::Pull)),
-                            ),
-                            (a, n) => (
-                                format!("{}  {a} ahead, {n} behind {upstream}", icon::GIT_DIFF),
-                                Some(("Pull", Action::Pull)),
-                            ),
-                        }
-                    }
-                    (Some(_), false) => (
-                        format!("{}  Not pushed yet", icon::CLOUD_ARROW_UP),
-                        Some(("Push", Action::Push)),
+                    "Push",
+                    Action::Push,
+                ),
+                (0, n) => (
+                    format!(
+                        "{n} commit{} to pull from {upstream}",
+                        if n == 1 { "" } else { "s" }
                     ),
-                    (None, false) => (format!("{}  {}", icon::GIT_BRANCH, snap.head.label()), None),
-                };
-                commit_detail::without_icons(
-                    ui.label(RichText::new(status).size(m.body_size).color(p.text)),
-                );
-                if let Some((label, action)) = next {
-                    ui.add_space(theme::SM);
-                    if Button::new(label)
-                        .primary()
-                        .min_width(CTA_MIN_WIDTH)
-                        .enabled(!busy)
-                        .disabled_reason("Another operation is still running")
-                        .show(ui)
-                        .clicked()
-                    {
-                        actions.push(action);
-                    }
-                }
-                if let Some(c) = last {
-                    ui.add_space(theme::LG);
-                    let now = chrono::Utc::now().timestamp();
-                    ui.label(
-                        RichText::new(format!(
-                            "Last commit {}  ·  {}",
-                            canopy_core::short_id(c.oid),
-                            widgets::relative_time(c.author.time, now)
-                        ))
-                        .size(m.small_size)
-                        .color(p.text_faint),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&c.summary)
-                                .size(m.meta_size)
-                                .color(p.text_dim),
-                        )
-                        .truncate(),
-                    );
-                }
-            });
-        });
+                    "Pull",
+                    Action::Pull,
+                ),
+                (a, n) => (
+                    format!("{a} ahead, {n} behind {upstream}"),
+                    "Pull",
+                    Action::Pull,
+                ),
+            }
+        }
+        (Some(_), false) => ("Not pushed yet".to_owned(), "Push", Action::Push),
+        (None, false) => (snap.head.label(), "Fetch", Action::Fetch),
+    };
+    let mut state = EmptyState::new("Working tree clean")
+        .art(art::empty_clean())
+        .icon(icon::CHECK_CIRCLE)
+        .body(status)
+        .action(label)
+        .action_min_width(CTA_MIN_WIDTH)
+        .id_salt("clean-working-tree");
+    if snap.head.oid.is_some() && snap.state == canopy_core::RepoState::Clean && !tab.amend {
+        state = state.link("Amend last commit");
+    }
+    let clicked = ui
+        .add_enabled_ui(tab.running.is_none(), |ui| state.show(ui).value)
+        .inner;
+    match clicked {
+        Some(EmptyAction::Primary) => actions.push(action),
+        Some(EmptyAction::Link) => {
+            tab.amend = true;
+            if tab.message_is_unwritten() {
+                actions.push(Action::PrefillAmend);
+            }
+        }
+        None => {}
+    }
 }
 
 /// Which of the conflicted, unstaged and staged sections to draw. An empty section is left out
@@ -618,7 +603,7 @@ fn list_motion(ui: &Ui, tab: &RepoTab) -> Flip {
 }
 
 /// Keys of the file lists' [`Flip`] items: a section's header and empty line, a file's row in a
-/// section (aliased by its path, so it slides between sections), the clean tree's header and the
+/// section (aliased by its path, so it slides between sections), and the
 /// composer that follows the lists.
 fn header_key(which: List) -> egui::Id {
     egui::Id::new(("changes-header", which as u8))
@@ -632,9 +617,6 @@ fn row_key(which: List, path: &str) -> egui::Id {
 fn path_key(path: &str) -> egui::Id {
     egui::Id::new(("changes-file", path))
 }
-fn clean_key() -> egui::Id {
-    egui::Id::new("changes-clean")
-}
 fn composer_key() -> egui::Id {
     egui::Id::new("changes-composer")
 }
@@ -646,7 +628,7 @@ fn listed(st: &canopy_core::WorkingStatus, key: egui::Id) -> bool {
         return true;
     }
     if st.is_clean() {
-        return key == clean_key();
+        return false;
     }
     let (conflicts, unstaged, staged) = visible_lists(st);
     [
@@ -1095,10 +1077,6 @@ fn composer(
     let m = theme::metrics();
     // Always-visible bars with their own room, so a handle never covers the fields' text.
     ui.spacing_mut().scroll = theme::solid_scroll();
-    if composer_is_quiet(tab, snap) {
-        quiet_composer(ui, tab, snap, actions);
-        return;
-    }
     let staged = snap.status.staged.len();
     let merging = snap.state == canopy_core::RepoState::Merge;
     let can = tab.can_commit();
@@ -1235,45 +1213,6 @@ fn fitting_label<'a>(ui: &Ui, labels: &'a [String], room: f32) -> (&'a str, bool
     (label.map_or("", String::as_str), false)
 }
 
-/// A clean tree with nothing typed: the composer shrinks to a line and the Amend choice, so an
-/// empty form and a disabled button do not compete with the rest of the view.
-fn composer_is_quiet(tab: &RepoTab, snap: &canopy_core::RepoSnapshot) -> bool {
-    snap.state == canopy_core::RepoState::Clean
-        && snap.status.is_clean()
-        && !tab.amend
-        && tab.commit_summary.is_empty()
-        && tab.commit_body.is_empty()
-}
-
-fn quiet_composer(
-    ui: &mut Ui,
-    tab: &mut RepoTab,
-    snap: &canopy_core::RepoSnapshot,
-    actions: &mut Vec<Action>,
-) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
-    // Nothing to commit yet, so a pending request to focus the summary would fire later,
-    // when files appear.
-    tab.focus_summary = false;
-    let _ = SectionHeader::new("Commit").first(true).show(ui);
-    ui.add_space(theme::XS);
-    ui.label(
-        RichText::new("Nothing to commit")
-            .size(m.meta_size)
-            .color(p.text_faint),
-    );
-    if snap.head.oid.is_some() {
-        ui.add_space(theme::SM);
-        Checkbox::new(&mut tab.amend, "Amend last commit")
-            .tooltip("Replace the last commit with a new message")
-            .show(ui);
-        if tab.amend {
-            actions.push(Action::PrefillAmend);
-        }
-    }
-}
-
 fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let _ = SectionHeader::new("Commit").first(true).show(ui);
     ui.add_space(theme::XS);
@@ -1305,6 +1244,24 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .guide(72)
         .id_salt("commit-body")
         .show(ui);
+    let hints = message_hints(tab);
+    if !hints.is_empty() {
+        let p = palette(ui.ctx());
+        let m = theme::metrics();
+        ui.add_space(theme::XS);
+        for hint in &hints {
+            commit_detail::without_icons(
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!("{}  {hint}", icon::WARNING))
+                            .color(p.warning)
+                            .size(m.small_size),
+                    )
+                    .wrap(),
+                ),
+            );
+        }
+    }
     ui.add_space(theme::SM);
     let was = tab.amend;
     let clean = tab
@@ -1316,7 +1273,7 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .tooltip("Replace the last commit with the staged changes and this message")
         .disabled_reason("Finish or abort the operation in progress first")
         .show(ui);
-    if tab.amend && !was && tab.commit_summary.is_empty() {
+    if tab.amend && !was && tab.message_is_unwritten() {
         actions.push(Action::PrefillAmend);
     }
     ui.add_space(theme::SM);
@@ -1802,12 +1759,188 @@ mod tests {
     }
 
     #[test]
+    fn a_clean_tree_has_one_state_and_keyboard_amend() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        ctx.enable_accesskit();
+        let (worker, events, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let mut snap = canopy_core::RepoSnapshot::default();
+        snap.head.oid = Some(canopy_core::Oid::from_bytes(&[1; 20]).expect("head"));
+        tab.snap = Some(std::sync::Arc::new(snap));
+        let mut actions = Vec::new();
+        let mut draw = |keys: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(960.0, 400.0))),
+                    events: keys,
+                    ..Default::default()
+                },
+                |ui| {
+                    let split = show(ui, &mut tab, &mut actions);
+                    assert!(
+                        split.is_none(),
+                        "a clean tree has no empty file-list column"
+                    );
+                },
+            );
+            out.textures_delta.clear();
+            let text = out
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            (
+                out.platform_output
+                    .accesskit_update
+                    .expect("accessible tree"),
+                text,
+            )
+        };
+        let (mut update, mut text) = draw(Vec::new());
+        for _ in 0..3 {
+            (update, text) = draw(Vec::new());
+        }
+        assert!(
+            text.iter().any(|text| text == "Working tree clean"),
+            "{text:?}"
+        );
+        assert!(
+            !update
+                .nodes
+                .iter()
+                .any(|(_, n)| n.label() == Some("Commit summary"))
+        );
+        let amend = update
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.label() == Some("Amend last commit"))
+            .collect::<Vec<_>>();
+        assert_eq!(amend.len(), 1);
+        assert_eq!(amend[0].1.role(), egui::accesskit::Role::Link);
+        let mut reached = false;
+        for _ in 0..10 {
+            let (update, _) = draw(crate::ui::kit::testkit::key(egui::Key::Tab));
+            if update
+                .nodes
+                .iter()
+                .any(|(id, n)| *id == update.focus && n.label() == Some("Amend last commit"))
+            {
+                draw(crate::ui::kit::testkit::key(egui::Key::Enter));
+                reached = true;
+                break;
+            }
+        }
+        assert!(reached, "amend is keyboard reachable");
+        assert!(tab.amend);
+        assert!(actions.iter().any(|a| matches!(a, Action::PrefillAmend)));
+        events
+            .send(crate::worker::Event::HeadMessage(
+                "Last message\n\nLast description".into(),
+            ))
+            .expect("message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "Last message");
+        assert_eq!(tab.commit_body, "Last description");
+        let nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+            show(ui, &mut tab, &mut actions);
+        });
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref() == Some("Commit summary"))
+        );
+    }
+
+    #[test]
+    fn clean_branches_offer_the_next_sync_action() {
+        for (ahead, behind, expected) in [
+            (0, 0, "Fetch"),
+            (2, 0, "Push"),
+            (0, 2, "Pull"),
+            (2, 2, "Pull"),
+        ] {
+            let ctx = crate::ui::kit::testkit::ctx();
+            ctx.enable_accesskit();
+            let (worker, _, _) = crate::worker::Worker::detached();
+            let mut tab = RepoTab::with_worker(
+                "fixture".into(),
+                100,
+                crate::settings::DiffPrefs::default(),
+                worker,
+            );
+            let mut snap = canopy_core::RepoSnapshot::default();
+            snap.head.branch = Some("main".into());
+            snap.branches.push(canopy_core::BranchInfo {
+                name: "main".into(),
+                target: None,
+                is_head: true,
+                upstream: Some("origin/main".into()),
+                ahead,
+                behind,
+                worktree: None,
+            });
+            snap.remotes.push(canopy_core::RemoteInfo {
+                name: "origin".into(),
+                url: None,
+                default_branch: Some("main".into()),
+            });
+            tab.snap = Some(std::sync::Arc::new(snap));
+            let mut actions = Vec::new();
+            let mut reached = false;
+            for _ in 0..10 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        events: crate::ui::kit::testkit::key(egui::Key::Tab),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(ui, &mut tab, &mut actions);
+                    },
+                );
+                out.textures_delta.clear();
+                let update = out.platform_output.accesskit_update.expect("tree");
+                if update
+                    .nodes
+                    .iter()
+                    .any(|(id, n)| *id == update.focus && n.label() == Some(expected))
+                {
+                    crate::ui::kit::testkit::frame(
+                        &ctx,
+                        crate::ui::kit::testkit::key(egui::Key::Enter),
+                        |ui| {
+                            show(ui, &mut tab, &mut actions);
+                        },
+                    );
+                    reached = true;
+                    break;
+                }
+            }
+            assert!(
+                reached,
+                "{ahead}/{behind}: {expected} is keyboard reachable"
+            );
+            assert!(actions.iter().any(|a| matches!(
+                (expected, a),
+                ("Fetch", Action::Fetch) | ("Push", Action::Push) | ("Pull", Action::Pull)
+            )));
+        }
+    }
+
+    #[test]
     fn compact_clean_summary_keeps_publish_reachable_by_scrolling() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (worker, _, _) = crate::worker::Worker::detached();
-        let tab = RepoTab::with_worker(
+        let mut tab = RepoTab::with_worker(
             "fixture".into(),
             100,
             crate::settings::DiffPrefs::default(),
@@ -1835,7 +1968,7 @@ mod tests {
                     egui::CentralPanel::default()
                         .frame(egui::Frame::NONE)
                         .show(ui, |ui| {
-                            clean_home(ui, &tab, &snap, &mut Vec::new());
+                            clean_home(ui, &mut tab, &snap, &mut Vec::new());
                         });
                 },
             );
@@ -2232,6 +2365,136 @@ mod tests {
             assert!(
                 !summary.is_positive() || !warning_rect.intersects(summary),
                 "identity notice {warning_rect:?} overlaps painted summary {summary:?}",
+            );
+        }
+    }
+
+    /// Every text the Changes view paints for `tab` in a window of `size`, after a few frames.
+    fn composer_texts(ctx: &egui::Context, tab: &mut RepoTab, size: egui::Vec2) -> Vec<String> {
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::Panel::top("test-actions")
+                        .exact_size(84.0)
+                        .show(ui, |_| {});
+                    show(ui, tab, &mut Vec::new());
+                },
+            );
+            output.textures_delta.clear();
+            texts = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    /// Issue 92: a summary or description line that is too wide is reported under the fields
+    /// while the setting is on, and the draft and the commit button are never touched.
+    #[test]
+    fn message_hints_follow_the_setting_and_leave_the_draft_alone() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let summary = "Rework the commit composer so that it reports every long line it finds";
+        let summary = format!("{summary} before the commit");
+        let body = format!("Short.\n{}", "word ".repeat(20));
+        tab.commit_summary.clone_from(&summary);
+        tab.commit_body.clone_from(&body);
+        let mut snap = unstaged_snapshot();
+        snap.status.staged = vec![entry("src/lib.rs")];
+        tab.snap = Some(std::sync::Arc::new(snap));
+        let can = tab.can_commit();
+        let size = vec2(562.5, 700.0);
+        let hinted = |texts: &[String], needle: &str| texts.iter().any(|t| t.contains(needle));
+
+        tab.check_message = true;
+        let texts = composer_texts(&ctx, &mut tab, size);
+        assert!(
+            hinted(
+                &texts,
+                &format!("Summary is {} characters", summary.chars().count())
+            ),
+            "summary hint missing in {texts:?}"
+        );
+        assert!(
+            hinted(&texts, "Description line 2 is 99 characters"),
+            "description hint missing in {texts:?}"
+        );
+        assert_eq!((&tab.commit_summary, &tab.commit_body), (&summary, &body));
+        assert_eq!(tab.can_commit(), can, "a hint never blocks the commit");
+
+        tab.check_message = false;
+        let texts = composer_texts(&ctx, &mut tab, size);
+        assert!(
+            !hinted(&texts, "characters;"),
+            "no hints when off: {texts:?}"
+        );
+        assert!(!hinted(&texts, "description line"), "{texts:?}");
+        assert_eq!((&tab.commit_summary, &tab.commit_body), (&summary, &body));
+
+        // A message that fits is never hinted.
+        tab.check_message = true;
+        tab.commit_summary = "Add metrics".into();
+        tab.commit_body = "Explains why.".into();
+        let texts = composer_texts(&ctx, &mut tab, size);
+        assert!(!hinted(&texts, "characters;"), "{texts:?}");
+    }
+
+    /// The composer reserves room for the hints, in a short window as in a tall one.
+    #[test]
+    fn message_hints_make_the_composer_taller() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let mut snap = unstaged_snapshot();
+        snap.status.staged = vec![entry("src/lib.rs")];
+        let snap = std::sync::Arc::new(snap);
+        tab.snap = Some(std::sync::Arc::clone(&snap));
+        tab.commit_summary = "x".repeat(80);
+        tab.commit_body = "word ".repeat(20);
+        for height in [400.0, 900.0] {
+            let mut heights = Vec::new();
+            for on in [false, true] {
+                tab.check_message = on;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(562.5, height),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| heights.push(composer_height(ui, &tab)),
+                );
+                output.textures_delta.clear();
+            }
+            assert!(
+                (heights[1] - heights[0] - 2.0 * MESSAGE_HINT_HEIGHT).abs() < f32::EPSILON,
+                "{heights:?} at {height}"
             );
         }
     }

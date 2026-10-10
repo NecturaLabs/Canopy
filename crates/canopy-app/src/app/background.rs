@@ -5,6 +5,7 @@ use super::*;
 use canopy_core::identity::{Scope, Source};
 
 use crate::identity_worker::Event as IdentityEvent;
+use crate::tab::REQUESTS_REFRESH_EVERY;
 use crate::views::settings_screen::source_label;
 
 /// What the first-launch identity question should do now.
@@ -133,6 +134,26 @@ fn force_push_dialog(repo: &std::path::Path, target: canopy_core::PushTarget) ->
 }
 
 impl CanopyApp {
+    pub(super) fn request_git_config(&mut self, ctx: &egui::Context, job: IdentityJob) {
+        if self
+            .identity_worker
+            .as_ref()
+            .is_some_and(|worker| worker.send(job))
+        {
+            return;
+        }
+        if let Some(screen) = &mut self.settings_screen {
+            screen.git_config_finished();
+        }
+        self.toasts.push(
+            ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Git settings were not saved",
+            "The Git settings helper is unavailable. Restart Canopy and try again.",
+        );
+    }
+
     pub(super) fn request_identity(&mut self, job: IdentityJob) {
         if self
             .identity_worker
@@ -190,6 +211,40 @@ impl CanopyApp {
         let events: Vec<_> = worker.events.try_iter().collect();
         for event in events {
             match event {
+                IdentityEvent::ConfigChanged {
+                    repo,
+                    recommended,
+                    result,
+                } => {
+                    if recommended && result.is_ok() {
+                        self.settings.use_recommended_git_choices();
+                    }
+                    if let Some(screen) = &mut self.settings_screen {
+                        screen.git_config_finished();
+                    }
+                    match result {
+                        Ok(()) => self.toasts.push(ctx, ToastKind::Success, Topic::Confirmation,
+                            "Git settings saved", if recommended {
+                                "Recommended values were saved globally. Repository overrides remain in force."
+                            } else { "The selected Git configuration was updated." }),
+                        Err(error) => self.toasts.push(ctx, ToastKind::Error, Topic::Error,
+                            "Git settings were not fully saved", error),
+                    }
+                    let paths: Vec<_> = self
+                        .tabs
+                        .iter()
+                        .filter(|tab| repo.as_ref().is_none_or(|path| tab.path == *path))
+                        .map(|tab| {
+                            tab.refresh();
+                            tab.path.clone()
+                        })
+                        .collect();
+                    for path in paths {
+                        self.request_identity(IdentityJob::ReadRepo(path.clone()));
+                        self.read_config_for(ctx, &path);
+                    }
+                    self.request_identity(IdentityJob::ReadGlobal);
+                }
                 IdentityEvent::Repo { path, result } => {
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.path == path) {
                         match result {
@@ -303,6 +358,8 @@ impl CanopyApp {
         self.poll_config_reads(ctx);
         self.poll_identity(ctx);
         for tab in &mut self.tabs {
+            tab.requests.refresh.interval =
+                requests_refresh_interval(self.settings.auto_fetch_for(&tab.path));
             for n in tab.poll(&self.gitlab_hosts) {
                 let (kind, topic) = if n.ok {
                     (ToastKind::Success, Topic::Finished)
@@ -311,6 +368,22 @@ impl CanopyApp {
                 };
                 self.toasts
                     .push_for(ctx, kind, topic, n.title, n.body, Some(&tab.path));
+            }
+            if !tab.sidebar_restored
+                && let Some(key) = tab.sidebar_key()
+            {
+                if let Some(closed) = self.settings.repo_sidebar.get(key) {
+                    tab.collapsed = closed.iter().cloned().collect();
+                }
+                tab.sidebar_restored = true;
+            }
+            if !tab.request_view_restored
+                && let Some(key) = tab.sidebar_key()
+            {
+                if let Some(view) = self.settings.repo_requests.get(key) {
+                    tab.request_view = view.clone();
+                }
+                tab.request_view_restored = true;
             }
             // Taken after the poll that set it, so the dialog shows in this frame.
             if let Some(d) = tab.pull_decision.take() {
@@ -493,6 +566,31 @@ impl CanopyApp {
             ctx.request_repaint_after(Duration::from_secs(30));
         }
     }
+
+    /// Refreshes the active tab's open request list on a timer: as often as the background
+    /// fetch runs, or every minute when that is off. Wakes the frame loop only when it falls due.
+    pub(super) fn auto_refresh_requests(&mut self, ctx: &egui::Context) {
+        if self.screenshot.is_some() {
+            return;
+        }
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        let interval = requests_refresh_interval(self.settings.auto_fetch_for(&t.path));
+        if let Some(next) = t.refresh_requests_on_timer(Instant::now(), interval, focused) {
+            ctx.request_repaint_after(next);
+        }
+    }
+}
+
+/// How often the open request list refreshes when the background fetch runs every `minutes`
+/// (0: off, so every [`REQUESTS_REFRESH_EVERY`]).
+fn requests_refresh_interval(minutes: u32) -> Duration {
+    match minutes {
+        0 => REQUESTS_REFRESH_EVERY,
+        minutes => Duration::from_secs(u64::from(minutes) * 60),
+    }
 }
 
 #[cfg(test)]
@@ -522,6 +620,18 @@ mod tests {
             author: person.clone(),
             committer: person,
         }
+    }
+
+    #[test]
+    fn the_request_list_refreshes_with_the_background_fetch_or_every_minute() {
+        for (minutes, secs) in [(0, 60), (1, 60), (5, 300), (30, 1_800)] {
+            assert_eq!(
+                requests_refresh_interval(minutes),
+                Duration::from_secs(secs),
+                "{minutes} minutes"
+            );
+        }
+        assert_eq!(requests_refresh_interval(0), REQUESTS_REFRESH_EVERY);
     }
 
     #[test]

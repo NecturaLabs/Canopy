@@ -31,6 +31,9 @@ mod github;
 mod gitlab;
 mod http;
 mod model;
+mod preview;
+#[cfg(test)]
+mod test_server;
 mod token;
 pub mod updates;
 
@@ -41,4 +44,5 @@ pub use model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, ReviewDecision, Rollup, StateFilter, checkout_ref,
 };
+pub use preview::{PREVIEW_CHARS, description_preview};
 pub use token::{TOKEN_PREFIXES, token_from_env_for, token_from_git_credentials};

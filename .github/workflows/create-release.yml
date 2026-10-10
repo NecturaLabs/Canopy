@@ -44,11 +44,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Test before tagging
+    if: github.ref == 'refs/heads/main' && !inputs.dry-run
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-release.yml
+    with:
+      commit: ${{ github.sha }}
+
   prepare:
     name: Build number and tag
+    needs: [test]
+    # A dry run skips tests and cannot tag; a real run proceeds only after tests pass.
+    if: ${{ !cancelled() && (inputs.dry-run || needs.test.result == 'success') }}
     # A throwaway GitHub-hosted runner: this job holds a token that can push tags.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
     permissions:
       contents: write
       actions: read
@@ -64,7 +76,7 @@ jobs:
       # and every tag, since the build number counts commits.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
       - name: Decide the build
@@ -86,14 +98,28 @@ jobs:
           fi
           echo "::notice::Next build: $build"
           echo "build=$build" >> "$GITHUB_OUTPUT"
+      # Dispatched right after a merge, CI on the merged commit may still be running (or not yet
+      # started): wait for it rather than refuse, up to 25 minutes (a full run takes about 10). A
+      # dry run only looks.
       - name: Check the commit CI tested
         if: steps.plan.outputs.build != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          TRIES: ${{ inputs.dry-run && 1 || 75 }}
         run: |
           sha=$(git rev-parse HEAD)
-          state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&per_page=1" \
-            --jq '.workflow_runs[0] | if . == null then "not run" else (.conclusion // .status) end')
+          for try in $(seq "$TRIES"); do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&per_page=1" \
+              --jq '.workflow_runs[0] | if . == null then "not run" else (.conclusion // .status) end') || state="unreadable"
+            case $state in
+              queued | in_progress | waiting | pending | requested) ;;
+              "not run" | unreadable) (( try < 6 )) || break ;;
+              *) break ;;
+            esac
+            (( try < TRIES )) || break
+            echo "CI on $sha: $state; checking again in 20 seconds."
+            sleep 20
+          done
           if [[ $state != success ]]; then
             echo "::error::CI has not passed on main ($sha: $state). Release after it is green."
             exit 1

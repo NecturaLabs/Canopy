@@ -22,20 +22,30 @@ use canopy_hosting::{
 };
 
 use crate::hosting::{HostWorker, TokenSource};
+use crate::request_view::{DraftChoice, RequestSort, RequestView};
 use crate::tab::RepoTab;
 
 /// The scenario `--demo-requests` chose. Set once by `main.rs`, read by the screenshot driver.
 static CHOSEN: OnceLock<Scenario> = OnceLock::new();
 
 /// What `--demo-requests` accepts, for `--help` and the error message.
-pub const SPECS: &str = "list, list-all, list-closed, <number>, busy, loading, details-loading, \
-details-error, error, no-token or empty; prefix gitlab: for merge requests";
+pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, list-overflow, filtered, no-match, \
+<number>, busy, loading, details-loading, details-error, error, no-token or empty; prefix gitlab: for \
+merge requests";
 
 /// Which part of the requests view to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scene {
     /// The list under this filter, nothing selected.
     List(StateFilter),
+    /// The open list as it shows before its checks and reviews arrive (or without a token).
+    Unchecked,
+    /// An open list longer than any window, to see the scroll bar beside the rows.
+    Overflow,
+    /// The open list with a filter and a sort chosen: ready requests, A to Z by title.
+    Filtered,
+    /// The open list with a text filter that matches nothing.
+    NoMatch,
     /// The list with this request selected and its details loaded.
     Request(u64),
     /// The request in flight: its merge box shows the busy line.
@@ -90,6 +100,10 @@ impl Scenario {
             "list" => Scene::List(StateFilter::Open),
             "list-all" => Scene::List(StateFilter::All),
             "list-closed" => Scene::List(StateFilter::Closed),
+            "list-unchecked" => Scene::Unchecked,
+            "list-overflow" => Scene::Overflow,
+            "filtered" => Scene::Filtered,
+            "no-match" => Scene::NoMatch,
             "busy" => Scene::Busy,
             "loading" => Scene::Loading,
             "details-loading" => Scene::DetailsLoading,
@@ -181,11 +195,34 @@ impl Scenario {
         requests.details_loading = false;
         requests.busy = None;
         requests.filter = StateFilter::Open;
+        tab.request_view = RequestView::default();
+        let requests = &mut tab.requests;
         let list = |filter| Some(Ok(summaries(kind, filter, now)));
         match self.scene {
             Scene::List(filter) => {
                 requests.filter = filter;
                 requests.list = list(filter);
+            }
+            Scene::Unchecked => {
+                let rows: Vec<RequestSummary> = summaries(kind, StateFilter::Open, now)
+                    .iter()
+                    .map(|r| RequestSummary {
+                        rollup: None,
+                        ..r.clone()
+                    })
+                    .collect();
+                requests.list = Some(Ok(rows.into()));
+            }
+            Scene::Overflow => requests.list = Some(Ok(overflow(kind, now))),
+            Scene::Filtered | Scene::NoMatch => {
+                requests.list = list(StateFilter::Open);
+                match self.scene {
+                    Scene::Filtered => {
+                        tab.request_view.draft = Some(DraftChoice::Ready);
+                        tab.request_view.sort = RequestSort::Title;
+                    }
+                    _ => "no such request".clone_into(&mut tab.request_view.text),
+                }
             }
             Scene::Request(number) => {
                 let open = ROWS
@@ -717,6 +754,7 @@ fn summary(kind: ForgeKind, row: &Row, now: i64) -> RequestSummary {
         updated_at: row.updated.at(now),
         web_url: path,
         labels: row.labels.iter().map(|l| (*l).to_owned()).collect(),
+        description: canopy_hosting::description_preview(row.body),
         rollup: Some(rollup(kind, row)),
     }
 }
@@ -754,6 +792,110 @@ fn summaries(kind: ForgeKind, filter: StateFilter, now: i64) -> Arc<[RequestSumm
             StateFilter::All => true,
         })
         .map(|row| summary(kind, row, now))
+        .collect()
+}
+
+/// How many requests the overflow list holds: more than fit a 1440x900 window with room to spare.
+const OVERFLOW_COUNT: u64 = 36;
+
+/// The number of the overflow list's newest request.
+const OVERFLOW_TOP: u64 = 500;
+
+/// A long open list, newest first, for the scroll bar's captures: titles of every length (some
+/// wrap, some are one word), drafts, labels, descriptions and every check and review standing, so
+/// the right edge of a row is as busy as it ever is.
+fn overflow(kind: ForgeKind, now: i64) -> Arc<[RequestSummary]> {
+    const TITLES: [&str; 12] = [
+        "Stream large diffs without materialising every hunk",
+        "Fix the lane allocator",
+        "Remember the diff mode per repository",
+        "Show the stash count beside the branch name in the sidebar",
+        "Tidy settings",
+        "Keep the selection when the history reloads after a fetch from a remote with many tags",
+        "Bump egui",
+        "Explain why a pull refused to run",
+        "Add a cheatsheet entry for the request filter",
+        "Make the commit message field grow with its text",
+        "Handle a detached HEAD in the branch picker",
+        "Quiet the status bar while a fetch runs",
+    ];
+    const PEOPLE: [&str; 5] = [
+        "lucia-ortega",
+        "maya-chen",
+        "sam-okafor",
+        "jonas-weber",
+        "priya-raman",
+    ];
+    const LABELS: [&[&str]; 6] = [
+        &[],
+        &["bug"],
+        &["ui", "accessibility"],
+        &["performance", "diff", "ready for review"],
+        &["graph", "needs design", "wip", "breaking change"],
+        &["docs"],
+    ];
+    const CHECKS: [Option<CheckState>; 4] = [
+        Some(CheckState::Success),
+        Some(CheckState::Failure),
+        Some(CheckState::Pending),
+        None,
+    ];
+    const REVIEWS: [Option<ReviewDecision>; 4] = [
+        Some(ReviewDecision::Approved),
+        Some(ReviewDecision::ChangesRequested),
+        Some(ReviewDecision::Required),
+        None,
+    ];
+    let github = kind == ForgeKind::GitHub;
+    (0..OVERFLOW_COUNT)
+        .map(|i| {
+            let n = OVERFLOW_TOP - i;
+            let at = |step: usize| usize::try_from(i).map_or(0, |i| i % step);
+            let draft = at(7) == 3;
+            let title = TITLES[at(TITLES.len())];
+            let review = REVIEWS[at(REVIEWS.len())]
+                // GitLab says approved or nothing.
+                .filter(|r| github || *r == ReviewDecision::Approved);
+            RequestSummary {
+                number: n,
+                title: if !github && draft {
+                    format!("Draft: {title}")
+                } else {
+                    title.to_owned()
+                },
+                author: PEOPLE[at(PEOPLE.len())].to_owned(),
+                state: RequestState::Open,
+                draft,
+                source_branch: format!("topic/{n}"),
+                target_branch: "main".to_owned(),
+                from_fork: false,
+                created_at: When::hours(i64::try_from(i).unwrap_or(0) + 2).at(now),
+                updated_at: When::minutes(i64::try_from(i).unwrap_or(0) * 25 + 5).at(now),
+                web_url: match kind {
+                    ForgeKind::GitHub => format!("https://github.com/example-org/harbor/pull/{n}"),
+                    ForgeKind::GitLab => {
+                        format!(
+                            "https://gitlab.com/example-org/platform/harbor/-/merge_requests/{n}"
+                        )
+                    }
+                },
+                labels: LABELS[at(LABELS.len())]
+                    .iter()
+                    .map(|l| (*l).to_owned())
+                    .collect(),
+                description: if at(3) == 0 {
+                    String::new()
+                } else {
+                    "Large diffs no longer allocate a row per line, so a generated file scrolls as \
+                     smoothly as a small one."
+                        .to_owned()
+                },
+                rollup: Some(Rollup {
+                    checks: CHECKS[at(CHECKS.len())],
+                    review,
+                }),
+            }
+        })
         .collect()
 }
 
@@ -809,6 +951,10 @@ mod tests {
             "list",
             "list-all",
             "list-closed",
+            "list-unchecked",
+            "list-overflow",
+            "filtered",
+            "no-match",
             "428",
             "busy",
             "loading",
@@ -912,6 +1058,23 @@ mod tests {
             r.rollup
                 .is_some_and(|x| matches!(x.review, None | Some(ReviewDecision::Approved)))
         }));
+    }
+
+    #[test]
+    fn the_overflow_list_is_long_distinct_and_busy_at_its_right_edge() {
+        for kind in [ForgeKind::GitHub, ForgeKind::GitLab] {
+            let list = overflow(kind, NOW);
+            assert_eq!(list.len(), usize::try_from(OVERFLOW_COUNT).unwrap());
+            assert!(list.len() >= 30, "more than any window shows");
+            let mut numbers: Vec<u64> = list.iter().map(|r| r.number).collect();
+            assert!(numbers.windows(2).all(|w| w[0] > w[1]), "newest first");
+            numbers.dedup();
+            assert_eq!(numbers.len(), list.len(), "{kind:?}");
+            assert!(list.iter().any(|r| r.draft) && list.iter().any(|r| !r.labels.is_empty()));
+            assert!(list.iter().any(|r| r.description.is_empty()));
+            assert!(list.iter().all(|r| r.rollup.is_some()));
+            assert!(list.windows(2).all(|w| w[0].updated_at >= w[1].updated_at));
+        }
     }
 
     #[test]

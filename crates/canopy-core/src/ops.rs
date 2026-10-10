@@ -3,6 +3,7 @@
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use git2::Oid;
 
@@ -13,6 +14,21 @@ use crate::{Error, MissingObjects, PushDefault, Repo, Result};
 
 /// The most of a commit template Canopy reads, in bytes.
 const COMMIT_TEMPLATE_LIMIT: u64 = 256 * 1024;
+
+/// The most commits one patch export covers.
+pub const MAX_PATCH_SERIES: usize = 50;
+
+/// Distinguishes concurrent exports in this process; exclusive creation also handles leftovers.
+static PATCH_EXPORT_NEXT: AtomicU64 = AtomicU64::new(0);
+
+/// The commits an export writes patches for, and the merge commits it skips.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PatchSeries {
+    /// Newest first.
+    pub commits: Vec<Oid>,
+    /// Merge commits of the chain, newest first: `git format-patch` writes no patch for them.
+    pub merges: Vec<Oid>,
+}
 
 /// How far `git reset` goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -470,8 +486,18 @@ impl Repo {
         if u64::try_from(text.len()).is_ok_and(|len| len > COMMIT_TEMPLATE_LIMIT) {
             return Err(unreadable(&"it is too large"));
         }
+        // The comment character git would strip: `core.commentChar` when it is one character
+        // (`auto` and anything else mean `#`). Trailing spaces stay: "feat: " is a prefix.
+        let configured =
+            cli::run_unchecked(self.workdir(), &["config", "--get", "core.commentChar"])?;
+        let configured = String::from_utf8_lossy(&configured.stdout);
+        let mut chars = configured.trim_end().chars();
+        let comment = match (chars.next(), chars.next()) {
+            (Some(c), None) if !c.is_whitespace() => c,
+            _ => '#',
+        };
         let text = String::from_utf8_lossy(&text);
-        let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+        let kept: Vec<&str> = text.lines().filter(|l| !l.starts_with(comment)).collect();
         Ok(Some(kept.join("\n").trim_end().to_owned()))
     }
 
@@ -671,8 +697,64 @@ impl Repo {
         self.conflicting_cmd(&args)
     }
 
+    /// `oids` without repeats, ancestors before their descendants whatever their dates (a
+    /// date sort would swap commits made in the same second or rebased out of order).
+    fn parents_first(&self, oids: &[Oid]) -> Result<Vec<Oid>> {
+        let wanted: std::collections::HashSet<Oid> = oids.iter().copied().collect();
+        let mut walk = self.git().revwalk()?;
+        walk.set_sorting(git2::Sort::TOPOLOGICAL)?;
+        for oid in &wanted {
+            walk.push(*oid)?;
+        }
+        let mut found = Vec::with_capacity(wanted.len());
+        for id in walk {
+            let id = id?;
+            if wanted.contains(&id) {
+                found.push(id);
+                if found.len() == wanted.len() {
+                    break;
+                }
+            }
+        }
+        found.reverse();
+        Ok(found)
+    }
+
+    /// `oid` and the commits before it along first parents, newest first: at most `count`
+    /// (clamped to 1 to [`MAX_PATCH_SERIES`]), fewer when the history starts sooner. Merge
+    /// commits stay in the chain; the walk goes on through their first parent.
+    pub fn first_parent_chain(&self, oid: Oid, count: usize) -> Result<Vec<Oid>> {
+        let count = count.clamp(1, MAX_PATCH_SERIES);
+        let repo = self.git();
+        let mut chain = Vec::with_capacity(count);
+        let mut next = Some(oid);
+        while let Some(id) = next.filter(|_| chain.len() < count) {
+            chain.push(id);
+            next = repo.find_commit(id)?.parent_ids().next();
+        }
+        Ok(chain)
+    }
+
+    /// What exporting `oid` and up to `count - 1` commits before it along first parents writes:
+    /// the chain of [`Self::first_parent_chain`] without its merge commits, which are listed
+    /// apart because `git format-patch` writes no patch for a merge (given a merge, it writes
+    /// the nearest commit before it instead).
+    pub fn patch_series(&self, oid: Oid, count: usize) -> Result<PatchSeries> {
+        let mut series = PatchSeries::default();
+        for id in self.first_parent_chain(oid, count)? {
+            if self.git().find_commit(id)?.parent_count() > 1 {
+                series.merges.push(id);
+            } else {
+                series.commits.push(id);
+            }
+        }
+        Ok(series)
+    }
+
     /// Writes one `git format-patch` file per commit of `oids` into `dir`, parents first, and
-    /// returns their paths. `dir` must be absolute and is created when missing.
+    /// returns their paths. `dir` must be absolute and is created when missing. A merge commit
+    /// is refused: `git format-patch` has no patch for it ([`Self::patch_series`] sets merges
+    /// apart).
     pub fn export_patches(&self, oids: &[Oid], dir: &Path) -> Result<Vec<std::path::PathBuf>> {
         if oids.is_empty() {
             return Ok(Vec::new());
@@ -680,26 +762,40 @@ impl Repo {
         if !dir.is_absolute() {
             return Err(Error::invalid("Choose a full folder path for the patches."));
         }
-        let ids: Vec<String> = oids.iter().map(Oid::to_string).collect();
-        let mut order = vec!["rev-list", "--topo-order", "--reverse", "--no-walk"];
-        order.extend(ids.iter().map(String::as_str));
-        let ordered = self.git_cmd(&order)?;
+        for id in oids {
+            if self.git().find_commit(*id)?.parent_count() > 1 {
+                return Err(Error::invalid(format!(
+                    "A merge commit cannot be exported as a patch: {}",
+                    crate::short_id(*id)
+                )));
+            }
+        }
+        let ordered = self.parents_first(oids)?;
         let io = |e: std::io::Error| Error::invalid(format!("{}: {e}", dir.display()));
         std::fs::create_dir_all(dir).map_err(io)?;
         // Written beside the target and moved in only once no file there would be replaced.
-        let staging = dir.join(format!(".canopy-patches-{}", std::process::id()));
+        let staging = loop {
+            let next = PATCH_EXPORT_NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = dir.join(format!(".canopy-patches-{}-{next}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => break path,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(io(error)),
+            }
+        };
         let staging_arg = staging.to_string_lossy();
         let mut staged = Vec::new();
-        let made = ordered.lines().enumerate().try_for_each(|(n, id)| {
+        let made = ordered.iter().enumerate().try_for_each(|(n, id)| {
             let start = (n + 1).to_string();
             let out = self.git_cmd(&[
                 "format-patch",
+                "--no-cover-letter",
                 "-1",
                 "--start-number",
                 &start,
                 "-o",
                 &staging_arg,
-                id,
+                &id.to_string(),
             ])?;
             staged.extend(out.lines().map(std::path::PathBuf::from));
             Ok::<(), Error>(())
@@ -716,11 +812,17 @@ impl Repo {
                 )));
             }
             for (file, target) in staged.iter().zip(&targets) {
-                std::fs::rename(file, target).map_err(io)?;
+                let mut source = std::fs::File::open(file).map_err(io)?;
+                let mut destination = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(target)
+                    .map_err(io)?;
+                std::io::copy(&mut source, &mut destination).map_err(io)?;
             }
             Ok(())
         });
-        // Only the staging folder this call made, which is empty after a successful move.
+        // Only the staging folder this call exclusively created.
         let _ = std::fs::remove_dir_all(&staging);
         result?;
         let written = targets;
@@ -934,7 +1036,7 @@ impl Repo {
             .map(String::as_str)
             .collect();
         args.extend(["pull", "--progress", "--no-prune"]);
-        args.extend(self.autostash_flag(rebase));
+        args.extend(self.pull_autostash_flag(rebase)?);
         args.extend(strategy.git_args());
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
@@ -972,7 +1074,7 @@ impl Repo {
         match strategy {
             PullStrategy::Rebase | PullStrategy::RebaseMerges => {
                 args.push("rebase");
-                args.extend(self.autostash_flag(true));
+                args.extend(self.pull_autostash_flag(true)?);
                 if strategy == PullStrategy::RebaseMerges {
                     args.push("--rebase-merges");
                 }
@@ -987,7 +1089,7 @@ impl Repo {
             | PullStrategy::MergeNoFastForward
             | PullStrategy::FastForwardOnly => {
                 args.extend(["merge", "--no-edit"]);
-                args.extend(self.autostash_flag(false));
+                args.extend(self.pull_autostash_flag(false)?);
                 args.push(match strategy {
                     PullStrategy::MergeNoFastForward => "--no-ff",
                     PullStrategy::FastForwardOnly => "--ff-only",

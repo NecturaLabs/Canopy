@@ -10,7 +10,10 @@ use crate::tab::{RepoTab, SidebarItem};
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Skeleton;
-use crate::ui::kit::row::{ListRow, Roving, RowKind, SectionHeader, TreeNav, TreeRow};
+use crate::ui::kit::row::{
+    ListRow, Roving, RowKind, SectionHeader, TreeNav, TreeRow, section_item_indent,
+    section_tree_indent,
+};
 use crate::ui::kit::{Button, KitResponse, Size, Tone, a11y, menu};
 use crate::ui::theme::{self, palette};
 use crate::ui::widgets::forge_icon;
@@ -61,11 +64,7 @@ fn section_with_action(
         header = header.action(glyph, label);
     }
     let shown = header.show(ui);
-    if open {
-        tab.collapsed.remove(key);
-    } else {
-        tab.collapsed.insert(key.to_owned());
-    }
+    tab.set_sidebar_open(key, open);
     (open, shown)
 }
 
@@ -171,13 +170,15 @@ fn row(ui: &mut Ui, r: &Row<'_>, list: Option<(Roving, usize)>) -> egui::Respons
         )
         .size()
         .x;
-    let room = ui.available_width() - 2.0 * theme::MD - m.icon_md - theme::SM;
+    let room =
+        ui.available_width() - section_item_indent() - 2.0 * theme::MD - m.icon_md - theme::SM;
     let tip = r
         .hint
         .map(str::to_owned)
         .or_else(|| (label_w > room - badges_w).then(|| r.label.to_owned()));
     let mut row = ListRow::new(r.id)
         .kind(RowKind::Sidebar)
+        .indent(section_item_indent())
         .selected(r.selected)
         .current(r.current)
         .icon(r.glyph)
@@ -397,26 +398,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             });
         }
 
-        // Remotes: "+" on the header (hover or focus) and its context menu add one; a
-        // repository with none says so and offers Publish and Add remote as links instead, so
-        // the header has no second "Add remote…".
+        // Remotes: a repository with none says so and offers Publish and Add remote…; the header
+        // has no action or menu of its own (Add remote… is in the palette too).
         let local_only = snap.remotes.is_empty();
-        let (open, header) = section_with_action(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false, (!local_only).then_some((icon::PLUS, "Add remote…")));
-        if header.value {
-            actions.push(Action::AddRemoteDialog);
-        }
-        menu::context(&header.response, |m| {
-            if m.item(icon::PLUS, "Add remote…").show(m.ui).clicked() {
-                actions.push(Action::AddRemoteDialog);
-            }
-            if local_only {
-                if m.item(icon::CLOUD_ARROW_UP, "Publish…").show(m.ui).clicked() {
-                    actions.push(Action::Publish);
-                }
-            } else if m.item(icon::ARROWS_CLOCKWISE, "Fetch all remotes").shortcut(Command::Fetch).show(m.ui).clicked() {
-                actions.push(Action::Fetch);
-            }
-        });
+        let open = section(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false);
         if open {
             if local_only {
                 no_remotes(ui, actions);
@@ -440,6 +425,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 };
                 let remote_at = at;
                 let shown = TreeRow::new(("remote", &r.name), 0)
+                    .indent(section_tree_indent())
                     .open(&mut open)
                     .toggle_on_click(true)
                     .label(label)
@@ -450,11 +436,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 if shown.value == Some(TreeNav::FirstChild) {
                     list.focus(ui.ctx(), remote_at + 1);
                 }
-                if open {
-                    tab.collapsed.remove(&key);
-                } else {
-                    tab.collapsed.insert(key.clone());
-                }
+                tab.set_sidebar_open(&key, open);
                 let resp = match r.url.as_deref() {
                     Some(url) => shown.response.kit_tooltip(url).show(),
                     None => shown.response,
@@ -487,6 +469,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     let b = &snap.remote_branches[branches[i]];
                     let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::RemoteBranch { remote, branch } if *remote == b.remote && *branch == b.branch), b.target);
                     let shown = TreeRow::new(("remote-branch", &b.remote, &b.branch), 1)
+                        .indent(section_tree_indent())
                         .icon(icon::GIT_BRANCH)
                         .label(b.branch.clone())
                         .selected(selected)
@@ -686,6 +669,15 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     if pick.is_some() {
         tab.sidebar_pick = pick;
     }
+    if tab.sidebar_changed {
+        if let Some(repo) = tab.sidebar_key() {
+            actions.push(Action::RememberSidebar {
+                repo: repo.to_path_buf(),
+                closed: tab.collapsed.iter().cloned().collect(),
+            });
+        }
+        tab.sidebar_changed = false;
+    }
 }
 
 /// A worktree's folder name, as its row and tooltips call it.
@@ -780,6 +772,8 @@ mod tests {
             crate::settings::DiffPrefs::default(),
             worker,
         );
+        // A new tab starts with all but Branches closed; these fixtures show every section.
+        tab.collapsed.clear();
         tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
             remotes,
             ..Default::default()
@@ -892,10 +886,10 @@ mod tests {
         );
     }
 
-    /// O9: with remotes the Remotes header's "+" is reachable at rest (keyboard and screen
-    /// readers, kit-polish Override O2), shows on hover, and a click on it opens the dialog.
+    /// #138: the Remotes header has no "+" and no context menu; "Add remote…" stays in the
+    /// palette and the local-only block.
     #[test]
-    fn the_remotes_header_adds_a_remote_from_its_hover_button() {
+    fn the_remotes_header_has_no_button_and_no_menu() {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
@@ -904,78 +898,194 @@ mod tests {
         let mut actions = Vec::new();
         let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
-        assert_eq!(
-            named(&nodes, "Add remote…").map(egui::accesskit::Node::role),
-            Some(Role::Button),
-            "the header's + is in the tree at rest"
-        );
         let header =
             center(named(&nodes, &a11y::disclosure_name("Remotes", true)).expect("remotes header"));
+        assert!(
+            named(&nodes, "Add remote…").is_none(),
+            "no + on the header at rest"
+        );
         let hover = vec![egui::Event::PointerMoved(header)];
         let _ = sidebar_frame(&ctx, &mut tab, hover.clone(), &mut actions);
         let nodes = sidebar_frame(&ctx, &mut tab, hover, &mut actions);
-        let add = center(named(&nodes, "Add remote…").expect("the header's + on hover"));
-        let _ = sidebar_frame(&ctx, &mut tab, click(add), &mut actions);
+        assert!(named(&nodes, "Add remote…").is_none(), "none on hover");
+        let right_click = [true, false].map(|pressed| egui::Event::PointerButton {
+            pos: header,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        });
+        let _ = sidebar_frame(&ctx, &mut tab, right_click.to_vec(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         crate::ui::motion::set_reduced(false);
-        assert!(
-            matches!(actions.as_slice(), [Action::AddRemoteDialog]),
-            "{actions:?}"
-        );
+        for label in ["Add remote…", "Fetch all remotes", "Publish…"] {
+            assert!(named(&nodes, label).is_none(), "a menu opened with {label}");
+        }
+        assert!(actions.is_empty(), "{actions:?}");
     }
 
-    /// O9, KPL-F13: the Remotes header's "+" is reachable from the keyboard: Tab from the header
-    /// lands on it, and Shift+Tab goes back to the header.
+    /// #138: a new tab starts with every section closed except Branches, and a section the user
+    /// opens stays open.
     #[test]
-    fn the_remotes_header_button_is_reachable_by_tab_and_shift_tab() {
+    fn a_new_tab_opens_only_branches_and_keeps_the_users_choice() {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
         crate::ui::motion::set_reduced(true);
-        let mut tab = tab_with(vec![origin()]);
-        tab.collapsed.insert("branches".into());
-        let mut actions = Vec::new();
-        let key = |shift: bool| egui::Event::Key {
-            key: egui::Key::Tab,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: if shift {
-                egui::Modifiers::SHIFT
-            } else {
-                egui::Modifiers::default()
-            },
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.snap = branch_tab().snap;
+        let sub = canopy_core::SubmoduleInfo {
+            name: "deps/lib".into(),
+            path: "deps/lib".into(),
+            url: None,
+            head_id: Some(oid(7)),
+            index_id: Some(oid(7)),
+            workdir_id: Some(oid(7)),
+            conflicted: false,
+            dirty: None,
         };
-        let mut focused = Vec::new();
-        for _ in 0..6 {
-            let _ = sidebar_frame(&ctx, &mut tab, vec![key(false)], &mut actions);
-            let now = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions).1;
-            let reached = now.as_deref() == Some("Add remote…");
-            focused.push(now);
-            if reached {
-                break;
+        if let Some(snap) = tab.snap.as_mut() {
+            std::sync::Arc::make_mut(snap).submodules = vec![sub];
+        }
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        // Where the adapter speaks the expanded state, the name is the bare label for both
+        // states, so the node's own expanded property is what tells them apart.
+        let state = |nodes: &[egui::accesskit::Node], title: &str| {
+            [true, false].into_iter().find_map(|open| {
+                named(nodes, &a11y::disclosure_name(title, open))
+                    .map(|n| n.is_expanded().unwrap_or(open))
+            })
+        };
+        assert_eq!(state(&nodes, "Branches"), Some(true));
+        for title in ["Worktrees", "Remotes", "Tags", "Stashes", "Submodules"] {
+            assert_eq!(state(&nodes, title), Some(false), "{title}");
+        }
+
+        // The user opens Tags and closes Branches: both stay as chosen.
+        for title in ["Tags", "Branches"] {
+            let open = state(&nodes, title) == Some(true);
+            let at = center(named(&nodes, &a11y::disclosure_name(title, open)).expect(title));
+            let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
+            let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+            assert_eq!(state(&nodes, title), Some(!open), "{title} toggled");
+        }
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        crate::ui::motion::set_reduced(false);
+        assert_eq!(state(&nodes, "Tags"), Some(true));
+        assert_eq!(state(&nodes, "Branches"), Some(false));
+        assert_eq!(state(&nodes, "Remotes"), Some(false));
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::RememberSidebar { closed, .. }
+            if closed.contains("branches") && !closed.contains("tags"))),
+            "the user's toggle is queued for persistence"
+        );
+        actions.clear();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert!(
+            actions.is_empty(),
+            "drawing steady state does not write preferences"
+        );
+    }
+
+    /// The text a painted shape holds, with where it is.
+    fn painted_text(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+        match shape {
+            egui::Shape::Text(t) => {
+                out.push((t.galley.text().to_owned(), t.visual_bounding_rect()));
+            }
+            egui::Shape::Vec(v) => v.iter().for_each(|s| painted_text(s, out)),
+            _ => {}
+        }
+    }
+
+    /// #139: the rows of a section sit right of its header's icon in every section, and a
+    /// remote's branches one level right of the remote.
+    #[test]
+    fn items_sit_right_of_their_section_headers() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        ctx.enable_accesskit();
+        let mut tab = branch_tab();
+        tab.collapsed.clear();
+        let remote = tab_with(vec![origin()]).snap.expect("snapshot");
+        if let Some(snap) = tab.snap.as_mut() {
+            let snap = std::sync::Arc::make_mut(snap);
+            snap.remotes = remote.remotes.clone();
+            snap.remote_branches = vec![canopy_core::RemoteBranchInfo {
+                remote: "origin".into(),
+                branch: "main".into(),
+                target: Some(oid(1)),
+            }];
+            snap.tags = vec![canopy_core::TagInfo {
+                name: "v1".into(),
+                target: Some(oid(1)),
+                message: None,
+            }];
+            snap.stashes = vec![canopy_core::StashInfo {
+                index: 0,
+                message: "On main: wip".into(),
+                oid: oid(5),
+            }];
+        }
+        tab.snap_index = crate::tab::SnapIndex::new(tab.snap.as_ref().expect("snapshot"));
+        let mut actions = Vec::new();
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let shapes = crate::ui::kit::testkit::frame(&ctx, Vec::new(), |ui| {
+                ui.set_max_size(egui::vec2(260.0, 700.0));
+                show(ui, &mut tab, &mut actions);
+            });
+            texts.clear();
+            for c in &shapes {
+                painted_text(&c.shape, &mut texts);
             }
         }
-        assert_eq!(
-            focused.last().cloned().flatten().as_deref(),
-            Some("Add remote…"),
-            "Tab never reached the header's +: {focused:?}"
-        );
-        assert!(
-            focused
+        // The glyphs of `glyph`, top to bottom.
+        let lefts = |glyph: &str| -> Vec<f32> {
+            let mut found: Vec<_> = texts.iter().filter(|(t, _)| t == glyph).collect();
+            found.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+            found.into_iter().map(|(_, r)| r.left()).collect()
+        };
+        let left_of = |label: &str| {
+            texts
                 .iter()
-                .rev()
-                .nth(1)
-                .is_some_and(|l| l.as_deref().is_some_and(|l| l.starts_with("Remotes"))),
-            "the + comes right after its header: {focused:?}"
-        );
-        let _ = sidebar_frame(&ctx, &mut tab, vec![key(true)], &mut actions);
-        let back = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions).1;
-        crate::ui::motion::set_reduced(false);
+                .find(|(t, _)| t == label)
+                .unwrap_or_else(|| panic!("{label}: {texts:?}"))
+                .1
+                .left()
+        };
+        let step = theme::metrics().tree_indent / 2.0;
+        // Branches: the header's glyph first, then the rows' (branch and remote branch).
+        let branch = lefts(icon::GIT_BRANCH);
+        assert!(branch.len() >= 3, "{branch:?}");
+        let (header, rows) = branch.split_first().expect("glyphs");
+        assert!(rows[0] > header + step, "branches {header} {rows:?}");
+        let worktrees = lefts(icon::FOLDERS)[0];
         assert!(
-            back.as_deref().is_some_and(|l| l.starts_with("Remotes")),
-            "Shift+Tab goes back to the header: {back:?}"
+            lefts(icon::FOLDER_SIMPLE)[0] > worktrees + step,
+            "worktrees"
         );
-        assert!(actions.is_empty(), "{actions:?}");
+        let tags = lefts(icon::TAG);
+        assert!(tags[1] > tags[0] + step, "tags {tags:?}");
+        let stashes = lefts(icon::ARCHIVE);
+        assert!(stashes[1] > stashes[0] + step, "stashes {stashes:?}");
+        // Remotes: the remote's name lines up with the items, its branch is one level further.
+        let cloud = lefts(icon::CLOUD)[0];
+        let origin = left_of("origin");
+        assert!(origin > cloud + step, "remote {cloud} {origin}");
+        let remote_branch = rows.last().copied().expect("remote branch glyph");
+        assert!(
+            remote_branch > origin + step,
+            "remote branch {origin} {remote_branch}"
+        );
     }
 
     /// A11Y-3: each section's rows are one Tab stop (the checked-out branch for Branches), the

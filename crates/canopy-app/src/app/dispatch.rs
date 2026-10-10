@@ -342,6 +342,31 @@ impl CanopyApp {
                         ));
                     }
                 }
+                Action::RememberSidebar { repo, closed } => {
+                    self.settings
+                        .repo_sidebar
+                        .insert(repo.clone(), closed.clone());
+                    for tab in &mut self.tabs {
+                        if tab.sidebar_key() == Some(repo.as_path()) {
+                            tab.collapsed = closed.iter().cloned().collect();
+                        }
+                    }
+                }
+                Action::RememberRequestView { repo, view } => {
+                    for tab in &mut self.tabs {
+                        if tab.sidebar_key() == Some(repo.as_path()) {
+                            tab.request_view = view.clone();
+                        }
+                    }
+                    // The default needs no entry, so repositories left alone do not pile up.
+                    if view.is_default() {
+                        self.settings.repo_requests.remove(&repo);
+                    } else {
+                        self.settings
+                            .repo_requests
+                            .insert(repo.clone(), view.clone());
+                    }
+                }
                 Action::SetRepoDiff { path, prefs } => {
                     match prefs {
                         Some(prefs) => self.settings.repo_diff.insert(path.clone(), prefs),
@@ -398,6 +423,25 @@ impl CanopyApp {
                 }
                 Action::ClearIdentity { repo, scope } => {
                     self.request_identity(IdentityJob::Clear { repo, scope });
+                }
+                Action::SaveGitConfig {
+                    repo,
+                    scope,
+                    setting,
+                    value,
+                } => {
+                    self.request_git_config(
+                        ctx,
+                        IdentityJob::Config {
+                            repo,
+                            scope,
+                            setting,
+                            value,
+                        },
+                    );
+                }
+                Action::UseRecommendedGitConfig => {
+                    self.request_git_config(ctx, IdentityJob::Recommendations);
                 }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();

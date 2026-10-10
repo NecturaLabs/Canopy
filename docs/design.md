@@ -110,6 +110,9 @@ text. A web link (`LinkButton::url`) ends in an arrow, shows its address in a to
 Copy link in its context menu (Copy address for an e-mail link). Every link is at least 24 points
 tall (`theme::MIN_TARGET`), WCAG 2.5.8's 24 CSS pixels read as 24 points at 100% scale.
 
+`LinkButton::max_text_width` elides long labels while retaining the whole accessible name; the
+commit header uses it for long committer names and provides their full text in a tooltip.
+
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
 syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
 in both styles; `Palette::ink` keeps coloured text readable on its own tint.
@@ -259,7 +262,7 @@ kit's helpers in `ui/kit/anim.rs`.
 | `TAB_CLOSE` | 250ms | A closed repository tab collapsing |
 | `EXIT_POPUP` / `EXIT_DIALOG` / `EXIT_TOAST` | 100 / 120 / 160ms | Exits |
 | `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay (Settings' Tooltip delay: Quick 150ms, Normal, Slow 1s); no delay right after one closed |
-| `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Spinners appear late and stay a minimum time |
+| `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Passive loading (skeleton rows, a field checking its value) appears late and stays a minimum time. A button's own operation (Fetch, Pull) is the user's action: its spinner starts at the click and crossfades in over `BASE` |
 
 Curves are cubic Béziers (`EASE_OUT` by default); springs (`SWITCH`, `PRESS`, the indicator
 pair) use the exact damped solution and repaint only while moving. Buttons scale their content
@@ -318,7 +321,11 @@ in the density's metrics:
 
 - Sidebar defaults to 250 points (resizable, 190–460). Below 1000 logical points it moves into
   the toolbar's navigation menu, preserving room for repository content. It stays open for
-  section toggles, double-click checkout and context menus.
+  section toggles, double-click checkout and context menus. A section's items sit one
+  `tree_indent` right of its header's icon (the header reads as their parent; a remote's branches
+  one level further) with their selection and hover fills at full width; a new tab opens only
+  Branches, and a section the user opened or closed keeps its state. The Remotes header carries no
+  button and no menu.
 - History column widths follow the currently visible rows: graph lane spans, ref pills and
   messages, author names and formatted dates. Metadata sits after the measured message width
   instead of at the far window edge. Narrow views omit lower-priority columns; long messages
@@ -329,23 +336,39 @@ in the density's metrics:
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
-- Commit details use a compact author, SHA and date above the changed files, and nothing twice:
-  the author's email (and the committer, when someone else made the commit) is the name's tooltip,
-  the full date with its zone the date's. The commit message's body sits flush under them, takes
-  its natural height up to the room left above two changed files and the "N files changed" line
-  (at least one line) and scrolls past it behind a faded edge, never cutting a line through its
-  glyphs. It repeats the commit summary only when the pane header cannot show it whole (or, in a
-  compact window, has no header). History prefers six visible rows and can retain the split with
-  two rows in a short window. Automatic inspector height adapts when the diff arrives; a manual
-  resize takes precedence.
-- Commit metadata, the Changes file list, and the request list take at most 40% of their
-  available width, leaving the rest for the diff or request details. The Changes file list and the
+- Commit details keep the summary, copyable commit id, parent links and committer's picture and
+  name in the pane header. The summary elides first, with its full text in a tooltip; facts wrap
+  below it when their controls cannot fit. Dates remain in the History row's tooltip. Compact
+  windows move the same facts into the card's top. The name opens the commit identity card with
+  the original author, signature status, profile link and picture explanation.
+- The details card holds only the description and the Changed files section: the description
+  scrolls independently behind a fade, leaving room for the stats and two file rows. A commit
+  without a body goes directly to its files. File names take precedence over folders and have
+  full-path tooltips; status badges and line counts use the kit. Automatic inspector height
+  follows the header and card contents; a manual resize takes precedence.
+- Commit metadata and the Changes file list take at most 40% of their available width, leaving
+  the rest for the diff or request details. The request list starts at 45% of the pane (320 to
+  560 points, following the window) and goes to 60% or 800 points. The Changes file list and the
   request list are resized with `kit::split::SplitHandle` (drag, the arrow keys while it has focus,
-  a double-click resets it) and keep their width across restarts. Pane limits follow the
-  current viewport. Read-only diff headers share a wrapping row at short heights to keep more
-  changed lines visible without reducing text size.
+  a double-click resets it) and keep their width across restarts; the request list keeps only a
+  width the user set, else it follows the window. Pane limits follow the current viewport.
+  Read-only diff headers share a wrapping row at short heights to keep more changed lines
+  visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
   the full state and branch pair remain available on hover.
+- A request row has no fixed height: the state glyph and `#number title` (medium weight, the
+  number in `text_faint`, up to two lines, an ellipsis only after the second), the checks and
+  review glyphs at the right of the first line, author and age in `small_size` `text_faint` with
+  the label chips right-aligned on that line, and the description in `small_size` `text_dim` (up to
+  two lines). A row is at least `request_row_height` and otherwise as tall as its text plus `SM`
+  above and below; the list virtualises by the measured heights.
+- The list's header holds the filter field (`SearchField`, the Filter command's chord as its
+  keycap) with a funnel `IconButton` (active while a filter other than the text is set, named
+  "Filters: N on") and a sort `IconButton` (a menu with the current choice checked). The funnel's
+  `Popover` stays open across the choices of its `Select`s (egui keeps one popup open, so the
+  popover holds its own open state and takes back the click that picks an option). A filtered
+  list gets a faint "N of M shown" line with Clear filters; an empty result is
+  `EmptyState::filtered`.
 - The right-aligned glyphs on a request row's title line come from the list's rollup when there
   is one (texts "Checks passed", "Checks failed", "Checks running"; a neutral state such as a
   skipped pipeline shows nothing), otherwise from the request's remembered details ("All N checks
@@ -447,14 +470,15 @@ in the density's metrics:
   chosen option shows a check. The resolver footer's "Save resolved file" is the one Primary.
 - Without a GitHub or GitLab remote, Requests offers Publish… (no remote at all) or Add remote…
   (remotes elsewhere) under its empty-state illustration.
-- A clean working tree gives the main pane its own state: the illustration, "Working tree
-  clean", where the branch stands (up to date, N to push or pull with that button, or local only
-  with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet
-  composer, "Nothing to commit" and the Amend choice, which expands to the full composer when
-  ticked or when text is typed.
-- The clean summary scrolls in a short pane so Publish/Push/Pull and the last commit remain
-  reachable at maximum zoom. The conflict resolver's body can shrink below its normal scroll
-  minimum rather than painting code across its fixed Save footer.
+- A clean working tree uses one kit `EmptyState` across the main pane, with the clean
+  illustration (the check icon in short panes), branch sync status and Push, Pull or Fetch.
+  A local-only repository offers Publish. Amend last commit is a quiet secondary link into
+  the composer; empty file lists and composer fields stay out of this state.
+
+- Short clean panes use the kit’s compact icon instead of the illustration, keeping the sync
+  and amend actions reachable. The primary action uses `EmptyState::action_min_width` to keep
+  its button width even with a short label. The conflict resolver’s body can shrink below its
+  normal scroll minimum rather than painting code across its fixed Save footer.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon
@@ -508,6 +532,44 @@ cannot fit. Pointer presses focus the field, so arrows, Home/End, typing and Ent
 opening with the mouse as well as from the keyboard, and the highlighted option scrolls into
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
+
+A select can mark one option with the kit's Recommended badge; its accessible description
+announces the recommendation without repeating the option name. The list reserves room for the
+badge and check, truncating only the painted label while keeping its full accessible name.
+Repository selects show the effective value once. Explicit selection pins even the current value;
+only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
+controls name their setting. Context lines and whitespace are one saved diff preset, with one
+shared reset that returns both to the app defaults.
+
+### Popover and the smaller components
+
+`Popover` is a small panel anchored to a control (diff options, the commit identity card, the theme
+quick-pick): the overlay surface with `card_pad` inside, 6 pt from the anchor and at least as wide.
+Clicking the anchor toggles it; a click outside or Esc closes it and gives focus back to the
+anchor. One popover is open at a time. The identity card in the commit details is one: the committer's name is a
+link button, the card holds the email with a copy button, the original author, the signature, a profile
+or user-search link and the picture settings; signature results get distinct glyphs and spoken
+names (verified: green seal, invalid: danger X, unavailable: muted question, untrusted or expired:
+warning). The identity card names the result and signer. The same result mark appears beside
+the name; unsigned commits have no mark.
+
+The rest of the kit, each with the states `--overlay gallery` shows:
+
+- `Badge` is a small rounded count or status label, neutral unless a `Tone` tints it;
+  `CountBadge` shows mono digits capped at `99+`.
+- `StatusDot` is a small circle with a ring of the surface behind it; `.pulse()` breathes while
+  something runs (still with reduced motion).
+- `Progress` is a bar with a label and value text; `Skeleton::rows(n)` stands in for a list that
+  loads for the first time (never on refreshes), after `LOADING_DELAY` so a quick load never
+  flashes it (at once with reduced motion).
+- `EmptyState` is a pane with nothing to show: art (an icon in a compact pane), a title, at most
+  two lines of body, a primary action, an optional link and keycap hints, centred a little above
+  the middle; the art grows in once.
+- `SearchField` is a filter input: magnifier, the shortcut's `Keycap` while empty, a clear button
+  once filled; Esc clears, then lets go of focus. `Keycap` draws one key.
+- `Slider` picks a value along a range by dragging, clicking or the arrow keys.
+- `TreeRow` is a `ListRow` with an indent per level and a disclosure chevron (space is kept for it
+  on leaves); Left collapses or asks for the parent, Right expands or asks for the first child.
 
 ### Text field
 
@@ -705,15 +767,20 @@ Finished operations, Confirmations); Settings → Notifications chooses which sh
 cards, and by default only the first three do. Every notification, card or not, goes to the
 notification center: the bell at the right end of the status bar (`BELL`, `BELL_SLASH` while
 cards are off) opens a 360-point popover listing the last 100, newest first. Each row is laid out
-like its card (the same glyph, title, body and gaps), with its relative time at the right of the
-title (exact in the tooltip), up to four lines of text (all of it in the tooltip), and buttons
+like its card (the same glyph, title, body and gaps), with its dismiss button at the right of the
+wrapping title and its source and relative time on their own line (exact time in the tooltip),
+up to four lines of text (all of it in the tooltip), and buttons
 only for what can be done: a decision's own two as Xs (tonal Primary and Ghost), and Copy (Ghost)
 on a failure, whose output is worth keeping; their labels line up with the text. Rows part by
 `SM` space and a hairline at 8% of the text colour over the surface, the same in every theme. A
-header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors,
+header holds a Ghost Clear all and the settings gear. The list keeps its scroll bar's own room
+(`solid_scroll`) beside the rows, so it never covers a dismiss button, and fades a row cut by
+its edge. The same notice again straight after itself from one repository is one row, with its
+count (`5×`) after the title and the latest time. Notifications of a counting topic (errors,
 attention, updates) that showed no card, and decisions whose card ran out, raise a strong count
 badge on the bell, solid `danger_solid` with `on_danger` text when an unread one is an error, else
-`accent`, kept inside the status bar; opening the center clears it,
+`accent`, kept inside the status bar. Read state is saved per entry, preserving unread counts and
+error severity across restarts; legacy entries without a read-state field load as read. Opening the center clears it,
 and while it is open new notifications go to its list instead of a card.
 
 ### Command palette
@@ -766,7 +833,7 @@ They do not append a universal command preview: an action may run several Git co
 arguments can depend on repository state at execution time, and a guessed preview would imply a
 guarantee it cannot keep. A future optional command disclosure must use the same redacted argv
 that the operation actually executes. Differences from the user's Git configuration are shown
-with the setting, value and source, as the Git settings work in the backlog requires.
+with the setting, value and source, as the Git settings work (GitHub issue #42) requires.
 
 The partial-clone trust dialog lists external Git folders needed by a linked worktree. Its
 confirmation says "Trust these folders" and includes the displayed directories; the parent-folder
@@ -804,6 +871,17 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
   colour.
 - The `HEAD` commit has an additional soft glow ring (`accent` at 35%, radius +4px).
 - Filtering shows matching commits without graph lanes; clearing the filter restores the graph.
+
+### Git configuration editing
+
+The Git page edits the main global Git file; This repository edits its common local Git file.
+Rows use the existing Select/TextField and row layout, with the configured value, scope and
+source below the help. Enumerated values have one option each; unsupported configured values
+remain visible as text. Recommendations are badges, never a reason to lock a control. Unset and
+Inherit remove the direct override, leaving includes and higher-priority scopes intact. The
+first-branch field requires Save and validates before writing. Writes temporarily disable the
+editor, then reread facts and show success or Git's error. Use recommended confirms its global
+scope and preserves signing, hooks, identity and line endings.
 
 ### Settings and native selection
 

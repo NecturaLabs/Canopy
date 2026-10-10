@@ -81,6 +81,8 @@ pub struct FileDiff {
     pub kind: Option<ChangeKind>,
     /// Git considers the file binary; no hunks.
     pub binary: bool,
+    /// A side exceeds the type-change preview limit; no hunks are loaded.
+    pub too_large: bool,
     /// Hunks, top to bottom.
     pub hunks: Vec<Hunk>,
     /// Lines added.
@@ -96,9 +98,9 @@ pub struct FileDiff {
 }
 
 impl FileDiff {
-    /// No hunks and not binary. A mode-only change is empty but has a [`Self::mode_change`].
+    /// No hunks and no omitted content. A mode-only change has a [`Self::mode_change`].
     pub fn is_empty(&self) -> bool {
-        self.hunks.is_empty() && !self.binary
+        self.hunks.is_empty() && !self.binary && !self.too_large
     }
 
     /// The old and new mode when both sides exist and differ: an executable-bit change, or a
@@ -212,6 +214,212 @@ pub(crate) fn delta_kind(status: git2::Delta) -> Option<ChangeKind> {
 
 pub(crate) fn path_of(file: &git2::DiffFile<'_>) -> Option<String> {
     file.path().map(|p| p.to_string_lossy().replace('\\', "/"))
+}
+
+/// The most bytes of a replaced or replacing file a type change reads to show.
+const TYPECHANGE_READ_LIMIT: u64 = 256 * 1024;
+
+/// Content of one side, keeping a bounded preview distinct from binary data.
+enum TypechangeSide {
+    Text(Vec<String>),
+    Binary,
+    TooLarge,
+}
+
+/// A symbolic link's target text or a file's text. Links are read, never followed.
+fn side_lines(bytes: &[u8]) -> TypechangeSide {
+    if bytes.contains(&0) {
+        return TypechangeSide::Binary;
+    }
+    TypechangeSide::Text(
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// The new side of a working-tree type change: the link's target text, or the file's text. The
+/// path goes through [`crate::paths::safe_join`] for its folders, and its last component is read
+/// as a link when it is one, so no link is ever followed.
+fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<TypechangeSide> {
+    use std::io::Read;
+    let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let base = if dir.is_empty() {
+        workdir.to_path_buf()
+    } else {
+        crate::paths::safe_join(workdir, dir)?
+    };
+    let full = base.join(name);
+    let meta = std::fs::symlink_metadata(&full)?;
+    if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(&full)?;
+        return Ok(side_lines(target.to_string_lossy().as_bytes()));
+    }
+    if !meta.is_file() {
+        return Err(crate::Error::invalid("This file type cannot be previewed."));
+    }
+    if meta.len() > TYPECHANGE_READ_LIMIT {
+        return Ok(TypechangeSide::TooLarge);
+    }
+    let file = std::fs::File::open(&full)?;
+    // The path may have been swapped for a link since it was checked: read only the very file
+    // that was checked.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file.metadata()?;
+        if !opened.is_file() || (opened.dev(), opened.ino()) != (meta.dev(), meta.ino()) {
+            return Err(crate::Error::invalid(
+                "The file changed while opening its preview. Refresh and try again.",
+            ));
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take(TYPECHANGE_READ_LIMIT + 1)
+        .read_to_end(&mut bytes)?;
+    Ok(if bytes.len() as u64 > TYPECHANGE_READ_LIMIT {
+        TypechangeSide::TooLarge
+    } else {
+        side_lines(&bytes)
+    })
+}
+
+/// Counts a committed type change without building display lines or applying the display cap.
+pub(crate) fn typechange_stats(
+    repo: &crate::Repo,
+    delta: &git2::DiffDelta<'_>,
+) -> Result<(usize, usize)> {
+    let count = |file: &git2::DiffFile<'_>| -> Result<Option<usize>> {
+        if file.id().is_zero() {
+            return Ok(None);
+        }
+        if file.mode() == git2::FileMode::Commit {
+            return Ok(Some(1));
+        }
+        let blob = repo.git().find_blob(file.id())?;
+        let bytes = blob.content();
+        if bytes.contains(&0) {
+            return Ok(None);
+        }
+        let lines = bytes.split_inclusive(|&b| b == b'\n').count();
+        Ok(Some(lines))
+    };
+    Ok(
+        match (count(&delta.old_file())?, count(&delta.new_file())?) {
+            (Some(old), Some(new)) => (new, old),
+            _ => (0, 0),
+        },
+    )
+}
+
+/// The two sides of a type change, preserving why a preview is omitted.
+fn typechange_sides(
+    repo: &crate::Repo,
+    source: &DiffSource,
+    delta: &git2::DiffDelta<'_>,
+) -> Result<(TypechangeSide, TypechangeSide)> {
+    let blob = |file: &git2::DiffFile<'_>| -> Result<TypechangeSide> {
+        let id = file.id();
+        if id.is_zero() {
+            return Err(crate::Error::invalid(
+                "The preview has no object for this file.",
+            ));
+        }
+        // A submodule's side holds a commit, which `git diff` prints as one line.
+        if file.mode() == git2::FileMode::Commit {
+            return Ok(side_lines(format!("Subproject commit {id}\n").as_bytes()));
+        }
+        let blob = repo.git().find_blob(id)?;
+        Ok(if blob.size() as u64 > TYPECHANGE_READ_LIMIT {
+            TypechangeSide::TooLarge
+        } else {
+            side_lines(blob.content())
+        })
+    };
+    let old = blob(&delta.old_file())?;
+    let new = match (source, path_of(&delta.new_file())) {
+        (DiffSource::Unstaged, Some(path)) => workdir_side(repo.workdir(), &path)?,
+        _ => blob(&delta.new_file())?,
+    };
+    Ok((old, new))
+}
+
+/// A file turned into a symbolic link (or back) has no hunks of its own in libgit2: the lines
+/// `git diff` prints, the old side removed and then the new side added, built from the two blobs
+/// or the working tree. Sets `out.binary` for binary data or `out.too_large` for capped content.
+pub(crate) fn typechange_hunks(
+    repo: &crate::Repo,
+    source: &DiffSource,
+    diff: &Diff<'_>,
+    out: &mut FileDiff,
+) -> Result<()> {
+    let Some(delta) = (0..diff.deltas().len())
+        .filter_map(|i| diff.get_delta(i))
+        .find(|d| d.status() == git2::Delta::Typechange)
+    else {
+        return Ok(());
+    };
+    let (old, new) = match typechange_sides(repo, source, &delta)? {
+        (TypechangeSide::Text(old), TypechangeSide::Text(new)) => (old, new),
+        (TypechangeSide::Binary, _) | (_, TypechangeSide::Binary) => {
+            out.binary = true;
+            return Ok(());
+        }
+        (TypechangeSide::TooLarge, _) | (_, TypechangeSide::TooLarge) => {
+            out.too_large = true;
+            return Ok(());
+        }
+    };
+    let count = |lines: &[String]| u32::try_from(lines.len()).unwrap_or(u32::MAX);
+    let range = |start: u32, n: u32| match n {
+        1 => start.to_string(),
+        _ => format!("{start},{n}"),
+    };
+    let (old_len, new_len) = (old.len(), new.len());
+    if !old.is_empty() {
+        let n = count(&old);
+        out.deletions += old_len;
+        out.hunks.push(Hunk {
+            header: format!("@@ -{} +0,0 @@", range(1, n)),
+            old_start: 1,
+            old_lines: n,
+            new_start: 0,
+            new_lines: 0,
+            lines: old
+                .into_iter()
+                .zip(1..)
+                .map(|(text, no)| DiffLine {
+                    kind: LineKind::Removed,
+                    old_no: Some(no),
+                    new_no: None,
+                    text,
+                })
+                .collect(),
+        });
+    }
+    if !new.is_empty() {
+        let n = count(&new);
+        out.additions += new_len;
+        out.hunks.push(Hunk {
+            header: format!("@@ -0,0 +{} @@", range(1, n)),
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: n,
+            lines: new
+                .into_iter()
+                .zip(1..)
+                .map(|(text, no)| DiffLine {
+                    kind: LineKind::Added,
+                    old_no: None,
+                    new_no: Some(no),
+                    text,
+                })
+                .collect(),
+        });
+    }
+    Ok(())
 }
 
 /// Converts every delta of `diff` into one [`FileDiff`] (deltas are merged; callers pass a
@@ -404,6 +612,13 @@ pub(crate) fn quoted(prefix: &[u8], path: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_workdir_types_fail_instead_of_claiming_binary() {
+        let dir = tempfile::tempdir().expect("fixture");
+        std::fs::create_dir(dir.path().join("directory")).expect("directory");
+        assert!(workdir_side(dir.path(), "directory").is_err());
+    }
 
     #[test]
     fn quotes_paths_like_git() {
