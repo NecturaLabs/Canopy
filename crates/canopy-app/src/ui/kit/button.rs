@@ -454,7 +454,7 @@ impl Button {
         self.enabled = enabled;
         self
     }
-    /// Busy: the spinner replaces the icon at once; clicks are ignored, focus and
+    /// Busy: the spinner fades in over the icon from the click; clicks are ignored, focus and
     /// width are kept.
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
@@ -2210,6 +2210,39 @@ mod tests {
             }
             assert_eq!(clicked, [op == Operation::Idle; 4], "{op:?}");
         }
+    }
+
+    /// A running operation's spinner starts with the click and is at full strength after `BASE`
+    /// (at once with reduced motion); nothing running has none.
+    #[test]
+    fn the_spinner_fades_in_from_the_click() {
+        let ctx = testkit::ctx();
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            theme::Appearance {
+                reduce_motion: false,
+                ..theme::Appearance::STILL
+            },
+        );
+        let id = Id::new("spinner-fade");
+        let at = |time: f64, loading: bool| {
+            let mut fade = None;
+            let _ = frame_at(&ctx, time, Vec::new(), |_| {
+                fade = spinner_fade(&ctx, id, loading);
+            });
+            fade
+        };
+        assert_eq!(at(1.0, false), None);
+        assert_eq!(at(2.0, true), Some(0.0), "begins at the click, not later");
+        let mid = at(2.0 + f64::from(motion::time(motion::BASE)) / 2.0, true);
+        assert!(mid.is_some_and(|f| f > 0.0 && f < 1.0), "{mid:?}");
+        let full = at(2.0 + f64::from(motion::time(motion::BASE)) + 0.01, true);
+        assert_eq!(full, Some(1.0));
+        assert_eq!(at(3.0, false), None);
+        motion::set_reduced(true);
+        assert_eq!(at(4.0, true), Some(1.0), "full strength at once");
+        motion::set_reduced(false);
     }
 
     /// Running shows the spinner (at once); success then shows a check in
