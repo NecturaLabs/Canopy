@@ -466,11 +466,14 @@ jobs:
           git -C "$work" add "canopy/$channel.json"
           # A stable build is also the newest build for beta copies: the beta manifest names the
           # same feed release, unless it already offers a newer (beta) build.
+          also=""
           if [[ $channel == latest ]]; then
             beta="$work/canopy/beta.json"
-            if [[ ! -f $beta ]] || (( $(built "$beta") <= BUILD )); then
+            beta_current=$(built "$beta" 2>/dev/null) || beta_current=0
+            if [[ ! -f $beta ]] || (( beta_current <= BUILD )); then
               cp "$manifest" "$beta"
               git -C "$work" add canopy/beta.json
+              also=" and the beta channel"
             fi
           fi
           # The one-line installers live next to the manifests. Only a stable release replaces
@@ -483,7 +486,7 @@ jobs:
             echo "The $channel manifest already describes build $BUILD."
             exit 0
           fi
-          git -C "$work" commit -m "canopy: publish build $BUILD to the $channel channel"
+          git -C "$work" commit -m "canopy: publish build $BUILD to the $channel channel$also"
           git -C "$work" push origin main
       - name: Clean up
         if: always()
