@@ -81,40 +81,85 @@ impl PullChoice {
     }
 }
 
+/// The choices of Settings → Git, as one value: [`Settings::git_choices`] reads them and
+/// [`Settings::set_git_choices`] writes them, each naming every field (no `..`), so a choice
+/// added to the page cannot be left out of "Use recommended".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitChoices {
+    follow_git_config: bool,
+    pull_mode: PullMode,
+    prune_on_fetch: bool,
+    prune_tags: bool,
+    autostash: bool,
+    follow_tags: bool,
+    recurse_submodules: bool,
+    push_default: PushMode,
+    conflict_style: ConflictMode,
+    cleanup: CleanupMode,
+    initial_branch: String,
+    auto_fetch_minutes: u32,
+    stale_inactivity_days: u32,
+}
+
 impl Settings {
+    fn git_choices(&self) -> GitChoices {
+        GitChoices {
+            follow_git_config: self.follow_git_config,
+            pull_mode: self.pull_mode,
+            prune_on_fetch: self.prune_on_fetch,
+            prune_tags: self.prune_tags,
+            autostash: self.autostash,
+            follow_tags: self.follow_tags,
+            recurse_submodules: self.recurse_submodules,
+            push_default: self.push_default,
+            conflict_style: self.conflict_style,
+            cleanup: self.cleanup,
+            initial_branch: self.initial_branch.clone(),
+            auto_fetch_minutes: self.auto_fetch_minutes,
+            stale_inactivity_days: self.stale_inactivity_days,
+        }
+    }
+
+    fn set_git_choices(&mut self, choices: GitChoices) {
+        let GitChoices {
+            follow_git_config,
+            pull_mode,
+            prune_on_fetch,
+            prune_tags,
+            autostash,
+            follow_tags,
+            recurse_submodules,
+            push_default,
+            conflict_style,
+            cleanup,
+            initial_branch,
+            auto_fetch_minutes,
+            stale_inactivity_days,
+        } = choices;
+        self.follow_git_config = follow_git_config;
+        self.pull_mode = pull_mode;
+        self.prune_on_fetch = prune_on_fetch;
+        self.prune_tags = prune_tags;
+        self.autostash = autostash;
+        self.follow_tags = follow_tags;
+        self.recurse_submodules = recurse_submodules;
+        self.push_default = push_default;
+        self.conflict_style = conflict_style;
+        self.cleanup = cleanup;
+        self.initial_branch = initial_branch;
+        self.auto_fetch_minutes = auto_fetch_minutes;
+        self.stale_inactivity_days = stale_inactivity_days;
+    }
+
     /// Whether every choice of Settings → Git is Canopy's recommendation.
     pub fn git_choices_are_recommended(&self) -> bool {
-        let d = Self::default();
-        self.follow_git_config == d.follow_git_config
-            && self.pull_mode == d.pull_mode
-            && self.prune_on_fetch == d.prune_on_fetch
-            && self.prune_tags == d.prune_tags
-            && self.autostash == d.autostash
-            && self.follow_tags == d.follow_tags
-            && self.recurse_submodules == d.recurse_submodules
-            && self.push_default == d.push_default
-            && self.conflict_style == d.conflict_style
-            && self.cleanup == d.cleanup
-            && self.auto_fetch_minutes == d.auto_fetch_minutes
-            && self.stale_inactivity_days == d.stale_inactivity_days
+        self.git_choices() == Self::default().git_choices()
     }
 
     /// Settings → Git back to Canopy's recommendations, all at once; what a repository chose
     /// for itself stays.
     pub fn use_recommended_git_choices(&mut self) {
-        let d = Self::default();
-        self.follow_git_config = d.follow_git_config;
-        self.pull_mode = d.pull_mode;
-        self.prune_on_fetch = d.prune_on_fetch;
-        self.prune_tags = d.prune_tags;
-        self.autostash = d.autostash;
-        self.follow_tags = d.follow_tags;
-        self.recurse_submodules = d.recurse_submodules;
-        self.push_default = d.push_default;
-        self.conflict_style = d.conflict_style;
-        self.cleanup = d.cleanup;
-        self.auto_fetch_minutes = d.auto_fetch_minutes;
-        self.stale_inactivity_days = d.stale_inactivity_days;
+        self.set_git_choices(Self::default().git_choices());
     }
 }
 
@@ -843,17 +888,62 @@ mod tests {
             follow_git_config: false,
             pull_mode: PullMode::Rebase,
             prune_on_fetch: false,
+            prune_tags: true,
             autostash: false,
+            follow_tags: false,
+            recurse_submodules: false,
+            push_default: PushMode::Current,
+            conflict_style: ConflictMode::Merge,
+            cleanup: CleanupMode::Strip,
+            initial_branch: "trunk".to_owned(),
             auto_fetch_minutes: 5,
+            stale_inactivity_days: 7,
             iso_dates: true,
             ..Settings::default()
         };
+        let default = Settings::default();
+        // Each field is off its recommendation, so a field the reset forgot stays visible.
+        assert_ne!(s.git_choices(), default.git_choices());
         assert!(!s.git_choices_are_recommended());
+        for (changed, name) in [
+            (
+                s.follow_git_config != default.follow_git_config,
+                "follow_git_config",
+            ),
+            (s.pull_mode != default.pull_mode, "pull_mode"),
+            (s.prune_on_fetch != default.prune_on_fetch, "prune_on_fetch"),
+            (s.prune_tags != default.prune_tags, "prune_tags"),
+            (s.autostash != default.autostash, "autostash"),
+            (s.follow_tags != default.follow_tags, "follow_tags"),
+            (
+                s.recurse_submodules != default.recurse_submodules,
+                "recurse_submodules",
+            ),
+            (s.push_default != default.push_default, "push_default"),
+            (s.conflict_style != default.conflict_style, "conflict_style"),
+            (s.cleanup != default.cleanup, "cleanup"),
+            (s.initial_branch != default.initial_branch, "initial_branch"),
+            (
+                s.auto_fetch_minutes != default.auto_fetch_minutes,
+                "auto_fetch_minutes",
+            ),
+            (
+                s.stale_inactivity_days != default.stale_inactivity_days,
+                "stale_inactivity_days",
+            ),
+        ] {
+            assert!(changed, "{name} must start off its recommendation");
+        }
         s.use_recommended_git_choices();
         assert!(s.git_choices_are_recommended());
-        assert!(s.follow_git_config);
-        assert_eq!(s.pull_mode, PullMode::FastForwardOnly);
+        assert_eq!(s.git_choices(), default.git_choices());
         assert!(s.iso_dates, "settings outside Git stay");
+        // A lone changed choice, first branch included, is seen.
+        let lone = Settings {
+            initial_branch: "trunk".to_owned(),
+            ..Settings::default()
+        };
+        assert!(!lone.git_choices_are_recommended());
     }
 
     /// An arbitrary hue chosen with the sliders is saved and comes back, and it colours the
