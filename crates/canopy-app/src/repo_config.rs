@@ -20,7 +20,7 @@ pub struct ConfigValue {
     pub value: String,
     /// `global`, `local`, `system`, `worktree` or `command`; empty when this git cannot say.
     pub scope: String,
-    /// Where it is set, as git prints it (`file:/home/ada/.gitconfig`).
+    /// Where it is set, as git prints it (`file:/home/ada/.gitconfig`), a file always absolute.
     pub origin: String,
 }
 
@@ -342,9 +342,11 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
     facts
 }
 
-/// `git config --show-scope --show-origin --get <key>`: `Ok(None)` when it is not set.
+/// `git config -z --show-scope --show-origin --get <key>`: `Ok(None)` when it is not set. `-z`
+/// keeps git from C-quoting a path with non-ASCII characters; the origin is made absolute here,
+/// since git prints a repository's own file relative to the directory it ran in.
 fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>, String> {
-    let mut args = vec!["config"];
+    let mut args = vec!["config", "-z"];
     args.extend_from_slice(scope);
     args.extend(["--show-scope", "--show-origin", "--get", key]);
     let out = canopy_core::cli::run_unchecked(dir, &args).map_err(|e| e.to_string())?;
@@ -353,11 +355,12 @@ fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue
             key,
             &String::from_utf8_lossy(&out.stdout),
             true,
+            dir,
         )),
         Some(1) => Ok(None),
         // An older git without --show-scope (before 2.26): ask again without it.
         _ => {
-            let mut args = vec!["config"];
+            let mut args = vec!["config", "-z"];
             args.extend_from_slice(scope);
             args.extend(["--show-origin", "--get", key]);
             let out = canopy_core::cli::run_unchecked(dir, &args).map_err(|e| e.to_string())?;
@@ -366,6 +369,7 @@ fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue
                     key,
                     &String::from_utf8_lossy(&out.stdout),
                     false,
+                    dir,
                 )),
                 Some(1) => Ok(None),
                 _ => Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()),
@@ -408,19 +412,35 @@ fn get_bool(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>
     Ok(found)
 }
 
-/// The last line of `git config --show-origin [--show-scope] --get` output.
-fn parse_value(key: &str, out: &str, with_scope: bool) -> Option<ConfigValue> {
-    let line = out.lines().rev().find(|l| !l.trim().is_empty())?;
-    let mut parts = line.splitn(if with_scope { 3 } else { 2 }, '\t');
-    let scope = if with_scope { parts.next()? } else { "" };
-    let origin = parts.next()?;
-    let value = parts.next()?;
+/// The last record of `git config -z --show-origin [--show-scope] --get` output: NUL-terminated
+/// `scope`, `origin` and `value`. A relative `file:` origin is resolved against `dir`, where git
+/// ran.
+fn parse_value(key: &str, out: &str, with_scope: bool, dir: &Path) -> Option<ConfigValue> {
+    let width = if with_scope { 3 } else { 2 };
+    let mut fields: Vec<&str> = out.split('\0').collect();
+    fields.pop();
+    let record = fields.chunks_exact(width).next_back()?;
+    let (scope, rest) = if with_scope {
+        (record[0], &record[1..])
+    } else {
+        ("", record)
+    };
     Some(ConfigValue {
         key: key.to_owned(),
-        value: value.to_owned(),
+        value: rest[1].to_owned(),
         scope: scope.to_owned(),
-        origin: origin.to_owned(),
+        origin: absolute_origin(rest[0], dir),
     })
+}
+
+/// `origin` with a relative `file:` path (`file:.git/config`) made absolute against `dir`.
+fn absolute_origin(origin: &str, dir: &Path) -> String {
+    match origin.strip_prefix("file:") {
+        Some(file) if Path::new(file).is_relative() => {
+            format!("file:{}", dir.join(file).display())
+        }
+        _ => origin.to_owned(),
+    }
 }
 
 /// The repository's remotes and their URLs, in configuration order.
@@ -452,10 +472,12 @@ mod tests {
 
     #[test]
     fn values_and_where_they_are_set_are_read() {
+        let here = Path::new("/work/repo");
         let v = parse_value(
             "pull.rebase",
-            "global\tfile:/home/ada/.gitconfig\ttrue\n",
+            "global\0file:/home/ada/.gitconfig\0true\0",
             true,
+            here,
         )
         .expect("value");
         assert_eq!(
@@ -466,8 +488,9 @@ mod tests {
         // The last of several values wins, as for git itself.
         let last = parse_value(
             "pull.ff",
-            "system\tfile:/etc/gitconfig\ttrue\nlocal\tfile:.git/config\tonly\n",
+            "system\0file:/etc/gitconfig\0true\0local\0file:/work/repo/.git/config\0only\0",
             true,
+            here,
         )
         .expect("value");
         assert_eq!(
@@ -475,9 +498,49 @@ mod tests {
             ("local", "only")
         );
         assert_eq!(last.as_bool(), None, "only is not a boolean");
-        let old = parse_value("fetch.prune", "file:.git/config\tfalse\n", false).expect("value");
+        let old =
+            parse_value("fetch.prune", "file:/r/.git/config\0false\0", false, here).expect("value");
         assert_eq!((old.scope.as_str(), old.as_bool()), ("", Some(false)));
-        assert_eq!(parse_value("x", "", true), None);
+        let empty = parse_value("core.x", "local\0file:/r/.git/config\0\0", true, here)
+            .expect("an empty value");
+        assert_eq!(empty.value, "");
+        assert_eq!(parse_value("x", "", true, here), None);
+    }
+
+    /// Git prints the repository's own file relative to where it ran; the origin must name the
+    /// file wherever Canopy's working directory is.
+    #[test]
+    fn a_relative_origin_is_resolved_against_the_repository() {
+        let here = Path::new("/work/repo");
+        let v = parse_value("a.b", "local\0file:.git/config\0x\0", true, here).expect("value");
+        assert_eq!(
+            Path::new(v.origin.strip_prefix("file:").expect("file origin")),
+            here.join(".git/config")
+        );
+        let command = parse_value("a.b", "command\0command line:\0x\0", true, here).expect("value");
+        assert_eq!(command.origin, "command line:");
+        let absolute =
+            parse_value("a.b", "global\0file:/etc/gitconfig\0x\0", true, here).expect("value");
+        assert_eq!(absolute.origin, "file:/etc/gitconfig");
+    }
+
+    /// A repository under a non-ASCII path: git C-quotes the origin without `-z`.
+    #[test]
+    fn the_origin_of_a_non_ascii_path_is_the_real_path() -> std::io::Result<()> {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join("höme répo");
+        std::fs::create_dir(&dir)?;
+        canopy_core::cli::run(&dir, &["init", "-q"]).expect("git");
+        canopy_core::cli::run(&dir, &["config", "user.signingkey", "ABCDEF12"]).expect("git");
+        let found = get_value(&dir, &[], "user.signingkey")
+            .expect("read")
+            .expect("set");
+        assert_eq!(found.scope, "local");
+        assert_eq!(
+            found.origin,
+            format!("file:{}", dir.join(".git/config").display())
+        );
+        Ok(())
     }
 
     #[test]
