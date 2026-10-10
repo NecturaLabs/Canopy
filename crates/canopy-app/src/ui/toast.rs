@@ -2422,6 +2422,29 @@ mod tests {
         );
     }
 
+    /// A center kept before notices were grouped has no `count` (nor `unread`): each entry is
+    /// one notice and read, and a stored count of zero is never shown.
+    #[test]
+    fn an_entry_kept_before_grouping_restores_as_one_notice() {
+        let json = r#"[
+            {"kind":"Success","title":"Fetched","body":"Nothing new on any remote.",
+             "at":1700000000,"source":"/work/mote","offer":null},
+            {"kind":"Error","title":"Push failed","body":"denied","at":1700000100,
+             "source":null,"offer":null,"unread":true,"count":0}
+        ]"#;
+        let mut toasts = Toasts::default();
+        toasts.restore_json(json);
+        assert_eq!(
+            toasts
+                .history
+                .iter()
+                .map(|e| (e.title.as_str(), e.count, e.unread))
+                .collect::<Vec<_>>(),
+            [("Fetched", 1, false), ("Push failed", 1, true)]
+        );
+        assert_eq!(toasts.unread, 1);
+    }
+
     /// A decision is never folded into the notice before it.
     #[test]
     fn a_decision_is_not_grouped() {
