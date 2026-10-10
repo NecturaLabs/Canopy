@@ -167,21 +167,24 @@ impl Repo {
     /// expression over lower-case key names): Canopy follows it and it sets one of them.
     pub(crate) fn config_decides(&self, pattern: &str) -> bool {
         self.options().follow_config
-            && cli::run_unchecked(self.workdir(), &["config", "--get-regexp", pattern])
-                .is_ok_and(|o| o.code == Some(0))
+            && crate::config::read(
+                self.workdir(),
+                false,
+                crate::config::Query::Matching(pattern),
+            )
+            .is_ok_and(|entries| !entries.is_empty())
     }
 
     /// Whether submodules follow a pull or a checkout: what the git configuration says in
     /// `submodule.recurse` where it decides, Canopy's choice otherwise.
-    pub(crate) fn recurses_into_submodules(&self) -> bool {
-        if !self.config_decides(r"^submodule\.recurse$") {
-            return self.options().recurse_submodules;
+    pub(crate) fn recurses_into_submodules(&self) -> crate::Result<bool> {
+        if self.options().follow_config
+            && let Some(entry) =
+                crate::config::read_bool(self.workdir(), false, "submodule.recurse")?
+        {
+            return Ok(entry.value.as_deref() == Some("true"));
         }
-        cli::run_unchecked(
-            self.workdir(),
-            &["config", "--type=bool", "--get", "submodule.recurse"],
-        )
-        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+        Ok(self.options().recurse_submodules)
     }
 
     /// The `-c submodule.recurse=false` that goes before a pull, switch or rebase: Canopy brings
@@ -229,6 +232,24 @@ impl Repo {
         };
         (known && !self.config_decides(key))
             .then(|| flag(self.options().autostash, "--autostash", "--no-autostash"))
+    }
+
+    /// A fetched pull uses merge or rebase directly, so carry pull.autoStash's precedence over
+    /// their strategy-specific configuration into an explicit flag.
+    pub(crate) fn pull_autostash_flag(&self, rebase: bool) -> crate::Result<Option<&'static str>> {
+        if !rebase && cli::version_number().is_none_or(|v| v < cli::MERGE_AUTOSTASH_SINCE) {
+            return Ok(None);
+        }
+        if self.options().follow_config
+            && let Some(entry) = crate::config::read_bool(self.workdir(), false, "pull.autoStash")?
+        {
+            return Ok(Some(flag(
+                entry.value.as_deref() == Some("true"),
+                "--autostash",
+                "--no-autostash",
+            )));
+        }
+        Ok(self.autostash_flag(rebase))
     }
 
     pub(crate) fn follow_tags_flag(&self) -> Option<&'static str> {
@@ -280,8 +301,11 @@ impl Repo {
 
     /// The value the git configuration sets for `key`, as git reads it.
     pub(crate) fn config_value(&self, key: &str) -> Option<String> {
-        let out = cli::run_unchecked(self.workdir(), &["config", "--get", key]).ok()?;
-        (out.code == Some(0)).then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        crate::config::read(self.workdir(), false, crate::config::Query::Get(key))
+            .ok()?
+            .pop()?
+            .value
+            .map(|value| value.trim().to_owned())
     }
 
     /// How a fetch prunes remote-tracking branches (`prune`) and local tags

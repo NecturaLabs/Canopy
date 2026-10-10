@@ -45,8 +45,10 @@ These come from the owner and override anything else in the repository.
   when branches diverged). Pull configuration lives in Settings only. Settings shows every
   choice with its recommendation and, where the user's configuration sets it, the setting, its
   value and where it is set. Covered: pull strategy, prune, tag pruning, autostash,
-  follow-tags, submodule updates, `push.default`, conflict style, the first branch of `init`, commit cleanup; no
-  notification outside Settings reports them yet (see the Git settings GitHub issue). A pull
+  follow-tags, submodule updates, `push.default`, conflict style, the first branch of `init`, commit cleanup; the
+  notification center also reports configured values that differ from the recommendations.
+  Supported Git values are editable at global or repository scope; recommendations write global
+  Git configuration after confirmation and preserve signing, hooks, identity and line endings. A pull
   checks first and asks before it would diverge or conflict.
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,

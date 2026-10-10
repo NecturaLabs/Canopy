@@ -869,6 +869,17 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
 - The `HEAD` commit has an additional soft glow ring (`accent` at 35%, radius +4px).
 - Filtering shows matching commits without graph lanes; clearing the filter restores the graph.
 
+### Git configuration editing
+
+The Git page edits the main global Git file; This repository edits its common local Git file.
+Rows use the existing Select/TextField and row layout, with the configured value, scope and
+source below the help. Enumerated values have one option each; unsupported configured values
+remain visible as text. Recommendations are badges, never a reason to lock a control. Unset and
+Inherit remove the direct override, leaving includes and higher-priority scopes intact. The
+first-branch field requires Save and validates before writing. Writes temporarily disable the
+editor, then reread facts and show success or Git's error. Use recommended confirms its global
+scope and preserves signing, hooks, identity and line endings.
+
 ### Settings and native selection
 
 Settings stay within the viewport with an independently scrolling content area. A section menu

@@ -1036,7 +1036,7 @@ impl Repo {
             .map(String::as_str)
             .collect();
         args.extend(["pull", "--progress", "--no-prune"]);
-        args.extend(self.autostash_flag(rebase));
+        args.extend(self.pull_autostash_flag(rebase)?);
         args.extend(strategy.git_args());
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
@@ -1074,7 +1074,7 @@ impl Repo {
         match strategy {
             PullStrategy::Rebase | PullStrategy::RebaseMerges => {
                 args.push("rebase");
-                args.extend(self.autostash_flag(true));
+                args.extend(self.pull_autostash_flag(true)?);
                 if strategy == PullStrategy::RebaseMerges {
                     args.push("--rebase-merges");
                 }
@@ -1089,7 +1089,7 @@ impl Repo {
             | PullStrategy::MergeNoFastForward
             | PullStrategy::FastForwardOnly => {
                 args.extend(["merge", "--no-edit"]);
-                args.extend(self.autostash_flag(false));
+                args.extend(self.pull_autostash_flag(false)?);
                 args.push(match strategy {
                     PullStrategy::MergeNoFastForward => "--no-ff",
                     PullStrategy::FastForwardOnly => "--ff-only",

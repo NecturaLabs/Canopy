@@ -4184,3 +4184,51 @@ fn stale_candidates_skip_unavailable_locked_worktree_but_keep_its_branch_exclude
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].name, "eligible");
 }
+
+#[test]
+fn pull_autostash_overrides_strategy_settings_and_matches_fetched_pull() {
+    if !in_isolated_git_env("pull_autostash_overrides_strategy_settings_and_matches_fetched_pull") {
+        return;
+    }
+    for fetched in [false, true] {
+        for autostash in [false, true] {
+            let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+            let path = copy.workdir();
+            diverge(up_dir.path(), &copy);
+            git(
+                path,
+                &[
+                    "config",
+                    "pull.autoStash",
+                    if autostash { "true" } else { "false" },
+                ],
+            );
+            git(
+                path,
+                &[
+                    "config",
+                    "rebase.autoStash",
+                    if autostash { "false" } else { "true" },
+                ],
+            );
+            copy.set_options(GitOptions::default());
+            fs::write(path.join("a.txt"), "dirty\n").expect("dirty file");
+            let result = if fetched {
+                copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+                copy.pull_fetched(PullStrategy::Rebase, None, |_| {})
+            } else {
+                copy.pull(PullStrategy::Rebase, |_| {})
+            };
+            assert_eq!(
+                result.is_ok(),
+                autostash,
+                "fetched={fetched} autostash={autostash}: {result:?}"
+            );
+            assert_eq!(
+                fs::read_to_string(path.join("a.txt")).expect("dirty file"),
+                "dirty\n"
+            );
+            assert_eq!(path.join("up.txt").exists(), autostash);
+        }
+    }
+}

@@ -195,7 +195,7 @@ impl Reader<'_> {
 
     /// `git config [--global] <rest>`.
     fn args<'b>(&self, rest: &[&'b str]) -> Vec<&'b str> {
-        let mut args = vec!["config"];
+        let mut args = vec!["config", "--includes"];
         if self.global {
             args.push("--global");
         }

@@ -18,6 +18,13 @@ pub enum Job {
         repo: Option<PathBuf>,
         scope: Scope,
     },
+    Config {
+        repo: Option<PathBuf>,
+        scope: Scope,
+        setting: canopy_core::config::Setting,
+        value: Option<String>,
+    },
+    Recommendations,
 }
 
 pub enum Event {
@@ -32,6 +39,11 @@ pub enum Event {
         result: Result<(), String>,
         /// After a clear: what Git uses now, to tell the user what the clear left in force.
         now: Option<Identity>,
+    },
+    ConfigChanged {
+        repo: Option<PathBuf>,
+        recommended: bool,
+        result: Result<(), String>,
     },
 }
 
@@ -50,6 +62,34 @@ impl IdentityWorker {
             .spawn(move || {
                 for job in jobs {
                     let event = match job {
+                        Job::Config {
+                            repo,
+                            scope,
+                            setting,
+                            value,
+                        } => {
+                            let home = crate::settings::home_dir();
+                            let dir = repo.as_deref().unwrap_or(&home);
+                            Event::ConfigChanged {
+                                result: canopy_core::config::set(
+                                    dir,
+                                    scope,
+                                    setting,
+                                    value.as_deref(),
+                                )
+                                .map_err(|error| error.to_string()),
+                                repo,
+                                recommended: false,
+                            }
+                        }
+                        Job::Recommendations => Event::ConfigChanged {
+                            repo: None,
+                            recommended: true,
+                            result: canopy_core::config::apply_recommended(
+                                &crate::settings::home_dir(),
+                            )
+                            .map_err(|error| error.to_string()),
+                        },
                         Job::ReadRepo(path) => Event::Repo {
                             result: Identity::read(&path).map_err(|e| e.to_string()),
                             path,
@@ -212,6 +252,46 @@ mod tests {
         }
         assert_eq!(local(&path, "user.name"), None);
         assert_eq!(local(&path, "user.email"), None);
+
+        assert!(worker.send(Job::Config {
+            repo: Some(path.clone()),
+            scope: Scope::Local,
+            setting: canopy_core::config::Setting::FetchPrune,
+            value: Some("false".into()),
+        }));
+        assert!(worker.send(Job::Config {
+            repo: Some(path.clone()),
+            scope: Scope::Local,
+            setting: canopy_core::config::Setting::PushDefault,
+            value: Some("matching".into()),
+        }));
+        for _ in 0..2 {
+            match next(&worker) {
+                Event::ConfigChanged {
+                    repo,
+                    recommended,
+                    result,
+                } => {
+                    assert_eq!(repo.as_ref(), Some(&path));
+                    assert!(!recommended);
+                    assert_eq!(result, Ok(()));
+                }
+                _ => panic!("config saves answer in queue order"),
+            }
+        }
+        assert_eq!(local(&path, "fetch.prune").as_deref(), Some("false"));
+        assert_eq!(local(&path, "push.default").as_deref(), Some("matching"));
+        assert!(worker.send(Job::Config {
+            repo: Some(path.clone()),
+            scope: Scope::Local,
+            setting: canopy_core::config::Setting::FetchPrune,
+            value: None,
+        }));
+        assert!(matches!(
+            next(&worker),
+            Event::ConfigChanged { result: Ok(()), .. }
+        ));
+        assert_eq!(local(&path, "fetch.prune"), None);
 
         assert!(worker.send(Job::ReadGlobal));
         assert!(matches!(next(&worker), Event::Global(_)));

@@ -135,6 +135,13 @@ pub enum Action {
         repo: Option<PathBuf>,
         scope: Scope,
     },
+    SaveGitConfig {
+        repo: Option<PathBuf>,
+        scope: Scope,
+        setting: canopy_core::config::Setting,
+        value: Option<String>,
+    },
+    UseRecommendedGitConfig,
     /// Let repositories in this folder download missing objects in partial clones (Settings,
     /// `trusted_folders`).
     TrustFolder(PathBuf),
