@@ -360,6 +360,13 @@ pub enum Job {
     Signature(Oid),
     /// Diff of one file.
     Diff(DiffKey),
+    /// Who last changed each line of a file, as it is in `rev` or, without one, in the working
+    /// tree; the serial ties the reply to the newest request.
+    Blame {
+        serial: u64,
+        path: String,
+        rev: Option<Oid>,
+    },
     /// `HEAD`'s message (to prefill an amend).
     HeadMessage,
     /// Git's pending merge message, read off the UI thread.
@@ -463,6 +470,10 @@ pub enum Event {
         can_download: bool,
     },
     Diff(DiffKey, Result<Arc<FileDiff>, String>),
+    Blame {
+        serial: u64,
+        result: Result<Arc<canopy_core::Blame>, String>,
+    },
     /// The diff failed only because a partial clone has not downloaded what it needs, and a
     /// retry could fetch it: the tab remembers that until the user asks again.
     DiffNotDownloaded(DiffKey),
@@ -768,6 +779,7 @@ impl Job {
             Self::Details(_) => "details",
             Self::Signature(_) => "signature",
             Self::Diff(_) => "diff",
+            Self::Blame { .. } => "blame",
             Self::HeadMessage => "head-message",
             Self::MergeMessage => "merge-message",
             Self::CommitTemplate => "commit-template",
@@ -872,6 +884,19 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         result: read_ignore(&repo, &query)
                             .map(Arc::new)
                             .map_err(|e| e.to_string()),
+                    });
+                }
+                Job::Blame { serial, path, rev } => {
+                    let trusted = allowed();
+                    let result = read_downloading(&emit, &allowed, |missing| {
+                        repo.blame(&path, rev, missing, trusted)
+                    });
+                    if let Err(error) = &result {
+                        tracing::warn!(error = %redacted(error), "blame failed");
+                    }
+                    emit(Event::Blame {
+                        serial,
+                        result: result.map(Arc::new).map_err(|e| e.to_string()),
                     });
                 }
                 Job::Signature(oid) => {
@@ -1229,7 +1254,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
 
 /// Drops the reads a later job of the same batch makes pointless, so a burst of selections does
 /// not queue one download per click on the repository's single thread: only the last
-/// [`Job::Details`] runs, and only the last [`Job::Diff`] of each kind of source (a commit diff
+/// [`Job::Details`] and [`Job::Blame`] run, and only the last [`Job::Diff`] of each kind of source (a commit diff
 /// supersedes earlier commit diffs of any commit; the tab ignores the replies of all but the
 /// newest request anyway). Every other job keeps its place and order.
 fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
@@ -1237,12 +1262,14 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
     let mut details_seen = false;
     let mut signature_seen = false;
     let mut ignore_seen = false;
+    let mut blame_seen = false;
     let mut diff_sources = Vec::new();
     for (i, job) in jobs.iter().enumerate().rev() {
         match job {
             Job::Ignore { .. } => keep[i] = !std::mem::replace(&mut ignore_seen, true),
             Job::Details(_) => keep[i] = !std::mem::replace(&mut details_seen, true),
             Job::Signature(_) => keep[i] = !std::mem::replace(&mut signature_seen, true),
+            Job::Blame { .. } => keep[i] = !std::mem::replace(&mut blame_seen, true),
             Job::Diff(key) => {
                 let source = std::mem::discriminant(&key.source);
                 if diff_sources.contains(&source) {
@@ -2085,6 +2112,20 @@ mod read_tests {
                 format!("diff {:?} u2", DiffSource::Unstaged),
             ]
         );
+    }
+
+    #[test]
+    fn only_the_last_blame_of_a_burst_runs() {
+        let blame = |serial, path: &str| Job::Blame {
+            serial,
+            path: path.into(),
+            rev: None,
+        };
+        let kept = coalesce_reads(vec![blame(1, "a"), Job::HeadMessage, blame(2, "b")]);
+        assert!(matches!(
+            kept.as_slice(),
+            [Job::HeadMessage, Job::Blame { serial: 2, .. }]
+        ));
     }
 
     #[test]
