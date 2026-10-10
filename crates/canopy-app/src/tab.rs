@@ -4694,6 +4694,7 @@ mod tests {
                 updated_at: 0,
                 web_url: String::new(),
                 labels: Vec::new(),
+                description: String::new(),
                 rollup: None,
             },
             body: String::new(),
