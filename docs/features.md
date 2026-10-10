@@ -218,6 +218,9 @@ Canopy has a token for the host; without a token a row shows them once the reque
 the session, and until then a faint question mark says they are not loaded (a request with no
 checks shows nothing).
 
+A request's details start with its summary line (commits, files changed, lines, conflict
+state) with the lines in the added and removed colours, as the commit and file diffs show them.
+
 The request list stays current without pressing Reload: a fetch (manual or the background one),
 pull or push that succeeds refreshes it, and the open request, quietly (no spinner or toast; the
 list, selection and open request stay on screen, and a failed refresh keeps them), and opening

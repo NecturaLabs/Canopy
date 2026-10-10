@@ -25,7 +25,7 @@ use crate::tab::RepoTab;
 use crate::ui::art;
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::LinkButton;
-use crate::ui::kit::chip::{Badge, RefPill};
+use crate::ui::kit::chip::{Badge, DiffStat, RefPill};
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::TextArea;
 use crate::ui::kit::overlay::TooltipExt;
@@ -1421,33 +1421,61 @@ pub(crate) fn merge_confirmation(
     })
 }
 
+/// One part of the summary line under a request's header.
+#[derive(Debug, PartialEq, Eq)]
+enum Stat {
+    Text(String),
+    /// Lines added and removed, drawn as the app's other diff stats.
+    Lines(usize, usize),
+}
+
+/// The summary line's parts: commits, files, lines and the conflict state, as far as known.
+fn summary_stats(d: &RequestDetails) -> Vec<Stat> {
+    let plural = |n: u32| if n == 1 { "" } else { "s" };
+    let mut stats = Vec::new();
+    if let Some(c) = d.commits {
+        stats.push(Stat::Text(format!("{c} commit{}", plural(c))));
+    }
+    if let Some(f) = d.changed_files {
+        stats.push(Stat::Text(format!("{f} file{} changed", plural(f))));
+    }
+    if let (Some(a), Some(r)) = (d.additions, d.deletions) {
+        let count = |n: u32| usize::try_from(n).unwrap_or(usize::MAX);
+        stats.push(Stat::Lines(count(a), count(r)));
+    }
+    if let Some(m) = d.mergeable {
+        stats.push(Stat::Text(
+            if m { "no conflicts" } else { "has conflicts" }.into(),
+        ));
+    }
+    stats
+}
+
 fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    // Stats.
-    let mut stats = Vec::new();
-    if let Some(c) = d.commits {
-        stats.push(format!("{c} commit{}", if c == 1 { "" } else { "s" }));
-    }
-    if let Some(f) = d.changed_files {
-        stats.push(format!("{f} file{} changed", if f == 1 { "" } else { "s" }));
-    }
-    if let (Some(a), Some(r)) = (d.additions, d.deletions) {
-        stats.push(format!("+{a} −{r}"));
-    }
-    if let Some(m) = d.mergeable {
-        stats.push(if m {
-            "no conflicts".into()
-        } else {
-            "has conflicts".into()
-        });
-    }
+    // Stats: the counts in the dim text, the lines in the added and removed colours.
+    let stats = summary_stats(d);
     if !stats.is_empty() {
-        ui.label(
-            RichText::new(stats.join("  ·  "))
-                .size(m.meta_size)
-                .color(p.text_dim),
-        );
+        ui.scope(|ui| {
+            // As tall as its text, like the commit details' summary.
+            ui.spacing_mut().interact_size.y = 0.0;
+            ui.horizontal_wrapped(|ui| {
+                for (i, stat) in stats.iter().enumerate() {
+                    if i > 0 {
+                        ui.label(RichText::new("·").size(m.meta_size).color(p.text_faint));
+                    }
+                    match stat {
+                        Stat::Text(text) => {
+                            ui.label(RichText::new(text).size(m.meta_size).color(p.text_dim));
+                        }
+                        Stat::Lines(added, removed) => {
+                            DiffStat::new(*added, *removed).show(ui);
+                        }
+                    }
+                }
+            });
+        });
         ui.add_space(theme::MD);
     }
 
@@ -1733,6 +1761,80 @@ mod tests {
         tab.requests.list = Some(Ok(Arc::from([summary(state)])));
         tab.requests.details = Some(Ok(Arc::new(details(state))));
         tab
+    }
+
+    /// #143: the summary line reads "8 commits · 8 files changed · +607 −98", with the lines in
+    /// the theme's added and removed colours and the rest in the dim text.
+    #[test]
+    fn the_summary_line_colours_the_lines_like_other_diff_stats() {
+        let mut d = details(RequestState::Open);
+        d.commits = Some(8);
+        d.changed_files = Some(1);
+        d.additions = Some(607);
+        d.deletions = Some(98);
+        assert_eq!(
+            summary_stats(&d),
+            [
+                Stat::Text("8 commits".into()),
+                Stat::Text("1 file changed".into()),
+                Stat::Lines(607, 98),
+                Stat::Text("no conflicts".into()),
+            ]
+        );
+        for theme_id in theme::ThemeId::ALL {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme_id, theme::Appearance::STILL);
+            let mut p = None;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, SCREEN)),
+                    ..Default::default()
+                },
+                |ui| {
+                    p = Some(palette(ui.ctx()));
+                    body(ui, &d, 0, &mut Vec::new());
+                },
+            );
+            out.textures_delta.clear();
+            let p = p.expect("palette");
+            // Each painted text with the colour of each of its sections.
+            let mut inks = Vec::new();
+            for c in &out.shapes {
+                colours_of(&c.shape, &mut inks);
+            }
+            let colours = |text: &str| {
+                let (_, colours) = inks
+                    .iter()
+                    .find(|(t, _)| t == text)
+                    .unwrap_or_else(|| panic!("{text} not painted: {inks:?}"));
+                colours.clone()
+            };
+            assert_eq!(
+                colours("+607\u{2212}98"),
+                [p.success, p.danger.gamma_multiply(0.85)],
+                "{theme_id:?}"
+            );
+            assert_eq!(colours("8 commits"), [p.text_dim], "{theme_id:?}");
+            assert_eq!(colours("1 file changed"), [p.text_dim], "{theme_id:?}");
+        }
+    }
+
+    /// Each text in `shape` with the colour of each of its sections.
+    fn colours_of(shape: &egui::Shape, out: &mut Vec<(String, Vec<Color32>)>) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| colours_of(s, out)),
+            egui::Shape::Text(t) => out.push((
+                t.galley.text().to_owned(),
+                t.galley
+                    .job
+                    .sections
+                    .iter()
+                    .map(|s| s.format.color)
+                    .collect(),
+            )),
+            _ => {}
+        }
     }
 
     /// F3: a GitLab merge request is `!7` everywhere it is numbered; a GitHub pull request `#7`.
