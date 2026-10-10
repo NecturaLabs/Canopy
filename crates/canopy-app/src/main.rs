@@ -57,7 +57,7 @@ OPTIONS:
                               long-message,
                               gallery, menu-branch, menu-commit, menu-file, open,
                               open-error, clone,
-                              clone-running, clone-error, init, new-branch, rename, add-submodule,
+                              clone-running, clone-error, init, new-branch, new-worktree, rename, add-submodule,
                               git-missing, remove-submodule, new-tag,
                               stash, export-patch, apply-patch, add-remote, add-remote-refused, publish, new-request,
                               confirm, confirm-danger, confirm-host, convert-partial-clone, confirm-merge-risky,

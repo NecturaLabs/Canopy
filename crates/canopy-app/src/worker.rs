@@ -72,6 +72,13 @@ pub enum Op {
         start: Option<String>,
         checkout: bool,
     },
+    /// A linked working folder (`git worktree add`) on a new branch, or on an existing one.
+    AddWorktree {
+        folder: PathBuf,
+        branch: String,
+        create: bool,
+        start: Option<String>,
+    },
     Checkout(String),
     CheckoutRemote {
         remote: String,
@@ -266,6 +273,7 @@ impl Op {
             Self::Commit { amend: true, .. } => "Amending commit".into(),
             Self::Commit { .. } => "Committing".into(),
             Self::CreateBranch { name, .. } => format!("Creating branch {name}"),
+            Self::AddWorktree { branch, .. } => format!("Adding a worktree for {branch}"),
             Self::Checkout(b) => format!("Checking out {b}"),
             Self::CheckoutRemote { remote, branch } => format!("Checking out {remote}/{branch}"),
             Self::CheckoutDetached(o) => format!("Checking out {}", canopy_core::short_id(*o)),
@@ -1528,6 +1536,14 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
             start,
             checkout,
         } => done(repo.create_branch(&name, start.as_deref(), checkout)),
+        Op::AddWorktree {
+            folder,
+            branch,
+            create,
+            start,
+        } => repo
+            .add_worktree(&folder, &branch, create, start.as_deref())
+            .map(|()| format!("Added a worktree for {branch} in {}", folder.display())),
         Op::Checkout(b) => done(repo.checkout_branch(&b)),
         Op::CheckoutRemote { remote, branch } => {
             done(repo.checkout_remote_branch(&remote, &branch))
