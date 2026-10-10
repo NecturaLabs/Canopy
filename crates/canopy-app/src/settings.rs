@@ -359,7 +359,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Known<T> {
 }
 
 /// A choice, or its default when the saved one no longer exists.
-fn known<'de, D, T>(d: D) -> Result<T, D::Error>
+pub(crate) fn known<'de, D, T>(d: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de> + Default,
@@ -368,7 +368,7 @@ where
 }
 
 /// An optional choice, or none when the saved one no longer exists.
-fn known_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+pub(crate) fn known_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -525,6 +525,9 @@ pub struct Settings {
     /// Closed sidebar sections, keyed by shared Git directory so worktrees follow one choice.
     /// An empty set means every section is open.
     pub repo_sidebar: HashMap<PathBuf, BTreeSet<String>>,
+    /// The request list's filters and sort, keyed like [`Settings::repo_sidebar`]. A repository
+    /// left at the defaults has no entry.
+    pub repo_requests: HashMap<PathBuf, crate::request_view::RequestView>,
     /// Per-repository choices that differ from the defaults above, keyed by working directory.
     pub repos: HashMap<PathBuf, RepoSettings>,
     /// Show diffs side by side (old left, new right) instead of unified.
@@ -635,6 +638,7 @@ impl Default for Settings {
             diff: DiffPrefs::default(),
             repo_diff: HashMap::new(),
             repo_sidebar: HashMap::new(),
+            repo_requests: HashMap::new(),
             repos: HashMap::new(),
             split_diff: false,
             syntax_highlight: true,

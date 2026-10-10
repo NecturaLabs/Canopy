@@ -144,6 +144,18 @@ impl CanopyApp {
                     actions.push(Action::Commit);
                 }
             }
+            // The request list's own filter field takes the caret in the requests view, while
+            // there is a list to filter; History's search everywhere else.
+            C::Filter
+                if view == Some(View::Requests)
+                    && self.tabs.get(self.active).is_some_and(
+                        |tab| matches!(&tab.requests.list, Some(Ok(rows)) if !rows.is_empty()),
+                    ) =>
+            {
+                if let Some(tab) = self.tab() {
+                    tab.requests.focus_filter = true;
+                }
+            }
             C::Filter => {
                 actions.push(Action::SetView(View::History));
                 if let Some(tab) = self.tab() {
@@ -320,6 +332,139 @@ mod tests {
         let mut actions = Vec::new();
         app.command(&ctx, command, 0, &mut actions);
         actions
+    }
+
+    fn requests_tab(rows: usize) -> RepoTab {
+        use crate::worker::Worker;
+        use canopy_hosting::RequestState;
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.view = View::Requests;
+        tab.forges = vec![(
+            "origin".to_owned(),
+            canopy_core::forge::Forge::parse("https://github.com/acme/widgets.git", &[])
+                .expect("a GitHub remote"),
+        )];
+        let list: Vec<RequestSummary> = (1..=rows as u64)
+            .map(|number| RequestSummary {
+                number,
+                title: format!("Request {number}"),
+                author: "ann".into(),
+                state: RequestState::Open,
+                draft: false,
+                source_branch: format!("topic-{number}"),
+                target_branch: "main".into(),
+                from_fork: false,
+                created_at: 0,
+                updated_at: 1_000 - i64::try_from(number).unwrap_or(0),
+                web_url: String::new(),
+                labels: Vec::new(),
+                description: String::new(),
+                rollup: None,
+            })
+            .collect();
+        tab.requests.list = Some(Ok(list.into()));
+        tab.requests.selected = Some(1);
+        tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
+            common_dir: PathBuf::from("/fixture/.git"),
+            ..Default::default()
+        }));
+        tab
+    }
+
+    #[test]
+    fn the_filter_key_focuses_the_request_filter_while_there_is_a_list() {
+        let mut app = test_app();
+        app.tabs.push(requests_tab(3));
+        assert!(run(&mut app, Command::Filter).is_empty());
+        assert!(
+            app.tabs[0].requests.focus_filter,
+            "the field takes the caret"
+        );
+        assert_eq!(
+            app.tabs[0].view,
+            View::Requests,
+            "History's search stays closed"
+        );
+        assert!(!app.tabs[0].history_filter_open);
+
+        // Nothing to filter: the key does what it does in the other views.
+        let mut app = test_app();
+        app.tabs.push(requests_tab(0));
+        let actions = run(&mut app, Command::Filter);
+        assert!(!app.tabs[0].requests.focus_filter);
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::SetView(View::History))),
+            "{actions:?}"
+        );
+    }
+
+    #[test]
+    fn typing_in_the_request_filter_fires_no_shortcut_and_reaches_the_field() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut app = test_app();
+        app.tabs.push(requests_tab(3));
+        let draw = |app: &mut CanopyApp, events: Vec<egui::Event>| {
+            let mut actions = Vec::new();
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 700.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.keyboard(ui.ctx(), &mut actions);
+                    let tab = &mut app.tabs[0];
+                    requests::show(ui, tab, true, &mut actions);
+                },
+            );
+            out.textures_delta.clear();
+            actions
+        };
+        draw(&mut app, Vec::new());
+        assert!(run(&mut app, Command::Filter).is_empty());
+        draw(&mut app, Vec::new());
+        draw(&mut app, Vec::new());
+        assert!(
+            !app.tabs[0].requests.focus_filter,
+            "the field took the request"
+        );
+        // J would select the next request outside a text field.
+        let typed = vec![
+            egui::Event::Key {
+                key: egui::Key::J,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::Text("j".into()),
+        ];
+        let queued = draw(&mut app, typed);
+        assert_eq!(app.tabs[0].requests.selected, Some(1), "no bare key fired");
+        assert_eq!(
+            app.tabs[0].request_view.text, "j",
+            "the text reached the field"
+        );
+        assert!(
+            queued.iter().any(|a| matches!(
+                a,
+                Action::RememberRequestView { view, .. } if view.text == "j"
+            )),
+            "the typed filter is queued for saving: {queued:?}"
+        );
     }
 
     #[test]

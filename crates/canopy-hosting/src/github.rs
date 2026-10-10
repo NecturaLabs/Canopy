@@ -13,6 +13,7 @@ use crate::model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
 };
+use crate::preview::description_preview;
 
 /// `/repos/owner/repo`.
 pub(crate) fn repo_path(path: &str) -> String {
@@ -62,8 +63,9 @@ struct Pull {
     updated_at: Option<String>,
     html_url: String,
     labels: Vec<Label>,
-    // Single-pull fields only.
+    /// The description; the list carries it too.
     body: Option<String>,
+    // Single-pull fields only.
     mergeable: Option<bool>,
     commits: Option<u32>,
     changed_files: Option<u32>,
@@ -105,6 +107,7 @@ impl Pull {
             updated_at: unix(self.updated_at.as_deref()),
             web_url: self.html_url.clone(),
             labels: self.labels.iter().map(|l| l.name.clone()).collect(),
+            description: description_preview(self.body.as_deref().unwrap_or_default()),
             rollup: None,
         }
     }

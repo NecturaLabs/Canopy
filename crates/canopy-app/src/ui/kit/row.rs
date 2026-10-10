@@ -136,7 +136,7 @@ pub struct RowCtx {
 }
 
 /// Horizontal padding inside a row.
-const PAD: f32 = 10.0;
+pub(crate) const PAD: f32 = 10.0;
 /// Gap between a row's icon, label, detail and trailing text.
 const GAP: f32 = 8.0;
 /// A disclosure chevron's column: its inset from the row's left edge, its width, and the gap

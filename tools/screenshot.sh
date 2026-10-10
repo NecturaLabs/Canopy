@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|settings-git-pull|settings-git-commits|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-repository-pull|settings-repository-diffs|settings-search|about|repository-insights|clean-stale|author-card|commit-expanded|commit-compact|amend-commit|toasts|notifications|branch-selected|long-message|gallery|menu-branch|menu-commit|menu-file|<dialog>]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|settings-git-pull|settings-git-commits|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-repository-pull|settings-repository-diffs|settings-search|about|repository-insights|clean-stale|author-card|request-filters|request-sort|commit-expanded|commit-compact|amend-commit|toasts|notifications|branch-selected|long-message|gallery|menu-branch|menu-commit|menu-file|<dialog>]
 #                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
 #                            [--contrast on|off] [--custom-theme SPEC]
 #                            [--motion system|reduced|full] [--gallery-page N]
@@ -16,8 +16,9 @@
 # <repo> may be "-" to render the welcome screen with no repository open.
 #
 # --demo-requests fills the pull/merge requests view with invented requests, with no network:
-# list, list-all, list-closed, list-unchecked, a request number (428, 427, 425, 422, 420, ...), busy, loading,
-# details-loading, details-error, error, no-token or empty; prefix gitlab: for merge requests.
+# list, list-all, list-closed, list-unchecked, list-overflow, filtered, no-match, a request number
+# (428, 427, 425, 422, 420, ...), busy, loading, details-loading, details-error, error, no-token or
+# empty; prefix gitlab: for merge requests.
 # It implies --view requests and needs a repository without a GitHub or GitLab remote (the
 # fixtures have none).
 #

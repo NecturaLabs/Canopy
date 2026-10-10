@@ -321,6 +321,14 @@ impl CanopyApp {
                 }
                 tab.sidebar_restored = true;
             }
+            if !tab.request_view_restored
+                && let Some(key) = tab.sidebar_key()
+            {
+                if let Some(view) = self.settings.repo_requests.get(key) {
+                    tab.request_view = view.clone();
+                }
+                tab.request_view_restored = true;
+            }
             // Taken after the poll that set it, so the dialog shows in this frame.
             if let Some(d) = tab.pull_decision.take() {
                 self.dialogs.open(if d.diverged {
