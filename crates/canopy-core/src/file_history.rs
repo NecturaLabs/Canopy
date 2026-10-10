@@ -3,7 +3,7 @@
 use git2::Oid;
 
 use crate::cli;
-use crate::{Repo, Result};
+use crate::{ChangeKind, Repo, Result};
 
 /// One commit in a file's history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +20,9 @@ pub struct FileHistoryEntry {
     pub path: String,
     /// The path before this commit, when it renamed or copied the file.
     pub old_path: Option<String>,
+    /// What the commit did to the file ([`ChangeKind::Modified`] where git lists no change, as for
+    /// a merge).
+    pub kind: ChangeKind,
 }
 
 /// A file's history, newest first.
@@ -31,14 +34,15 @@ pub struct FileHistory {
 }
 
 impl Repo {
-    /// The commits of `HEAD` that changed `path` (relative to the repository root), at most
-    /// `limit`, following the file back through renames. Each entry carries the path the file
+    /// The commits reachable from `from` (`HEAD` when `None`) that changed `path` (relative to
+    /// the repository root), at most `limit`, following the file back through renames. Each entry carries the path the file
     /// had in that commit, so its diff can be opened with [`crate::DiffSource::Commit`].
     ///
     /// # Errors
     /// Git's own message when the history cannot be read (an unborn branch, for one).
-    pub fn file_history(&self, path: &str, limit: usize) -> Result<FileHistory> {
+    pub fn file_history(&self, from: Option<Oid>, path: &str, limit: usize) -> Result<FileHistory> {
         let count = format!("-n{}", limit.saturating_add(1));
+        let start = from.map_or_else(|| "HEAD".to_owned(), |oid| oid.to_string());
         let out = cli::run(
             self.workdir(),
             &[
@@ -51,6 +55,7 @@ impl Repo {
                 "--no-show-signature",
                 &count,
                 "--format=%x1e%H%x1f%an%x1f%at%x1f%s",
+                &start,
                 "--",
                 path,
             ],
@@ -77,15 +82,21 @@ fn parse(out: &str, path: &str) -> Vec<FileHistoryEntry> {
             continue;
         };
         let Ok(oid) = Oid::from_str(id) else { continue };
-        let old_path = if tokens
-            .next()
-            .is_some_and(|status| status.trim_start().starts_with(['R', 'C']))
+        let status = tokens.next().unwrap_or_default().trim_start();
+        let old_path = if status.starts_with(['R', 'C'])
             && let (Some(old), Some(new)) = (tokens.next(), tokens.next())
             && new == current
         {
             Some(old.to_owned())
         } else {
             None
+        };
+        let kind = match status.chars().next() {
+            Some('A') => ChangeKind::Added,
+            Some('D') => ChangeKind::Deleted,
+            Some('R' | 'C') => ChangeKind::Renamed,
+            Some('T') => ChangeKind::Typechange,
+            _ => ChangeKind::Modified,
         };
         entries.push(FileHistoryEntry {
             oid,
@@ -94,6 +105,7 @@ fn parse(out: &str, path: &str) -> Vec<FileHistoryEntry> {
             time: time.parse().unwrap_or_default(),
             path: current.clone(),
             old_path: old_path.clone(),
+            kind,
         });
         if let Some(old) = old_path {
             current = old;

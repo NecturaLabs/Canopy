@@ -10,6 +10,9 @@ commits since the previous build.
 
 ### Added
 
+- File history: right-click a file in Changes or in a commit's file list, or use the command palette,
+  to list the commits that changed it, followed back through renames. Choosing one opens that
+  commit with the file's diff; the working tree is not touched.
 - A pull or merge request whose checks and reviews are not loaded (before they arrive, or without a
   token and never opened) shows a faint question mark with that tooltip, instead of looking like a
   request that has none.

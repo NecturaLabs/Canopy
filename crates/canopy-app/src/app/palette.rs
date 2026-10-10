@@ -207,6 +207,17 @@ impl CanopyApp {
                 e(icon::CHART_BAR, "Repository insights", "Repository", None),
                 Action::RepositoryInsights(tab.path.clone()),
             ));
+            if let Some(action) = tab.file.as_ref().and_then(file_history_action) {
+                v.push((
+                    e(
+                        icon::CLOCK_COUNTER_CLOCKWISE,
+                        "File history…",
+                        "Repository",
+                        None,
+                    ),
+                    action,
+                ));
+            }
             let local_only = tab.is_local_only();
             match tab.view {
                 View::Changes => v.push((
@@ -576,6 +587,34 @@ impl CanopyApp {
     }
 }
 
+/// The history of the open file, if it has one: a commit's file from that commit, a working-tree
+/// file under the name `HEAD` knows it by.
+fn file_history_action(sel: &crate::tab::FileSelection) -> Option<Action> {
+    use canopy_core::{ChangeKind, DiffSource};
+    if sel.conflicted {
+        return None;
+    }
+    match sel.source {
+        DiffSource::Commit(oid) => Some(Action::FileHistory {
+            from: Some(oid),
+            path: sel.entry.path.clone(),
+        }),
+        DiffSource::Staged | DiffSource::Unstaged
+            if !matches!(sel.entry.kind, ChangeKind::Untracked | ChangeKind::Added) =>
+        {
+            Some(Action::FileHistory {
+                from: None,
+                path: sel
+                    .entry
+                    .old_path
+                    .clone()
+                    .unwrap_or_else(|| sel.entry.path.clone()),
+            })
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,5 +690,42 @@ mod tests {
         app.tabs
             .push(test_tab(canopy_core::RepoSnapshot::default()));
         assert!(app.palette_entries().iter().any(|(_, action)| matches!(action, Action::RepositoryInsights(path) if path == &app.tabs[0].path)));
+    }
+
+    #[test]
+    fn file_history_is_offered_for_the_open_file_under_its_name_in_head() {
+        use crate::tab::FileSelection;
+        use canopy_core::{ChangeKind, DiffSource, FileEntry};
+        let entry = |kind, old: Option<&str>| FileEntry {
+            path: "new.txt".into(),
+            old_path: old.map(str::to_owned),
+            kind,
+            additions: 0,
+            deletions: 0,
+            lfs: false,
+            old_mode: None,
+            new_mode: None,
+        };
+        let select = |source, entry| FileSelection {
+            source,
+            entry,
+            conflicted: false,
+        };
+        let renamed = select(
+            DiffSource::Staged,
+            entry(ChangeKind::Renamed, Some("old.txt")),
+        );
+        assert!(matches!(
+            file_history_action(&renamed),
+            Some(Action::FileHistory { from: None, path }) if path == "old.txt"
+        ));
+        let untracked = select(DiffSource::Unstaged, entry(ChangeKind::Untracked, None));
+        assert!(file_history_action(&untracked).is_none());
+        let oid = canopy_core::Oid::from_bytes(&[3; 20]).expect("an id");
+        let committed = select(DiffSource::Commit(oid), entry(ChangeKind::Added, None));
+        assert!(matches!(
+            file_history_action(&committed),
+            Some(Action::FileHistory { from: Some(from), path }) if from == oid && path == "new.txt"
+        ));
     }
 }

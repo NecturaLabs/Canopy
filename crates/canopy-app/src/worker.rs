@@ -348,6 +348,13 @@ pub enum Job {
         serial: u64,
         query: IgnoreQuery,
     },
+    /// The commits that changed one file, followed through renames; the serial ties the reply to
+    /// the newest request.
+    FileHistory {
+        serial: u64,
+        from: Option<Oid>,
+        path: String,
+    },
     /// Full snapshot with up to this many commits (0 keeps the current limit).
     Refresh(usize),
     /// The user's Retry after a download failed: forget the failure and read again, downloading.
@@ -441,6 +448,10 @@ pub enum Event {
     Insights {
         serial: u64,
         result: Result<Arc<Insights>, String>,
+    },
+    FileHistory {
+        serial: u64,
+        result: Result<Arc<canopy_core::FileHistory>, String>,
     },
     Ignore {
         serial: u64,
@@ -775,6 +786,7 @@ impl Job {
             Self::Conflict(_) => "conflict",
             Self::PullConfig => "pull-config",
             Self::Insights(_) => "repository insights",
+            Self::FileHistory { .. } => "file-history",
             Self::Tools => "tools",
             Self::PushTarget => "push-target",
             Self::Options(_) => "options",
@@ -1050,6 +1062,16 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         result: result.map_err(|e| e.to_string()),
                     });
                 }
+                Job::FileHistory { serial, from, path } => {
+                    let result = repo.file_history(from, &path, FILE_HISTORY_LIMIT);
+                    if let Err(error) = &result {
+                        tracing::warn!(%error, "file history failed");
+                    }
+                    emit(Event::FileHistory {
+                        serial,
+                        result: result.map(Arc::new).map_err(|e| e.to_string()),
+                    });
+                }
                 Job::Tools => emit(Event::ToolsMissing(repo.missing_tools())),
                 Job::PushTarget => {
                     emit(Event::PushTarget(
@@ -1290,6 +1312,9 @@ fn trusted_now(repo: &Repo) -> bool {
     TRUST_VERSION.set(version);
     repo.is_in_trusted_folder(&folders)
 }
+
+/// The most commits of one file's history a read returns; the dialog says when there are more.
+const FILE_HISTORY_LIMIT: usize = 500;
 
 /// Why a download did not run in a repository outside every trusted folder.
 pub(crate) const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a trusted folder. \

@@ -73,6 +73,7 @@ pub const OVERLAYS: &[&str] = &[
     "settings-search",
     "about",
     "repository-insights",
+    "file-history",
     "clean-stale",
     "author-card",
     "request-filters",

@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use canopy_core::{DiffSource, MissingObjects, Repo, Whitespace};
+use canopy_core::{ChangeKind, DiffSource, MissingObjects, Repo, Whitespace};
 
 #[expect(
     clippy::disallowed_methods,
@@ -84,26 +84,40 @@ fn history_follows_a_file_through_renames_like_git() {
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
 
-    let history = repo.file_history("docs/c d.txt", 100).expect("history");
+    let history = repo
+        .file_history(None, "docs/c d.txt", 100)
+        .expect("history");
     let ids: Vec<String> = history.entries.iter().map(|e| e.oid.to_string()).collect();
     assert_eq!(ids, oracle(dir.path(), "docs/c d.txt"));
     assert_eq!(ids.len(), 6, "the unrelated commit is not in it: {ids:?}");
     assert!(!history.truncated);
 
-    let rows: Vec<(&str, &str, Option<&str>)> = history
+    let rows: Vec<(&str, &str, Option<&str>, ChangeKind)> = history
         .entries
         .iter()
-        .map(|e| (e.summary.as_str(), e.path.as_str(), e.old_path.as_deref()))
+        .map(|e| {
+            (
+                e.summary.as_str(),
+                e.path.as_str(),
+                e.old_path.as_deref(),
+                e.kind,
+            )
+        })
         .collect();
     assert_eq!(
         rows,
         [
-            ("edit c", "docs/c d.txt", None),
-            ("move to docs", "docs/c d.txt", Some("b.txt")),
-            ("edit b", "b.txt", None),
-            ("rename to b", "b.txt", Some("a.txt")),
-            ("edit a", "a.txt", None),
-            ("add a", "a.txt", None),
+            ("edit c", "docs/c d.txt", None, ChangeKind::Modified),
+            (
+                "move to docs",
+                "docs/c d.txt",
+                Some("b.txt"),
+                ChangeKind::Renamed
+            ),
+            ("edit b", "b.txt", None, ChangeKind::Modified),
+            ("rename to b", "b.txt", Some("a.txt"), ChangeKind::Renamed),
+            ("edit a", "a.txt", None, ChangeKind::Modified),
+            ("add a", "a.txt", None, ChangeKind::Added),
         ]
     );
     assert!(history.entries.iter().all(|e| e.author == "Ada Lovelace"));
@@ -114,7 +128,9 @@ fn a_historical_diff_opens_without_touching_the_working_tree() {
     let dir = tempfile::tempdir().expect("tmp");
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
-    let history = repo.file_history("docs/c d.txt", 100).expect("history");
+    let history = repo
+        .file_history(None, "docs/c d.txt", 100)
+        .expect("history");
     let before = git(dir.path(), &["status", "--porcelain=v2", "--branch"]);
 
     let edit_b = &history.entries[2];
@@ -149,12 +165,14 @@ fn a_limit_keeps_the_newest_commits_and_says_there_are_more() {
     let dir = tempfile::tempdir().expect("tmp");
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
-    let all = repo.file_history("docs/c d.txt", 100).expect("history");
+    let all = repo
+        .file_history(None, "docs/c d.txt", 100)
+        .expect("history");
 
-    let part = repo.file_history("docs/c d.txt", 3).expect("history");
+    let part = repo.file_history(None, "docs/c d.txt", 3).expect("history");
     assert_eq!(part.entries, all.entries[..3]);
     assert!(part.truncated);
-    let exact = repo.file_history("docs/c d.txt", 6).expect("history");
+    let exact = repo.file_history(None, "docs/c d.txt", 6).expect("history");
     assert!(!exact.truncated);
 }
 
@@ -164,7 +182,7 @@ fn a_path_is_literal_and_an_unknown_file_has_no_history() {
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
     for path in ["docs/*", "missing.txt"] {
-        let history = repo.file_history(path, 10).expect("history");
+        let history = repo.file_history(None, path, 10).expect("history");
         assert!(history.entries.is_empty(), "{path}");
     }
 }
@@ -174,9 +192,24 @@ fn an_unborn_branch_reports_gits_message() {
     let dir = tempfile::tempdir().expect("tmp");
     git(dir.path(), &["init", "-q", "-b", "main"]);
     let repo = Repo::open(dir.path()).expect("repo");
-    let error = repo.file_history("a.txt", 10).expect_err("no commits");
-    assert!(
-        error.to_string().contains("does not have any commits"),
-        "{error}"
-    );
+    let error = repo
+        .file_history(None, "a.txt", 10)
+        .expect_err("no commits");
+    assert!(error.to_string().contains("bad revision"), "{error}");
+}
+
+#[test]
+fn history_can_start_at_an_older_commit_under_its_old_name() {
+    let dir = tempfile::tempdir().expect("tmp");
+    renamed_twice(dir.path());
+    let repo = Repo::open(dir.path()).expect("repo");
+    let all = repo
+        .file_history(None, "docs/c d.txt", 100)
+        .expect("history");
+    // "edit b": the file was b.txt then, and is not at HEAD under that name.
+    let edit_b = all.entries[2].oid;
+    let from = repo
+        .file_history(Some(edit_b), "b.txt", 100)
+        .expect("history");
+    assert_eq!(from.entries, all.entries[2..]);
 }

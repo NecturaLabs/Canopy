@@ -181,6 +181,14 @@ impl CanopyApp {
             repo.clone_from(&tab.path);
             tab.read_insights();
         }
+        if let Some(Dialog::FileHistory { path }) = self.dialogs.current_mut()
+            && let Some(tab) = self.tabs.get_mut(self.active)
+            && path.is_empty()
+        {
+            // A file with several commits in the fixture repository.
+            "Cargo.toml".clone_into(path);
+            tab.read_file_history(None, path.clone());
+        }
         if matches!(self.dialogs.current(), Some(Dialog::CleanStale(form)) if form.repo.as_os_str().is_empty())
             && !self.tabs.is_empty()
         {
@@ -210,12 +218,20 @@ impl CanopyApp {
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.insights.is_some());
+        let file_history_ready = !self
+            .dialogs
+            .any(|d| matches!(d, Dialog::FileHistory { .. }))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.file_history.is_some());
         let stale_ready = !self.dialogs.any(|d| matches!(d, Dialog::CleanStale(_)))
             || self
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.stale_result.is_some());
         let ready = insights_ready
+            && file_history_ready
             && stale_ready
             && demo_shown
             && self.pending_opens == 0
@@ -326,6 +342,12 @@ impl CanopyApp {
         if name == "repository-insights" {
             self.dialogs.open(Dialog::Insights {
                 repo: PathBuf::new(),
+            });
+            return;
+        }
+        if name == "file-history" {
+            self.dialogs.open(Dialog::FileHistory {
+                path: String::new(),
             });
             return;
         }

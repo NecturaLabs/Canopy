@@ -18,7 +18,7 @@ use crate::ui::kit::chip::{ChangeBadge, DiffStat};
 use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowKind, SectionHeader};
-use crate::ui::kit::{Button, IconButton, Size, paint};
+use crate::ui::kit::{Button, IconButton, Size, menu, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
 use crate::views::diff;
@@ -123,7 +123,7 @@ pub fn show(
                 .id_salt("commit-file-list")
                 .min_scrolled_height(0.0)
                 .auto_shrink([false, false])
-                .show(ui, |ui| files(ui, &d, tab));
+                .show(ui, |ui| files(ui, &d, tab, actions));
             paint::scroll_fade(ui, &list, s.pane);
         });
     egui::CentralPanel::default()
@@ -707,7 +707,7 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) -> f32 {
     .height()
 }
 
-fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
+fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     virtual_rows(ui, d.files.len(), file_row_height(), |ui, i| {
         let f = &d.files[i];
         let selected = tab.file.as_ref().is_some_and(|s| s.entry.path == f.path);
@@ -715,13 +715,25 @@ fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
         let missing = tab
             .not_downloaded
             .contains(&(DiffSource::Commit(d.oid), f.path.clone()));
-        if file_list_row(ui, f, selected, missing, id).clicked() {
+        let row = file_list_row(ui, f, selected, missing, id);
+        if row.clicked() {
             tab.select_file(FileSelection {
                 source: DiffSource::Commit(d.oid),
                 entry: f.clone(),
                 conflicted: false,
             });
         }
+        menu::context(&row, |m| {
+            if m.item(icon::CLOCK_COUNTER_CLOCKWISE, "File history…")
+                .show(m.ui)
+                .clicked()
+            {
+                actions.push(Action::FileHistory {
+                    from: Some(d.oid),
+                    path: f.path.clone(),
+                });
+            }
+        });
     });
 }
 
