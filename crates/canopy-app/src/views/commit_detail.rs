@@ -79,30 +79,22 @@ pub fn show(
             };
             let note = crate::avatars::explain_tab(settings, tab).map(PictureNote::from);
             author(ui, &d, tab, note.as_ref(), actions);
-            ui.horizontal_wrapped(|ui| {
-                if !d.parents.is_empty() {
-                    ui.label(
-                        RichText::new(if d.parents.len() == 1 {
-                            "Parent"
-                        } else {
-                            "Parents"
-                        })
-                        .size(m.meta_size)
-                        .color(p.text_dim),
-                    );
-                    for parent in &d.parents {
-                        let link = LinkButton::new(short_id(*parent))
-                            .text_size(m.sha_size)
-                            .show(ui)
-                            .kit_tooltip("Show this commit")
-                            .detail(parent.to_string())
-                            .show();
-                        if link.clicked() {
-                            tab.select_commit(*parent);
-                            tab.scroll_to_selected = true;
-                        }
-                    }
-                }
+            // "Commit" and "Parent" rows share one label column, so the two ids never read as one.
+            let label_w = ui.fonts_mut(|f| {
+                ["Commit", "Parents"]
+                    .into_iter()
+                    .map(|t| {
+                        f.layout_no_wrap(
+                            t.to_owned(),
+                            FontId::proportional(m.meta_size),
+                            p.text_dim,
+                        )
+                        .size()
+                        .x
+                    })
+                    .fold(0.0, f32::max)
+            });
+            fact_row(ui, "Commit", label_w, |ui| {
                 let id = LinkButton::new(short_id(d.oid))
                     .text_size(m.sha_size)
                     .show(ui)
@@ -123,6 +115,27 @@ pub fn show(
                 .kit_tooltip(widgets::full_date(d.author.time, d.author.offset_minutes))
                 .show();
             });
+            if !d.parents.is_empty() {
+                let name = if d.parents.len() == 1 {
+                    "Parent"
+                } else {
+                    "Parents"
+                };
+                fact_row(ui, name, label_w, |ui| {
+                    for parent in &d.parents {
+                        let link = LinkButton::new(short_id(*parent))
+                            .text_size(m.sha_size)
+                            .show(ui)
+                            .kit_tooltip("Show this commit")
+                            .detail(parent.to_string())
+                            .show();
+                        if link.clicked() {
+                            tab.select_commit(*parent);
+                            tab.scroll_to_selected = true;
+                        }
+                    }
+                });
+            }
             // Up to two whole file rows, the "N files changed" line above them (as tall as it
             // was last frame, at first one line of its text) and the gaps between them.
             let stats_key = ui.id().with("commit-file-stats-height");
@@ -171,6 +184,19 @@ pub fn show(
         .show(ui, |ui| diff::show(ui, tab, actions));
 }
 
+/// One labelled fact of the commit column: `label` in a column `label_w` wide, then `content`.
+fn fact_row(ui: &mut Ui, label: &str, label_w: f32, content: impl FnOnce(&mut Ui)) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    ui.horizontal_wrapped(|ui| {
+        ui.add_sized(
+            [label_w, Size::Xs.height()],
+            egui::Label::new(RichText::new(label).size(m.meta_size).color(p.text_dim)),
+        );
+        content(ui);
+    });
+}
+
 /// Lines of a commit message's body a details pane that sizes itself keeps room for; a longer
 /// body scrolls in its block.
 const BODY_LINES: usize = 2;
@@ -199,7 +225,10 @@ pub fn natural_height(ui: &Ui, d: Option<&CommitDetails>) -> f32 {
         + text_row(ui, m.meta_size)
         + theme::XS * 2.0
         + gap * 3.0;
-    m.pane_header_height + m.detail_pad.y * 2.0 + author + gap + sha + gap + body + files
+    // The commit's own id row and, for all but a root commit, its parents' row.
+    let parents = d.map_or(1, |d| usize::from(!d.parents.is_empty()));
+    let sha_rows = (sha + gap) * crate::ui::count_f32(1 + parents);
+    m.pane_header_height + m.detail_pad.y * 2.0 + author + gap + sha_rows + body + files
 }
 
 /// The height of one line of text at `size` (an icon row of the same size included).

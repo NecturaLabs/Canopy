@@ -81,7 +81,7 @@ git would run on every `git status`.
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
 | Author avatars | Done (GitHub/GitLab pictures, initials fallback) | Yes | Yes | Yes |
 | On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
-| Commit details: metadata, parents, files with +/- counts, per-file diff; persistent information disclosure, expand/return header and compact full view | Done | Yes | Yes | Yes |
+| Commit details: metadata (labelled Commit and Parent rows), files with +/- counts, per-file diff; persistent information disclosure, expand/return header and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
 | File history | Planned | Yes | Yes | Yes |
