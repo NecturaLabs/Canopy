@@ -344,26 +344,13 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
 /// keeps git from C-quoting a path with non-ASCII characters; the origin is made absolute here,
 /// since git prints a repository's own file relative to its worktree root.
 fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>, String> {
-    let mut args = vec!["config", "-z"];
-    args.extend_from_slice(scope);
-    args.extend(["--show-scope", "--show-origin", "--get", key]);
-    let out = canopy_core::cli::run_unchecked(dir, &args).map_err(|e| e.to_string())?;
-    match out.code {
-        Some(0) => Ok(parse_value(key, &out.stdout, true, dir)),
-        Some(1) => Ok(None),
-        // An older git without --show-scope (before 2.26): ask again without it.
-        _ => {
-            let mut args = vec!["config", "-z"];
-            args.extend_from_slice(scope);
-            args.extend(["--show-origin", "--get", key]);
-            let out = canopy_core::cli::run_unchecked(dir, &args).map_err(|e| e.to_string())?;
-            match out.code {
-                Some(0) => Ok(parse_value(key, &out.stdout, false, dir)),
-                Some(1) => Ok(None),
-                _ => Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()),
-            }
-        }
-    }
+    canopy_core::config::read(
+        dir,
+        scope.contains(&"--global"),
+        canopy_core::config::Query::Get(key),
+    )
+    .map(|entries| entries.into_iter().next_back().map(ConfigValue::from))
+    .map_err(|e| e.to_string())
 }
 
 /// Reads each remote's pruning preference without silently dropping a failed git config read.
@@ -400,49 +387,34 @@ fn get_bool(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>
     Ok(found)
 }
 
-/// The last record of `git config -z --show-origin [--show-scope] --get` output: NUL-terminated
-/// `scope`, `origin` and `value`. `dir` is the worktree root, against which git prints relative
-/// `file:` origins.
+impl From<canopy_core::config::Entry> for ConfigValue {
+    fn from(entry: canopy_core::config::Entry) -> Self {
+        Self {
+            key: entry.key,
+            value: entry.value.unwrap_or_default(),
+            scope: entry.scope,
+            origin: entry.origin,
+            file: entry.file,
+        }
+    }
+}
+
+#[cfg(test)]
 fn parse_value(
     key: &str,
     out: impl AsRef<[u8]>,
     with_scope: bool,
     dir: &Path,
 ) -> Option<ConfigValue> {
-    let width = if with_scope { 3 } else { 2 };
-    let mut fields: Vec<&[u8]> = out.as_ref().split(|&b| b == 0).collect();
-    fields.pop();
-    let record = fields.chunks_exact(width).next_back()?;
-    let (scope, rest) = if with_scope {
-        (record[0], &record[1..])
-    } else {
-        (b"".as_slice(), record)
-    };
-    let (origin, file) = absolute_origin(rest[0], dir);
-    Some(ConfigValue {
-        key: key.to_owned(),
-        value: String::from_utf8_lossy(rest[1]).into_owned(),
-        scope: String::from_utf8_lossy(scope).into_owned(),
-        origin,
-        file,
-    })
-}
-
-/// A file origin as its actual path and display text; relative paths are joined to the worktree
-/// root `dir`. Non-file origins have only display text.
-fn absolute_origin(origin: &[u8], dir: &Path) -> (String, Option<PathBuf>) {
-    match origin.strip_prefix(b"file:") {
-        Some(file) => {
-            let file = canopy_core::paths::os_path(file);
-            let file = if file.is_relative() {
-                dir.join(file)
-            } else {
-                file
-            };
-            (format!("file:{}", file.display()), Some(file))
-        }
-        None => (String::from_utf8_lossy(origin).into_owned(), None),
-    }
+    canopy_core::config::parse(
+        out.as_ref(),
+        canopy_core::config::Query::Get(key),
+        with_scope,
+        dir,
+    )
+    .into_iter()
+    .next_back()
+    .map(ConfigValue::from)
 }
 
 /// The repository's remotes and their URLs, in configuration order.

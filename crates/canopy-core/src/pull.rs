@@ -21,11 +21,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::ops::PullStrategy;
-use crate::paths::os_path;
 use crate::{Repo, Result, cli};
-
-/// A pull's list records three NUL-terminated fields per entry: scope, origin and entry.
-const PULL_FIELDS: usize = 3;
 
 /// Which configuration file layer a value comes from (`git config --show-scope`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,8 +76,8 @@ pub struct ConfigSource {
     pub value: String,
     /// The configuration layer.
     pub scope: ConfigScope,
-    /// What git prints for the origin, for example `file:/home/ada/.gitconfig`, `file:.git/config`
-    /// or `command line:`.
+    /// The origin, for example `file:/home/ada/.gitconfig` or `command line:`.
+    /// File origins are absolute and unquoted.
     pub origin: String,
     /// The configuration file, when the origin is one. A relative path git prints (the
     /// repository's own `.git/config`) is joined to the working tree.
@@ -210,46 +206,20 @@ impl Reader<'_> {
     /// Every `pull.rebase`, `pull.ff`, `merge.ff` and `branch.*.rebase` entry in git's reading
     /// order, so the last one of a key is the one in force.
     fn read_pull_entries(&self) -> Result<Vec<ConfigSource>> {
-        let (_, out) = cli::run_answer(
+        Ok(crate::config::read(
             self.dir,
-            &self.args(&[
-                "--show-origin",
-                "--show-scope",
-                "-z",
-                "--get-regexp",
-                r"^(pull\.(rebase|ff)|merge\.ff|branch\..*\.rebase)$",
-            ]),
-            b"",
-            &[0, 1],
-        )?;
-        let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
-        let (entries, _) = fields.as_chunks::<PULL_FIELDS>();
-        Ok(entries
-            .iter()
-            .map(|&[scope, origin, entry]| {
-                // `key\nvalue`; a key written without a value has no newline and means true.
-                let (key, value) = match entry.iter().position(|&b| b == b'\n') {
-                    Some(at) => (&entry[..at], &entry[at + 1..]),
-                    None => (entry, b"true".as_slice()),
-                };
-                let file = origin.strip_prefix(b"file:").map(|path| {
-                    let path = os_path(path);
-                    if path.is_relative() {
-                        self.dir.join(path)
-                    } else {
-                        path
-                    }
-                });
-                let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
-                ConfigSource {
-                    key: text(key),
-                    value: text(value),
-                    scope: ConfigScope::parse(&text(scope)),
-                    origin: text(origin),
-                    file,
-                }
-            })
-            .collect())
+            self.global,
+            crate::config::Query::Matching(r"^(pull\.(rebase|ff)|merge\.ff|branch\..*\.rebase)$"),
+        )?
+        .into_iter()
+        .map(|entry| ConfigSource {
+            key: entry.key,
+            value: entry.value.unwrap_or_else(|| "true".to_owned()),
+            scope: ConfigScope::parse(&entry.scope),
+            origin: entry.origin,
+            file: entry.file,
+        })
+        .collect())
     }
 
     fn parse_rebase(&self, source: ConfigSource) -> Result<Setting<Rebase>> {
@@ -353,6 +323,33 @@ fn decide(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_origins_are_absolute_in_non_ascii_repository() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dir = root.path().join("répo");
+        std::fs::create_dir(&dir).expect("directory");
+        cli::run(&dir, &["init", "-q", "-b", "main"]).expect("init");
+        cli::run(&dir, &["config", "pull.ff", "only"]).expect("config");
+        let entries = Reader {
+            dir: &dir,
+            global: false,
+        }
+        .read_pull_entries()
+        .expect("read config");
+        let entry = entries
+            .iter()
+            .rfind(|e| e.key == "pull.ff")
+            .expect("pull.ff");
+        assert_eq!(
+            entry.origin,
+            format!("file:{}", dir.join(".git/config").display())
+        );
+        assert_eq!(
+            entry.file.as_deref(),
+            Some(dir.join(".git/config").as_path())
+        );
+    }
 
     fn source(key: &str, value: &str) -> ConfigSource {
         ConfigSource {

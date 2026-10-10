@@ -11,6 +11,7 @@
 //! them off the UI thread.
 
 pub mod cli;
+pub mod config;
 pub mod conflict;
 pub mod diff;
 mod error;
