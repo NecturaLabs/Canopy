@@ -27,7 +27,7 @@ use crate::request_view::{
 use crate::tab::RepoTab;
 use crate::ui::art;
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
-use crate::ui::kit::button::LinkButton;
+use crate::ui::kit::button::{LinkButton, icon_button_side};
 use crate::ui::kit::chip::{Badge, DiffStat, RefPill};
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::{SearchField, TextArea};
@@ -619,7 +619,7 @@ fn filter_bar(ui: &mut Ui, tab: &mut RepoTab, items: &[RequestSummary], actions:
     let mut view = before.clone();
     ui.horizontal(|ui| {
         let spacing = ui.spacing().item_spacing.x;
-        let buttons = 2.0 * (m.control_sm + spacing);
+        let buttons = 2.0 * (icon_button_side(Size::Sm) + spacing);
         let field = SearchField::new(&mut view.text)
             .placeholder(format!("Filter {}s…", tab_noun(tab)))
             .name(format!("Filter {}s", tab_noun(tab)))
@@ -847,72 +847,83 @@ fn rows(
         selected.and_then(|n| order.iter().position(|&i| items[i].number == n)),
     );
     let scroll_to = scroll_target(&ctx, tab, selected);
-    let out = egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .id_salt("requests-rows")
-        .show(ui, |ui| {
-            egui::Frame::new()
-                .inner_margin(Margin::symmetric(
-                    crate::ui::points_i8(m.sidebar_pad),
-                    crate::ui::points_i8(theme::XS),
-                ))
+    // The bar is always visible and keeps its own lane beside the rows (`solid_scroll`), so the
+    // handle never covers a status glyph or a label chip, as in the notification center.
+    let out = ui
+        .scope(|ui| {
+            ui.spacing_mut().scroll = theme::solid_scroll();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .id_salt("requests-rows")
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    a11y::group(ui, egui::accesskit::Role::List, "Requests");
-                    let content = ui.available_width() - 2.0 * row::PAD;
-                    let laid: Vec<RowLayout> = order
-                        .iter()
-                        .map(|&i| {
-                            let r = &items[i];
-                            let glyphs = row_signals(&ctx, tab, r).map_or(1, |s| s.glyphs().len());
-                            RowLayout::new(ui.painter(), r, kind, glyphs, content, now)
+                    egui::Frame::new()
+                        .inner_margin(Margin {
+                            left: crate::ui::points_i8(m.sidebar_pad),
+                            right: crate::ui::points_i8(m.sidebar_pad),
+                            top: crate::ui::points_i8(theme::XS),
+                            // The last row scrolls clear of the edge (design.md, Scroll edges).
+                            bottom: crate::ui::points_i8(theme::SM),
                         })
-                        .collect();
-                    let heights: Vec<f32> = laid.iter().map(|l| l.height).collect();
-                    let top = ui.cursor().min.y;
-                    if let Some(at) = scroll_to.filter(|&at| at < heights.len()) {
-                        let (y, h) = (heights[..at].iter().sum::<f32>(), heights[at]);
-                        let width = ui.available_width();
-                        ui.scroll_to_rect(
-                            Rect::from_min_size(pos2(0.0, top + y), vec2(width, h)),
-                            None,
-                        );
-                    }
-                    let span = visible_span(&heights, top, ui.clip_rect().y_range());
-                    let width = ui.available_width();
-                    if span.before > 0.0 {
-                        ui.allocate_space(vec2(width, span.before));
-                    }
-                    for at in span.range.clone() {
-                        let r = &items[order[at]];
-                        let is_selected = selected == Some(r.number);
-                        if is_selected {
-                            roving.follow(&ctx, at);
-                        }
-                        let signals = row_signals(&ctx, tab, r);
-                        let response = row(
-                            ui,
-                            r,
-                            RowDraw {
-                                kind,
-                                layout: &laid[at],
-                                signals,
-                                selected: is_selected,
-                                ground,
-                                index: at,
-                                list: roving,
-                                now,
-                            },
-                        );
-                        if response.clicked() {
-                            tab.select_request(r.number);
-                        }
-                    }
-                    if span.after > 0.0 {
-                        ui.allocate_space(vec2(width, span.after));
-                    }
-                });
-        });
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            a11y::group(ui, egui::accesskit::Role::List, "Requests");
+                            let content = ui.available_width() - 2.0 * row::PAD;
+                            let laid: Vec<RowLayout> = order
+                                .iter()
+                                .map(|&i| {
+                                    let r = &items[i];
+                                    let glyphs =
+                                        row_signals(&ctx, tab, r).map_or(1, |s| s.glyphs().len());
+                                    RowLayout::new(ui.painter(), r, kind, glyphs, content, now)
+                                })
+                                .collect();
+                            let heights: Vec<f32> = laid.iter().map(|l| l.height).collect();
+                            let top = ui.cursor().min.y;
+                            if let Some(at) = scroll_to.filter(|&at| at < heights.len()) {
+                                let (y, h) = (heights[..at].iter().sum::<f32>(), heights[at]);
+                                let width = ui.available_width();
+                                ui.scroll_to_rect(
+                                    Rect::from_min_size(pos2(0.0, top + y), vec2(width, h)),
+                                    None,
+                                );
+                            }
+                            let span = visible_span(&heights, top, ui.clip_rect().y_range());
+                            let width = ui.available_width();
+                            if span.before > 0.0 {
+                                ui.allocate_space(vec2(width, span.before));
+                            }
+                            for at in span.range.clone() {
+                                let r = &items[order[at]];
+                                let is_selected = selected == Some(r.number);
+                                if is_selected {
+                                    roving.follow(&ctx, at);
+                                }
+                                let signals = row_signals(&ctx, tab, r);
+                                let response = row(
+                                    ui,
+                                    r,
+                                    RowDraw {
+                                        kind,
+                                        layout: &laid[at],
+                                        signals,
+                                        selected: is_selected,
+                                        ground,
+                                        index: at,
+                                        list: roving,
+                                        now,
+                                    },
+                                );
+                                if response.clicked() {
+                                    tab.select_request(r.number);
+                                }
+                            }
+                            if span.after > 0.0 {
+                                ui.allocate_space(vec2(width, span.after));
+                            }
+                        });
+                })
+        })
+        .inner;
     paint::scroll_fade(ui, &out, ground);
     // An arrow on a focused row moves the selection; focus follows it next frame.
     if let Some((from, to)) = roving.moved(&ctx) {
@@ -3678,6 +3689,160 @@ mod tests {
         draw(&mut tab, kit::testkit::key(egui::Key::Escape));
         let nodes = draw(&mut tab, Vec::new());
         assert!(!nodes.iter().any(|(l, _)| l == "Review"), "{nodes:?}");
+    }
+
+    // ---------------------------------------------------------------------------- the scroll bar
+
+    /// `count` requests with the busiest right edge a row has: a title that wraps, a description,
+    /// three labels, and a checks glyph and a review glyph.
+    fn overflowing(count: u64) -> RepoTab {
+        let rows = (1..=count)
+            .map(|n| RequestSummary {
+                labels: vec!["bug".into(), "accessibility".into(), "needs design".into()],
+                rollup: Some(Rollup {
+                    checks: Some(CheckState::Failure),
+                    review: Some(ReviewDecision::ChangesRequested),
+                }),
+                ..request(
+                    n,
+                    "A title that is long enough to wrap onto a second line in a narrow list",
+                    "maya-chen",
+                    "What the change does, in a sentence or two of plain text.",
+                )
+            })
+            .collect();
+        tab_with(rows)
+    }
+
+    /// What `list` paints at `size` after a few frames (the bar needs one to know the rows
+    /// overflow), with the pointer over the rows and, when `to_the_end`, the wheel turned far
+    /// enough to reach the last row; and the right edge of the panel it ran in.
+    fn list_painted(
+        tab: &mut RepoTab,
+        size: egui::Vec2,
+        to_the_end: bool,
+    ) -> (Vec<egui::epaint::ClippedShape>, f32) {
+        let ctx = kit::testkit::ctx();
+        let (mut right, mut shapes) = (0.0, Vec::new());
+        for step in 0..6_u8 {
+            let mut events = Vec::new();
+            if step == 1 {
+                events.push(egui::Event::PointerMoved(pos2(size.x / 2.0, size.y / 2.0)));
+            }
+            if to_the_end && step == 2 {
+                events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(0.0, -1.0e6),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(f64::from(step) * 0.05),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    right = ui.max_rect().right();
+                    list(ui, tab, ForgeKind::GitHub, Color32::BLACK, &mut Vec::new());
+                },
+            );
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        (shapes, right)
+    }
+
+    /// The owner's report: the bar must be visible and must never sit over a status glyph or a
+    /// label chip. The bar keeps its own lane (`solid_scroll`), the handle is the kit's, and
+    /// every part of a row ends at least a handle, its margin and a gutter short of it.
+    #[test]
+    fn the_scroll_bar_is_visible_and_keeps_its_lane_clear_of_every_row() {
+        let solid = theme::solid_scroll();
+        // The handle at its widest (hovered), its margin and a gutter: the least a row may leave.
+        let clear = solid.bar_width + solid.bar_inner_margin + theme::XS;
+        for size in [vec2(420.0, 600.0), vec2(320.0, 480.0), vec2(800.0, 900.0)] {
+            let mut tab = overflowing(40);
+            let (shapes, right) = list_painted(&mut tab, size, false);
+            let lane = right - solid.floating_allocated_width;
+            let (fills, inks) = kit::testkit::painted_colors(&shapes);
+            let handle = fills
+                .iter()
+                .map(|(rect, _)| *rect)
+                .find(|r| r.left() >= lane - 0.5 && r.width() <= solid.bar_width + 0.5)
+                .unwrap_or_else(|| panic!("no scroll bar handle in the lane at {size:?}"));
+            assert!(
+                handle.height() >= theme::SCROLL_HANDLE_MIN,
+                "{size:?}: a handle of {} is hard to grab",
+                handle.height()
+            );
+            // What a row paints: its text, and its label chips (the row's own band, a hover or a
+            // selection, is taller than a line and ends at the list's edge by design).
+            let rows = |r: &Rect| r.top() >= handle.top() - 0.5 && r.left() < lane;
+            let furthest = inks
+                .iter()
+                .map(|(r, _)| *r)
+                .chain(fills.iter().map(|(r, _)| *r).filter(|r| r.height() < 24.0))
+                .filter(rows)
+                .map(|r| r.right())
+                .fold(f32::MIN, f32::max);
+            assert!(
+                lane - furthest >= clear,
+                "{size:?}: a row reaches {furthest}, {} short of the lane at {lane}; needs {clear}",
+                lane - furthest
+            );
+        }
+    }
+
+    /// The last row scrolls clear of the bottom edge: its last line of text ends the row's own
+    /// padding and the list's room short of it.
+    /// The filter bar fits the panel it is in: its buttons took room the field did not leave, and
+    /// the overflow widened the list, so the scroll bar's lane sat 4 points past the panel's edge.
+    #[test]
+    fn the_filter_bar_does_not_outgrow_its_panel() {
+        let ctx = kit::testkit::ctx();
+        for width in [220.0_f32, 320.0, 560.0, 800.0] {
+            let mut tab = overflowing(3);
+            let items = match &tab.requests.list {
+                Some(Ok(rows)) => Arc::clone(rows),
+                _ => unreachable!("the tab has a list"),
+            };
+            let mut used = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    filter_bar(ui, &mut tab, &items, &mut Vec::new());
+                    used = ui.min_rect().right();
+                },
+            );
+            output.textures_delta.clear();
+            assert!(
+                used <= width + 0.5,
+                "the filter bar is {used} wide in a panel {width} wide"
+            );
+        }
+    }
+
+    #[test]
+    fn the_last_row_scrolls_clear_of_the_bottom_edge() {
+        let size = vec2(420.0, 600.0);
+        let mut tab = overflowing(40);
+        let (shapes, _) = list_painted(&mut tab, size, true);
+        let (_, inks) = kit::testkit::painted_colors(&shapes);
+        let lowest = inks
+            .iter()
+            .map(|(r, _)| r.bottom())
+            .fold(f32::MIN, f32::max);
+        assert!(
+            lowest <= size.y - 2.0 * theme::SM,
+            "the last line ends at {lowest} in a list {} high",
+            size.y
+        );
     }
 
     #[test]
