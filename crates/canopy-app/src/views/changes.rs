@@ -12,7 +12,7 @@ use crate::tab::{FileSelection, RepoTab};
 use crate::ui::art;
 use crate::ui::kit::anim::Flip;
 use crate::ui::kit::chip::CountBadge;
-use crate::ui::kit::field::{TextArea, TextField};
+use crate::ui::kit::field::{Join, TextArea, TextField};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{RowKind, SectionHeader, Selection, caps_galley};
 use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
@@ -1217,8 +1217,9 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let _ = SectionHeader::new("Commit").first(true).show(ui);
     ui.add_space(theme::XS);
     let summary = TextField::new(&mut tab.commit_summary)
-        .placeholder("Summary (required)")
+        .placeholder("Summary")
         .name("Commit summary")
+        .joined(Join::Above)
         .counter(true)
         .tooltip("Keep the summary under 50 characters; 72 at most.")
         .id_salt("commit-summary")
@@ -1227,15 +1228,18 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         summary.request_focus();
         tab.focus_summary = false;
     }
-    ui.add_space(6.0);
+    // The description sits under the summary as the second half of one message box: its top edge
+    // is the summary's bottom edge.
+    ui.add_space(-ui.spacing().item_spacing.y);
     let rows = if ui.ctx().content_rect().height() < 600.0 {
         2..=6
     } else {
         3..=12
     };
     TextArea::new(&mut tab.commit_body)
-        .placeholder("Description")
+        .placeholder("Description (optional)")
         .name("Commit description")
+        .joined(Join::Below)
         .rows(rows)
         .guide(72)
         .id_salt("commit-body")
@@ -2060,7 +2064,7 @@ mod tests {
             let texts = painted_texts(&ctx, tab, None);
             let (_, at) = texts
                 .iter()
-                .find(|(t, _)| t == "Summary (required)")
+                .find(|(t, _)| t == "Summary")
                 .expect("painted summary hint");
             at.min.y
         };
@@ -2350,7 +2354,7 @@ mod tests {
                 .iter()
                 .find_map(|shape| {
                     if let egui::Shape::Text(text) = &shape.shape
-                        && text.galley.text().contains("Summary (required)")
+                        && text.galley.text() == "Summary"
                     {
                         Some(text.visual_bounding_rect().intersect(shape.clip_rect))
                     } else {
@@ -2695,7 +2699,7 @@ mod tests {
                 before = timed_texts(&ctx, &mut tab, f64::from(i) * 0.1);
             }
             let (b0, c0) = (painted_at(&before, "b.rs"), painted_at(&before, "c.rs"));
-            let composer0 = painted_at(&before, "Summary (required)");
+            let composer0 = painted_at(&before, "Summary");
             // b.rs is staged: the worker sends the new status.
             snap.status.unstaged = vec![entry("a.rs"), entry("c.rs")];
             snap.status.staged = vec![entry("b.rs")];
@@ -2708,7 +2712,7 @@ mod tests {
                 rest = timed_texts(&ctx, &mut tab, 2.0 + f64::from(i) * 0.1);
             }
             let (b1, c1) = (painted_at(&rest, "b.rs"), painted_at(&rest, "c.rs"));
-            let composer1 = painted_at(&rest, "Summary (required)");
+            let composer1 = painted_at(&rest, "Summary");
             let (b0, b1, c0, c1) = (
                 b0.expect("b.rs before"),
                 b1.expect("b.rs after"),
@@ -2727,7 +2731,7 @@ mod tests {
             assert_eq!(at(&change, "b.rs"), b0, "b.rs starts where it was");
             assert_eq!(at(&change, "c.rs"), c0, "c.rs starts where it was");
             assert_eq!(
-                painted_at(&change, "Summary (required)"),
+                painted_at(&change, "Summary"),
                 composer0,
                 "the composer does not jump"
             );

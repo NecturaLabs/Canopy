@@ -50,7 +50,7 @@ const ERROR_HALO_ALPHA: u8 = 46;
 const FOCUS_LINE: f32 = 2.0;
 /// The well: `text` at this alpha at most (less where a text colour would not read), and this
 /// much more while hovered.
-const WELL_ALPHA: u8 = 12;
+const WELL_ALPHA: u8 = 16;
 const HOVER_ALPHA: u8 = 6;
 /// The quiet sides of the resting edge: `edge` this far towards `control_border`.
 const SIDE_MIX: f32 = 0.35;
@@ -245,6 +245,35 @@ pub(crate) fn paint_box(
     }
 }
 
+/// Which side of a stacked pair of fields a field is: the pair reads as one box, so the corners
+/// at the seam are square and the next field overlaps this one's edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Join {
+    /// The upper field: its bottom corners are square.
+    Above,
+    /// The lower field: its top corners are square.
+    Below,
+}
+
+impl Join {
+    fn radius(self, round: u8) -> CornerRadius {
+        match self {
+            Self::Above => CornerRadius {
+                nw: round,
+                ne: round,
+                sw: 0,
+                se: 0,
+            },
+            Self::Below => CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: round,
+                se: round,
+            },
+        }
+    }
+}
+
 /// Everything the fields share.
 #[derive(Debug)]
 struct Core<'t> {
@@ -269,6 +298,7 @@ struct Core<'t> {
     guide: Option<usize>,
     shortcut: Option<Command>,
     borderless: bool,
+    joined: Option<Join>,
     /// A − and + pair at the trailing end, with their names and whether each can step.
     stepper: Option<Stepper>,
     id_salt: Option<Id>,
@@ -318,6 +348,7 @@ impl<'t> Core<'t> {
             guide: None,
             shortcut: None,
             borderless: false,
+            joined: None,
             stepper: None,
             id_salt: None,
             id: None,
@@ -432,7 +463,9 @@ impl<'t> Core<'t> {
             _ => self.size.height(),
         };
         let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-        let radius = CornerRadius::same(m.radius);
+        let radius = self
+            .joined
+            .map_or_else(|| CornerRadius::same(m.radius), |j| j.radius(m.radius));
         // The well goes here, under the text, once hover is known.
         let painter = if enabled {
             ui.painter().clone()
@@ -1143,6 +1176,11 @@ impl<'t> TextField<'t> {
         self.core.counter = counter;
         self
     }
+    /// One half of a stacked pair that reads as a single box.
+    pub fn joined(mut self, join: Join) -> Self {
+        self.core.joined = Some(join);
+        self
+    }
     pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
         self.core.force = Some(force);
         self.show(ui)
@@ -1230,6 +1268,11 @@ impl<'t> TextArea<'t> {
     /// The rows it shows when empty, and the most it grows to (3 to 12 by default).
     pub fn rows(mut self, rows: RangeInclusive<usize>) -> Self {
         self.core.kind = Kind::Area { rows };
+        self
+    }
+    /// One half of a stacked pair that reads as a single box.
+    pub fn joined(mut self, join: Join) -> Self {
+        self.core.joined = Some(join);
         self
     }
     /// A dotted guide at this column (72 for commit descriptions).
@@ -1852,6 +1895,14 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_joined_pair_has_square_corners_at_its_seam() {
+        let above = Join::Above.radius(6);
+        assert_eq!((above.nw, above.ne, above.sw, above.se), (6, 6, 0, 0));
+        let below = Join::Below.radius(6);
+        assert_eq!((below.nw, below.ne, below.sw, below.se), (0, 0, 6, 6));
+    }
+
     use egui::accesskit::Role;
 
     use super::super::testkit::{self, find, frame, key, key_with, spoken};
