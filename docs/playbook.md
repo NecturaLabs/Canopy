@@ -117,7 +117,13 @@ or how flows feel end to end.
 
 - Read the `release` skill first. A release publishes to users: confirm the build and channel with
   the owner, then `gh workflow run create-release.yml --ref main -f channel=beta -f dry-run=true`,
-  and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`.
+  and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`. It can
+  be dispatched right after a merge: it waits for main's CI run (under a minute when the merged
+  branch was up to date with `main`, since that run reuses the branch's).
+- The experimental builds (aarch64 Linux, Intel macOS) never hold back a release: it is published
+  from the other builds, and "Add the experimental builds" adds their archives to the releases
+  and the feed when they finish. Build 1116 was stuck for an hour on a hung aarch64 job before
+  that (#144).
 - `NecturaLabs/app-updates` (public) holds `canopy/latest.json`, `beta.json`, `install.sh`,
   `install.ps1` and the releases `canopy-build-<n>`. The build each channel serves is the `version`
   in its manifest: `gh api -H 'Accept: application/vnd.github.raw'
