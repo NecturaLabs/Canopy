@@ -555,8 +555,9 @@ pub struct Requests {
         reason = "not yet known, known to be absent, or known, as the doc comment says"
     )]
     pub token: Option<Option<TokenSource>>,
-    /// The host refused the token on the newest reply that carried an answer (a list, a request's
-    /// details or an action); cleared by the next one it accepted.
+    /// The host refused the token on the newest read (a list or a request's details); cleared by
+    /// the next read or action it accepted. An action's refusal does not set it: the host also
+    /// answers 403 to a locked conversation or an archived repository.
     pub token_rejected: bool,
     /// When the list was last loaded.
     pub loaded_at: Option<Instant>,
@@ -2095,8 +2096,8 @@ impl RepoTab {
         notices
     }
 
-    /// Remembers whether the host refused the token in `reply`: an accepted reply clears the
-    /// note, a refusal sets it, and any other failure says nothing about the token.
+    /// Remembers whether the host refused the token in `reply` to a read: an accepted reply
+    /// clears the note, a refusal sets it, and any other failure says nothing about the token.
     fn note_token<T>(&mut self, reply: &Result<T, String>) {
         match reply {
             Ok(_) => self.requests.token_rejected = false,
@@ -2194,7 +2195,9 @@ impl RepoTab {
                     number,
                     result,
                 } => {
-                    self.note_token(&result);
+                    if result.is_ok() {
+                        self.requests.token_rejected = false;
+                    }
                     self.requests.busy = None;
                     let submitted = if action == HostAction::Comment {
                         self.requests.pending_comment.take()
@@ -2353,6 +2356,31 @@ mod tests {
         );
         tab.note_token(&Ok(()));
         assert!(!tab.requests.token_rejected);
+    }
+
+    /// An action refused for another reason (a locked conversation answers 403) must not turn a
+    /// token that reads fine into a rejected one; one the host accepted still clears the note.
+    #[test]
+    fn a_refused_action_does_not_flag_the_token() {
+        let refused = canopy_hosting::Error::Unauthorized("Conversation is locked".into());
+        let done = |result| HostEvent::Done {
+            label: "Commenting".into(),
+            action: HostAction::Comment,
+            number: Some(7),
+            result,
+        };
+        let (mut tab, _, _) = tab_showing_requests();
+        let forge = tab.host.as_ref().expect("host").forge.clone();
+        let (host, events, _) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        events.send(done(Err(refused.to_string()))).expect("event");
+        tab.poll(&[]);
+        assert!(!tab.requests.token_rejected);
+
+        tab.requests.token_rejected = true;
+        events.send(done(Ok(()))).expect("event");
+        tab.poll(&[]);
+        assert!(!tab.requests.token_rejected, "an accepted action clears it");
     }
 
     /// A notification says what happened in the past tense, or what could not be done.
