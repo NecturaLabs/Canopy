@@ -352,6 +352,21 @@ impl CanopyApp {
                         }
                     }
                 }
+                Action::RememberRequestView { repo, view } => {
+                    for tab in &mut self.tabs {
+                        if tab.sidebar_key() == Some(repo.as_path()) {
+                            tab.request_view = view.clone();
+                        }
+                    }
+                    // The default needs no entry, so repositories left alone do not pile up.
+                    if view.is_default() {
+                        self.settings.repo_requests.remove(&repo);
+                    } else {
+                        self.settings
+                            .repo_requests
+                            .insert(repo.clone(), view.clone());
+                    }
+                }
                 Action::SetRepoDiff { path, prefs } => {
                     match prefs {
                         Some(prefs) => self.settings.repo_diff.insert(path.clone(), prefs),

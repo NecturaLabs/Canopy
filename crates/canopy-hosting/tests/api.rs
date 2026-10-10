@@ -284,6 +284,7 @@ fn gh_pull(number: u64, state: &str, merged: bool, updated: &str) -> Value {
         "updated_at": updated,
         "html_url": format!("https://github.com/octo/hello/pull/{number}"),
         "labels": [{ "name": "bug" }, { "name": "ui" }],
+        "body": if number == 1 { json!("## Why\n\nFixes the [bug](https://example.test/1).") } else { Value::Null },
         "unknown_field": { "ignored": true },
     })
 }
@@ -305,6 +306,7 @@ fn gl_mr(iid: u64, state: &str, updated: &str) -> Value {
         "updated_at": updated,
         "web_url": format!("https://gitlab.example.com/group/sub/proj/-/merge_requests/{iid}"),
         "labels": ["backend"],
+        "description": if iid == 1 { json!("**Adds** the backend <!-- note -->hook.") } else { Value::Null },
     })
 }
 
@@ -360,6 +362,11 @@ fn github_list_maps_fields() {
     assert_eq!(first.updated_at, 1_704_412_800);
     assert_eq!(first.web_url, "https://github.com/octo/hello/pull/1");
     assert_eq!(first.labels, ["bug", "ui"]);
+    assert_eq!(
+        first.description, "Why Fixes the bug.",
+        "the list's own body is the preview"
+    );
+    assert_eq!(all[1].description, "", "a pull request without a body");
 
     let req = &server.requests()[0];
     assert_eq!(
@@ -822,6 +829,8 @@ fn gitlab_list_maps_fields_and_merges_closed_states() {
     assert_eq!(mr.target_branch, "main");
     assert_eq!(mr.created_at, 1_706_778_000);
     assert_eq!(mr.labels, ["backend"]);
+    assert_eq!(mr.description, "Adds the backend hook.");
+    assert_eq!(list[1].description, "");
 
     // Closed = closed + merged, interleaved by update time.
     let server = Server::start();

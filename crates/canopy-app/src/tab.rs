@@ -11,6 +11,7 @@ use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
 use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource};
+use crate::request_view::RequestView;
 use crate::settings::{DiffPrefs, PullChoice};
 use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
 
@@ -536,6 +537,12 @@ pub struct Requests {
     pub filter: StateFilter,
     /// Shared so a frame can hold the list while it mutates the tab, without copying it.
     pub list: Option<Result<Arc<[RequestSummary]>, String>>,
+    /// The request filter field takes the caret on the next frame (the filter command).
+    pub focus_filter: bool,
+    /// The numbers of the requests the list showed on its last frame, in the order it showed
+    /// them (the view's filters and sort applied); `None` before it was drawn. The arrow keys
+    /// walk this order.
+    pub shown: Option<Vec<u64>>,
     pub loading: bool,
     pub selected: Option<u64>,
     pub details: Option<Result<Arc<RequestDetails>, String>>,
@@ -572,6 +579,8 @@ impl Default for Requests {
         Self {
             filter: StateFilter::Open,
             list: None,
+            shown: None,
+            focus_filter: false,
             loading: false,
             selected: None,
             details: None,
@@ -813,6 +822,10 @@ pub struct RepoTab {
     pub sidebar_restored: bool,
     /// A section was toggled this frame, awaiting persistence by the app.
     pub sidebar_changed: bool,
+    /// The request list's filters and sort for this repository.
+    pub request_view: RequestView,
+    /// The saved request view has been applied after the first repository snapshot.
+    pub request_view_restored: bool,
     /// The sidebar row last clicked ([`RepoTab::sidebar_shows`]).
     pub sidebar_pick: Option<SidebarItem>,
     /// GitHub and GitLab remotes: (remote name, forge).
@@ -931,6 +944,8 @@ impl RepoTab {
             collapsed: SIDEBAR_CLOSED_AT_START.map(str::to_owned).into(),
             sidebar_restored: false,
             sidebar_changed: false,
+            request_view: RequestView::default(),
+            request_view_restored: false,
             sidebar_pick: None,
             forges: Vec::new(),
             host: None,
@@ -1561,8 +1576,9 @@ impl RepoTab {
 
     /// Moves the request selection.
     pub fn move_request(&mut self, delta: isize) {
-        let numbers: Vec<u64> = match &self.requests.list {
-            Some(Ok(l)) => l.iter().map(|r| r.number).collect(),
+        let numbers: Vec<u64> = match (&self.requests.shown, &self.requests.list) {
+            (Some(shown), Some(Ok(_))) => shown.clone(),
+            (None, Some(Ok(l))) => l.iter().map(|r| r.number).collect(),
             _ => return,
         };
         if numbers.is_empty() {
@@ -2172,8 +2188,7 @@ impl RepoTab {
                         let first = result
                             .as_ref()
                             .ok()
-                            .and_then(|l| l.first())
-                            .map(|r| r.number);
+                            .and_then(|l| crate::request_view::first_shown(&self.request_view, l));
                         self.generation += 1;
                         let keep = self.requests.selected.is_some_and(|n| {
                             result
@@ -4404,6 +4419,7 @@ mod tests {
                 updated_at: 0,
                 web_url: String::new(),
                 labels: Vec::new(),
+                description: String::new(),
                 rollup: None,
             },
             body: String::new(),

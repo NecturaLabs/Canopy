@@ -22,14 +22,15 @@ use canopy_hosting::{
 };
 
 use crate::hosting::{HostWorker, TokenSource};
+use crate::request_view::{DraftChoice, RequestSort, RequestView};
 use crate::tab::RepoTab;
 
 /// The scenario `--demo-requests` chose. Set once by `main.rs`, read by the screenshot driver.
 static CHOSEN: OnceLock<Scenario> = OnceLock::new();
 
 /// What `--demo-requests` accepts, for `--help` and the error message.
-pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, <number>, busy, loading, details-loading, \
-details-error, error, no-token or empty; prefix gitlab: for merge requests";
+pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, filtered, no-match, <number>, busy, \
+loading, details-loading, details-error, error, no-token or empty; prefix gitlab: for merge requests";
 
 /// Which part of the requests view to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,10 @@ enum Scene {
     List(StateFilter),
     /// The open list as it shows before its checks and reviews arrive (or without a token).
     Unchecked,
+    /// The open list with a filter and a sort chosen: ready requests, A to Z by title.
+    Filtered,
+    /// The open list with a text filter that matches nothing.
+    NoMatch,
     /// The list with this request selected and its details loaded.
     Request(u64),
     /// The request in flight: its merge box shows the busy line.
@@ -93,6 +98,8 @@ impl Scenario {
             "list-all" => Scene::List(StateFilter::All),
             "list-closed" => Scene::List(StateFilter::Closed),
             "list-unchecked" => Scene::Unchecked,
+            "filtered" => Scene::Filtered,
+            "no-match" => Scene::NoMatch,
             "busy" => Scene::Busy,
             "loading" => Scene::Loading,
             "details-loading" => Scene::DetailsLoading,
@@ -184,6 +191,8 @@ impl Scenario {
         requests.details_loading = false;
         requests.busy = None;
         requests.filter = StateFilter::Open;
+        tab.request_view = RequestView::default();
+        let requests = &mut tab.requests;
         let list = |filter| Some(Ok(summaries(kind, filter, now)));
         match self.scene {
             Scene::List(filter) => {
@@ -199,6 +208,16 @@ impl Scenario {
                     })
                     .collect();
                 requests.list = Some(Ok(rows.into()));
+            }
+            Scene::Filtered | Scene::NoMatch => {
+                requests.list = list(StateFilter::Open);
+                match self.scene {
+                    Scene::Filtered => {
+                        tab.request_view.draft = Some(DraftChoice::Ready);
+                        tab.request_view.sort = RequestSort::Title;
+                    }
+                    _ => "no such request".clone_into(&mut tab.request_view.text),
+                }
             }
             Scene::Request(number) => {
                 let open = ROWS
@@ -730,6 +749,7 @@ fn summary(kind: ForgeKind, row: &Row, now: i64) -> RequestSummary {
         updated_at: row.updated.at(now),
         web_url: path,
         labels: row.labels.iter().map(|l| (*l).to_owned()).collect(),
+        description: canopy_hosting::description_preview(row.body),
         rollup: Some(rollup(kind, row)),
     }
 }
@@ -823,6 +843,8 @@ mod tests {
             "list-all",
             "list-closed",
             "list-unchecked",
+            "filtered",
+            "no-match",
             "428",
             "busy",
             "loading",

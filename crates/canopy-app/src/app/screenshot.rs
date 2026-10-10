@@ -83,6 +83,16 @@ impl MenuShot {
                 egui::PointerButton::Primary,
             ),
             "branch-selected" => ("feature/auth", View::History, egui::PointerButton::Primary),
+            "request-filters" => (
+                "Filter by draft, checks",
+                View::Requests,
+                egui::PointerButton::Primary,
+            ),
+            "request-sort" => (
+                "Sort requests",
+                View::Requests,
+                egui::PointerButton::Primary,
+            ),
             _ => return None,
         };
         Some(Self {

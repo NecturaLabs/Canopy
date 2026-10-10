@@ -213,12 +213,30 @@ with the same state and busy guards as the buttons.
 Without a GitHub or GitLab remote, the requests view offers Publish… for a repository with no
 remote and Add remote… for one whose remotes are elsewhere.
 
-Request list icons show lifecycle and draft state. Branches have a separate line with room
-reserved for the target. The request list shows each request's checks (passed, failed, running)
-and review (approved, changes requested, and on GitHub review required) without opening it when
-Canopy has a token for the host; without a token a row shows them once the request was opened in
-the session, and until then a faint question mark says they are not loaded (a request with no
-checks shows nothing).
+Request list icons show lifecycle and draft state. A row leads with the request's number and
+title (`#154 Title`, `!154` for a merge request), which wraps to a second line before it is cut,
+then the author and when it was last updated with the labels at the right, then the first
+lines of its description as plain text (Markdown, comments and tags flattened; nothing when it
+has none). The branches are in the request's header and the row's tooltip. The description comes
+with the list response, so a row costs no request of its own. The request list shows each
+request's checks (passed, failed, running) and review (approved, changes requested, and on GitHub
+review required) without opening it when Canopy has a token for the host; without a token a row
+shows them once the request was opened in the session, and until then a faint question mark says
+they are not loaded (a request with no checks shows nothing).
+
+The list narrows and orders the requests already loaded, with no further request: a filter field
+over number (`154`, `#154`, `!154`), title, author and the start of the description (every word
+must match; Ctrl+F or `/` in the Requests view puts the caret in it), a Filters popover for
+draft, checks (passed, failed, running), review (approved, changes requested, required) and
+author, and a Sort menu (recently updated, newest, oldest, number, title, author). A line under
+the field counts what is shown and clears the filters; a list with nothing left says so and
+offers the same. The filters and the sort are kept per repository (its worktrees share them),
+across restarts, and stay out of settings export and import. Up and Down, j and k move through
+the list in the order shown.
+
+The list starts at 45% of the pane (320 to 560 points) and follows the window until its width is
+dragged or set with the arrow keys; it can be dragged to 60% of the pane or 800 points, and
+double-clicking the handle makes it follow the window again.
 
 A request's header actions are one group of buttons of the same size: the primary for its state
 (Check out while it is open, Open on GitHub or GitLab otherwise), then the other, Copy link and
