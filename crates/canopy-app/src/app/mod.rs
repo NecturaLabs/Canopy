@@ -88,6 +88,7 @@ pub const OVERLAYS: &[&str] = &[
     "menu-branch",
     "menu-commit",
     "menu-file",
+    "blame",
     "open",
     "open-error",
     "clone",

@@ -207,6 +207,17 @@ impl CanopyApp {
                 e(icon::CHART_BAR, "Repository insights", "Repository", None),
                 Action::RepositoryInsights(tab.path.clone()),
             ));
+            if tab.view != View::Requests
+                && tab
+                    .file
+                    .as_ref()
+                    .is_some_and(crate::tab::FileSelection::can_blame)
+            {
+                v.push((
+                    e(icon::USER_LIST, "Blame selected file", "File", None),
+                    Action::BlameFile,
+                ));
+            }
             let local_only = tab.is_local_only();
             match tab.view {
                 View::Changes => v.push((
@@ -651,5 +662,51 @@ mod tests {
         app.tabs
             .push(test_tab(canopy_core::RepoSnapshot::default()));
         assert!(app.palette_entries().iter().any(|(_, action)| matches!(action, Action::RepositoryInsights(path) if path == &app.tabs[0].path)));
+    }
+
+    #[test]
+    fn blame_is_offered_for_a_selected_file_git_has_history_for() {
+        use canopy_core::{ChangeKind, DiffSource, FileEntry};
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        let offered = |app: &CanopyApp| {
+            app.palette_entries()
+                .iter()
+                .any(|(_, action)| matches!(action, Action::BlameFile))
+        };
+        assert!(!offered(&app), "no file is selected");
+        let select = |app: &mut CanopyApp, kind, source| {
+            app.tabs[0].file = Some(crate::tab::FileSelection {
+                source,
+                entry: FileEntry {
+                    path: "src/main.rs".into(),
+                    old_path: None,
+                    kind,
+                    additions: 0,
+                    deletions: 0,
+                    lfs: false,
+                    old_mode: None,
+                    new_mode: None,
+                },
+                conflicted: false,
+            });
+        };
+        select(&mut app, ChangeKind::Modified, DiffSource::Unstaged);
+        assert!(offered(&app));
+        select(&mut app, ChangeKind::Untracked, DiffSource::Unstaged);
+        assert!(!offered(&app), "an untracked file has no history");
+        select(
+            &mut app,
+            ChangeKind::Deleted,
+            DiffSource::Commit(canopy_core::Oid::ZERO_SHA1),
+        );
+        assert!(!offered(&app), "the commit removed the file");
+        select(
+            &mut app,
+            ChangeKind::Added,
+            DiffSource::Commit(canopy_core::Oid::ZERO_SHA1),
+        );
+        assert!(offered(&app));
     }
 }

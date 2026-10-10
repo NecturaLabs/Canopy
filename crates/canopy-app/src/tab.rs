@@ -87,12 +87,49 @@ pub struct DetailsError {
     pub can_download: bool,
 }
 
+/// A file's blame, as asked for and as read.
+#[derive(Debug, Clone)]
+pub struct BlameRead {
+    pub path: String,
+    pub rev: Option<Oid>,
+    /// `None` while the worker reads it.
+    pub result: Option<Result<Arc<canopy_core::Blame>, String>>,
+}
+
 /// A file whose diff is shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileSelection {
     pub source: DiffSource,
     pub entry: FileEntry,
     pub conflicted: bool,
+}
+
+impl FileSelection {
+    /// The commit to blame the file at: the one whose diff is shown, else the working tree.
+    pub fn blame_rev(&self) -> Option<Oid> {
+        match self.source {
+            DiffSource::Commit(oid) => Some(oid),
+            _ => None,
+        }
+    }
+
+    /// Whether git has history to blame the file by: not a file the commit deleted, and in the
+    /// working tree not one that is new, untracked, deleted or conflicted.
+    pub fn can_blame(&self) -> bool {
+        match self.source {
+            DiffSource::Commit(_) => self.entry.kind != canopy_core::ChangeKind::Deleted,
+            _ => {
+                !self.conflicted
+                    && !matches!(
+                        self.entry.kind,
+                        canopy_core::ChangeKind::Added
+                            | canopy_core::ChangeKind::Untracked
+                            | canopy_core::ChangeKind::Deleted
+                            | canopy_core::ChangeKind::Conflicted
+                    )
+            }
+        }
+    }
 }
 
 /// Lines picked in one hunk of the shown diff, for staging, unstaging or discarding just them.
@@ -858,6 +895,10 @@ pub struct RepoTab {
     pub stale_result: Option<Result<Arc<[canopy_core::StaleCandidate]>, String>>,
     insights_serial: u64,
     pub insights: Option<Result<Arc<crate::worker::Insights>, String>>,
+    blame_serial: u64,
+    /// The blame being shown: of this file, as of this commit (`None`: the working tree), and
+    /// what the worker read; the result is `None` while it is read.
+    pub blame: Option<BlameRead>,
     pub ignore_query: Option<crate::worker::IgnoreQuery>,
     pub ignore_result: Option<Result<Arc<crate::worker::IgnoreData>, String>>,
     ignore_serial: u64,
@@ -1028,6 +1069,8 @@ impl RepoTab {
             path,
             insights_serial: 0,
             insights: None,
+            blame_serial: 0,
+            blame: None,
             ignore_query: None,
             stale_serial: 0,
             stale_result: None,
@@ -1142,6 +1185,29 @@ impl RepoTab {
     /// Queues a mutation.
     pub fn op(&self, op: Op) {
         self.worker.send(Job::Op(op));
+    }
+
+    /// Asks for the blame of `path` as of `rev` (the working tree when `None`).
+    pub fn read_blame(&mut self, path: String, rev: Option<Oid>) {
+        self.blame_serial = self.blame_serial.wrapping_add(1);
+        self.worker.send(Job::Blame {
+            serial: self.blame_serial,
+            path: path.clone(),
+            rev,
+        });
+        self.blame = Some(BlameRead {
+            path,
+            rev,
+            result: None,
+        });
+    }
+
+    /// Shows the blame of the selected file in place of its diff, when it has one.
+    pub fn blame_file(&mut self) {
+        if let Some(sel) = self.file.as_ref().filter(|sel| sel.can_blame()) {
+            let (path, rev) = (sel.entry.path.clone(), sel.blame_rev());
+            self.read_blame(path, rev);
+        }
     }
 
     pub fn read_insights(&mut self) {
@@ -2165,6 +2231,21 @@ impl RepoTab {
                         self.pull_config = None;
                     }
                 },
+                Event::Blame { serial, result } => {
+                    if serial != self.blame_serial {
+                        continue;
+                    }
+                    if let Err(error) = &result {
+                        notices.push(Notice {
+                            ok: false,
+                            title: "Could not blame the file".into(),
+                            body: error.clone(),
+                        });
+                    }
+                    if let Some(read) = &mut self.blame {
+                        read.result = Some(result);
+                    }
+                }
                 Event::Insights { serial, result } => {
                     if serial != self.insights_serial {
                         continue;
@@ -4308,6 +4389,46 @@ mod tests {
         assert_eq!(tab.view, View::Changes);
         assert_eq!(notices.len(), 1);
         assert!(!notices[0].ok, "it needs the user");
+        Ok(())
+    }
+
+    #[test]
+    fn blame_rejects_superseded_replies_and_surfaces_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.read_blame("old.rs".into(), None);
+        let Job::Blame { serial: old, .. } = jobs.recv()? else {
+            panic!("blame job");
+        };
+        tab.read_blame("new.rs".into(), None);
+        let Job::Blame {
+            serial: current,
+            path,
+            rev: None,
+        } = jobs.recv()?
+        else {
+            panic!("blame job");
+        };
+        assert_eq!(path, "new.rs");
+        events.send(Event::Blame {
+            serial: old,
+            result: Err("old read".into()),
+        })?;
+        assert_eq!(tab.poll(&[]).len(), 0);
+        assert!(tab.blame.as_ref().is_some_and(|b| b.result.is_none()));
+        events.send(Event::Blame {
+            serial: current,
+            result: Err("no such path".into()),
+        })?;
+        let notices = tab.poll(&[]);
+        assert_eq!(notices.len(), 1);
+        assert!(!notices[0].ok);
+        assert!(matches!(
+            tab.blame,
+            Some(BlameRead { result: Some(Err(ref error)), .. }) if error == "no such path"
+        ));
         Ok(())
     }
 

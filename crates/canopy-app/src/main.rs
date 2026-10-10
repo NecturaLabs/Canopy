@@ -55,7 +55,7 @@ OPTIONS:
                               settings-repository-pull, settings-repository-diffs,
                               settings-search, about, repository-insights, clean-stale, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
                               long-message,
-                              gallery, menu-branch, menu-commit, menu-file, open,
+                              gallery, menu-branch, menu-commit, menu-file, blame, open,
                               open-error, clone,
                               clone-running, clone-error, init, new-branch, rename, add-submodule,
                               git-missing, remove-submodule, new-tag,

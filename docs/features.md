@@ -85,7 +85,7 @@ git would run on every `git status`.
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
 | File history | Planned | Yes | Yes | Yes |
-| Blame | Planned | Yes | Yes | Yes |
+| Blame: a file's lines with the short id, author and date of the commit that last changed each (follows renames); the Blame button in a file's diff header, or "Blame selected file" in the command palette, shows it in place of the diff, as of the commit being viewed or the working tree; clicking a line's commit opens it in History; changes not committed yet are marked | Done | Yes | Yes | Yes |
 | Reflog view | Planned | ? | ? | ? |
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |

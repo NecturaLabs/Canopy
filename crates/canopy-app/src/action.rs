@@ -40,6 +40,8 @@ pub enum Action {
         view: crate::request_view::RequestView,
     },
     RepositoryInsights(PathBuf),
+    /// Show who last changed each line of the selected file, in place of its diff.
+    BlameFile,
     ReadIgnore {
         repo: PathBuf,
         query: crate::worker::IgnoreQuery,

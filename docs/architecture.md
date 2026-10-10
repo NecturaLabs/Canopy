@@ -169,6 +169,7 @@ thread.
 | `views/history.rs` | Virtualised commit-graph table. |
 | `views/commit_detail.rs` | Selected commit: metadata, parents, changed files, diff. Also the views' shared file rows and screen-reader helpers: `without_icons` (keeps icon glyphs out of a label's spoken name) and `say_unavailable` (a disabled button says ", unavailable" and why, which the Linux AT-SPI adapter does not). |
 | `views/changes.rs` | Staging area and commit composer. |
+| `views/blame.rs` | The blame of the selected file, drawn in place of its diff (`RepoTab::blame`, read by `Job::Blame`): virtualised rows with commit id, author, date, line number and text; a click on a line's commit sends `Action::Reveal`. |
 | `views/diff.rs` | Unified and side-by-side diff viewer with line numbers, hunk and line actions; row layout cached per diff. |
 | `views/resolve.rs` | Conflict resolver; off-screen cards skipped by measured height. |
 | `views/requests.rs` | Pull and merge requests: list, details, checks, reviews and actions. |
