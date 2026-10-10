@@ -235,6 +235,13 @@ list, selection and open request stay on screen, and a failed refresh keeps them
 the Requests view reloads a list older than a minute. These use the same list and details calls
 as Reload, and only with hosting on and a list already loaded.
 
+Going back to a request opened within the last minute (A, then B, then A again) shows its details
+at once from a small cache of the last 16 loads, without asking the host again. The cache is keyed
+by forge host, project and request number, so equal numbers in different projects never share an
+entry. A Reload, a refresh that loads the request again, the result of an action (merge, close,
+approve, comment and so on) and a change of token empty it, and a failed load is never kept.
+Unsent comments are kept apart from it.
+
 Hosting error messages hide the client token after normalizing invisible characters. Profile
 lookup errors also hide private request paths and email addresses after that normalization.
 A response with the wrong JSON shape reports its failure location without quoting the returned values.
