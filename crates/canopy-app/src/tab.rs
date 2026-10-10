@@ -11,7 +11,9 @@ use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
 use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource};
+use crate::request_view::RequestView;
 use crate::settings::{DiffPrefs, PullChoice};
+use crate::views::requests::row_standing;
 use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
 
 /// The main views of a repository.
@@ -553,6 +555,12 @@ pub struct Requests {
     pub filter: StateFilter,
     /// Shared so a frame can hold the list while it mutates the tab, without copying it.
     pub list: Option<Result<Arc<[RequestSummary]>, String>>,
+    /// The request filter field takes the caret on the next frame (the filter command).
+    pub focus_filter: bool,
+    /// The numbers of the requests the list showed on its last frame, in the order it showed
+    /// them (the view's filters and sort applied); `None` before it was drawn. The arrow keys
+    /// walk this order.
+    pub shown: Option<Vec<u64>>,
     pub loading: bool,
     pub selected: Option<u64>,
     pub details: Option<Result<Arc<RequestDetails>, String>>,
@@ -592,6 +600,8 @@ impl Default for Requests {
         Self {
             filter: StateFilter::Open,
             list: None,
+            shown: None,
+            focus_filter: false,
             loading: false,
             selected: None,
             details: None,
@@ -867,6 +877,10 @@ pub struct RepoTab {
     pub sidebar_restored: bool,
     /// A section was toggled this frame, awaiting persistence by the app.
     pub sidebar_changed: bool,
+    /// The request list's filters and sort for this repository.
+    pub request_view: RequestView,
+    /// The saved request view has been applied after the first repository snapshot.
+    pub request_view_restored: bool,
     /// The sidebar row last clicked ([`RepoTab::sidebar_shows`]).
     pub sidebar_pick: Option<SidebarItem>,
     /// GitHub and GitLab remotes: (remote name, forge).
@@ -985,6 +999,8 @@ impl RepoTab {
             collapsed: SIDEBAR_CLOSED_AT_START.map(str::to_owned).into(),
             sidebar_restored: false,
             sidebar_changed: false,
+            request_view: RequestView::default(),
+            request_view_restored: false,
             sidebar_pick: None,
             forges: Vec::new(),
             host: None,
@@ -1631,8 +1647,9 @@ impl RepoTab {
 
     /// Moves the request selection.
     pub fn move_request(&mut self, delta: isize) {
-        let numbers: Vec<u64> = match &self.requests.list {
-            Some(Ok(l)) => l.iter().map(|r| r.number).collect(),
+        let numbers: Vec<u64> = match (&self.requests.shown, &self.requests.list) {
+            (Some(shown), Some(Ok(_))) => shown.clone(),
+            (None, Some(Ok(l))) => l.iter().map(|r| r.number).collect(),
             _ => return,
         };
         if numbers.is_empty() {
@@ -2239,11 +2256,14 @@ impl RepoTab {
                     } else if filter == self.requests.filter {
                         self.requests.loading = false;
                         self.requests.loaded_at = Some(Instant::now());
-                        let first = result
-                            .as_ref()
-                            .ok()
-                            .and_then(|l| l.first())
-                            .map(|r| r.number);
+                        // The order the list will show, standing as its rows will show it: the
+                        // arrow keys walk it from now, and the first of it opens.
+                        let order: Option<Vec<u64>> = result.as_ref().ok().map(|l| {
+                            let standing = |r: &RequestSummary| row_standing(&ctx, self, r);
+                            let visible = self.request_view.visible(l, standing);
+                            visible.into_iter().map(|i| l[i].number).collect()
+                        });
+                        let first = order.as_ref().and_then(|o| o.first().copied());
                         self.generation += 1;
                         let keep = self.requests.selected.is_some_and(|n| {
                             result
@@ -2251,6 +2271,7 @@ impl RepoTab {
                                 .is_ok_and(|l| l.iter().any(|r| r.number == n))
                         });
                         self.requests.list = Some(result.map(Arc::from));
+                        self.requests.shown = order;
                         if !keep {
                             self.request_comments = self.request_comment_drafts();
                             self.requests.comment.clear();
@@ -4479,6 +4500,7 @@ mod tests {
                 updated_at: 0,
                 web_url: String::new(),
                 labels: Vec::new(),
+                description: String::new(),
                 rollup: None,
             },
             body: String::new(),
@@ -4546,6 +4568,96 @@ mod tests {
         ))?;
         tab.poll(&[]);
         assert!(matches!(tab.requests.list, Some(Err(_))));
+        Ok(())
+    }
+
+    fn listed(number: u64, updated_at: i64) -> RequestSummary {
+        RequestSummary {
+            number,
+            title: format!("Request {number}"),
+            author: "sam".into(),
+            state: canopy_hosting::RequestState::Open,
+            draft: false,
+            source_branch: format!("topic-{number}"),
+            target_branch: "main".into(),
+            from_fork: false,
+            created_at: 0,
+            updated_at,
+            web_url: String::new(),
+            labels: Vec::new(),
+            description: String::new(),
+            rollup: None,
+        }
+    }
+
+    #[test]
+    fn the_arrow_keys_select_nothing_in_a_list_that_has_become_empty()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, _events, host_jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().ok_or("no host")?.forge.clone();
+        let (host, host_events, _) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        // A drawn frame of the open list left its order behind.
+        tab.requests.list = Some(Ok(Arc::from(vec![listed(2, 20), listed(1, 10)])));
+        tab.requests.shown = Some(vec![2, 1]);
+        tab.requests.selected = None;
+
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        tab.poll(&[]);
+        tab.move_request(1);
+        assert_eq!(
+            tab.requests.selected, None,
+            "no request is listed to select"
+        );
+        assert!(
+            !jobs_of(&host_jobs)
+                .iter()
+                .any(|j| matches!(j, HostJob::Details(..))),
+            "nothing was opened"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_list_that_arrives_opens_on_the_row_the_list_shows_first()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, _events, _jobs) = tab_showing_requests();
+        let forge = tab.host.as_ref().ok_or("no host")?.forge.clone();
+        let (host, host_events, _) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        tab.requests.selected = None;
+        tab.request_view.checks = Some(crate::request_view::ChecksChoice::Failed);
+
+        // Request 1's checks were seen when it was opened; the list itself says nothing of them,
+        // so the row shows the remembered failure and the filter keeps it.
+        let seen = RequestDetails {
+            summary: listed(1, 10),
+            body: String::new(),
+            head_sha: None,
+            mergeable: None,
+            commits: None,
+            changed_files: None,
+            additions: None,
+            deletions: None,
+            reviews: Vec::new(),
+            checks: vec![canopy_hosting::Check {
+                name: "build".into(),
+                state: canopy_hosting::CheckState::Failure,
+                url: None,
+            }],
+            comments: Vec::new(),
+        };
+        let ctx = tab.host.as_ref().ok_or("no host")?.context().clone();
+        crate::views::requests::remember_signals(&ctx, &tab, &seen);
+
+        host_events.send(HostEvent::List(
+            StateFilter::Open,
+            Ok(vec![listed(2, 20), listed(1, 10)]),
+        ))?;
+        tab.poll(&[]);
+        assert_eq!(tab.requests.selected, Some(1));
         Ok(())
     }
 

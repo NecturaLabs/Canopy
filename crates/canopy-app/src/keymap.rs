@@ -343,7 +343,7 @@ pub const BINDINGS: &[Binding] = &[
         S::Anywhere,
         C::Filter,
         &[ctrl(Key::F)],
-        "Toggle history search",
+        "Search History, or filter the requests",
     ),
     b(
         S::Anywhere,
@@ -425,7 +425,7 @@ pub const BINDINGS: &[Binding] = &[
         S::Navigate,
         C::Filter,
         &[symbol(Key::Slash)],
-        "Toggle history search",
+        "Search History, or filter the requests",
     ),
     b(S::Navigate, C::Refresh, &[shifted(Key::R)], "Refresh"),
     b(

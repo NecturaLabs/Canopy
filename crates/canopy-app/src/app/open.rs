@@ -738,6 +738,66 @@ mod tests {
     }
 
     #[test]
+    fn request_filters_and_sort_are_kept_per_repository() {
+        use crate::request_view::{ChecksChoice, RequestSort, RequestView};
+        let ctx = egui::Context::default();
+        let snap = |name: &str| canopy_core::RepoSnapshot {
+            workdir: PathBuf::from(format!("/fixture/{name}")),
+            common_dir: PathBuf::from(format!("/fixture/{name}/.git")),
+            ..Default::default()
+        };
+        let mut app = test_app();
+        app.tabs.push(test_tab(snap("main")));
+        let mut linked = snap("main");
+        linked.workdir = PathBuf::from("/fixture/linked");
+        app.tabs.push(test_tab(linked.clone()));
+        app.tabs.push(test_tab(snap("other")));
+        app.poll(&ctx);
+        let wanted = RequestView {
+            text: "graph".into(),
+            checks: Some(ChecksChoice::Failed),
+            author: Some("sam".into()),
+            sort: RequestSort::Oldest,
+            ..RequestView::default()
+        };
+        let main = PathBuf::from("/fixture/main/.git");
+        app.apply(
+            &ctx,
+            vec![Action::RememberRequestView {
+                repo: main.clone(),
+                view: wanted.clone(),
+            }],
+        );
+        assert_eq!(app.tabs[0].request_view, wanted);
+        assert_eq!(
+            app.tabs[1].request_view, wanted,
+            "worktrees share the repository's view"
+        );
+        assert!(app.tabs[2].request_view.is_default());
+
+        // Across a restart: the settings round-trip, and a tab opened later restores its view.
+        let saved = serde_json::to_string(&app.settings).expect("settings serialize");
+        let mut reopened = test_app();
+        reopened.settings = serde_json::from_str(&saved).expect("settings deserialize");
+        reopened.tabs.push(test_tab(linked));
+        reopened.tabs.push(test_tab(snap("other")));
+        reopened.poll(&ctx);
+        assert_eq!(reopened.tabs[0].request_view, wanted);
+        assert!(reopened.tabs[1].request_view.is_default());
+
+        // Back at the defaults, the repository stores nothing.
+        reopened.apply(
+            &ctx,
+            vec![Action::RememberRequestView {
+                repo: main.clone(),
+                view: RequestView::default(),
+            }],
+        );
+        assert!(!reopened.settings.repo_requests.contains_key(&main));
+        assert!(reopened.tabs[0].request_view.is_default());
+    }
+
+    #[test]
     fn switching_worktrees_reuses_the_source_tab() {
         let ctx = egui::Context::default();
         let dir = tempfile::tempdir().expect("a folder");
@@ -911,6 +971,7 @@ mod tests {
             updated_at: 0,
             web_url: String::new(),
             labels: Vec::new(),
+            description: String::new(),
             rollup: None,
         };
         let mut app = test_app();

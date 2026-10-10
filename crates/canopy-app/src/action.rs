@@ -34,6 +34,11 @@ pub enum Action {
         repo: PathBuf,
         closed: std::collections::BTreeSet<String>,
     },
+    /// The request list's filters and sort for the repository identified like the sidebar's.
+    RememberRequestView {
+        repo: PathBuf,
+        view: crate::request_view::RequestView,
+    },
     RepositoryInsights(PathBuf),
     ReadIgnore {
         repo: PathBuf,

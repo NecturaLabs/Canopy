@@ -75,6 +75,8 @@ pub const OVERLAYS: &[&str] = &[
     "repository-insights",
     "clean-stale",
     "author-card",
+    "request-filters",
+    "request-sort",
     "commit-expanded",
     "commit-compact",
     "amend-commit",

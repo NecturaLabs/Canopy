@@ -346,14 +346,29 @@ in the density's metrics:
   without a body goes directly to its files. File names take precedence over folders and have
   full-path tooltips; status badges and line counts use the kit. Automatic inspector height
   follows the header and card contents; a manual resize takes precedence.
-- Commit metadata, the Changes file list, and the request list take at most 40% of their
-  available width, leaving the rest for the diff or request details. The Changes file list and the
+- Commit metadata and the Changes file list take at most 40% of their available width, leaving
+  the rest for the diff or request details. The request list starts at 45% of the pane (320 to
+  560 points, following the window) and goes to 60% or 800 points. The Changes file list and the
   request list are resized with `kit::split::SplitHandle` (drag, the arrow keys while it has focus,
-  a double-click resets it) and keep their width across restarts. Pane limits follow the
-  current viewport. Read-only diff headers share a wrapping row at short heights to keep more
-  changed lines visible without reducing text size.
+  a double-click resets it) and keep their width across restarts; the request list keeps only a
+  width the user set, else it follows the window. Pane limits follow the current viewport.
+  Read-only diff headers share a wrapping row at short heights to keep more changed lines
+  visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
   the full state and branch pair remain available on hover.
+- A request row has no fixed height: the state glyph and `#number title` (medium weight, the
+  number in `text_faint`, up to two lines, an ellipsis only after the second), the checks and
+  review glyphs at the right of the first line, author and age in `small_size` `text_faint` with
+  the label chips right-aligned on that line, and the description in `small_size` `text_dim` (up to
+  two lines). A row is at least `request_row_height` and otherwise as tall as its text plus `SM`
+  above and below; the list virtualises by the measured heights.
+- The list's header holds the filter field (`SearchField`, the Filter command's chord as its
+  keycap) with a funnel `IconButton` (active while a filter other than the text is set, named
+  "Filters: N on") and a sort `IconButton` (a menu with the current choice checked). The funnel's
+  `Popover` stays open across the choices of its `Select`s (egui keeps one popup open, so the
+  popover holds its own open state and takes back the click that picks an option). A filtered
+  list gets a faint "N of M shown" line with Clear filters; an empty result is
+  `EmptyState::filtered`.
 - The right-aligned glyphs on a request row's title line come from the list's rollup when there
   is one (texts "Checks passed", "Checks failed", "Checks running"; a neutral state such as a
   skipped pipeline shows nothing), otherwise from the request's remembered details ("All N checks
