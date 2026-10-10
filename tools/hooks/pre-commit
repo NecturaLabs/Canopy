@@ -23,6 +23,13 @@ if ! "$rust_changed"; then
     exit 0
 fi
 
+# Git exports repository context to hooks. The tests create their own repositories; keeping
+# GIT_DIR or GIT_INDEX_FILE would make their git commands modify this checkout instead.
+git_context=$(git rev-parse --local-env-vars)
+while IFS= read -r variable; do
+    unset "$variable"
+done <<<"$git_context"
+
 echo "pre-commit: cargo clippy --workspace --all-targets --locked -- -D warnings" >&2
 if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
     echo "pre-commit: clippy found problems; fix them and commit again." >&2
@@ -30,7 +37,12 @@ if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
 fi
 
 echo "pre-commit: cargo test --workspace --locked" >&2
-if ! cargo test --workspace --locked; then
+test_gitconfig=$(mktemp "${TMPDIR:-/tmp}/canopy-hook-gitconfig.XXXXXX")
+trap 'rm -f -- "$staged" "$test_gitconfig"' EXIT
+git config --file "$test_gitconfig" user.name "Canopy CI"
+git config --file "$test_gitconfig" user.email "ci@canopy.invalid"
+git config --file "$test_gitconfig" init.defaultBranch main
+if ! GIT_CONFIG_GLOBAL="$test_gitconfig" GIT_CONFIG_NOSYSTEM=1 cargo test --workspace --locked; then
     echo "pre-commit: a test failed; fix it and commit again." >&2
     exit 1
 fi
