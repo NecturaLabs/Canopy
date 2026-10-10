@@ -22,6 +22,8 @@ pub struct ConfigValue {
     pub scope: String,
     /// Where it is set, as git prints it (`file:/home/ada/.gitconfig`), a file always absolute.
     pub origin: String,
+    /// The configuration file as an absolute path, preserving non-UTF-8 names.
+    pub file: Option<PathBuf>,
 }
 
 impl ConfigValue {
@@ -130,21 +132,24 @@ impl Signing {
 }
 
 /// `user.signingkey` as far as it is safe to show: a file's name, the end of a long key id or
-/// fingerprint, or `an inline SSH key`. `None` when unset or empty.
+/// fingerprint, or a generic label for SSH key material. `None` when unset or without a name.
 fn key_label(key: &str) -> Option<String> {
     let key = key.trim();
     if key.is_empty() {
         return None;
     }
-    if inline_ssh_key(key) {
-        return Some("an inline SSH key".to_owned());
+    if inline_ssh_key(key)
+        || ((key.starts_with("ecdsa-") || key.starts_with("sk-"))
+            && key.contains(char::is_whitespace))
+    {
+        return Some("an SSH key".to_owned());
     }
     if key.contains(['/', '\\']) || key.starts_with('~') {
         let name = key
             .trim_end_matches(['/', '\\'])
             .rsplit(['/', '\\'])
             .next()?;
-        return Some(name.to_owned());
+        return (!name.is_empty()).then(|| name.to_owned());
     }
     let chars: Vec<char> = key.chars().collect();
     Some(
@@ -337,19 +342,14 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
 
 /// `git config -z --show-scope --show-origin --get <key>`: `Ok(None)` when it is not set. `-z`
 /// keeps git from C-quoting a path with non-ASCII characters; the origin is made absolute here,
-/// since git prints a repository's own file relative to the directory it ran in.
+/// since git prints a repository's own file relative to its worktree root.
 fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>, String> {
     let mut args = vec!["config", "-z"];
     args.extend_from_slice(scope);
     args.extend(["--show-scope", "--show-origin", "--get", key]);
     let out = canopy_core::cli::run_unchecked(dir, &args).map_err(|e| e.to_string())?;
     match out.code {
-        Some(0) => Ok(parse_value(
-            key,
-            &String::from_utf8_lossy(&out.stdout),
-            true,
-            dir,
-        )),
+        Some(0) => Ok(parse_value(key, &out.stdout, true, dir)),
         Some(1) => Ok(None),
         // An older git without --show-scope (before 2.26): ask again without it.
         _ => {
@@ -358,12 +358,7 @@ fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue
             args.extend(["--show-origin", "--get", key]);
             let out = canopy_core::cli::run_unchecked(dir, &args).map_err(|e| e.to_string())?;
             match out.code {
-                Some(0) => Ok(parse_value(
-                    key,
-                    &String::from_utf8_lossy(&out.stdout),
-                    false,
-                    dir,
-                )),
+                Some(0) => Ok(parse_value(key, &out.stdout, false, dir)),
                 Some(1) => Ok(None),
                 _ => Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()),
             }
@@ -406,33 +401,47 @@ fn get_bool(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>
 }
 
 /// The last record of `git config -z --show-origin [--show-scope] --get` output: NUL-terminated
-/// `scope`, `origin` and `value`. A relative `file:` origin is resolved against `dir`, where git
-/// ran.
-fn parse_value(key: &str, out: &str, with_scope: bool, dir: &Path) -> Option<ConfigValue> {
+/// `scope`, `origin` and `value`. `dir` is the worktree root, against which git prints relative
+/// `file:` origins.
+fn parse_value(
+    key: &str,
+    out: impl AsRef<[u8]>,
+    with_scope: bool,
+    dir: &Path,
+) -> Option<ConfigValue> {
     let width = if with_scope { 3 } else { 2 };
-    let mut fields: Vec<&str> = out.split('\0').collect();
+    let mut fields: Vec<&[u8]> = out.as_ref().split(|&b| b == 0).collect();
     fields.pop();
     let record = fields.chunks_exact(width).next_back()?;
     let (scope, rest) = if with_scope {
         (record[0], &record[1..])
     } else {
-        ("", record)
+        (b"".as_slice(), record)
     };
+    let (origin, file) = absolute_origin(rest[0], dir);
     Some(ConfigValue {
         key: key.to_owned(),
-        value: rest[1].to_owned(),
-        scope: scope.to_owned(),
-        origin: absolute_origin(rest[0], dir),
+        value: String::from_utf8_lossy(rest[1]).into_owned(),
+        scope: String::from_utf8_lossy(scope).into_owned(),
+        origin,
+        file,
     })
 }
 
-/// `origin` with a relative `file:` path (`file:.git/config`) made absolute against `dir`.
-fn absolute_origin(origin: &str, dir: &Path) -> String {
-    match origin.strip_prefix("file:") {
-        Some(file) if Path::new(file).is_relative() => {
-            format!("file:{}", dir.join(file).display())
+/// A file origin as its actual path and display text; relative paths are joined to the worktree
+/// root `dir`. Non-file origins have only display text.
+fn absolute_origin(origin: &[u8], dir: &Path) -> (String, Option<PathBuf>) {
+    match origin.strip_prefix(b"file:") {
+        Some(file) => {
+            let file = canopy_core::paths::os_path(file);
+            let file = if file.is_relative() {
+                dir.join(file)
+            } else {
+                file
+            };
+            (format!("file:{}", file.display()), Some(file))
         }
-        _ => origin.to_owned(),
+        None => (String::from_utf8_lossy(origin).into_owned(), None),
     }
 }
 
@@ -517,7 +526,7 @@ mod tests {
         assert_eq!(absolute.origin, "file:/etc/gitconfig");
     }
 
-    /// A repository under a non-ASCII path: git C-quotes the origin without `-z`.
+    /// Git prints the local file relative to the worktree root; the reader joins that root.
     #[test]
     fn the_origin_of_a_non_ascii_path_is_the_real_path() -> std::io::Result<()> {
         let root = tempfile::tempdir()?;
@@ -534,6 +543,48 @@ mod tests {
             format!("file:{}", dir.join(".git/config").display())
         );
         Ok(())
+    }
+
+    /// An included file has its non-ASCII origin unquoted by `-z`.
+    #[test]
+    fn an_included_non_ascii_config_file_is_unquoted() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        canopy_core::cli::run(dir.path(), &["init", "-q", "-b", "main"]).expect("git");
+        std::fs::write(dir.path().join(".git/ü.inc"), "[commit]\n gpgsign = true\n")?;
+        canopy_core::cli::run(dir.path(), &["config", "include.path", "ü.inc"]).expect("git");
+        let found = get_value(dir.path(), &[], "commit.gpgsign")
+            .expect("read")
+            .expect("set");
+        assert_eq!(found.file, Some(dir.path().join(".git/ü.inc")));
+        assert!(!found.origin.contains('"'), "{}", found.origin);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_config_file_keeps_non_utf8_path_bytes() -> std::io::Result<()> {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = tempfile::tempdir()?;
+        let dir = root
+            .path()
+            .join(std::ffi::OsString::from_vec(b"bad\xffdir".to_vec()));
+        std::fs::create_dir(&dir)?;
+        canopy_core::cli::run(&dir, &["init", "-q", "-b", "main"]).expect("git");
+        canopy_core::cli::run(&dir, &["config", "commit.gpgsign", "true"]).expect("git");
+        let found = get_value(&dir, &[], "commit.gpgsign")
+            .expect("read")
+            .expect("set");
+        assert_eq!(found.file, Some(dir.join(".git/config")));
+        Ok(())
+    }
+
+    #[test]
+    fn signing_key_labels_hide_key_material_and_empty_names() {
+        assert_eq!(key_label("/"), None);
+        assert_eq!(key_label("\\"), None);
+        let label = key_label("ecdsa-sha2-nistp256 AAAAprivate-public-key-data").expect("label");
+        assert!(!label.contains("AAAA"), "{label}");
     }
 
     #[test]
@@ -697,6 +748,7 @@ mod tests {
                 value: value.clone(),
                 scope: "global".into(),
                 origin: "file:/home/ada/.gitconfig".into(),
+                file: Some(PathBuf::from("/home/ada/.gitconfig")),
             })
         }
     }

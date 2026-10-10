@@ -1486,6 +1486,7 @@ fn pull_phrase(config: &canopy_core::PullConfig) -> Option<String> {
                 }
                 .to_owned(),
                 origin: s.origin.clone(),
+                file: s.file.clone(),
             })
         })
         .collect();
@@ -4065,8 +4066,20 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
     };
     let program = program_label(&signing.program);
     let key = signing.key.as_deref().map_or_else(
-        || "git's default key for your committer identity".to_owned(),
-        |k| format!("key {k}"),
+        || {
+            if signing.problem == Some(SigningProblem::KeyFileMissing) {
+                "the configured key file".to_owned()
+            } else {
+                "git's default key for your committer identity".to_owned()
+            }
+        },
+        |k| {
+            if k == "an SSH key" {
+                k.to_owned()
+            } else {
+                format!("key {k}")
+            }
+        },
     );
     let setting = facts
         .gpg_sign
@@ -4087,10 +4100,11 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
                 "{program} is not installed or not on the PATH, so every commit will fail. Install it, or set {program_key} to another program in your git configuration."
             ),
             SigningProblem::KeyNotSet => "SSH signing needs a key and user.signingkey is not set, so every commit will fail. Set user.signingkey to your public key file in your git configuration.".to_owned(),
-            SigningProblem::KeyFileMissing => format!(
-                "The key file {} does not exist, so every commit will fail. Correct user.signingkey in your git configuration.",
-                signing.key.as_deref().unwrap_or_default()
-            ),
+            SigningProblem::KeyFileMissing => {
+                let file = signing.key.as_deref().filter(|key| *key != "an SSH key")
+                    .unwrap_or("named by user.signingkey");
+                format!("The key file {file} does not exist, so every commit will fail. Correct user.signingkey in your git configuration.")
+            },
             SigningProblem::UnknownFormat => format!(
                 "gpg.format = \"{}\" is not a format git knows (openpgp, ssh or x509), so every commit will fail. Correct it in your git configuration.",
                 signing.format
@@ -4123,8 +4137,7 @@ fn signing_row(ui: &mut Ui, facts: &GitFacts, actions: &mut Vec<Action>) {
         .gpg_sign
         .as_ref()
         .filter(|v| v.scope != "command")
-        .and_then(|v| v.origin.strip_prefix("file:"))
-        .map(PathBuf::from);
+        .and_then(|v| v.file.clone());
     row_with_note(ui, "Commit signing", &look.help, look.note.as_ref(), |ui| {
         // Right to left.
         Badge::new(look.badge).tone(look.tone).show(ui);
@@ -6437,6 +6450,7 @@ mod tests {
             value: value.to_owned(),
             scope: "global".to_owned(),
             origin: "file:/home/me/.gitconfig".to_owned(),
+            file: Some(PathBuf::from("/home/me/.gitconfig")),
         }
     }
 
