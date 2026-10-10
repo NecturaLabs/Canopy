@@ -564,6 +564,8 @@ pub struct RefreshGate {
 /// The timed refresh's bookkeeping, apart from the clock.
 #[derive(Debug, Default)]
 pub struct RefreshTimer {
+    /// The configured cadence, shared by timed and post-sync retries (zero before configured).
+    pub interval: Duration,
     /// A quiet refresh was sent and its list has not come back.
     pub in_flight: bool,
     /// Quiet refreshes in a row that failed; each doubles the wait.
@@ -1367,7 +1369,12 @@ impl RepoTab {
         let now = Instant::now();
         let timer = &self.requests.refresh;
         let held = timer.held_until.is_some_and(|until| now < until);
-        let wait = backoff_wait(REQUESTS_STALE_AFTER, timer.failures);
+        let interval = if timer.failures == 0 {
+            REQUESTS_STALE_AFTER
+        } else {
+            timer.interval.max(REQUESTS_STALE_AFTER)
+        };
+        let wait = backoff_wait(interval, timer.failures);
         if !self.requests.loading
             && !held
             && self.requests.loaded_at.is_some()
@@ -1387,6 +1394,7 @@ impl RepoTab {
         interval: Duration,
         focused: bool,
     ) -> Option<Duration> {
+        self.requests.refresh.interval = interval;
         let last = self.refresh_last()?;
         let timer = &self.requests.refresh;
         let syncing = self.running_kind.as_ref().is_some_and(OpKind::syncs_remote);
@@ -2275,7 +2283,18 @@ impl RepoTab {
                                 self.auto_fetch_failure = None;
                             }
                             // The remote moved, or Canopy moved it: its requests may have too.
-                            if kind.syncs_remote() {
+                            // A successful Git sync does not lift the API's retry hold.
+                            let now = Instant::now();
+                            let timer = &self.requests.refresh;
+                            let held = timer.held_until.is_some_and(|until| now < until);
+                            let backing_off = timer.failed_at.is_some_and(|failed| {
+                                now.saturating_duration_since(failed)
+                                    < backoff_wait(
+                                        timer.interval.max(REQUESTS_REFRESH_EVERY),
+                                        timer.failures,
+                                    )
+                            });
+                            if kind.syncs_remote() && !held && !backing_off {
                                 self.refresh_requests_quietly();
                             }
                             if announce {
@@ -2415,6 +2434,7 @@ impl RepoTab {
                         self.requests.refresh.in_flight = false;
                         if result.is_ok() {
                             self.requests.refresh.failures = 0;
+                            self.requests.refresh.failed_at = None;
                             self.requests.refresh.held_until = None;
                         }
                         // The order the list will show, standing as its rows will show it: the
@@ -5121,6 +5141,50 @@ mod tests {
             .filter(|j| matches!(j, HostJob::Details(..)))
             .count();
         assert_eq!((lists, details), (1, 1), "{jobs:?}");
+    }
+
+    #[test]
+    fn a_successful_sync_respects_the_request_refresh_backoff() {
+        for held in [false, true] {
+            let (mut tab, events, _host_jobs) = tab_showing_requests();
+            let forge = tab.host.as_ref().expect("host").forge.clone();
+            let (host, host_events, host_jobs) = HostWorker::detached(forge);
+            tab.host = Some(host);
+            tab.requests.refresh.interval = Duration::from_mins(5);
+            tab.requests.refresh.failures = u32::from(!held);
+            tab.requests.refresh.failed_at = (!held).then(|| {
+                Instant::now()
+                    .checked_sub(Duration::from_mins(5))
+                    .expect("earlier instant")
+            });
+            if held {
+                tab.requests.refresh.held_until = Some(Instant::now() + Duration::from_mins(30));
+            }
+            finish(&events, OpKind::Fetch, Ok(String::new()));
+            tab.poll(&[]);
+            assert!(
+                jobs_of(&host_jobs).is_empty(),
+                "sync must respect the API backoff (held={held})"
+            );
+            tab.load_requests();
+            assert_eq!(
+                lists_in(&host_jobs),
+                1,
+                "explicit Reload is still available"
+            );
+            tab.requests.refresh.failed_at = Some(Instant::now());
+            host_events
+                .send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))
+                .expect("reload");
+            tab.poll(&[]);
+            finish(&events, OpKind::Fetch, Ok(String::new()));
+            tab.poll(&[]);
+            assert_eq!(
+                lists_in(&host_jobs),
+                1,
+                "success clears the backoff immediately"
+            );
+        }
     }
 
     #[test]

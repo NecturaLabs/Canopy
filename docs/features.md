@@ -262,7 +262,8 @@ and after a fetch, pull or push. The timer pauses while another view is shown or
 unfocused, and while a fetch, pull or push runs (that one refreshes the list when it ends); a
 Settings page or a dialog over the Requests view does not pause it. A rate limit holds it until
 the host says the limit lifts (an hour at most), else for fifteen minutes; opening the Requests
-view waits out the same backoff. These use the same list and details calls as Reload, and only
+view and a refresh after a Git sync wait out the same backoff. These use the same list and
+details calls as Reload, and only
 with hosting on and a list already loaded.
 
 Going back to a request opened within the last minute (A, then B, then A again) shows its details

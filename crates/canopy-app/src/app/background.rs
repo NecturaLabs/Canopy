@@ -304,6 +304,8 @@ impl CanopyApp {
         self.poll_config_reads(ctx);
         self.poll_identity(ctx);
         for tab in &mut self.tabs {
+            tab.requests.refresh.interval =
+                requests_refresh_interval(self.settings.auto_fetch_for(&tab.path));
             for n in tab.poll(&self.gitlab_hosts) {
                 let (kind, topic) = if n.ok {
                     (ToastKind::Success, Topic::Finished)
