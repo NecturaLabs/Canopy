@@ -34,7 +34,8 @@ the feed manifest.
 
 The channel is chosen per release: `stable` goes to `latest.json`, `beta` to `beta.json` and the
 GitHub release is marked a pre-release. A build is one or the other; a beta is not promoted, the
-next build is released as stable.
+next build is released as stable. A stable build also becomes the beta channel's manifest (the
+same feed release), so beta copies are never behind it.
 
 `plan` and `number` only read git and print: they are safe to run locally.
 `python3 tools/release.py selftest` is part of `tools/check.sh` and CI.

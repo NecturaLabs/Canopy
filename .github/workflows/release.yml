@@ -13,7 +13,8 @@
 # (`canopy/latest.json`, or `beta.json` for the beta channel), so running copies of Canopy offer
 # the update. A stable release also commits the installers (`canopy/install.sh`,
 # `canopy/install.ps1`, from packaging/), which the one-line install commands download from
-# app-updates' main branch.
+# app-updates' main branch, and also points `beta.json` at the same build unless the beta channel
+# already offers a newer one.
 #
 # Secrets (Settings → Secrets and variables → Actions):
 # - APP_UPDATES_TOKEN (required for the update feed): fine-grained token, Contents read/write on
@@ -445,8 +446,11 @@ jobs:
           # Never move a channel backwards (a rebuild of an older build). A manifest that names no
           # build number (the semantic version of a feed from before builds were numbered) is
           # older than every build.
+          built() {
+            python3 -c 'import json,re,sys; v = str(json.load(open(sys.argv[1])).get("version", "")); print(v if re.fullmatch(r"[0-9]+", v) else 0)' "$1"
+          }
           if [[ -f $manifest ]]; then
-            current=$(python3 -c 'import json,re,sys; v = str(json.load(open(sys.argv[1])).get("version", "")); print(v if re.fullmatch(r"[0-9]+", v) else 0)' "$manifest")
+            current=$(built "$manifest")
             if (( current > BUILD )); then
               echo "::warning::The $channel channel already offers build $current; not replacing it with build $BUILD."
               exit 0
@@ -460,6 +464,15 @@ jobs:
           git -C "$work" config user.name "github-actions[bot]"
           git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$work" add "canopy/$channel.json"
+          # A stable build is also the newest build for beta copies: the beta manifest names the
+          # same feed release, unless it already offers a newer (beta) build.
+          if [[ $channel == latest ]]; then
+            beta="$work/canopy/beta.json"
+            if [[ ! -f $beta ]] || (( $(built "$beta") <= BUILD )); then
+              cp "$manifest" "$beta"
+              git -C "$work" add canopy/beta.json
+            fi
+          fi
           # The one-line installers live next to the manifests. Only a stable release replaces
           # them, so a beta build never changes what new users run.
           if [[ $channel == latest ]]; then
