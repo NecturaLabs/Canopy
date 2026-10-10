@@ -14,7 +14,7 @@ HOOK = Path(__file__).resolve().parent / "hooks" / "pre-commit"
 
 
 class HookTests(unittest.TestCase):
-    def run_hook(self, paths, diff_status=0, cargo_status=0):
+    def run_hook(self, paths, diff_status=0, cargo_status=0, test_status=0):
         with tempfile.TemporaryDirectory(prefix="canopy-hook-test-") as scratch:
             root = Path(scratch)
             (root / "paths.json").write_text(json.dumps(paths), encoding="utf-8")
@@ -43,8 +43,10 @@ class HookTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import os, sys\n"
                 "from pathlib import Path\n"
-                "Path(os.environ['HOOK_TEST_ROOT'], 'cargo.json').write_text(str(sys.argv[1:]))\n"
-                "sys.exit(int(os.environ['HOOK_TEST_CARGO_STATUS']))\n",
+                "with Path(os.environ['HOOK_TEST_ROOT'], 'cargo.json').open('a') as log:\n"
+                "    log.write(str(sys.argv[1:]) + '\\n')\n"
+                "key = 'HOOK_TEST_TEST_STATUS' if sys.argv[1] == 'test' else 'HOOK_TEST_CARGO_STATUS'\n"
+                "sys.exit(int(os.environ[key]))\n",
                 encoding="utf-8",
             )
             git.chmod(0o700)
@@ -54,6 +56,7 @@ class HookTests(unittest.TestCase):
                 "HOOK_TEST_ROOT": str(root),
                 "HOOK_TEST_DIFF_STATUS": str(diff_status),
                 "HOOK_TEST_CARGO_STATUS": str(cargo_status),
+                "HOOK_TEST_TEST_STATUS": str(test_status),
             }
             result = subprocess.run(["bash", str(HOOK)], env=env, capture_output=True)
             invocation = root / "cargo.json"
@@ -66,6 +69,7 @@ class HookTests(unittest.TestCase):
         self.assertIsNotNone(invocation)
         self.assertIn("'--locked'", invocation)
         self.assertIn("'-D', 'warnings'", invocation)
+        self.assertIn("['test', '--workspace', '--locked']", invocation)
 
     def test_unusual_rust_filename_runs_clippy(self):
         status, invocation = self.run_hook(["src/a\nquoted name.rs"])
@@ -81,6 +85,11 @@ class HookTests(unittest.TestCase):
         status, invocation = self.run_hook(["nested/Cargo.toml"], cargo_status=42)
         self.assertEqual(status, 1)
         self.assertIsNotNone(invocation)
+
+    def test_failed_test_refuses_the_commit(self):
+        status, invocation = self.run_hook(["first.rs"], test_status=42)
+        self.assertEqual(status, 1)
+        self.assertIn("['test', '--workspace', '--locked']", invocation)
 
     def test_unrelated_files_skip_clippy(self):
         status, invocation = self.run_hook(["docs/example.md", "art/sample.png"])
