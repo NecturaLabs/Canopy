@@ -41,6 +41,12 @@ pub enum SidebarItem {
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
+/// Whether `message`, a hosting error's text, is the host refusing the token
+/// (`canopy_hosting::Error::Unauthorized`).
+fn credential_refused(message: &str) -> bool {
+    message.starts_with("The server refused the request (check the access token")
+}
+
 /// How the history list and selected commit share the content area.
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryLayout {
@@ -549,6 +555,9 @@ pub struct Requests {
         reason = "not yet known, known to be absent, or known, as the doc comment says"
     )]
     pub token: Option<Option<TokenSource>>,
+    /// The host refused the token on the newest reply that carried an answer (a list, a request's
+    /// details or an action); cleared by the next one it accepted.
+    pub token_rejected: bool,
     /// When the list was last loaded.
     pub loaded_at: Option<Instant>,
     /// The newest load was a quiet refresh (no spinner): if it fails, the list on screen stays.
@@ -572,6 +581,7 @@ impl Default for Requests {
             pending_comment: None,
             merge_method: MergeMethod::Merge,
             token: None,
+            token_rejected: false,
             loaded_at: None,
             quiet_refresh: false,
         }
@@ -2085,6 +2095,16 @@ impl RepoTab {
         notices
     }
 
+    /// Remembers whether the host refused the token in `reply`: an accepted reply clears the
+    /// note, a refusal sets it, and any other failure says nothing about the token.
+    fn note_token<T>(&mut self, reply: &Result<T, String>) {
+        match reply {
+            Ok(_) => self.requests.token_rejected = false,
+            Err(message) if credential_refused(message) => self.requests.token_rejected = true,
+            Err(_) => {}
+        }
+    }
+
     fn poll_host(&mut self, notices: &mut Vec<Notice>) {
         let Some(host) = &self.host else { return };
         let kind = host.forge.kind;
@@ -2098,6 +2118,7 @@ impl RepoTab {
                 }
                 HostEvent::Token(t) => self.requests.token = Some(t),
                 HostEvent::List(filter, result) => {
+                    self.note_token(&result);
                     let kept_through_failure = self.requests.quiet_refresh
                         && result.is_err()
                         && matches!(self.requests.list, Some(Ok(_)));
@@ -2133,6 +2154,7 @@ impl RepoTab {
                     }
                 }
                 HostEvent::Details(n, generation, result) => {
+                    self.note_token(&result);
                     if self.requests.selected == Some(n)
                         && self.requests.details_generation == generation
                     {
@@ -2172,6 +2194,7 @@ impl RepoTab {
                     number,
                     result,
                 } => {
+                    self.note_token(&result);
                     self.requests.busy = None;
                     let submitted = if action == HostAction::Comment {
                         self.requests.pending_comment.take()
@@ -2297,6 +2320,39 @@ mod tests {
             .expect("late response");
         tab.poll(&[]);
         assert!(tab.ignore_result.is_none() && tab.ignore_query.is_none());
+    }
+
+    /// #142: the host refusing the token is noted until it accepts one; a network failure or
+    /// another refusal says nothing about the token.
+    #[test]
+    fn a_refused_token_is_remembered_until_the_host_accepts_one() {
+        use canopy_hosting::Error;
+        let refused = Error::Unauthorized("Bad credentials".into()).to_string();
+        assert!(credential_refused(&refused), "{refused}");
+        for other in [
+            Error::Network("timed out".into()),
+            Error::RateLimited { reset: None },
+            Error::NotFound("no such project".into()),
+            Error::Api {
+                status: 500,
+                message: "oops".into(),
+            },
+        ] {
+            assert!(!credential_refused(&other.to_string()), "{other}");
+        }
+        let (worker, _, _) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        assert!(!tab.requests.token_rejected);
+        tab.note_token::<()>(&Err(refused));
+        assert!(tab.requests.token_rejected);
+        tab.note_token::<()>(&Err("Could not reach the server: timed out".into()));
+        assert!(
+            tab.requests.token_rejected,
+            "a network failure changes nothing"
+        );
+        tab.note_token(&Ok(()));
+        assert!(!tab.requests.token_rejected);
     }
 
     /// A notification says what happened in the past tense, or what could not be done.

@@ -218,6 +218,12 @@ Canopy has a token for the host; without a token a row shows them once the reque
 the session, and until then a faint question mark says they are not loaded (a request with no
 checks shows nothing).
 
+A request's header actions are one group of buttons of the same size: the primary for its state
+(Check out while it is open, Open on GitHub or GitLab otherwise), then the other, Copy link and
+More. Nothing says where the token came from while it works (Settings → Hosting does); a missing
+token, or one the host refused (expired, revoked or short of scope), shows as a warning under the
+actions with Add a token… or Replace the token…, which opens Settings.
+
 A request's details start with its summary line (commits, files changed, lines, conflict
 state) with the lines in the added and removed colours, as the commit and file diffs show them.
 

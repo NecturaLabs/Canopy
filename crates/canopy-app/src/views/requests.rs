@@ -19,7 +19,7 @@ use canopy_hosting::{
 };
 
 use crate::action::Action;
-use crate::hosting::{HostJob, TokenSource};
+use crate::hosting::HostJob;
 use crate::keymap::Command;
 use crate::tab::RepoTab;
 use crate::ui::art;
@@ -1165,24 +1165,57 @@ fn action_bar(
     } else {
         (false, WAIT)
     };
+    // One primary for the state: Check out while the request is open, else Open on the host.
+    // The rest follow as one group of secondary buttons of the same size and spacing.
+    let open = r.state == RequestState::Open;
     ui.horizontal_wrapped(|ui| {
-        if Button::new("Check out")
-            .icon(icon::DOWNLOAD_SIMPLE)
-            .enabled(!checkout_off)
-            .tooltip("Fetch the request's branch and check it out locally")
-            .disabled_reason(checkout_reason)
+        ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+        let check_out = |ui: &mut Ui, actions: &mut Vec<Action>| {
+            let button = Button::new("Check out")
+                .icon(icon::DOWNLOAD_SIMPLE)
+                .enabled(!checkout_off)
+                .tooltip("Fetch the request's branch and check it out locally")
+                .disabled_reason(checkout_reason);
+            let button = if open {
+                button.primary()
+            } else {
+                button.secondary()
+            };
+            if button.show(ui).clicked() {
+                actions.push(Action::CheckoutRequest(r.clone()));
+            }
+        };
+        let open_on_host = |ui: &mut Ui, actions: &mut Vec<Action>| {
+            let button = Button::new(format!("Open on {}", kind.name()))
+                .icon(forge_icon(kind))
+                .shortcut(Command::OpenOnForge)
+                .tooltip(format!(
+                    "Open this {} on {}",
+                    kind.request_noun(),
+                    kind.name()
+                ));
+            let button = if open {
+                button.secondary()
+            } else {
+                button.primary()
+            };
+            if button.show(ui).clicked() {
+                actions.push(Action::OpenUrl(r.web_url.clone()));
+            }
+        };
+        if open {
+            check_out(ui, actions);
+            open_on_host(ui, actions);
+        } else {
+            open_on_host(ui, actions);
+            check_out(ui, actions);
+        }
+        if Button::new("Copy link")
+            .icon(icon::LINK)
+            .tooltip(format!("Copy the address of this {}", kind.request_noun()))
             .show(ui)
             .clicked()
         {
-            actions.push(Action::CheckoutRequest(r.clone()));
-        }
-        if Button::new(format!("{}  Open on {}", forge_icon(kind), kind.name()))
-            .show(ui)
-            .clicked()
-        {
-            actions.push(Action::OpenUrl(r.web_url.clone()));
-        }
-        if IconButton::new(icon::LINK, "Copy link").show(ui).clicked() {
             actions.push(Action::Copy(r.web_url.clone()));
         }
         let more = Button::new("More").caret().show(ui);
@@ -1325,16 +1358,51 @@ fn action_bar(
             ui.label(RichText::new(b).size(m.meta_size).color(p.accent));
         });
     }
-    if let Some(Some(source)) = tab.requests.token
-        && source != TokenSource::Saved
-    {
-        commit_detail::without_icons(
-            ui.label(
-                RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
-                    .size(m.small_size)
-                    .color(p.text_faint),
+    if let Some(problem) = credential_problem(tab) {
+        ui.add_space(theme::SM);
+        let fix = Callout::new(Tone::Warning, problem.text)
+            .title(problem.title)
+            .action(NoticeAction::new(problem.fix).icon(icon::KEY))
+            .id_salt("credential-problem")
+            .show_actions(ui)
+            .value;
+        if fix.is_some() {
+            actions.push(Action::Settings);
+        }
+    }
+}
+
+/// A credential that cannot do what the request's actions need, and what fixes it.
+struct CredentialProblem {
+    title: &'static str,
+    text: String,
+    fix: &'static str,
+}
+
+/// The credential problem to show under the request's actions: none while the credential works
+/// (its source is Settings' to say), else no token or a token the host refused.
+fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
+    if tab.requests.token_rejected {
+        Some(CredentialProblem {
+            title: "The host refused the token",
+            // Which one, so the fix goes to the right place.
+            text: format!(
+                "The token {} is expired, revoked or lacks the scope this needs. Replace it to approve, merge or comment.",
+                tab.requests
+                    .token
+                    .flatten()
+                    .map_or("Canopy sends", |source| source.label()),
             ),
-        );
+            fix: "Replace the token…",
+        })
+    } else if tab.requests.token == Some(None) {
+        Some(CredentialProblem {
+            title: "No token",
+            text: "Without one Canopy can only read this request. Approving, merging and commenting need a token.".into(),
+            fix: "Add a token…",
+        })
+    } else {
+        None
     }
 }
 
@@ -1949,6 +2017,213 @@ mod tests {
                 .find(|(t, _)| t == method.label())
                 .unwrap_or_else(|| panic!("{} not shown: {:?}", method.label(), frame.texts));
             assert!(!shown.1, "{} is cut short at {width}", method.label());
+        }
+    }
+
+    /// The shapes one frame of `f` paints on a pane of `size`.
+    fn painted(
+        theme_id: theme::ThemeId,
+        size: egui::Vec2,
+        mut f: impl FnMut(&mut Ui),
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme_id, theme::Appearance::STILL);
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            },
+            |ui| f(ui),
+        );
+        out.textures_delta.clear();
+        out.shapes
+    }
+
+    /// The colour `text` is painted in, and the left edge it starts at.
+    fn ink(shapes: &[egui::epaint::ClippedShape], text: &str) -> (Color32, f32) {
+        fn find(shape: &egui::Shape, text: &str) -> Option<(Color32, f32)> {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                egui::Shape::Text(t) if t.galley.text() == text => Some((
+                    t.override_text_color.unwrap_or(t.fallback_color),
+                    t.visual_bounding_rect().left(),
+                )),
+                _ => None,
+            }
+        }
+        shapes
+            .iter()
+            .find_map(|c| find(&c.shape, text))
+            .unwrap_or_else(|| panic!("{text:?} not painted"))
+    }
+
+    fn action_row(
+        theme_id: theme::ThemeId,
+        kind: ForgeKind,
+        state: RequestState,
+        width: f32,
+        tab: &mut RepoTab,
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let details = details(state);
+        painted(theme_id, vec2(width, 400.0), |ui| {
+            action_bar(
+                ui,
+                tab,
+                kind,
+                &details.summary,
+                Some(&details),
+                &mut Vec::new(),
+            );
+        })
+    }
+
+    /// #142: the header actions are one group of kit buttons with a single primary for the
+    /// state: Check out while the request is open, Open on the host otherwise.
+    #[test]
+    fn the_action_row_has_one_primary_for_the_state() {
+        for theme_id in theme::ThemeId::ALL {
+            let mut tab = test_tab();
+            let open = action_row(
+                theme_id,
+                ForgeKind::GitHub,
+                RequestState::Open,
+                560.0,
+                &mut tab,
+            );
+            let merged = action_row(
+                theme_id,
+                ForgeKind::GitHub,
+                RequestState::Merged,
+                560.0,
+                &mut tab,
+            );
+            let (check_out_open, _) = ink(&open, "Check out");
+            let (host_open, _) = ink(&open, "Open on GitHub");
+            let (check_out_merged, _) = ink(&merged, "Check out");
+            let (host_merged, _) = ink(&merged, "Open on GitHub");
+            let (copy, _) = ink(&open, "Copy link");
+            let (more, _) = ink(&open, "More");
+            assert_ne!(
+                check_out_open, host_open,
+                "{theme_id:?}: a primary and a secondary"
+            );
+            assert_eq!(check_out_open, host_merged, "{theme_id:?}: the primary");
+            assert_eq!(host_open, check_out_merged, "{theme_id:?}: the secondary");
+            assert_eq!(
+                [host_open, copy, more],
+                [host_open; 3],
+                "{theme_id:?}: one group"
+            );
+            // Left to right: the primary first.
+            assert!(ink(&open, "Check out").1 < ink(&open, "Open on GitHub").1);
+            assert!(ink(&merged, "Open on GitHub").1 < ink(&merged, "Check out").1);
+            assert!(ink(&open, "Open on GitHub").1 < ink(&open, "Copy link").1);
+            assert!(ink(&open, "Copy link").1 < ink(&open, "More").1);
+        }
+    }
+
+    /// #142: nothing says where the token came from while the credential works.
+    #[test]
+    fn no_credential_line_while_the_token_works() {
+        for source in [
+            crate::hosting::TokenSource::Saved,
+            crate::hosting::TokenSource::Environment,
+            crate::hosting::TokenSource::GitCredentials,
+        ] {
+            let mut tab = test_tab();
+            tab.requests.token = Some(Some(source));
+            let frame = render(theme::ThemeId::Midnight, vec2(560.0, 400.0), |ui| {
+                let details = details(RequestState::Open);
+                action_bar(
+                    ui,
+                    &mut tab,
+                    ForgeKind::GitHub,
+                    &details.summary,
+                    Some(&details),
+                    &mut Vec::new(),
+                );
+            });
+            for word in ["token", "credential", "Using"] {
+                assert!(
+                    !frame.mentions(word),
+                    "{source:?} shows {word}: {:?}",
+                    frame.texts
+                );
+            }
+        }
+    }
+
+    /// #142: a missing or refused token shows as a warning with its fix, and the fix opens
+    /// Settings.
+    #[test]
+    fn a_missing_or_refused_token_is_shown_with_its_fix() {
+        for (rejected, token, fix) in [
+            (false, Some(None), "Add a token…"),
+            (
+                true,
+                Some(Some(crate::hosting::TokenSource::Saved)),
+                "Replace the token…",
+            ),
+        ] {
+            let mut tab = test_tab();
+            tab.requests.token = token;
+            tab.requests.token_rejected = rejected;
+            let details = details(RequestState::Open);
+            let mut actions = Vec::new();
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+            ctx.enable_accesskit();
+            let mut run = |events: Vec<egui::Event>, actions: &mut Vec<Action>| {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(560.0, 700.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        action_bar(
+                            ui,
+                            &mut tab,
+                            ForgeKind::GitHub,
+                            &details.summary,
+                            Some(&details),
+                            actions,
+                        );
+                    },
+                );
+                out.textures_delta.clear();
+                out.platform_output.accesskit_update
+            };
+            let _ = run(Vec::new(), &mut actions);
+            let nodes = run(Vec::new(), &mut actions).expect("accesskit").nodes;
+            let button = nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some(fix))
+                .unwrap_or_else(|| panic!("no {fix:?} button"));
+            let b = button.1.bounds().expect("bounds");
+            let at = pos2(
+                crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+                crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+            );
+            let mut events = vec![egui::Event::PointerMoved(at)];
+            for pressed in [true, false] {
+                events.push(egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+            let _ = run(events, &mut actions);
+            assert!(
+                actions.iter().any(|a| matches!(a, Action::Settings)),
+                "{fix}: {actions:?}"
+            );
         }
     }
 
