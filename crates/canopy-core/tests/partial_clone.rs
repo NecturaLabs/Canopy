@@ -362,6 +362,30 @@ fn blobless_clone_fail_mode_stays_offline() {
 }
 
 #[test]
+fn blame_downloads_only_when_allowed_and_matches_the_source() {
+    let fx = Fixture::new();
+    let dir = fx.clone("blobless", &["--filter=blob:none"]);
+    let before = missing(&dir);
+    let repo = Repo::open(&dir).expect("open");
+
+    repo.blame("a.txt", None, Fail)
+        .expect_err("a.txt's old blobs are missing");
+    assert_eq!(missing(&dir), before, "Fail must not download anything");
+
+    let ours = repo.blame("a.txt", None, Download).expect("blame");
+    let oracle: Vec<String> = git(&fx.src, &["blame", "--root", "-l", "--", "a.txt"])
+        .lines()
+        .map(|l| l.chars().take(40).collect())
+        .collect();
+    let ids: Vec<String> = ours
+        .lines
+        .iter()
+        .map(|l| ours.commits[l.commit].oid.to_string())
+        .collect();
+    assert_eq!(ids, oracle);
+}
+
+#[test]
 fn details_list_files_offline_then_complete_with_a_download() {
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
