@@ -146,3 +146,9 @@ or how flows feel end to end.
   as build 120. A release job's composite actions come from the tag's own commit, so a workflow fix
   needs a new build, not a rerun of the old tag.
 - `APP_UPDATES_TOKEN` must exist in the Canopy repository's secrets or the feed step is skipped.
+
+For the expanded commit-details layout, render with `--overlay commit-expanded`; it activates
+the header’s Expand button by its accessible name. Use `--size 960x640` for compact details.
+
+Use `--overlay commit-compact --size 960x400` to select Commit details in the compact
+History layout through its accessible control.

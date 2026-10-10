@@ -1,4 +1,4 @@
-//! Author account pictures, restricted to the repository's forge and GitHub's avatar CDN.
+//! Commit identity pictures, restricted to the repository's forge and GitHub's avatar CDN.
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -174,6 +174,36 @@ struct Account {
 struct Commit {
     sha: String,
     author: Option<Account>,
+    committer: Option<Account>,
+    #[serde(rename = "commit")]
+    people: Option<CommitPeople>,
+}
+
+#[derive(Deserialize)]
+struct CommitPeople {
+    author: Option<CommitPerson>,
+    committer: Option<CommitPerson>,
+}
+
+#[derive(Deserialize)]
+struct CommitPerson {
+    email: Option<String>,
+}
+
+impl Commit {
+    fn account(self, email: &str) -> Option<Account> {
+        let people = self.people?;
+        let matches = |person: &Option<CommitPerson>| {
+            person.as_ref().and_then(|p| p.email.as_deref()) == Some(email)
+        };
+        if matches(&people.author) {
+            self.author
+        } else if matches(&people.committer) {
+            self.committer
+        } else {
+            None
+        }
+    }
 }
 
 pub(crate) fn lookup(
@@ -198,7 +228,7 @@ pub(crate) fn lookup(
                 .into_iter()
                 .next()
                 .filter(|c| c.sha.eq_ignore_ascii_case(commit))
-                .and_then(|c| c.author)
+                .and_then(|c| c.account(email))
                 .and_then(|a| a.avatar_url)
         }
         ForgeKind::GitLab => {

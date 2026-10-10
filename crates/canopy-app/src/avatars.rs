@@ -654,7 +654,7 @@ fn fetch(
         take().map_err(Miss::Later)
     };
     may_ask()?;
-    let avatar = match client.author_avatar(&oid.to_string(), email) {
+    let avatar = match client.commit_avatar(&oid.to_string(), email) {
         Ok(avatar) => avatar,
         // GitHub answers 404 both for a commit it does not have and for a repository it will not
         // show; only the repository itself tells them apart.
@@ -1160,7 +1160,7 @@ mod tests {
         }
 
         /// Serves a real PNG at `/picture.png` as `sha`'s author picture.
-        fn picture_for(&self, sha: &str) {
+        fn picture_for(&self, sha: &str, email: &str) {
             let mut png = Cursor::new(Vec::new());
             image::DynamicImage::new_rgb8(8, 8)
                 .write_to(&mut png, image::ImageFormat::Png)
@@ -1169,6 +1169,7 @@ mod tests {
             let commits = serde_json::json!([{
                 "sha": sha,
                 "author": {"avatar_url": format!("{}/picture.png", self.base)},
+                "commit": {"author": {"email": email}},
             }]);
             self.route(
                 &format!("/repos/octo/hello/commits?sha={sha}&per_page=1"),
@@ -1204,7 +1205,7 @@ mod tests {
 
         // With a token that can see it, the same author's picture arrives at once.
         stub.route("/repos/octo/hello", 200, "{}");
-        stub.picture_for(PUSHED);
+        stub.picture_for(PUSHED, "a@example.com");
         let shown = load_at(
             Some(path),
             &stub.client(Some("t")),
@@ -1219,7 +1220,7 @@ mod tests {
     fn a_commit_not_pushed_yet_does_not_hide_its_authors_picture() {
         let stub = Stub::start();
         stub.route("/repos/octo/hello", 200, "{}");
-        stub.picture_for(PUSHED);
+        stub.picture_for(PUSHED, "me@example.com");
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("picture.json");
         let on = AtomicBool::new(true);
@@ -1393,7 +1394,7 @@ mod tests {
     #[test]
     fn a_picture_host_without_a_picture_replaces_a_cached_stand_in_with_initials() {
         let stub = Stub::start();
-        stub.picture_for(PUSHED);
+        stub.picture_for(PUSHED, "a@example.com");
         // The picture host now answers that the author has none (GitLab's Gravatar links ask
         // for a 404 instead of a generated pattern).
         stub.route("/picture.png", 404, "");
@@ -1427,7 +1428,7 @@ mod tests {
     fn a_picture_host_s_limit_or_refusal_is_not_cached_for_the_author() {
         for status in [429, 403, 302, 400] {
             let stub = Stub::start();
-            stub.picture_for(PUSHED);
+            stub.picture_for(PUSHED, "a@example.com");
             stub.route("/picture.png", status, "");
             let dir = tempfile::tempdir().unwrap();
             let empty = dir.path().join("empty.json");

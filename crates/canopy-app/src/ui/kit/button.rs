@@ -1231,6 +1231,7 @@ pub struct LinkButton {
     text: String,
     url: Option<String>,
     size: Option<f32>,
+    max_text_width: Option<f32>,
     force: Option<ForceState>,
 }
 
@@ -1240,6 +1241,7 @@ impl LinkButton {
             text: text.into(),
             url: None,
             size: None,
+            max_text_width: None,
             force: None,
         }
     }
@@ -1254,6 +1256,11 @@ impl LinkButton {
         self.size = Some(size);
         self
     }
+    /// Limits the visible text to this width, with an ellipsis; its accessible name stays whole.
+    pub fn max_text_width(mut self, width: f32) -> Self {
+        self.max_text_width = Some(width.max(0.0));
+        self
+    }
     pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
         self.force = Some(force);
         self.show(ui)
@@ -1266,9 +1273,11 @@ impl LinkButton {
         let enabled = ui.is_enabled();
         let size = self.size.unwrap_or(m.body_size);
         let font = FontId::new(size, theme::medium());
-        let g = ui
-            .painter()
-            .layout_no_wrap(self.text.clone(), font, p.accent2);
+        let mut text = egui::text::LayoutJob::simple_singleline(self.text.clone(), font, p.accent2);
+        text.wrap.max_width = self.max_text_width.unwrap_or(f32::INFINITY);
+        text.wrap.max_rows = 1;
+        text.wrap.break_anywhere = true;
+        let g = ui.painter().layout_job(text);
         // An external link's arrow is the icon font's, a little smaller than the text.
         let arrow = self.url.is_some().then(|| {
             ui.painter().layout_no_wrap(

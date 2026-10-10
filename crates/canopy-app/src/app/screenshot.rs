@@ -61,8 +61,14 @@ impl MenuShot {
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
             "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
+            "commit-compact" => (
+                "Commit details",
+                View::History,
+                egui::PointerButton::Primary,
+            ),
+            "commit-expanded" => ("Expand", View::History, egui::PointerButton::Primary),
             "author-card" => (
-                "Maya Chen (author card)",
+                "Maya Chen (commit identity card)",
                 View::History,
                 egui::PointerButton::Primary,
             ),

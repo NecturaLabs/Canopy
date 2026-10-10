@@ -81,7 +81,7 @@ git would run on every `git status`.
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
 | Author avatars | Done (GitHub/GitLab pictures, initials fallback) | Yes | Yes | Yes |
 | On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
-| Commit details: metadata (labelled Commit and Parent rows), files with +/- counts, per-file diff; persistent information disclosure, expand/return header and compact full view | Done | Yes | Yes | Yes |
+| Commit details: summary, copyable commit id, parent links and committer picture/name in the header; scrolling description and changed-file card, per-file diff, expand/return and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
 | File history | Planned | Yes | Yes | Yes |
@@ -90,7 +90,7 @@ git would run on every `git status`.
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |
 | Signature verification badges | Done: distinct verified, invalid, unavailable, untrusted and expired/revoked marks in commit details and the author card; only verified signatures use the trusted mark; checked by git in trusted folders only | ? | Yes | ? |
-| Author card and parent links in commit details | Done: the name opens a card (email, committer, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
+| Commit identity card and parent links in commit details | Done: the committer name opens a card (email, original author, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
 
 Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.
 The merge composer names the conclusion and prefills Git's merge message without replacing a draft.
