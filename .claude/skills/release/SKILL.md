@@ -34,7 +34,8 @@ the feed manifest.
 
 The channel is chosen per release: `stable` goes to `latest.json`, `beta` to `beta.json` and the
 GitHub release is marked a pre-release. A build is one or the other; a beta is not promoted, the
-next build is released as stable.
+next build is released as stable. A stable build also becomes the beta channel's manifest (the
+same feed release) unless beta already offers a newer build.
 
 `plan` and `number` only read git and print: they are safe to run locally.
 `python3 tools/release.py selftest` is part of `tools/check.sh` and CI.
@@ -106,7 +107,7 @@ next build is released as stable.
    - publishes the GitHub release `build-<number>` with those archives, `install.sh`,
      `install.ps1`, a `SHA256SUMS` file and the notes (`prerelease` for the beta channel);
    - copies them to a release `canopy-build-<number>` in `NecturaLabs/app-updates` and commits
-     `canopy/latest.json` (`canopy/beta.json` for the beta channel) through
+     `canopy/latest.json` (`canopy/beta.json` for the beta channel; a stable release writes both) through
      `tools/update-manifest.sh`; a stable release also commits `packaging/install.sh` and
      `packaging/install.ps1` as `canopy/install.sh` and `canopy/install.ps1`, the files the
      one-line install commands fetch. A channel is never moved backwards (a manifest without a

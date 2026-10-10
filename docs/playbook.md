@@ -122,8 +122,9 @@ or how flows feel end to end.
   `install.ps1` and the releases `canopy-build-<n>`. The build each channel serves is the `version`
   in its manifest: `gh api -H 'Accept: application/vnd.github.raw'
   repos/NecturaLabs/app-updates/contents/canopy/latest.json` (and `beta.json`). A stable release
-  updates only `latest.json` and the installers: to keep the beta channel level with it, commit the
-  same manifest as `canopy/beta.json` afterwards.
+  updates `latest.json`, the installers and, unless it already offers a newer build, `beta.json`
+  with the same manifest, so both channels name the same feed release. A beta release updates
+  only `beta.json`.
 - Copies of Canopy older than the first numbered build cannot read the numbered manifest and report
   an update-check error until reinstalled with the one-line installer.
 - The Release workflow's Linux builds run as root in an Ubuntu 22.04 container: the first run of
