@@ -55,6 +55,7 @@ pub const OVERLAYS: &[&str] = &[
     "merge",
     "identity",
     "settings-git",
+    "settings-git-pull",
     "settings-git-commits",
     "clear-identity",
     "update-installed",
@@ -67,6 +68,8 @@ pub const OVERLAYS: &[&str] = &[
     "settings-keyboard",
     "settings-backup",
     "settings-repository",
+    "settings-repository-pull",
+    "settings-repository-diffs",
     "settings-search",
     "about",
     "repository-insights",
@@ -378,7 +381,7 @@ impl CanopyApp {
         }
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
-            Some("settings-git") => {
+            Some("settings-git" | "settings-git-pull") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
             }
             Some("settings-git-commits") => {
@@ -473,6 +476,14 @@ impl CanopyApp {
             }
             Some("settings-repository") => {
                 app.settings_screen = Some(SettingsScreen::awaiting_repository());
+            }
+            Some("settings-repository-pull" | "settings-repository-diffs") => {
+                let group = if launch.overlay.as_deref() == Some("settings-repository-pull") {
+                    "Pull and fetch"
+                } else {
+                    "Diffs"
+                };
+                app.settings_screen = Some(SettingsScreen::awaiting_repository_at(group));
             }
             Some("settings-search") => {
                 app.settings_screen = Some(SettingsScreen::searching("pull"));

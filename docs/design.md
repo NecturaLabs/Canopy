@@ -518,6 +518,14 @@ opening with the mouse as well as from the keyboard, and the highlighted option 
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
 
+A select can mark one option with the kit's Recommended badge; its accessible description
+announces the recommendation without repeating the option name. The list reserves room for the
+badge and check, truncating only the painted label while keeping its full accessible name.
+Repository selects show the effective value once. Explicit selection pins even the current value;
+only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
+controls name their setting. Context lines and whitespace are one saved diff preset, with one
+shared reset that returns both to the app defaults.
+
 ### Popover and the smaller components
 
 `Popover` is a small panel anchored to a control (diff options, the commit identity card, the theme

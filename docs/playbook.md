@@ -155,3 +155,7 @@ History layout through its accessible control.
 
 Use `--overlay amend-commit` with a clean fixture to open the amend composer through its
 secondary action and capture the message read by the worker.
+
+Use `--overlay settings-git-pull` or `--overlay settings-repository-pull` to capture the
+Pull strategy option list through its accessible control. `--overlay settings-repository-diffs`
+opens the repository's Diffs group.

@@ -51,6 +51,8 @@ pub(super) struct MenuShot {
     /// Where the click goes once the widget is found, and how many of its two frames (press,
     /// then release) were sent.
     click: Option<(egui::Pos2, u8)>,
+    /// Wait for a scrolled control to stop moving before aiming at it.
+    candidate: Option<(egui::Rect, u8)>,
 }
 
 impl MenuShot {
@@ -71,6 +73,9 @@ impl MenuShot {
                 View::History,
                 egui::PointerButton::Primary,
             ),
+            "settings-git-pull" | "settings-repository-pull" => {
+                ("Pull strategy", View::History, egui::PointerButton::Primary)
+            }
             "commit-expanded" => ("Expand", View::History, egui::PointerButton::Primary),
             "author-card" => (
                 "Maya Chen (commit identity card)",
@@ -85,6 +90,7 @@ impl MenuShot {
             view,
             button,
             click: None,
+            candidate: None,
         })
     }
 
@@ -99,7 +105,13 @@ impl MenuShot {
             nodes
                 .iter()
                 .filter(|(_, n)| n.label().is_some_and(|l| l.starts_with(self.name)))
-                .filter_map(|(id, _)| v.this_pass.widgets.get(*id).map(|w| w.rect))
+                .filter_map(|(id, _)| {
+                    v.this_pass
+                        .widgets
+                        .get(*id)
+                        .filter(|w| w.enabled)
+                        .map(|w| w.interact_rect)
+                })
                 .filter(egui::Rect::is_positive)
                 .min_by(|a, b| {
                     (a.top(), a.left())
@@ -108,7 +120,16 @@ impl MenuShot {
                 })
         });
         if let Some(rect) = found {
-            self.click = Some((rect.center(), 0));
+            let frames = self
+                .candidate
+                .filter(|(previous, _)| *previous == rect)
+                .map_or(1, |(_, frames)| frames + 1);
+            self.candidate = Some((rect, frames));
+            if frames >= 3 {
+                self.click = Some((rect.center(), 0));
+            }
+        } else {
+            self.candidate = None;
         }
         false
     }

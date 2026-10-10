@@ -46,11 +46,12 @@ OPTIONS:
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, crash-consent, legal, credential, host-key,
-                              merge, identity, settings-git, settings-git-commits,
+                              merge, identity, settings-git, settings-git-pull, settings-git-commits,
                               clear-identity, update-installed, update-running, trust-folder,
                               diff-options,
                               settings-integrations, settings-accounts, settings-updates,
                               settings-keyboard, settings-backup, settings-repository,
+                              settings-repository-pull, settings-repository-diffs,
                               settings-search, about, repository-insights, clean-stale, author-card, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
                               long-message,
                               gallery, menu-branch, menu-commit, menu-file, open,
