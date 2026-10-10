@@ -45,11 +45,12 @@ same feed release) unless beta already offers a newer build.
 1. Confirm the build and channel with the user: run `python3 tools/release.py plan` and
    `python3 tools/release.py notes` on an up-to-date `main` (full history, not a shallow clone) and
    show the result. A release is public and cannot be unpublished cleanly.
-2. `main` is clean, up to date and has a green CI run on its tip: the workflow refuses otherwise
-   (`gh run list --workflow ci.yml --branch main`). Merging a branch that was up to date with
-   `main` gives a commit with the branch's tree, whose CI run takes under a minute: it takes the
-   branch's passing run as proof and runs only the documentation and site checks. CI includes cargo-deny and the licence-notice
-   check, so a dependency change must already have regenerated
+2. `main` is clean, up to date and has a green CI run on its tip (`gh run list --workflow ci.yml
+   --branch main`). The workflow waits up to 25 minutes for a run still in progress and refuses
+   unless it passed; a dry run only looks. Merging a branch that was up to date with `main` gives a
+   commit with the branch's tree, whose CI run takes under a minute: it takes the branch's passing
+   run as proof and runs only the documentation and site checks. CI includes cargo-deny and the
+   licence-notice check, so a dependency change must already have regenerated
    `docs/legal/third-party-notices.txt` (`python3 tools/notices.py`).
 3. The notes read well for users: they are the commit subjects (see above), so a poorly worded
    `feat` or `fix` subject is what users read. Reword by releasing from a later commit, never by
@@ -147,8 +148,9 @@ same feed release) unless beta already offers a newer build.
 
 ## If something fails
 
-- Create release stops before tagging (not on `main`, CI not green, nothing releasable,
-  `build-<number>` already exists): fix the cause and dispatch it again; nothing was changed.
+- Create release stops before tagging (not on `main`, CI failed or still running after 25
+  minutes, nothing releasable, `build-<number>` already exists): fix the cause and dispatch it
+  again; nothing was changed.
 - A build or publish job fails after the tag exists: fix the runner or workflow problem and run
   Release by hand with that tag and its channel (`gh workflow run release.yml -f tag=build-<n> -f
   channel=stable|beta`). Do not run Create release again: it would stop, since HEAD is a tagged
