@@ -94,7 +94,7 @@ pub struct GitFacts {
 /// How git would sign a commit here, from configuration and what is installed; nothing is run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signing {
-    /// `gpg.format` as set, lower case; `openpgp` when unset.
+    /// `gpg.format` as set; `openpgp` when unset.
     pub format: String,
     /// `user.signingkey`: a key id, a path or an inline SSH key. Show it only shortened
     /// ([`Self::key_label`]); never log it.
@@ -175,13 +175,9 @@ fn signing_from(
     program_missing: &dyn Fn(&str) -> bool,
     file_exists: &dyn Fn(&Path) -> bool,
 ) -> Signing {
+    // Git compares the value exactly (`SSH` is an error, so is an empty one).
     let format =
-        get("gpg.format").map_or_else(String::new, |v| v.value.trim().to_ascii_lowercase());
-    let format = if format.is_empty() {
-        "openpgp".to_owned()
-    } else {
-        format
-    };
+        get("gpg.format").map_or_else(|| "openpgp".to_owned(), |v| v.value.trim().to_owned());
     let (program_key, default_program) = match format.as_str() {
         "ssh" => ("gpg.ssh.program", "ssh-keygen"),
         "x509" => ("gpg.x509.program", "gpgsm"),
@@ -775,16 +771,22 @@ mod tests {
 
     #[test]
     fn x509_signing_uses_gpgsm_and_an_unknown_format_is_a_problem() {
-        let x509 = values(&[("gpg.format", "X509")]);
+        let x509 = values(&[("gpg.format", "x509")]);
         let signing = signing_from(&x509, &|_| false, &|_| false);
         assert_eq!(signing.format_label(), "X.509");
         assert_eq!(signing.program, "gpgsm");
 
-        let odd = values(&[("gpg.format", "pgp")]);
-        assert_eq!(
-            signing_from(&odd, &|_| false, &|_| false).problem,
-            Some(SigningProblem::UnknownFormat)
-        );
+        // Git compares the format exactly: `X509` and an empty value are errors in git itself.
+        for odd in ["pgp", "X509", "SSH", "OpenPGP", ""] {
+            let config = values(&[("gpg.format", odd)]);
+            let signing = signing_from(&config, &|_| false, &|_| false);
+            assert_eq!(
+                signing.problem,
+                Some(SigningProblem::UnknownFormat),
+                "{odd:?}"
+            );
+            assert_eq!(signing.format, odd);
+        }
     }
 
     #[test]

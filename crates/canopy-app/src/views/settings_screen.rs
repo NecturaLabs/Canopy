@@ -4092,7 +4092,7 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
                 signing.key_label().unwrap_or_default()
             ),
             SigningProblem::UnknownFormat => format!(
-                "gpg.format = {} is not a format git knows (openpgp, ssh or x509), so every commit will fail. Correct it in your git configuration.",
+                "gpg.format = \"{}\" is not a format git knows (openpgp, ssh or x509), so every commit will fail. Correct it in your git configuration.",
                 signing.format
             ),
         },
