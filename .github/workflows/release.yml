@@ -16,6 +16,11 @@
 # app-updates' main branch, and also points `beta.json` at the same build unless the beta channel
 # already offers a newer one.
 #
+# The release and the feed are published from the required builds only. The experimental targets
+# (`platforms`) build alongside in `build-experimental`, which nothing waits for; once the release
+# is out, `attach-experimental` adds the archives that built to both releases and to the feed
+# manifests that still name the build.
+#
 # Secrets (Settings → Secrets and variables → Actions):
 # - APP_UPDATES_TOKEN (required for the update feed): fine-grained token, Contents read/write on
 #   NecturaLabs/app-updates only. Without it the feed step is skipped with a warning.
@@ -116,13 +121,15 @@ jobs:
   # CI_LINUX is '0', macOS and Windows only when CI_MACOS or CI_WINDOWS is '1'. Ubuntu 22.04,
   # hosted or as the self-hosted container, keeps the glibc requirement at 2.35; aarch64 Linux
   # (cross-compiled in the same container) and Intel macOS (cross-compiled on Apple silicon)
-  # are experimental: their failure does not hold back the release.
+  # are experimental: they build in a job of their own that the release does not wait for, and
+  # `attach-experimental` adds the archives that built once the release is out.
   platforms:
     name: Platforms
     runs-on: ${{ vars.USE_SELF_HOSTED == '0' && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
     permissions: {}
     outputs:
-      matrix: ${{ steps.pick.outputs.matrix }}
+      required: ${{ steps.pick.outputs.required }}
+      experimental: ${{ steps.pick.outputs.experimental }}
     steps:
       - id: pick
         env:
@@ -148,14 +155,17 @@ jobs:
           fi
           matrix=$(printf '%s\n' "${on[@]}" | jq -cs 'add')
           echo "Building: $(jq -r 'map(.target) | join(", ")' <<<"$matrix")"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          {
+            echo "required=$(jq -c 'map(select(.experimental != true))' <<<"$matrix")"
+            echo "experimental=$(jq -c 'map(select(.experimental == true))' <<<"$matrix")"
+          } >> "$GITHUB_OUTPUT"
 
+  # The builds the release is published from. The slowest one measured took 16 minutes.
   build:
     name: Build (${{ matrix.target }})
     needs: [platforms, identity]
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || !matrix.self-hosted) && matrix.os || fromJSON(matrix.self-hosted) }}
-    timeout-minutes: 60
-    continue-on-error: ${{ matrix.experimental == true }}
+    timeout-minutes: 30
     permissions:
       contents: read
     # On the self-hosted runners (Ubuntu 24.04) the Linux build runs in an
@@ -164,17 +174,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.platforms.outputs.matrix) }}
-    defaults:
+        include: ${{ fromJSON(needs.platforms.outputs.required) }}
+    defaults: &build-defaults
       run:
         shell: bash
-    env:
+    env: &build-env
       TARGET: ${{ matrix.target }}
       ARCHIVE: ${{ matrix.archive }}
       BUILD: ${{ needs.identity.outputs.build }}
       CANOPY_BUILD_NUMBER: ${{ needs.identity.outputs.build }}
       CANOPY_COMMIT: ${{ needs.identity.outputs.commit }}
-    steps:
+    steps: &build-steps
       - name: Install build tools in the container
         if: runner.os == 'Linux'
         run: |
@@ -208,7 +218,10 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
           persist-credentials: false
+      # It takes under a minute and a half; a stalled download once held it for the job's whole
+      # hour (#144). A step that runs out of time fails rather than cancels the job.
       - uses: ./.github/actions/setup-rust
+        timeout-minutes: 10
         with:
           targets: ${{ matrix.target }}
           isolated: "true"
@@ -241,7 +254,10 @@ jobs:
               echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV" ;;
           esac
 
+      # Measured: 4 to 14 minutes. Inside the job's own limit, so an experimental build that runs
+      # out of time fails (which continue-on-error absorbs) instead of being cancelled.
       - name: Build
+        timeout-minutes: ${{ matrix.experimental && 15 || 25 }}
         run: cargo build --release --locked -p canopy-app --target "$TARGET"
         env:
           CANOPY_SENTRY_DSN: ${{ vars.CANOPY_SENTRY_DSN }}
@@ -310,9 +326,10 @@ jobs:
           fi
           rm -rf "$name"
 
+      # Publishing takes the canopy-* artifacts; experimental-* ones are added afterwards.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: canopy-${{ matrix.target }}
+          name: ${{ matrix.experimental && 'experimental' || 'canopy' }}-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
@@ -326,6 +343,27 @@ jobs:
           rm -rf "$RUNNER_TEMP/canopy-rust"
           owner=$(stat -c %u:%g "$RUNNER_WORKSPACE")
           chown -R "$owner" "$GITHUB_WORKSPACE" "$HOME"
+
+  # The same steps for the experimental targets. Nothing waits for this job: a failure, a hang or
+  # its timeout (measured: 5 to 16 minutes, once a stalled download for an hour) only leaves their
+  # archives out.
+  build-experimental:
+    name: Build (${{ matrix.target }}, experimental)
+    needs: [platforms, identity]
+    if: needs.platforms.outputs.experimental != '[]'
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || !matrix.self-hosted) && matrix.os || fromJSON(matrix.self-hosted) }}
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: read
+    container: ${{ vars.USE_SELF_HOSTED != '0' && matrix.container || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.platforms.outputs.experimental) }}
+    defaults: *build-defaults
+    env: *build-env
+    steps: *build-steps
 
   release:
     name: Publish release
@@ -487,6 +525,109 @@ jobs:
             exit 0
           fi
           git -C "$work" commit -m "canopy: publish build $BUILD to the $channel channel$also"
+          git -C "$work" push origin main
+      - name: Clean up
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/app-updates"
+
+  # Once the release is out, adds the experimental archives that built to the GitHub release and
+  # to the feed release, with a SHA256SUMS that covers every file, and rewrites each feed manifest
+  # that still names this build to offer them. A manifest that moved on to another build is left
+  # alone, so this never moves a channel backwards. A target that did not build is reported.
+  attach-experimental:
+    name: Add the experimental builds
+    needs: [identity, platforms, build-experimental, publish-update]
+    if: ${{ !cancelled() && needs.publish-update.result == 'success' && needs.platforms.outputs.experimental != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: write
+    env:
+      BUILD: ${{ needs.identity.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: experimental-*
+          path: late
+          merge-multiple: true
+      - name: Find the archives that built
+        id: late
+        env:
+          EXPECTED: ${{ needs.platforms.outputs.experimental }}
+        run: |
+          built=0
+          for target in $(jq -r '.[].target' <<<"$EXPECTED"); do
+            if compgen -G "late/canopy-build-$BUILD-$target.*" > /dev/null; then
+              built=$((built + 1))
+            else
+              echo "::warning::The experimental $target build did not finish: build $BUILD ships without it."
+            fi
+          done
+          echo "built=$built" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.late.outputs.built != '0'
+        with:
+          pattern: canopy-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.late.outputs.built != '0'
+        with:
+          name: release-notes
+          path: notes
+      - name: Add them to the GitHub release
+        if: steps.late.outputs.built != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp late/* packaging/install.sh packaging/install.ps1 dist/
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          gh release upload "$TAG" late/* dist/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Add them to the update feed
+        if: steps.late.outputs.built != '0'
+        env:
+          APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
+        run: |
+          if [[ -z $APP_UPDATES_TOKEN ]]; then
+            echo "::warning::APP_UPDATES_TOKEN is not set: the update feed does not offer the experimental builds."
+            exit 0
+          fi
+          feed_tag="canopy-build-$BUILD"
+          GH_TOKEN=$APP_UPDATES_TOKEN gh release upload "$feed_tag" late/* dist/SHA256SUMS --clobber --repo NecturaLabs/app-updates
+          work="$RUNNER_TEMP/app-updates"
+          rm -rf "$work"
+          # The token travels as in publish-update: in a header set through the environment.
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_UPDATES_TOKEN" | base64 -w0)"
+          echo "::add-mask::${auth#AUTHORIZATION: basic }"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="$auth"
+          git clone --depth 1 https://github.com/NecturaLabs/app-updates.git "$work"
+          built() {
+            python3 -c 'import json,re,sys; v = str(json.load(open(sys.argv[1])).get("version", "")); print(v if re.fullmatch(r"[0-9]+", v) else 0)' "$1"
+          }
+          channels=""
+          for channel in latest beta; do
+            manifest="$work/canopy/$channel.json"
+            [[ -f $manifest && $(built "$manifest") == "$BUILD" ]] || continue
+            tools/update-manifest.sh dist "$BUILD" \
+              "https://github.com/NecturaLabs/app-updates/releases/tag/$feed_tag" \
+              "https://github.com/NecturaLabs/app-updates/releases/download/$feed_tag" \
+              notes/notes.md \
+              > "$manifest"
+            git -C "$work" add "canopy/$channel.json"
+            channels+=" $channel"
+          done
+          if git -C "$work" diff --cached --quiet; then
+            echo "No manifest offers build $BUILD; the feed release has the archives."
+            exit 0
+          fi
+          git -C "$work" config user.name "github-actions[bot]"
+          git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$work" commit -m "canopy: add the experimental builds to build $BUILD (${channels# })"
           git -C "$work" push origin main
       - name: Clean up
         if: always()

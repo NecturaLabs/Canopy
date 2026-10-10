@@ -1553,6 +1553,19 @@ const PULL_SETTINGS: &[&[&str]] = &[
     &["branch.other.rebase=true", "pull.rebase=false"],
 ];
 
+/// Runs `check` on every combination in [`PULL_SETTINGS`], spread over the machine's cores. Each
+/// combination pulls copies of its own; one after another, the matrices took minutes on Windows,
+/// where starting git is slow.
+fn for_each_pull_setting(check: impl Fn(&[&str]) + Sync) {
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    std::thread::scope(|scope| {
+        for chunk in PULL_SETTINGS.chunks(PULL_SETTINGS.len().div_ceil(threads)) {
+            let check = &check;
+            scope.spawn(move || chunk.iter().for_each(|settings| check(settings)));
+        }
+    });
+}
+
 #[test]
 fn pull_config_matches_what_git_pull_does() {
     // For every combination of settings: a pull with the strategy the configuration asks for
@@ -1562,7 +1575,7 @@ fn pull_config_matches_what_git_pull_does() {
         return;
     }
     let templates = pull_templates();
-    for settings in PULL_SETTINGS {
+    for_each_pull_setting(|settings| {
         for &(diverged, ref up_dir, ref clone_dir, _) in &templates {
             let (_copy_dir, copy) = pull_copy(clone_dir.path(), settings);
             let before = copy.head().expect("head").oid;
@@ -1594,7 +1607,7 @@ fn pull_config_matches_what_git_pull_does() {
                 None => {}
             }
         }
-    }
+    });
     assert_upstreams_unchanged(&templates);
 }
 
@@ -1629,7 +1642,7 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
     ];
     assert_eq!(expected.len(), PullStrategy::ALL.len());
     let templates = pull_templates();
-    for settings in PULL_SETTINGS {
+    for_each_pull_setting(|settings| {
         for (strategy, on_diverged, on_behind) in expected {
             for &(diverged, ref up_dir, ref clone_dir, _) in &templates {
                 let want = if diverged { on_diverged } else { on_behind };
@@ -1660,7 +1673,7 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
                 );
             }
         }
-    }
+    });
     assert_upstreams_unchanged(&templates);
 }
 

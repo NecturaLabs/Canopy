@@ -94,7 +94,8 @@ adding a dependency.
   and `shellcheck` and `cargo deny check` only when installed. CI runs the docs check on every
   push; the rest is skipped only when everything changed since the last commit CI passed is
   documentation (Markdown and `docs/`, except `CHANGELOG.md` and `docs/legal/`, which the app
-  embeds) or the landing site (`site/`), and runs whenever that cannot be established. `site.yml`
+  embeds) or the landing site (`site/`), or when CI already passed on a commit with the same tree
+  (a merge of an up-to-date branch), and runs whenever that cannot be established. `site.yml`
   checks `site/` and, on `main`, deploys it to Netlify (https://canopy.necturalabs.com).
   `stall-check.py` runs in CI's Linux test job (required on GitHub-hosted runners, advisory on the
   self-hosted one). Run `cargo deny check`
