@@ -20,7 +20,7 @@ pub struct ConfigValue {
     pub value: String,
     /// `global`, `local`, `system`, `worktree` or `command`; empty when this git cannot say.
     pub scope: String,
-    /// Where it is set, as git prints it (`file:/home/ada/.gitconfig`).
+    /// Where it is set, as git prints it (`file:/home/ada/.gitconfig`), a file always absolute.
     pub origin: String,
 }
 
@@ -65,6 +65,9 @@ pub struct GitFacts {
     pub remote_prune: Vec<ConfigValue>,
     pub gpg_sign: Option<ConfigValue>,
     pub gpg_format: Option<ConfigValue>,
+    /// How commits would be signed and what would stop it; read only while `commit.gpgsign` is
+    /// on and for a repository.
+    pub signing: Option<Signing>,
     /// `fetch.pruneTags`, and `remote.<name>.pruneTags` for each remote that sets it.
     pub prune_tags: Vec<ConfigValue>,
     /// `rebase.autoStash` (rebases) and `merge.autoStash` (merges and merging pulls).
@@ -86,6 +89,133 @@ pub struct GitFacts {
     pub git: Option<(u32, u32)>,
     /// Why the configuration could not be read (git missing, not a repository).
     pub error: Option<String>,
+}
+
+/// How git would sign a commit here, from configuration and what is installed; nothing is run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signing {
+    /// `gpg.format` as set; `openpgp` when unset.
+    pub format: String,
+    /// `user.signingkey` shortened for display ([`key_label`]); the key itself is never kept.
+    pub key: Option<String>,
+    /// The program git runs: `gpg.<format>.program` (`gpg.program` for `OpenPGP`) or its default.
+    pub program: String,
+    /// What would make a commit fail, if anything.
+    pub problem: Option<SigningProblem>,
+}
+
+/// Why signing would fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SigningProblem {
+    /// `gpg.format` is none of `openpgp`, `ssh` and `x509`.
+    UnknownFormat,
+    /// The signing program is not installed.
+    ProgramMissing,
+    /// SSH signing needs a key and neither `user.signingkey` nor `gpg.ssh.defaultKeyCommand` is set.
+    KeyNotSet,
+    /// The key file `user.signingkey` names does not exist.
+    KeyFileMissing,
+}
+
+impl Signing {
+    /// The format as people name it.
+    pub fn format_label(&self) -> &str {
+        match self.format.as_str() {
+            "openpgp" => "OpenPGP",
+            "ssh" => "SSH",
+            "x509" => "X.509",
+            other => other,
+        }
+    }
+}
+
+/// `user.signingkey` as far as it is safe to show: a file's name, the end of a long key id or
+/// fingerprint, or `an inline SSH key`. `None` when unset or empty.
+fn key_label(key: &str) -> Option<String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    if inline_ssh_key(key) {
+        return Some("an inline SSH key".to_owned());
+    }
+    if key.contains(['/', '\\']) || key.starts_with('~') {
+        let name = key
+            .trim_end_matches(['/', '\\'])
+            .rsplit(['/', '\\'])
+            .next()?;
+        return Some(name.to_owned());
+    }
+    let chars: Vec<char> = key.chars().collect();
+    Some(
+        if chars.len() > KEY_ID_SHOWN && key.chars().all(|c| c.is_ascii_hexdigit()) {
+            let tail: String = chars[chars.len() - KEY_ID_SHOWN..].iter().collect();
+            format!("…{tail}")
+        } else {
+            chars.into_iter().take(KEY_LABEL_MAX).collect()
+        },
+    )
+}
+
+/// Characters of a long key id or fingerprint shown (the usual long key id).
+const KEY_ID_SHOWN: usize = 16;
+/// Characters of any other key description shown.
+const KEY_LABEL_MAX: usize = 32;
+
+/// Whether `user.signingkey` holds the key itself rather than naming a file: git takes only a
+/// `key::` prefix or an `ssh-` start as a literal key and anything else as a path.
+fn inline_ssh_key(key: &str) -> bool {
+    key.starts_with("key::") || key.starts_with("ssh-")
+}
+
+/// How git signs with this configuration. `get` reads a configuration value, `program_missing`
+/// says the signing program is not installed and `file_exists` is a plain metadata check, which
+/// resolves a relative path where git runs (the repository's working directory).
+fn signing_from(
+    get: &dyn Fn(&str) -> Option<ConfigValue>,
+    program_missing: &dyn Fn(&str) -> bool,
+    file_exists: &dyn Fn(&Path) -> bool,
+) -> Signing {
+    // Git compares the value exactly (`SSH` is an error, so is an empty one).
+    let format =
+        get("gpg.format").map_or_else(|| "openpgp".to_owned(), |v| v.value.trim().to_owned());
+    let (program_key, default_program) = match format.as_str() {
+        "ssh" => ("gpg.ssh.program", "ssh-keygen"),
+        "x509" => ("gpg.x509.program", "gpgsm"),
+        _ => ("gpg.openpgp.program", "gpg"),
+    };
+    let program = get(program_key)
+        .or_else(|| get("gpg.program").filter(|_| program_key == "gpg.openpgp.program"))
+        .map(|v| v.value)
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| default_program.to_owned());
+    let key = get("user.signingkey").map(|v| v.value);
+    let problem = if !matches!(format.as_str(), "openpgp" | "ssh" | "x509") {
+        Some(SigningProblem::UnknownFormat)
+    } else if program_missing(&program) {
+        Some(SigningProblem::ProgramMissing)
+    } else if format == "ssh" {
+        match key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
+            None => get("gpg.ssh.defaultKeyCommand")
+                .is_none()
+                .then_some(SigningProblem::KeyNotSet),
+            Some(k) if inline_ssh_key(k) => None,
+            Some(k) => {
+                let path = crate::settings::expand_home(k);
+                // `~user` is git's to expand: not judged here.
+                (!path.to_string_lossy().starts_with('~') && !file_exists(&path))
+                    .then_some(SigningProblem::KeyFileMissing)
+            }
+        }
+    } else {
+        None
+    };
+    Signing {
+        format,
+        key: key.as_deref().and_then(key_label),
+        program,
+        problem,
+    }
 }
 
 impl GitFacts {
@@ -179,6 +309,19 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
         .ok();
     facts.gpg_sign = get_bool(dir, scope, "commit.gpgsign").ok().flatten();
     facts.gpg_format = get("gpg.format").ok().flatten();
+    if let Some(w) = workdir
+        && facts.signs_commits()
+    {
+        // The tool check reads configuration and `PATH` only; it never runs the program.
+        let missing = canopy_core::Repo::open(w)
+            .map(|r| r.missing_tools())
+            .unwrap_or_default();
+        facts.signing = Some(signing_from(
+            &|key| get(key).ok().flatten(),
+            &|program| missing.iter().any(|m| m.program == program),
+            &|path| w.join(path).metadata().is_ok(),
+        ));
+    }
     facts.autostash = ["rebase.autoStash", "merge.autoStash"]
         .into_iter()
         .filter_map(|key| get_bool(dir, scope, key).ok().flatten())
@@ -192,9 +335,11 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
     facts
 }
 
-/// `git config --show-scope --show-origin --get <key>`: `Ok(None)` when it is not set.
+/// `git config -z --show-scope --show-origin --get <key>`: `Ok(None)` when it is not set. `-z`
+/// keeps git from C-quoting a path with non-ASCII characters; the origin is made absolute here,
+/// since git prints a repository's own file relative to the directory it ran in.
 fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>, String> {
-    let mut args = vec!["config"];
+    let mut args = vec!["config", "-z"];
     args.extend_from_slice(scope);
     args.extend(["--show-scope", "--show-origin", "--get", key]);
     let out = canopy_core::cli::run_unchecked(dir, &args).map_err(|e| e.to_string())?;
@@ -203,11 +348,12 @@ fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue
             key,
             &String::from_utf8_lossy(&out.stdout),
             true,
+            dir,
         )),
         Some(1) => Ok(None),
         // An older git without --show-scope (before 2.26): ask again without it.
         _ => {
-            let mut args = vec!["config"];
+            let mut args = vec!["config", "-z"];
             args.extend_from_slice(scope);
             args.extend(["--show-origin", "--get", key]);
             let out = canopy_core::cli::run_unchecked(dir, &args).map_err(|e| e.to_string())?;
@@ -216,6 +362,7 @@ fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue
                     key,
                     &String::from_utf8_lossy(&out.stdout),
                     false,
+                    dir,
                 )),
                 Some(1) => Ok(None),
                 _ => Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()),
@@ -258,19 +405,35 @@ fn get_bool(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>
     Ok(found)
 }
 
-/// The last line of `git config --show-origin [--show-scope] --get` output.
-fn parse_value(key: &str, out: &str, with_scope: bool) -> Option<ConfigValue> {
-    let line = out.lines().rev().find(|l| !l.trim().is_empty())?;
-    let mut parts = line.splitn(if with_scope { 3 } else { 2 }, '\t');
-    let scope = if with_scope { parts.next()? } else { "" };
-    let origin = parts.next()?;
-    let value = parts.next()?;
+/// The last record of `git config -z --show-origin [--show-scope] --get` output: NUL-terminated
+/// `scope`, `origin` and `value`. A relative `file:` origin is resolved against `dir`, where git
+/// ran.
+fn parse_value(key: &str, out: &str, with_scope: bool, dir: &Path) -> Option<ConfigValue> {
+    let width = if with_scope { 3 } else { 2 };
+    let mut fields: Vec<&str> = out.split('\0').collect();
+    fields.pop();
+    let record = fields.chunks_exact(width).next_back()?;
+    let (scope, rest) = if with_scope {
+        (record[0], &record[1..])
+    } else {
+        ("", record)
+    };
     Some(ConfigValue {
         key: key.to_owned(),
-        value: value.to_owned(),
+        value: rest[1].to_owned(),
         scope: scope.to_owned(),
-        origin: origin.to_owned(),
+        origin: absolute_origin(rest[0], dir),
     })
+}
+
+/// `origin` with a relative `file:` path (`file:.git/config`) made absolute against `dir`.
+fn absolute_origin(origin: &str, dir: &Path) -> String {
+    match origin.strip_prefix("file:") {
+        Some(file) if Path::new(file).is_relative() => {
+            format!("file:{}", dir.join(file).display())
+        }
+        _ => origin.to_owned(),
+    }
 }
 
 /// The repository's remotes and their URLs, in configuration order.
@@ -302,10 +465,12 @@ mod tests {
 
     #[test]
     fn values_and_where_they_are_set_are_read() {
+        let here = Path::new("/work/repo");
         let v = parse_value(
             "pull.rebase",
-            "global\tfile:/home/ada/.gitconfig\ttrue\n",
+            "global\0file:/home/ada/.gitconfig\0true\0",
             true,
+            here,
         )
         .expect("value");
         assert_eq!(
@@ -316,8 +481,9 @@ mod tests {
         // The last of several values wins, as for git itself.
         let last = parse_value(
             "pull.ff",
-            "system\tfile:/etc/gitconfig\ttrue\nlocal\tfile:.git/config\tonly\n",
+            "system\0file:/etc/gitconfig\0true\0local\0file:/work/repo/.git/config\0only\0",
             true,
+            here,
         )
         .expect("value");
         assert_eq!(
@@ -325,9 +491,49 @@ mod tests {
             ("local", "only")
         );
         assert_eq!(last.as_bool(), None, "only is not a boolean");
-        let old = parse_value("fetch.prune", "file:.git/config\tfalse\n", false).expect("value");
+        let old =
+            parse_value("fetch.prune", "file:/r/.git/config\0false\0", false, here).expect("value");
         assert_eq!((old.scope.as_str(), old.as_bool()), ("", Some(false)));
-        assert_eq!(parse_value("x", "", true), None);
+        let empty = parse_value("core.x", "local\0file:/r/.git/config\0\0", true, here)
+            .expect("an empty value");
+        assert_eq!(empty.value, "");
+        assert_eq!(parse_value("x", "", true, here), None);
+    }
+
+    /// Git prints the repository's own file relative to where it ran; the origin must name the
+    /// file wherever Canopy's working directory is.
+    #[test]
+    fn a_relative_origin_is_resolved_against_the_repository() {
+        let here = Path::new("/work/repo");
+        let v = parse_value("a.b", "local\0file:.git/config\0x\0", true, here).expect("value");
+        assert_eq!(
+            Path::new(v.origin.strip_prefix("file:").expect("file origin")),
+            here.join(".git/config")
+        );
+        let command = parse_value("a.b", "command\0command line:\0x\0", true, here).expect("value");
+        assert_eq!(command.origin, "command line:");
+        let absolute =
+            parse_value("a.b", "global\0file:/etc/gitconfig\0x\0", true, here).expect("value");
+        assert_eq!(absolute.origin, "file:/etc/gitconfig");
+    }
+
+    /// A repository under a non-ASCII path: git C-quotes the origin without `-z`.
+    #[test]
+    fn the_origin_of_a_non_ascii_path_is_the_real_path() -> std::io::Result<()> {
+        let root = tempfile::tempdir()?;
+        let dir = root.path().join("höme répo");
+        std::fs::create_dir(&dir)?;
+        canopy_core::cli::run(&dir, &["init", "-q"]).expect("git");
+        canopy_core::cli::run(&dir, &["config", "user.signingkey", "ABCDEF12"]).expect("git");
+        let found = get_value(&dir, &[], "user.signingkey")
+            .expect("read")
+            .expect("set");
+        assert_eq!(found.scope, "local");
+        assert_eq!(
+            found.origin,
+            format!("file:{}", dir.join(".git/config").display())
+        );
+        Ok(())
     }
 
     #[test]
@@ -477,6 +683,192 @@ mod tests {
             facts.fetch_prune.as_ref().and_then(ConfigValue::as_bool),
             Some(false)
         );
+        Ok(())
+    }
+
+    fn values(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<ConfigValue> + use<> {
+        let map: std::collections::HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        move |key| {
+            map.get(key).map(|value| ConfigValue {
+                key: key.to_owned(),
+                value: value.clone(),
+                scope: "global".into(),
+                origin: "file:/home/ada/.gitconfig".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn openpgp_signing_names_its_program_and_needs_no_key() {
+        let signing = signing_from(&values(&[]), &|_| false, &|_| false);
+        assert_eq!(signing.format_label(), "OpenPGP");
+        assert_eq!(signing.program, "gpg");
+        assert_eq!((signing.key.as_deref(), signing.problem), (None, None));
+
+        let configured = values(&[
+            ("user.signingkey", "3AA5C34371567BD2"),
+            ("gpg.program", "gpg2"),
+        ]);
+        let signing = signing_from(&configured, &|_| false, &|_| false);
+        assert_eq!(signing.program, "gpg2");
+        assert_eq!(signing.key.as_deref(), Some("3AA5C34371567BD2"));
+
+        let own = values(&[("gpg.program", "gpg2"), ("gpg.openpgp.program", "gpg-new")]);
+        assert_eq!(
+            signing_from(&own, &|_| false, &|_| false).program,
+            "gpg-new"
+        );
+    }
+
+    #[test]
+    fn a_long_fingerprint_is_shortened() {
+        let fingerprint = "0123456789ABCDEF0123456789ABCDEF3AA5C34371567BD2";
+        let signing = signing_from(
+            &values(&[("user.signingkey", fingerprint)]),
+            &|_| false,
+            &|_| false,
+        );
+        assert_eq!(signing.key.as_deref(), Some("…3AA5C34371567BD2"));
+    }
+
+    #[test]
+    fn ssh_signing_checks_the_key_file_and_never_shows_an_inline_key() {
+        let ssh = |key: &'static str| values(&[("gpg.format", "ssh"), ("user.signingkey", key)]);
+        let signing = signing_from(&ssh("/home/ada/.ssh/id_ed25519.pub"), &|_| false, &|_| true);
+        assert_eq!(signing.format_label(), "SSH");
+        assert_eq!(signing.program, "ssh-keygen");
+        assert_eq!(signing.key.as_deref(), Some("id_ed25519.pub"));
+        assert_eq!(signing.problem, None);
+
+        let signing = signing_from(&ssh("/home/ada/.ssh/id_ed25519.pub"), &|_| false, &|_| {
+            false
+        });
+        assert_eq!(signing.problem, Some(SigningProblem::KeyFileMissing));
+
+        let inline = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIsecret";
+        let signing = signing_from(&ssh(inline), &|_| false, &|_| false);
+        assert_eq!(signing.problem, None, "an inline key is not a file");
+        let shown = signing.key.as_deref().expect("label");
+        assert!(!shown.contains("AAAA"), "{shown}");
+        assert!(
+            !format!("{signing:?}").contains("AAAA"),
+            "the key is not kept at all"
+        );
+
+        let none = values(&[("gpg.format", "ssh")]);
+        assert_eq!(
+            signing_from(&none, &|_| false, &|_| false).problem,
+            Some(SigningProblem::KeyNotSet)
+        );
+        let command = values(&[
+            ("gpg.format", "ssh"),
+            ("gpg.ssh.defaultKeyCommand", "ssh-add -L"),
+        ]);
+        assert_eq!(signing_from(&command, &|_| false, &|_| false).problem, None);
+    }
+
+    /// Git takes only `key::` and `ssh-` as a literal key; any other value is a path, so a
+    /// relative one is looked for where git runs and a Windows one names its file.
+    #[test]
+    fn a_key_is_inline_only_as_git_reads_it() {
+        assert!(inline_ssh_key("key::ssh-ed25519 AAAA") && inline_ssh_key("ssh-ed25519 AAAA"));
+        for path in [
+            "ecdsa-sha2-nistp256 AAAA",
+            "sk-ssh-ed25519@openssh.com AAAA",
+            "id.pub",
+        ] {
+            assert!(!inline_ssh_key(path), "{path}");
+        }
+        assert_eq!(
+            key_label(r"C:\Users\ada\.ssh\id_ed25519.pub").as_deref(),
+            Some("id_ed25519.pub")
+        );
+        assert_eq!(key_label("~/.ssh/id.pub").as_deref(), Some("id.pub"));
+
+        let ssh = values(&[("gpg.format", "ssh"), ("user.signingkey", "keys/id.pub")]);
+        let seen = std::cell::RefCell::new(None);
+        let signing = signing_from(&ssh, &|_| false, &|p| {
+            *seen.borrow_mut() = Some(p.to_path_buf());
+            false
+        });
+        assert_eq!(seen.into_inner().as_deref(), Some(Path::new("keys/id.pub")));
+        assert_eq!(signing.problem, Some(SigningProblem::KeyFileMissing));
+        let user = values(&[("gpg.format", "ssh"), ("user.signingkey", "~bob/id.pub")]);
+        assert_eq!(signing_from(&user, &|_| false, &|_| false).problem, None);
+    }
+
+    /// A relative key path is checked in the repository, not where Canopy happens to run.
+    #[test]
+    fn a_relative_key_file_is_looked_for_in_the_repository() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let git = |args: &[&str]| {
+            canopy_core::cli::run(dir.path(), args).expect("git");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "commit.gpgsign", "true"]);
+        git(&["config", "gpg.format", "ssh"]);
+        git(&["config", "gpg.ssh.program", "sh"]);
+        git(&["config", "user.signingkey", "keys/id.pub"]);
+        let signing = read(Some(dir.path())).signing.expect("signing is on");
+        assert_eq!(signing.problem, Some(SigningProblem::KeyFileMissing));
+        std::fs::create_dir(dir.path().join("keys"))?;
+        std::fs::write(dir.path().join("keys/id.pub"), "ssh-ed25519 AAAA\n")?;
+        let signing = read(Some(dir.path())).signing.expect("signing is on");
+        assert_eq!(signing.problem, None);
+        assert_eq!(signing.key.as_deref(), Some("id.pub"));
+        Ok(())
+    }
+
+    #[test]
+    fn x509_signing_uses_gpgsm_and_an_unknown_format_is_a_problem() {
+        let x509 = values(&[("gpg.format", "x509")]);
+        let signing = signing_from(&x509, &|_| false, &|_| false);
+        assert_eq!(signing.format_label(), "X.509");
+        assert_eq!(signing.program, "gpgsm");
+
+        // Git compares the format exactly: `X509` and an empty value are errors in git itself.
+        for odd in ["pgp", "X509", "SSH", "OpenPGP", ""] {
+            let config = values(&[("gpg.format", odd)]);
+            let signing = signing_from(&config, &|_| false, &|_| false);
+            assert_eq!(
+                signing.problem,
+                Some(SigningProblem::UnknownFormat),
+                "{odd:?}"
+            );
+            assert_eq!(signing.format, odd);
+        }
+    }
+
+    #[test]
+    fn a_missing_program_is_the_first_problem() {
+        let config = values(&[("gpg.format", "ssh")]);
+        let signing = signing_from(&config, &|p| p == "ssh-keygen", &|_| false);
+        assert_eq!(signing.problem, Some(SigningProblem::ProgramMissing));
+    }
+
+    #[test]
+    fn signing_is_read_only_while_commits_are_signed() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let git = |args: &[&str]| {
+            canopy_core::cli::run(dir.path(), args).expect("git");
+        };
+        git(&["init", "-q"]);
+        // Read after any global signing configuration, so the developer's cannot decide.
+        git(&["config", "commit.gpgsign", "false"]);
+        assert_eq!(read(Some(dir.path())).signing, None);
+
+        git(&["config", "commit.gpgsign", "true"]);
+        git(&["config", "gpg.format", "ssh"]);
+        git(&["config", "gpg.ssh.program", "canopy-no-such-signer"]);
+        git(&["config", "user.signingkey", "key::ssh-ed25519 AAAA"]);
+        let facts = read(Some(dir.path()));
+        let signing = facts.signing.expect("signing is on");
+        assert_eq!(signing.format_label(), "SSH");
+        assert_eq!(signing.program, "canopy-no-such-signer");
+        assert_eq!(signing.problem, Some(SigningProblem::ProgramMissing));
         Ok(())
     }
 }

@@ -19,13 +19,13 @@ use canopy_hosting::{
 };
 
 use crate::action::Action;
-use crate::hosting::{HostJob, TokenSource};
+use crate::hosting::HostJob;
 use crate::keymap::Command;
 use crate::tab::RepoTab;
 use crate::ui::art;
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::LinkButton;
-use crate::ui::kit::chip::{Badge, RefPill};
+use crate::ui::kit::chip::{Badge, DiffStat, RefPill};
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::TextArea;
 use crate::ui::kit::overlay::TooltipExt;
@@ -1165,24 +1165,57 @@ fn action_bar(
     } else {
         (false, WAIT)
     };
+    // One primary for the state: Check out while the request is open, else Open on the host.
+    // The rest follow as one group of secondary buttons of the same size and spacing.
+    let open = r.state == RequestState::Open;
     ui.horizontal_wrapped(|ui| {
-        if Button::new("Check out")
-            .icon(icon::DOWNLOAD_SIMPLE)
-            .enabled(!checkout_off)
-            .tooltip("Fetch the request's branch and check it out locally")
-            .disabled_reason(checkout_reason)
+        ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+        let check_out = |ui: &mut Ui, actions: &mut Vec<Action>| {
+            let button = Button::new("Check out")
+                .icon(icon::DOWNLOAD_SIMPLE)
+                .enabled(!checkout_off)
+                .tooltip("Fetch the request's branch and check it out locally")
+                .disabled_reason(checkout_reason);
+            let button = if open {
+                button.primary()
+            } else {
+                button.secondary()
+            };
+            if button.show(ui).clicked() {
+                actions.push(Action::CheckoutRequest(r.clone()));
+            }
+        };
+        let open_on_host = |ui: &mut Ui, actions: &mut Vec<Action>| {
+            let button = Button::new(format!("Open on {}", kind.name()))
+                .icon(forge_icon(kind))
+                .shortcut(Command::OpenOnForge)
+                .tooltip(format!(
+                    "Open this {} on {}",
+                    kind.request_noun(),
+                    kind.name()
+                ));
+            let button = if open {
+                button.secondary()
+            } else {
+                button.primary()
+            };
+            if button.show(ui).clicked() {
+                actions.push(Action::OpenUrl(r.web_url.clone()));
+            }
+        };
+        if open {
+            check_out(ui, actions);
+            open_on_host(ui, actions);
+        } else {
+            open_on_host(ui, actions);
+            check_out(ui, actions);
+        }
+        if Button::new("Copy link")
+            .icon(icon::LINK)
+            .tooltip(format!("Copy the address of this {}", kind.request_noun()))
             .show(ui)
             .clicked()
         {
-            actions.push(Action::CheckoutRequest(r.clone()));
-        }
-        if Button::new(format!("{}  Open on {}", forge_icon(kind), kind.name()))
-            .show(ui)
-            .clicked()
-        {
-            actions.push(Action::OpenUrl(r.web_url.clone()));
-        }
-        if IconButton::new(icon::LINK, "Copy link").show(ui).clicked() {
             actions.push(Action::Copy(r.web_url.clone()));
         }
         let more = Button::new("More").caret().show(ui);
@@ -1325,16 +1358,52 @@ fn action_bar(
             ui.label(RichText::new(b).size(m.meta_size).color(p.accent));
         });
     }
-    if let Some(Some(source)) = tab.requests.token
-        && source != TokenSource::Saved
-    {
-        commit_detail::without_icons(
-            ui.label(
-                RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
-                    .size(m.small_size)
-                    .color(p.text_faint),
+    if let Some(problem) = credential_problem(tab) {
+        ui.add_space(theme::SM);
+        let fix = Callout::new(Tone::Warning, problem.text)
+            .title(problem.title)
+            .action(NoticeAction::new(problem.fix).icon(icon::KEY))
+            .id_salt("credential-problem")
+            .show_actions(ui)
+            .value;
+        if fix.is_some() {
+            actions.push(Action::Settings);
+        }
+    }
+}
+
+/// A credential that cannot do what the request's actions need, and what fixes it.
+struct CredentialProblem {
+    title: &'static str,
+    text: String,
+    fix: &'static str,
+}
+
+/// The credential problem to show under the request's actions: none while the credential works
+/// (its source is Settings' to say), else no token or a token the host refused. Without a token
+/// nothing was refused, whatever the host answered (a GitLab that wants a sign-in answers 401).
+fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
+    if tab.requests.token == Some(None) {
+        Some(CredentialProblem {
+            title: "No token",
+            text: "Without one Canopy can only read this request. Approving, merging and commenting need a token.".into(),
+            fix: "Add a token…",
+        })
+    } else if tab.requests.token_rejected {
+        Some(CredentialProblem {
+            title: "The host refused the token",
+            // Which one, so the fix goes to the right place.
+            text: format!(
+                "The token {} is expired, revoked or lacks the scope this needs. Replace it to approve, merge or comment.",
+                tab.requests
+                    .token
+                    .flatten()
+                    .map_or("Canopy sends", |source| source.label()),
             ),
-        );
+            fix: "Replace the token…",
+        })
+    } else {
+        None
     }
 }
 
@@ -1421,33 +1490,61 @@ pub(crate) fn merge_confirmation(
     })
 }
 
+/// One part of the summary line under a request's header.
+#[derive(Debug, PartialEq, Eq)]
+enum Stat {
+    Text(String),
+    /// Lines added and removed, drawn as the app's other diff stats.
+    Lines(usize, usize),
+}
+
+/// The summary line's parts: commits, files, lines and the conflict state, as far as known.
+fn summary_stats(d: &RequestDetails) -> Vec<Stat> {
+    let plural = |n: u32| if n == 1 { "" } else { "s" };
+    let mut stats = Vec::new();
+    if let Some(c) = d.commits {
+        stats.push(Stat::Text(format!("{c} commit{}", plural(c))));
+    }
+    if let Some(f) = d.changed_files {
+        stats.push(Stat::Text(format!("{f} file{} changed", plural(f))));
+    }
+    if let (Some(a), Some(r)) = (d.additions, d.deletions) {
+        let count = |n: u32| usize::try_from(n).unwrap_or(usize::MAX);
+        stats.push(Stat::Lines(count(a), count(r)));
+    }
+    if let Some(m) = d.mergeable {
+        stats.push(Stat::Text(
+            if m { "no conflicts" } else { "has conflicts" }.into(),
+        ));
+    }
+    stats
+}
+
 fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    // Stats.
-    let mut stats = Vec::new();
-    if let Some(c) = d.commits {
-        stats.push(format!("{c} commit{}", if c == 1 { "" } else { "s" }));
-    }
-    if let Some(f) = d.changed_files {
-        stats.push(format!("{f} file{} changed", if f == 1 { "" } else { "s" }));
-    }
-    if let (Some(a), Some(r)) = (d.additions, d.deletions) {
-        stats.push(format!("+{a} −{r}"));
-    }
-    if let Some(m) = d.mergeable {
-        stats.push(if m {
-            "no conflicts".into()
-        } else {
-            "has conflicts".into()
-        });
-    }
+    // Stats: the counts in the dim text, the lines in the added and removed colours.
+    let stats = summary_stats(d);
     if !stats.is_empty() {
-        ui.label(
-            RichText::new(stats.join("  ·  "))
-                .size(m.meta_size)
-                .color(p.text_dim),
-        );
+        ui.scope(|ui| {
+            // As tall as its text, like the commit details' summary.
+            ui.spacing_mut().interact_size.y = 0.0;
+            ui.horizontal_wrapped(|ui| {
+                for (i, stat) in stats.iter().enumerate() {
+                    if i > 0 {
+                        ui.label(RichText::new("·").size(m.meta_size).color(p.text_faint));
+                    }
+                    match stat {
+                        Stat::Text(text) => {
+                            ui.label(RichText::new(text).size(m.meta_size).color(p.text_dim));
+                        }
+                        Stat::Lines(added, removed) => {
+                            DiffStat::new(*added, *removed).show(ui);
+                        }
+                    }
+                }
+            });
+        });
         ui.add_space(theme::MD);
     }
 
@@ -1735,6 +1832,80 @@ mod tests {
         tab
     }
 
+    /// #143: the summary line reads "8 commits · 8 files changed · +607 −98", with the lines in
+    /// the theme's added and removed colours and the rest in the dim text.
+    #[test]
+    fn the_summary_line_colours_the_lines_like_other_diff_stats() {
+        let mut d = details(RequestState::Open);
+        d.commits = Some(8);
+        d.changed_files = Some(1);
+        d.additions = Some(607);
+        d.deletions = Some(98);
+        assert_eq!(
+            summary_stats(&d),
+            [
+                Stat::Text("8 commits".into()),
+                Stat::Text("1 file changed".into()),
+                Stat::Lines(607, 98),
+                Stat::Text("no conflicts".into()),
+            ]
+        );
+        for theme_id in theme::ThemeId::ALL {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme_id, theme::Appearance::STILL);
+            let mut p = None;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, SCREEN)),
+                    ..Default::default()
+                },
+                |ui| {
+                    p = Some(palette(ui.ctx()));
+                    body(ui, &d, 0, &mut Vec::new());
+                },
+            );
+            out.textures_delta.clear();
+            let p = p.expect("palette");
+            // Each painted text with the colour of each of its sections.
+            let mut inks = Vec::new();
+            for c in &out.shapes {
+                colours_of(&c.shape, &mut inks);
+            }
+            let colours = |text: &str| {
+                let (_, colours) = inks
+                    .iter()
+                    .find(|(t, _)| t == text)
+                    .unwrap_or_else(|| panic!("{text} not painted: {inks:?}"));
+                colours.clone()
+            };
+            assert_eq!(
+                colours("+607\u{2212}98"),
+                [p.success, p.danger.gamma_multiply(0.85)],
+                "{theme_id:?}"
+            );
+            assert_eq!(colours("8 commits"), [p.text_dim], "{theme_id:?}");
+            assert_eq!(colours("1 file changed"), [p.text_dim], "{theme_id:?}");
+        }
+    }
+
+    /// Each text in `shape` with the colour of each of its sections.
+    fn colours_of(shape: &egui::Shape, out: &mut Vec<(String, Vec<Color32>)>) {
+        match shape {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| colours_of(s, out)),
+            egui::Shape::Text(t) => out.push((
+                t.galley.text().to_owned(),
+                t.galley
+                    .job
+                    .sections
+                    .iter()
+                    .map(|s| s.format.color)
+                    .collect(),
+            )),
+            _ => {}
+        }
+    }
+
     /// F3: a GitLab merge request is `!7` everywhere it is numbered; a GitHub pull request `#7`.
     #[test]
     fn requests_are_numbered_with_their_providers_sigil() {
@@ -1847,6 +2018,215 @@ mod tests {
                 .find(|(t, _)| t == method.label())
                 .unwrap_or_else(|| panic!("{} not shown: {:?}", method.label(), frame.texts));
             assert!(!shown.1, "{} is cut short at {width}", method.label());
+        }
+    }
+
+    /// The shapes one frame of `f` paints on a pane of `size`.
+    fn painted(
+        theme_id: theme::ThemeId,
+        size: egui::Vec2,
+        mut f: impl FnMut(&mut Ui),
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme_id, theme::Appearance::STILL);
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            },
+            |ui| f(ui),
+        );
+        out.textures_delta.clear();
+        out.shapes
+    }
+
+    /// The colour `text` is painted in, and the left edge it starts at.
+    fn ink(shapes: &[egui::epaint::ClippedShape], text: &str) -> (Color32, f32) {
+        fn find(shape: &egui::Shape, text: &str) -> Option<(Color32, f32)> {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                egui::Shape::Text(t) if t.galley.text() == text => Some((
+                    t.override_text_color.unwrap_or(t.fallback_color),
+                    t.visual_bounding_rect().left(),
+                )),
+                _ => None,
+            }
+        }
+        shapes
+            .iter()
+            .find_map(|c| find(&c.shape, text))
+            .unwrap_or_else(|| panic!("{text:?} not painted"))
+    }
+
+    fn action_row(
+        theme_id: theme::ThemeId,
+        kind: ForgeKind,
+        state: RequestState,
+        width: f32,
+        tab: &mut RepoTab,
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let details = details(state);
+        painted(theme_id, vec2(width, 400.0), |ui| {
+            action_bar(
+                ui,
+                tab,
+                kind,
+                &details.summary,
+                Some(&details),
+                &mut Vec::new(),
+            );
+        })
+    }
+
+    /// #142: the header actions are one group of kit buttons with a single primary for the
+    /// state: Check out while the request is open, Open on the host otherwise.
+    #[test]
+    fn the_action_row_has_one_primary_for_the_state() {
+        for theme_id in theme::ThemeId::ALL {
+            let mut tab = test_tab();
+            let open = action_row(
+                theme_id,
+                ForgeKind::GitHub,
+                RequestState::Open,
+                560.0,
+                &mut tab,
+            );
+            let merged = action_row(
+                theme_id,
+                ForgeKind::GitHub,
+                RequestState::Merged,
+                560.0,
+                &mut tab,
+            );
+            let (check_out_open, _) = ink(&open, "Check out");
+            let (host_open, _) = ink(&open, "Open on GitHub");
+            let (check_out_merged, _) = ink(&merged, "Check out");
+            let (host_merged, _) = ink(&merged, "Open on GitHub");
+            let (copy, _) = ink(&open, "Copy link");
+            let (more, _) = ink(&open, "More");
+            assert_ne!(
+                check_out_open, host_open,
+                "{theme_id:?}: a primary and a secondary"
+            );
+            assert_eq!(check_out_open, host_merged, "{theme_id:?}: the primary");
+            assert_eq!(host_open, check_out_merged, "{theme_id:?}: the secondary");
+            assert_eq!(
+                [host_open, copy, more],
+                [host_open; 3],
+                "{theme_id:?}: one group"
+            );
+            // Left to right: the primary first.
+            assert!(ink(&open, "Check out").1 < ink(&open, "Open on GitHub").1);
+            assert!(ink(&merged, "Open on GitHub").1 < ink(&merged, "Check out").1);
+            assert!(ink(&open, "Open on GitHub").1 < ink(&open, "Copy link").1);
+            assert!(ink(&open, "Copy link").1 < ink(&open, "More").1);
+        }
+    }
+
+    /// #142: nothing says where the token came from while the credential works.
+    #[test]
+    fn no_credential_line_while_the_token_works() {
+        for source in [
+            crate::hosting::TokenSource::Saved,
+            crate::hosting::TokenSource::Environment,
+            crate::hosting::TokenSource::GitCredentials,
+        ] {
+            let mut tab = test_tab();
+            tab.requests.token = Some(Some(source));
+            let frame = render(theme::ThemeId::Midnight, vec2(560.0, 400.0), |ui| {
+                let details = details(RequestState::Open);
+                action_bar(
+                    ui,
+                    &mut tab,
+                    ForgeKind::GitHub,
+                    &details.summary,
+                    Some(&details),
+                    &mut Vec::new(),
+                );
+            });
+            for word in ["token", "credential", "Using"] {
+                assert!(
+                    !frame.mentions(word),
+                    "{source:?} shows {word}: {:?}",
+                    frame.texts
+                );
+            }
+        }
+    }
+
+    /// #142: a missing or refused token shows as a warning with its fix, and the fix opens
+    /// Settings.
+    #[test]
+    fn a_missing_or_refused_token_is_shown_with_its_fix() {
+        for (rejected, token, fix) in [
+            (false, Some(None), "Add a token…"),
+            // A host that wants a sign-in refuses a tokenless read; there is nothing to replace.
+            (true, Some(None), "Add a token…"),
+            (
+                true,
+                Some(Some(crate::hosting::TokenSource::Saved)),
+                "Replace the token…",
+            ),
+        ] {
+            let mut tab = test_tab();
+            tab.requests.token = token;
+            tab.requests.token_rejected = rejected;
+            let details = details(RequestState::Open);
+            let mut actions = Vec::new();
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+            ctx.enable_accesskit();
+            let mut run = |events: Vec<egui::Event>, actions: &mut Vec<Action>| {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(560.0, 700.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        action_bar(
+                            ui,
+                            &mut tab,
+                            ForgeKind::GitHub,
+                            &details.summary,
+                            Some(&details),
+                            actions,
+                        );
+                    },
+                );
+                out.textures_delta.clear();
+                out.platform_output.accesskit_update
+            };
+            let _ = run(Vec::new(), &mut actions);
+            let nodes = run(Vec::new(), &mut actions).expect("accesskit").nodes;
+            let button = nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some(fix))
+                .unwrap_or_else(|| panic!("no {fix:?} button"));
+            let b = button.1.bounds().expect("bounds");
+            let at = pos2(
+                crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+                crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+            );
+            let mut events = vec![egui::Event::PointerMoved(at)];
+            for pressed in [true, false] {
+                events.push(egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+            let _ = run(events, &mut actions);
+            assert!(
+                actions.iter().any(|a| matches!(a, Action::Settings)),
+                "{fix}: {actions:?}"
+            );
         }
     }
 

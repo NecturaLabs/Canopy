@@ -154,6 +154,7 @@ of that preview limit.
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
 | Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Done | Yes | Yes | Yes |
+| Sidebar rows sit indented under their section header; a new tab opens only Branches (Worktrees, Remotes, Tags, Stashes and Submodules start closed) and keeps the sections you open or close; Add remote… is in the palette and the local-only card | Done | ? | ? | ? |
 | A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Done | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |
@@ -177,6 +178,7 @@ The git-flow UI remains planned.
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
 | Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Done | ? | ? | ? |
 | Your git configuration decides what it sets (Follow my git config, on by default); elsewhere Canopy passes recommended defaults (autostash, push tags with their commits, `push.default=simple`, zdiff3 conflicts, `main` for new repositories, no tag pruning, `#` lines kept in commit messages), each a choice in Settings with its recommendation and where your configuration sets it; a greyed choice shows what git will do and a button stops following the configuration; Use recommended (confirmed in place) puts every Git choice back at once; the same notice from several repositories is shown once | Done | ? | ? | ? |
+| Settings → This repository → Commit signing states what git will do (signs or not) with the format (OpenPGP, SSH, X.509), the key's id or file name (an inline SSH key is never shown), the program and where `commit.gpgsign` is set, and warns with its fix when signing would fail: the program is not installed, an SSH key is not set or its file is missing, or `gpg.format` is unknown; read from the configuration and `PATH` only, never by running the program; a button opens the file that sets it | Done | ? | ? | ? |
 | A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Done | ? | ? | ? |
 | A rebase that stops on conflicts takes you to Changes, like a pull | Done | ? | ? | ? |
 | A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Done | ? | ? | ? |
@@ -217,6 +219,15 @@ Canopy has a token for the host; without a token a row shows them once the reque
 the session, and until then a faint question mark says they are not loaded (a request with no
 checks shows nothing).
 
+A request's header actions are one group of buttons of the same size: the primary for its state
+(Check out while it is open, Open on GitHub or GitLab otherwise), then the other, Copy link and
+More. Nothing says where the token came from while it works (Settings → Hosting does); a missing
+token, or one the host refused (expired, revoked or short of scope), shows as a warning under the
+actions with Add a token… or Replace the token…, which opens Settings.
+
+A request's details start with its summary line (commits, files changed, lines, conflict
+state) with the lines in the added and removed colours, as the commit and file diffs show them.
+
 The request list stays current without pressing Reload: a fetch (manual or the background one),
 pull or push that succeeds refreshes it, and the open request, quietly (no spinner or toast; the
 list, selection and open request stay on screen, and a failed refresh keeps them), and opening
@@ -254,7 +265,7 @@ A response with the wrong JSON shape reports its failure location without quotin
 | Tooltip settings (Appearance → Tooltips): Helpful (default; only what the screen does not show), All, or Off (only why a control is unavailable), and a Quick, Normal or Slow delay | Done | ? | ? | ? |
 | Links: a web link shows its address and offers Copy link; links in text are underlined; a cut-off field value shows whole in a tooltip | Unreleased | ? | ? | ? |
 | A settings file cannot turn on tag pruning, automatic fetching or beta builds, fetch more often, stop following your git configuration or choose where a push goes | Unreleased | ? | ? | ? |
-| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, git settings, review or restart into an update); entries, dismissals and unread counts kept across restarts, each row names its repository and dismisses on its own; a repository whose git configuration decides against the recommendation is listed once | Done | ? | Yes | ? |
+| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, git settings, review or restart into an update); entries, dismissals and unread counts kept across restarts, each row names its repository and dismisses on its own; the same notice again straight after itself from one repository (a fetch that found nothing, ten times) is one row with a count and the latest time; a repository whose git configuration decides against the recommendation is listed once | Done | ? | Yes | ? |
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Done | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Done | ? | ? | ? |

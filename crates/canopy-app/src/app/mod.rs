@@ -77,7 +77,6 @@ pub const OVERLAYS: &[&str] = &[
     "branch-selected",
     "long-message",
     "gallery",
-    "menu-remotes",
     "menu-branch",
     "menu-commit",
     "menu-file",

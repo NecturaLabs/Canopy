@@ -26,7 +26,7 @@ use super::kit::button::IconButton;
 use super::kit::chip::Badge;
 use super::kit::overlay::{self, Popover, TooltipExt};
 use super::kit::toast::{ACTIONS_GAP, BODY_LEADING, COLUMN_GAP, Choice, TITLE_GAP, ToastCard};
-use super::kit::{Button, KitResponse, Size};
+use super::kit::{Button, KitResponse, Size, paint};
 use super::motion;
 use super::theme;
 use crate::settings::NotificationPrefs;
@@ -298,6 +298,9 @@ struct Entry {
     help: Option<&'static str>,
     offer: Option<Offer>,
     unread: bool,
+    /// How many identical notices from the same repository, one after another, this row stands
+    /// for; `at` is the latest.
+    count: u32,
 }
 
 /// The stack of live toasts, and the notification center's history.
@@ -365,6 +368,13 @@ struct Saved {
     offer: Option<SavedOffer>,
     #[serde(default)]
     unread: bool,
+    #[serde(default = "one")]
+    count: u32,
+}
+
+/// The count of an entry kept before notices were grouped.
+fn one() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -399,6 +409,7 @@ impl Toasts {
                 body: e.body.clone(),
                 at: e.at,
                 source: e.source.clone(),
+                count: e.count,
                 unread: e.unread
                     || (matches!(
                         e.offer,
@@ -436,6 +447,7 @@ impl Toasts {
                 at: s.at,
                 source: s.source,
                 unread: s.unread,
+                count: s.count.max(1),
                 help: None,
                 offer: s.offer.map(|o| match o {
                     SavedOffer::Pull(path) => Offer::Pull(path),
@@ -591,17 +603,37 @@ impl Toasts {
         );
         self.next += 1;
         let card = self.prefs.shows(topic) && !self.center_open;
-        self.history.push_front(Entry {
-            id: self.next,
-            kind,
-            title: title.clone(),
-            body: body.clone(),
-            at: chrono::Utc::now().timestamp(),
-            source,
-            help,
-            offer: offer.clone(),
-            unread: !card && topic.counts() && !self.center_open,
+        let unread = !card && topic.counts() && !self.center_open;
+        let at = chrono::Utc::now().timestamp();
+        // The same notice again, straight after itself and from the same repository (a fetch
+        // that found nothing, ten times), is one row with a count and the latest time.
+        let repeated = self.history.front_mut().filter(|e| {
+            offer.is_none()
+                && e.offer.is_none()
+                && e.kind == kind
+                && e.title == title
+                && e.body == body
+                && e.source == source
         });
+        if let Some(entry) = repeated {
+            entry.count = entry.count.saturating_add(1);
+            entry.at = at;
+            entry.id = self.next;
+            entry.unread |= unread;
+        } else {
+            self.history.push_front(Entry {
+                id: self.next,
+                kind,
+                title: title.clone(),
+                body: body.clone(),
+                at,
+                source,
+                help,
+                offer: offer.clone(),
+                unread,
+                count: 1,
+            });
+        }
         self.history.truncate(HISTORY);
         self.count_unread();
         if !card {
@@ -968,8 +1000,11 @@ impl Toasts {
         }
         let now = chrono::Utc::now().timestamp();
         let mut gone = None;
-        let divider = theme::mix(theme::surfaces(ui.ctx()).overlay, p.text, 0.08);
-        egui::ScrollArea::vertical()
+        let ground = theme::surfaces(ui.ctx()).overlay;
+        let divider = theme::mix(ground, p.text, 0.08);
+        // The bar keeps its own room beside the rows, so it never covers a dismiss button.
+        ui.spacing_mut().scroll = theme::solid_scroll();
+        let list = egui::ScrollArea::vertical()
             .id_salt("notification-center-list")
             .max_height(CENTER_LIST_HEIGHT)
             .min_scrolled_height(CENTER_LIST_HEIGHT)
@@ -1027,15 +1062,34 @@ impl Toasts {
                                                     vec2(ui.available_width(), 0.0),
                                                     egui::Layout::top_down(egui::Align::Min),
                                                     |ui| {
-                                                        ui.add(
-                                                            egui::Label::new(
-                                                                RichText::new(&e.title)
-                                                                    .size(m.body_size)
-                                                                    .family(theme::semibold())
-                                                                    .color(p.text),
-                                                            )
-                                                            .wrap(),
-                                                        )
+                                                        let mut job =
+                                                            egui::text::LayoutJob::default();
+                                                        job.append(
+                                                            &e.title,
+                                                            0.0,
+                                                            egui::TextFormat::simple(
+                                                                egui::FontId::new(
+                                                                    m.body_size,
+                                                                    theme::semibold(),
+                                                                ),
+                                                                p.text,
+                                                            ),
+                                                        );
+                                                        if e.count > 1 {
+                                                            // How many times it came, in the dim
+                                                            // text after the title.
+                                                            job.append(
+                                                                &format!("  {}\u{d7}", e.count),
+                                                                0.0,
+                                                                egui::TextFormat::simple(
+                                                                    egui::FontId::proportional(
+                                                                        m.meta_size,
+                                                                    ),
+                                                                    p.text_faint,
+                                                                ),
+                                                            );
+                                                        }
+                                                        ui.add(egui::Label::new(job).wrap())
                                                     },
                                                 )
                                                 .inner;
@@ -1150,6 +1204,8 @@ impl Toasts {
                     });
                 }
             });
+        // A row cut by the list's edge fades out, so it reads as "scroll for more".
+        paint::scroll_fade(ui, &list, ground);
         if let Some(id) = gone {
             self.history.retain(|e| e.id != id);
         }
@@ -2284,6 +2340,202 @@ mod tests {
             2,
             "different words are another notice"
         );
+    }
+
+    fn fetched(toasts: &mut Toasts, ctx: &egui::Context, repo: &str, body: &str) {
+        toasts.push_for(
+            ctx,
+            ToastKind::Success,
+            Topic::Finished,
+            "Fetched",
+            body,
+            Some(Path::new(repo)),
+        );
+    }
+
+    /// #137: the same notice again straight after itself, from one repository, is one row with
+    /// a count and the latest time; another repository, other words or an interruption start a
+    /// new row.
+    #[test]
+    fn repeated_identical_notices_from_one_repository_are_one_row() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for _ in 0..10 {
+            fetched(
+                &mut toasts,
+                &ctx,
+                "/work/mote",
+                "Nothing new on any remote.",
+            );
+        }
+        assert_eq!(toasts.history.len(), 1, "ten fetches, one row");
+        assert_eq!(toasts.history[0].count, 10);
+        let first_id = toasts.history[0].id;
+        toasts.history[0].at -= 100;
+        fetched(
+            &mut toasts,
+            &ctx,
+            "/work/mote",
+            "Nothing new on any remote.",
+        );
+        assert_eq!(toasts.history[0].count, 11);
+        assert!(
+            toasts.history[0].at > chrono::Utc::now().timestamp() - 50,
+            "the latest time"
+        );
+        assert_ne!(toasts.history[0].id, first_id);
+
+        fetched(
+            &mut toasts,
+            &ctx,
+            "/work/other",
+            "Nothing new on any remote.",
+        );
+        fetched(
+            &mut toasts,
+            &ctx,
+            "/work/mote",
+            "Nothing new on any remote.",
+        );
+        fetched(&mut toasts, &ctx, "/work/mote", "2 new commits on origin.");
+        assert_eq!(
+            toasts.history.iter().map(|e| e.count).collect::<Vec<_>>(),
+            [1, 1, 1, 11],
+            "another repository, then the first again, then other words: each its own row"
+        );
+        // Errors are grouped the same way, and the group survives a restart.
+        for _ in 0..3 {
+            toasts.push(
+                &ctx,
+                ToastKind::Error,
+                Topic::Error,
+                "Push failed",
+                "denied",
+            );
+        }
+        assert_eq!(toasts.history[0].count, 3);
+        let mut restored = Toasts::default();
+        restored.restore_json(&toasts.to_json());
+        assert_eq!(
+            restored.history.iter().map(|e| e.count).collect::<Vec<_>>(),
+            [3, 1, 1, 1, 11]
+        );
+    }
+
+    /// A center kept before notices were grouped has no `count` (nor `unread`): each entry is
+    /// one notice and read, and a stored count of zero is never shown.
+    #[test]
+    fn an_entry_kept_before_grouping_restores_as_one_notice() {
+        let json = r#"[
+            {"kind":"Success","title":"Fetched","body":"Nothing new on any remote.",
+             "at":1700000000,"source":"/work/mote","offer":null},
+            {"kind":"Error","title":"Push failed","body":"denied","at":1700000100,
+             "source":null,"offer":null,"unread":true,"count":0}
+        ]"#;
+        let mut toasts = Toasts::default();
+        toasts.restore_json(json);
+        assert_eq!(
+            toasts
+                .history
+                .iter()
+                .map(|e| (e.title.as_str(), e.count, e.unread))
+                .collect::<Vec<_>>(),
+            [("Fetched", 1, false), ("Push failed", 1, true)]
+        );
+        assert_eq!(toasts.unread, 1);
+    }
+
+    /// A decision is never folded into the notice before it.
+    #[test]
+    fn a_decision_is_not_grouped() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for _ in 0..2 {
+            toasts.push_offer(
+                &ctx,
+                ToastKind::Info,
+                Topic::Attention,
+                "Pull?",
+                "behind",
+                Offer::Accounts,
+            );
+        }
+        assert_eq!(toasts.history.len(), 2);
+    }
+
+    /// #137: the list's scroll bar has its own room: no row's dismiss button reaches into it, at
+    /// any width, and the count shows after the title.
+    #[test]
+    fn the_scroll_bar_stays_clear_of_the_dismiss_buttons() {
+        for width in [CENTER_WIDTH, 260.0] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            crate::ui::fonts::install(&ctx);
+            let mut toasts = Toasts::default();
+            for i in 0..50 {
+                toasts.push_for(
+                    &ctx,
+                    ToastKind::Success,
+                    Topic::Finished,
+                    format!("Fetched {i}"),
+                    "Nothing new on any remote.",
+                    Some(Path::new("/work/mote")),
+                );
+            }
+            for _ in 0..3 {
+                fetched(&mut toasts, &ctx, "/work/mote", "again");
+            }
+            let mut right = 0.0_f32;
+            let mut dismiss = Vec::new();
+            let mut texts = Vec::new();
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(width, 700.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        right = ui.max_rect().right();
+                        let _ = toasts.center(ui);
+                    },
+                );
+                out.textures_delta.clear();
+                dismiss = out
+                    .platform_output
+                    .accesskit_update
+                    .into_iter()
+                    .flat_map(|u| u.nodes)
+                    .filter(|(_, n)| n.label() == Some("Dismiss notification"))
+                    .filter_map(|(_, n)| n.bounds())
+                    .collect();
+                texts = out
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            assert!(!dismiss.is_empty(), "no dismiss buttons at {width}");
+            let bar = theme::solid_scroll().floating_allocated_width;
+            for b in &dismiss {
+                assert!(
+                    crate::ui::to_f32(b.x1) <= right - bar + 0.5,
+                    "a dismiss button ends at {} but the bar starts at {} (width {width})",
+                    b.x1,
+                    right - bar
+                );
+            }
+            assert!(
+                texts.iter().any(|t| t == "  3\u{d7}")
+                    || texts.iter().any(|t| t.contains("3\u{d7}")),
+                "the count shows: {texts:?}"
+            );
+        }
     }
 
     /// The bell opens the center, which marks everything read and lists the notifications; while

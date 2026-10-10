@@ -36,6 +36,17 @@ pub enum SidebarItem {
     Worktree(PathBuf),
 }
 
+/// The sidebar sections a new tab starts with closed: only Branches is the daily surface. The
+/// user's own opening or closing of a section replaces this in [`RepoTab::collapsed`].
+const SIDEBAR_CLOSED_AT_START: [&str; 5] =
+    ["worktrees", "remotes", "tags", "stashes", "submodules"];
+
+/// Whether `message`, a hosting error's text, is the host refusing the token
+/// (`canopy_hosting::Error::Unauthorized`).
+fn credential_refused(message: &str) -> bool {
+    message.starts_with("The server refused the request (check the access token")
+}
+
 /// How the history list and selected commit share the content area.
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryLayout {
@@ -544,6 +555,10 @@ pub struct Requests {
         reason = "not yet known, known to be absent, or known, as the doc comment says"
     )]
     pub token: Option<Option<TokenSource>>,
+    /// The host refused the token on the newest read (a list or a request's details); cleared by
+    /// the next read or action it accepted. An action's refusal does not set it: the host also
+    /// answers 403 to a locked conversation or an archived repository.
+    pub token_rejected: bool,
     /// When the list was last loaded.
     pub loaded_at: Option<Instant>,
     /// The newest load was a quiet refresh (no spinner): if it fails, the list on screen stays.
@@ -567,6 +582,7 @@ impl Default for Requests {
             pending_comment: None,
             merge_method: MergeMethod::Merge,
             token: None,
+            token_rejected: false,
             loaded_at: None,
             quiet_refresh: false,
         }
@@ -789,6 +805,8 @@ pub struct RepoTab {
     pub scroll_to_selected: bool,
     /// Scroll just enough to show the selected commit next frame.
     pub reveal_selected: bool,
+    /// The sidebar sections and remotes the user (or the tab's start, [`SIDEBAR_CLOSED_AT_START`])
+    /// closed, by key.
     pub collapsed: HashSet<String>,
     /// The sidebar row last clicked ([`RepoTab::sidebar_shows`]).
     pub sidebar_pick: Option<SidebarItem>,
@@ -905,7 +923,7 @@ impl RepoTab {
             commit_limit,
             scroll_to_selected: false,
             reveal_selected: false,
-            collapsed: HashSet::new(),
+            collapsed: SIDEBAR_CLOSED_AT_START.map(str::to_owned).into(),
             sidebar_pick: None,
             forges: Vec::new(),
             host: None,
@@ -2078,6 +2096,16 @@ impl RepoTab {
         notices
     }
 
+    /// Remembers whether the host refused the token in `reply` to a read: an accepted reply
+    /// clears the note, a refusal sets it, and any other failure says nothing about the token.
+    fn note_token<T>(&mut self, reply: &Result<T, String>) {
+        match reply {
+            Ok(_) => self.requests.token_rejected = false,
+            Err(message) if credential_refused(message) => self.requests.token_rejected = true,
+            Err(_) => {}
+        }
+    }
+
     fn poll_host(&mut self, notices: &mut Vec<Notice>) {
         let Some(host) = &self.host else { return };
         let kind = host.forge.kind;
@@ -2091,6 +2119,7 @@ impl RepoTab {
                 }
                 HostEvent::Token(t) => self.requests.token = Some(t),
                 HostEvent::List(filter, result) => {
+                    self.note_token(&result);
                     let kept_through_failure = self.requests.quiet_refresh
                         && result.is_err()
                         && matches!(self.requests.list, Some(Ok(_)));
@@ -2126,6 +2155,7 @@ impl RepoTab {
                     }
                 }
                 HostEvent::Details(n, generation, result) => {
+                    self.note_token(&result);
                     if self.requests.selected == Some(n)
                         && self.requests.details_generation == generation
                     {
@@ -2165,6 +2195,9 @@ impl RepoTab {
                     number,
                     result,
                 } => {
+                    if result.is_ok() {
+                        self.requests.token_rejected = false;
+                    }
                     self.requests.busy = None;
                     let submitted = if action == HostAction::Comment {
                         self.requests.pending_comment.take()
@@ -2290,6 +2323,64 @@ mod tests {
             .expect("late response");
         tab.poll(&[]);
         assert!(tab.ignore_result.is_none() && tab.ignore_query.is_none());
+    }
+
+    /// #142: the host refusing the token is noted until it accepts one; a network failure or
+    /// another refusal says nothing about the token.
+    #[test]
+    fn a_refused_token_is_remembered_until_the_host_accepts_one() {
+        use canopy_hosting::Error;
+        let refused = Error::Unauthorized("Bad credentials".into()).to_string();
+        assert!(credential_refused(&refused), "{refused}");
+        for other in [
+            Error::Network("timed out".into()),
+            Error::RateLimited { reset: None },
+            Error::NotFound("no such project".into()),
+            Error::Api {
+                status: 500,
+                message: "oops".into(),
+            },
+        ] {
+            assert!(!credential_refused(&other.to_string()), "{other}");
+        }
+        let (worker, _, _) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        assert!(!tab.requests.token_rejected);
+        tab.note_token::<()>(&Err(refused));
+        assert!(tab.requests.token_rejected);
+        tab.note_token::<()>(&Err("Could not reach the server: timed out".into()));
+        assert!(
+            tab.requests.token_rejected,
+            "a network failure changes nothing"
+        );
+        tab.note_token(&Ok(()));
+        assert!(!tab.requests.token_rejected);
+    }
+
+    /// An action refused for another reason (a locked conversation answers 403) must not turn a
+    /// token that reads fine into a rejected one; one the host accepted still clears the note.
+    #[test]
+    fn a_refused_action_does_not_flag_the_token() {
+        let refused = canopy_hosting::Error::Unauthorized("Conversation is locked".into());
+        let done = |result| HostEvent::Done {
+            label: "Commenting".into(),
+            action: HostAction::Comment,
+            number: Some(7),
+            result,
+        };
+        let (mut tab, _, _) = tab_showing_requests();
+        let forge = tab.host.as_ref().expect("host").forge.clone();
+        let (host, events, _) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        events.send(done(Err(refused.to_string()))).expect("event");
+        tab.poll(&[]);
+        assert!(!tab.requests.token_rejected);
+
+        tab.requests.token_rejected = true;
+        events.send(done(Ok(()))).expect("event");
+        tab.poll(&[]);
+        assert!(!tab.requests.token_rejected, "an accepted action clears it");
     }
 
     /// A notification says what happened in the past tense, or what could not be done.
