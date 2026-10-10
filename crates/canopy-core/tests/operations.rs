@@ -4232,3 +4232,124 @@ fn pull_autostash_overrides_strategy_settings_and_matches_fetched_pull() {
         }
     }
 }
+
+/// What `git worktree list --porcelain` names, as `(folder, branch)` pairs.
+fn listed_worktrees(dir: &Path) -> Vec<(std::path::PathBuf, Option<String>)> {
+    let out = git(dir, &["worktree", "list", "--porcelain"]);
+    let mut found = Vec::new();
+    for block in out.split("\n\n").filter(|b| !b.trim().is_empty()) {
+        let value = |key: &str| {
+            block
+                .lines()
+                .find_map(|l| l.strip_prefix(key))
+                .map(str::to_owned)
+        };
+        let folder = value("worktree ").expect("a worktree line");
+        found.push((
+            fs::canonicalize(folder).expect("canonical"),
+            value("branch refs/heads/"),
+        ));
+    }
+    found
+}
+
+#[test]
+fn a_worktree_on_a_new_branch_starts_where_asked_and_tracks_nothing() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "base"]);
+    fs::write(p.join("later.txt"), "later\n").expect("write");
+    git(p, &["add", "."]);
+    git(p, &["commit", "-q", "-m", "feat: later"]);
+    let linked = tempfile::tempdir().expect("tempdir");
+    let wt = linked.path().join("wt");
+
+    repo.add_worktree(&wt, "topic", true, Some("base"))
+        .expect("add");
+
+    let canonical = fs::canonicalize(&wt).expect("canonical");
+    assert!(
+        listed_worktrees(p).contains(&(canonical, Some("topic".into()))),
+        "git lists the new folder on the new branch"
+    );
+    assert_eq!(
+        git(&wt, &["rev-parse", "HEAD"]),
+        git(p, &["rev-parse", "base"]),
+        "started at the branch asked for, not at HEAD"
+    );
+    assert!(!wt.join("later.txt").exists());
+    assert_eq!(
+        git(
+            p,
+            &["for-each-ref", "--format=%(upstream)", "refs/heads/topic"]
+        )
+        .trim(),
+        "",
+        "no upstream is set"
+    );
+    let snap = repo.snapshot(100).expect("snapshot");
+    assert_eq!(snap.worktrees.len(), 2);
+}
+
+#[test]
+fn a_worktree_on_an_existing_branch_checks_it_out() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "feature"]);
+    let linked = tempfile::tempdir().expect("tempdir");
+    let wt = linked.path().join("wt");
+
+    repo.add_worktree(&wt, "feature", false, None).expect("add");
+
+    assert_eq!(
+        git(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "feature"
+    );
+    assert!(wt.join("a.txt").exists(), "the files are checked out");
+}
+
+#[test]
+fn a_worktree_refuses_in_gits_words_what_git_refuses() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "feature"]);
+    git(p, &["branch", "taken"]);
+    let linked = tempfile::tempdir().expect("tempdir");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.path().join("first").to_str().expect("utf-8"),
+            "taken",
+        ],
+    );
+    let stderr = |result: canopy_core::Result<()>| match result {
+        Err(canopy_core::Error::Cli { stderr, .. }) => stderr,
+        other => panic!("expected git's refusal, got {other:?}"),
+    };
+
+    let checked_out = stderr(repo.add_worktree(&linked.path().join("again"), "taken", false, None));
+    assert!(checked_out.contains("taken"), "{checked_out}");
+    assert!(!linked.path().join("again").exists());
+
+    let busy = linked.path().join("busy");
+    fs::create_dir(&busy).expect("mkdir");
+    fs::write(busy.join("file.txt"), "x").expect("write");
+    let not_empty = stderr(repo.add_worktree(&busy, "feature", false, None));
+    assert!(not_empty.contains("already exists"), "{not_empty}");
+
+    let exists = stderr(repo.add_worktree(&linked.path().join("new"), "main", true, None));
+    assert!(exists.contains("main"), "{exists}");
+
+    assert!(
+        repo.add_worktree(&linked.path().join("x"), "-b", true, None)
+            .is_err()
+    );
+    assert!(
+        repo.add_worktree(&linked.path().join("y"), "ok", true, Some("--detach"))
+            .is_err()
+    );
+    assert_eq!(listed_worktrees(p).len(), 2, "only the first one exists");
+}
