@@ -961,6 +961,9 @@ pub struct RepoTab {
     pub line_sel: Option<LineSelection>,
     /// The selected conflict resolver, retained while hidden if it has authored work.
     pub resolver: Option<Resolver>,
+    /// Resolvers with authored work for the other conflicted files, kept until their file leaves
+    /// the conflicted list.
+    pub parked_resolvers: Vec<Resolver>,
     /// Side-by-side diff and syntax highlighting (from the settings).
     pub split_diff: bool,
     pub highlight_diff: bool,
@@ -1110,6 +1113,7 @@ impl RepoTab {
             line_sel: None,
             marked: BTreeSet::new(),
             resolver: None,
+            parked_resolvers: Vec::new(),
             split_diff: false,
             highlight_diff: true,
             check_message: true,
@@ -1744,6 +1748,19 @@ impl RepoTab {
         }
     }
 
+    /// Forgets parked resolvers of files that are no longer conflicted. An unreadable status says
+    /// nothing about the conflicts, so it keeps them.
+    fn prune_parked(&mut self) {
+        if let Some(snap) = self
+            .snap
+            .as_ref()
+            .filter(|s| s.status_unavailable.is_none())
+        {
+            self.parked_resolvers
+                .retain(|r| snap.status.conflicted.iter().any(|f| f.path == r.path));
+        }
+    }
+
     /// Shows the diff of a file.
     pub fn select_file(&mut self, sel: FileSelection) {
         let key = self.diff_key(&sel);
@@ -1770,7 +1787,17 @@ impl RepoTab {
                 .as_ref()
                 .is_none_or(|r| r.path != sel.entry.path)
             {
-                self.resolver = Some(Resolver::new(sel.entry.path.clone()));
+                let next = self
+                    .parked_resolvers
+                    .iter()
+                    .position(|r| r.path == sel.entry.path)
+                    .map_or_else(
+                        || Resolver::new(sel.entry.path.clone()),
+                        |i| self.parked_resolvers.remove(i),
+                    );
+                if let Some(left) = self.resolver.replace(next).filter(Resolver::has_draft) {
+                    self.parked_resolvers.push(left);
+                }
             }
             self.worker.send(Job::Conflict(sel.entry.path.clone()));
         } else if self.resolver.as_ref().is_none_or(|r| !r.has_draft()) {
@@ -2040,6 +2067,7 @@ impl RepoTab {
                     self.snap_index = SnapIndex::new(&s);
                     self.snap = Some(s);
                     self.prune_marked();
+                    self.prune_parked();
                     self.generation += 1;
                     self.update_forges(gitlab_hosts);
                     self.load_error = None;
@@ -2089,6 +2117,7 @@ impl RepoTab {
                         s.status_unavailable = None;
                         self.snap_index.update_submodules(s);
                     }
+                    self.prune_parked();
                     self.reconcile_file_selection();
                     self.clear_obsolete_refusal();
                 }
@@ -3518,6 +3547,99 @@ mod tests {
             .expect("message");
         tab.poll(&[]);
         assert_eq!(tab.commit_summary, "Typed draft");
+    }
+
+    fn conflicted_entry(path: &str) -> FileEntry {
+        FileEntry {
+            path: path.into(),
+            old_path: None,
+            kind: canopy_core::ChangeKind::Modified,
+            additions: 0,
+            deletions: 0,
+            lfs: false,
+            old_mode: None,
+            new_mode: None,
+        }
+    }
+
+    fn conflicted(path: &str) -> FileSelection {
+        FileSelection {
+            source: DiffSource::Unstaged,
+            entry: conflicted_entry(path),
+            conflicted: true,
+        }
+    }
+
+    /// #132: choices and an unfinished edit survive picking another conflicted file and coming
+    /// back; a file with no authored work leaves nothing behind.
+    #[test]
+    fn selecting_another_conflicted_file_keeps_the_resolver_draft() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let text = "<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n";
+        tab.select_file(conflicted("a.rs"));
+        events
+            .send(Event::Conflict {
+                path: "a.rs".into(),
+                kind: None,
+                file: Ok(Arc::new(ConflictFile::parse(text))),
+            })
+            .expect("conflict");
+        tab.poll(&[]);
+        let r = tab.resolver.as_mut().expect("resolver for a");
+        r.choose(Choice::Theirs);
+        r.editing = Some((0, "unfinished".into()));
+
+        tab.select_file(conflicted("b.rs"));
+        assert_eq!(tab.resolver.as_ref().map(|r| r.path.as_str()), Some("b.rs"));
+        tab.select_file(conflicted("a.rs"));
+        let r = tab.resolver.as_ref().expect("resolver for a again");
+        assert_eq!(r.path, "a.rs");
+        assert_eq!(r.choices, vec![Some(Choice::Theirs)]);
+        assert_eq!(r.editing, Some((0, "unfinished".into())));
+        assert!(tab.parked_resolvers.is_empty(), "b had no draft to park");
+    }
+
+    /// A parked draft goes when its file stops being conflicted (snapshot or status), but not
+    /// when the status could not be read.
+    #[test]
+    fn parked_resolvers_follow_the_conflicted_list() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let draft = || {
+            let mut r = Resolver::new("a.rs".into());
+            r.choices = vec![Some(Choice::Ours)];
+            r
+        };
+        let snap = |conflicted: &[&str], unavailable: bool| {
+            let mut s = RepoSnapshot::default();
+            s.status.conflicted = conflicted.iter().map(|p| conflicted_entry(p)).collect();
+            if unavailable {
+                s.status_unavailable = Some(canopy_core::StatusUnavailable {
+                    message: "unreadable".into(),
+                    can_download: false,
+                });
+            }
+            Arc::new(s)
+        };
+        tab.parked_resolvers = vec![draft()];
+        events
+            .send(Event::Snapshot(snap(&[], true)))
+            .expect("snapshot");
+        tab.poll(&[]);
+        assert_eq!(tab.parked_resolvers.len(), 1, "unreadable status keeps it");
+        events
+            .send(Event::Snapshot(snap(&["a.rs"], false)))
+            .expect("snapshot");
+        tab.poll(&[]);
+        assert_eq!(tab.parked_resolvers.len(), 1, "still conflicted");
+        events
+            .send(Event::Status(canopy_core::WorkingStatus::default()))
+            .expect("status");
+        tab.poll(&[]);
+        assert!(tab.parked_resolvers.is_empty(), "resolved elsewhere");
     }
 
     #[test]

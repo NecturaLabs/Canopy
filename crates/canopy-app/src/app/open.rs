@@ -112,6 +112,7 @@ struct RepositoryDraft {
     merge_prefill: Option<(String, String)>,
     template_prefill: Option<(String, String)>,
     resolution: Option<(Option<crate::tab::FileSelection>, crate::tab::Resolver)>,
+    parked_resolvers: Vec<crate::tab::Resolver>,
     comments: Vec<crate::tab::RequestCommentDraft>,
 }
 
@@ -135,6 +136,7 @@ pub(super) fn keep_draft(ctx: &egui::Context, tab: &RepoTab) {
     if !tab.commit_summary.is_empty()
         || !tab.commit_body.is_empty()
         || resolution.is_some()
+        || !tab.parked_resolvers.is_empty()
         || !comments.is_empty()
     {
         let draft = RepositoryDraft {
@@ -143,6 +145,7 @@ pub(super) fn keep_draft(ctx: &egui::Context, tab: &RepoTab) {
             merge_prefill: tab.merge_prefill.clone(),
             template_prefill: tab.template_prefill.clone(),
             resolution,
+            parked_resolvers: tab.parked_resolvers.clone(),
             comments,
         };
         ctx.data_mut(|d| d.insert_temp(draft_id(&tab.path), draft));
@@ -162,6 +165,7 @@ fn restore_draft(ctx: &egui::Context, tab: &mut RepoTab) {
         tab.merge_prefill = draft.merge_prefill;
         tab.template_prefill = draft.template_prefill;
         tab.request_comments = draft.comments;
+        tab.parked_resolvers = draft.parked_resolvers;
         if let Some((file, resolver)) = draft.resolution {
             tab.file = file;
             tab.resolver = Some(resolver);
@@ -937,6 +941,29 @@ mod tests {
             vec![Some(Choice::Custom("custom result".into()))]
         );
         assert!(app.tabs[0].file.is_none());
+    }
+
+    #[test]
+    fn switching_worktrees_preserves_resolvers_parked_for_other_conflicted_files() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        for path in [&a, &b] {
+            std::fs::create_dir(path).expect("worktree folder");
+        }
+        let mut app = test_app();
+        app.add_tab(&ctx, a.clone(), true);
+        let mut parked = crate::tab::Resolver::new("other.txt".into());
+        parked.choices = vec![Some(canopy_core::Choice::Ours)];
+        app.tabs[0].parked_resolvers = vec![parked];
+        app.replace_tab(&ctx, &a, b.clone());
+        assert!(app.tabs[0].parked_resolvers.is_empty());
+        app.replace_tab(&ctx, &b, a);
+        let restored = &app.tabs[0].parked_resolvers;
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].path, "other.txt");
+        assert_eq!(restored[0].choices, vec![Some(canopy_core::Choice::Ours)]);
     }
 
     #[test]

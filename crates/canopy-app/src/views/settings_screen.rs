@@ -1248,6 +1248,27 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
     row_end(ui);
 }
 
+/// What a Git setting row says under its title; the recommended option is marked in its list.
+fn git_setting_help(setting: Setting) -> &'static str {
+    match setting {
+        Setting::Autocrlf => "Keep the line-ending convention your projects require.",
+        Setting::CommitSigning => {
+            "Git uses your existing signing key and program; choose explicitly."
+        }
+        Setting::PullFastForward => {
+            "Pull strategy: when branches diverge, choose Rebase or Merge for that pull."
+        }
+        Setting::FetchPruneTags => "Turning this on can delete local tags that were never pushed.",
+        Setting::PullAutostash => "Overrides rebase and merge autostash for pulls.",
+        Setting::PushDefault => {
+            "Matching pushes all matching branches; Nothing requires an explicit destination."
+        }
+        Setting::SubmoduleRecurse => "Git also updates configured submodules.",
+        Setting::SigningFormat => "Git uses your existing signing key and program.",
+        _ => "",
+    }
+}
+
 /// [`row`] with a note under its help about what git's own configuration says.
 fn row_with_note(
     ui: &mut Ui,
@@ -1257,7 +1278,9 @@ fn row_with_note(
     control: impl FnOnce(&mut Ui),
 ) {
     let help_text = |ui: &mut Ui| {
-        help_label(ui, help);
+        if !help.is_empty() {
+            help_label(ui, help);
+        }
         if let Some(note) = note {
             note.show(ui);
         }
@@ -2995,19 +3018,8 @@ fn git_config_editor(
             ),
             warn: false,
         };
-        let help = recommended.map_or_else(|| match setting {
-            Setting::Autocrlf => "Keep the line-ending convention your projects require.".to_owned(),
-            Setting::CommitSigning => "Git uses your existing signing key and program; choose explicitly.".to_owned(),
-            _ => "Git uses your existing signing key and program.".to_owned(),
-        }, |value| format!("Recommended: {}. {}", git_value_label(setting, value), match setting {
-            Setting::PullFastForward => "Pull strategy: when branches diverge, choose Rebase or Merge for that pull.",
-            Setting::FetchPruneTags => "Turning this on can delete local tags that were never pushed.",
-            Setting::PullAutostash => "Overrides rebase and merge autostash for pulls.",
-            Setting::PushDefault => "Matching pushes all matching branches; Nothing requires an explicit destination.",
-            Setting::SubmoduleRecurse => "Git also updates configured submodules.",
-            _ => "",
-        }));
-        row_with_note(ui, setting.label(), &help, Some(&note), |ui| {
+        let help = git_setting_help(setting);
+        row_with_note(ui, setting.label(), help, Some(&note), |ui| {
             ui.add_enabled_ui(ready, |ui| {
                 let mut selected = value.map(|value| value.value.clone());
                 if setting == Setting::InitialBranch {
@@ -7779,6 +7791,16 @@ mod tests {
         }
         // Canopy's own choice for both is on.
         assert!(Settings::default().prune_on_fetch && Settings::default().follow_tags);
+    }
+
+    #[test]
+    fn git_setting_help_does_not_type_the_recommendation() {
+        for setting in Setting::ALL {
+            assert!(
+                !git_setting_help(setting).contains("Recommended"),
+                "{setting:?}: the list marks the recommended option"
+            );
+        }
     }
 
     #[test]
