@@ -238,7 +238,7 @@ as Reload, and only with hosting on and a list already loaded.
 Going back to a request opened within the last minute (A, then B, then A again) shows its details
 at once from a small cache of the last 16 loads, without asking the host again. The cache is keyed
 by forge host, project and request number, so equal numbers in different projects never share an
-entry. A Reload, a refresh that loads the request again, the result of an action (merge, close,
+entry. A Reload, an automatic refresh of the list, the result of an action (merge, close,
 approve, comment and so on) and a change of token empty it, and a failed load is never kept.
 Unsent comments are kept apart from it.
 

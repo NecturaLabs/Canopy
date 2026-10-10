@@ -1227,6 +1227,8 @@ impl RepoTab {
             return;
         }
         self.requests.quiet_refresh = true;
+        // The list is being revalidated, so what was cached before it may disagree with its rows.
+        self.requests.details_cache.clear();
         self.host_job(HostJob::List(self.requests.filter));
         if let Some(n) = self.requests.selected
             && self.requests.details.is_some()
@@ -4708,6 +4710,20 @@ mod tests {
         open_request(&mut tab, &host_events, &host_jobs, 9);
         open_request(&mut tab, &host_events, &host_jobs, 4);
         tab.load_requests();
+        drop(jobs_of(&host_jobs));
+        tab.select_request(9);
+        assert!(matches!(
+            jobs_of(&host_jobs).as_slice(),
+            [HostJob::Details(9, _)]
+        ));
+    }
+
+    #[test]
+    fn an_automatic_list_refresh_drops_the_cached_details() {
+        let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
+        open_request(&mut tab, &host_events, &host_jobs, 9);
+        open_request(&mut tab, &host_events, &host_jobs, 4);
+        tab.refresh_requests_quietly();
         drop(jobs_of(&host_jobs));
         tab.select_request(9);
         assert!(matches!(
