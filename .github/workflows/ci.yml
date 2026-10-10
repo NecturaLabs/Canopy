@@ -229,6 +229,9 @@ jobs:
       - name: Documentation check
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 tools/check-docs.py
+      - name: Release test gate regressions
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        run: python3 tools/test-release-gate.py
       # Files the landing site names exist, its addresses keep to its content security policy and
       # its scripts parse.
       - name: Site check

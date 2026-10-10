@@ -44,8 +44,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Test before tagging
+    if: github.ref == 'refs/heads/main' && !inputs.dry-run
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-release.yml
+    with:
+      commit: ${{ github.sha }}
+
   prepare:
     name: Build number and tag
+    needs: [test]
+    # A dry run skips tests and cannot tag; a real run proceeds only after tests pass.
+    if: ${{ !cancelled() && (inputs.dry-run || needs.test.result == 'success') }}
     # A throwaway GitHub-hosted runner: this job holds a token that can push tags.
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -64,7 +76,7 @@ jobs:
       # and every tag, since the build number counts commits.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
       - name: Decide the build
