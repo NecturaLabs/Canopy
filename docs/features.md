@@ -81,7 +81,7 @@ git would run on every `git status`.
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
 | Author avatars | Done (GitHub/GitLab pictures, initials fallback) | Yes | Yes | Yes |
 | On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
-| Commit details: metadata (labelled Commit and Parent rows), files with +/- counts, per-file diff; persistent information disclosure, expand/return header and compact full view | Done | Yes | Yes | Yes |
+| Commit details: summary, copyable commit id, parent links and committer picture/name in the header; scrolling description and changed-file card, per-file diff, expand/return and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
 | File history | Planned | Yes | Yes | Yes |
@@ -90,7 +90,7 @@ git would run on every `git status`.
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |
 | Signature verification badges | Done: distinct verified, invalid, unavailable, untrusted and expired/revoked marks in commit details and the author card; only verified signatures use the trusted mark; checked by git in trusted folders only | ? | Yes | ? |
-| Author card and parent links in commit details | Done: the name opens a card (email, committer, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
+| Commit identity card and parent links in commit details | Done: the committer name opens a card (email, original author, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
 
 Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.
 The merge composer names the conclusion and prefills Git's merge message without replacing a draft.
@@ -154,7 +154,7 @@ of that preview limit.
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
 | Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Done | Yes | Yes | Yes |
-| Sidebar rows sit indented under their section header; a new tab opens only Branches (Worktrees, Remotes, Tags, Stashes and Submodules start closed) and keeps the sections you open or close; Add remote… is in the palette and the local-only card | Done | ? | ? | ? |
+| Sidebar rows sit indented under their section header; a new tab opens only Branches (Worktrees, Remotes, Tags, Stashes and Submodules start closed) and keeps the sections you open or close, saved per repository (its worktrees share them) and restored when reopened; Add remote… is in the palette and the local-only card | Done | Yes | ? | ? |
 | A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Done | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |
@@ -178,7 +178,8 @@ The git-flow UI remains planned.
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
 | Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Done | ? | ? | ? |
 | Your git configuration decides what it sets (Follow my git config, on by default); elsewhere Canopy passes recommended defaults (autostash, push tags with their commits, `push.default=simple`, zdiff3 conflicts, `main` for new repositories, no tag pruning, `#` lines kept in commit messages), each a choice in Settings with its recommendation and where your configuration sets it; a greyed choice shows what git will do and a button stops following the configuration; Use recommended (confirmed in place) puts every Git choice back at once; the same notice from several repositories is shown once | Done | ? | ? | ? |
-| Settings → This repository → Commit signing states what git will do (signs or not) with the format (OpenPGP, SSH, X.509), the key's id or file name (an inline SSH key is never shown), the program and where `commit.gpgsign` is set, and warns with its fix when signing would fail: the program is not installed, an SSH key is not set or its file is missing, or `gpg.format` is unknown; read from the configuration and `PATH` only, never by running the program; a button opens the file that sets it | Done | ? | ? | ? |
+| Repository settings selects show each value once, mark recommended options in their lists, and distinguish a pinned value from an inherited one with Overridden and a named reset; context lines and whitespace pin and reset together | Done | ? | ? | ? |
+| Settings → This repository → Commit signing states what git will do (signs or not) with the format (OpenPGP, SSH, X.509), the key's id or file name (an inline SSH key is never shown), the program and where `commit.gpgsign` is set, and warns with its fix when signing would fail: the program is not installed, an SSH key is not set or its file is missing, or `gpg.format` is unknown; read from the configuration and `PATH` only, never by running the program; a button opens the file that sets it, preserving non-UTF-8 file names; identity, pull and repository settings share absolute, unquoted configuration origins | Done | ? | ? | ? |
 | A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Done | ? | ? | ? |
 | A rebase that stops on conflicts takes you to Changes, like a pull | Done | ? | ? | ? |
 | A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Done | ? | ? | ? |
@@ -276,3 +277,7 @@ Author pictures are fetched after consent when enabled in Privacy, through the r
 
 Request review and merge shortcuts use the selected request's refreshed details when available,
 matching the state displayed by the action buttons. Merge controls wrap within narrow panes.
+
+A clean Changes view uses one empty state with the branch’s sync status and Push, Pull or Fetch
+as the next action (Publish for a local-only repository). Amend last commit is a secondary link
+that opens the composer with the last message; an existing draft is preserved.

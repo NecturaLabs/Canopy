@@ -45,6 +45,7 @@ pub const NOT_PREFERENCES: &[&str] = &[
     "last_seen_version",
     "recent",
     "open_tabs",
+    "repo_sidebar",
     "seen_intro",
     "last_crash_seen",
     "dark",
@@ -450,6 +451,7 @@ mod tests {
             "terminal": "sh -c id", "file_manager": "sh -c id %d", "clone_dir": "/srv/x",
             "repos": {"/srv/secret": {"display_name": "x"}},
             "repo_diff": {"/srv/secret": {}},
+            "repo_sidebar": {"/srv/private/.git": ["branches"]},
             "hosting_api": true, "download_avatars": true, "check_updates": false,
             "zoom": 1.2}}"#;
         let back = import(&here, text).unwrap().settings;
@@ -459,6 +461,7 @@ mod tests {
         assert_eq!(back.file_manager, "");
         assert_eq!(back.clone_dir, here.clone_dir);
         assert!(back.repos.is_empty() && back.repo_diff.is_empty());
+        assert!(back.repo_sidebar.is_empty());
         // A network feature switched off here stays off; one the file switches off goes off.
         assert!(!back.hosting_api && !back.download_avatars && !back.check_updates);
         assert!(
@@ -615,6 +618,10 @@ mod tests {
             },
         );
         s.repo_diff.insert(PathBuf::from("/home/ada/other"), s.diff);
+        s.repo_sidebar.insert(
+            PathBuf::from("/private/repository/.git"),
+            std::collections::BTreeSet::new(),
+        );
         let text = export(&s).unwrap();
         for key in [
             "secret-project",
@@ -624,6 +631,7 @@ mod tests {
             "\"terminal\"",
             "\"repos\"",
             "\"repo_diff\"",
+            "\"repo_sidebar\"",
         ] {
             assert!(!text.contains(key), "{key} must not be exported:\n{text}");
         }

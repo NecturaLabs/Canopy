@@ -55,6 +55,7 @@ pub const OVERLAYS: &[&str] = &[
     "merge",
     "identity",
     "settings-git",
+    "settings-git-pull",
     "settings-git-commits",
     "clear-identity",
     "update-installed",
@@ -67,11 +68,16 @@ pub const OVERLAYS: &[&str] = &[
     "settings-keyboard",
     "settings-backup",
     "settings-repository",
+    "settings-repository-pull",
+    "settings-repository-diffs",
     "settings-search",
     "about",
     "repository-insights",
     "clean-stale",
     "author-card",
+    "commit-expanded",
+    "commit-compact",
+    "amend-commit",
     "toasts",
     "notifications",
     "branch-selected",
@@ -375,7 +381,7 @@ impl CanopyApp {
         }
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
-            Some("settings-git") => {
+            Some("settings-git" | "settings-git-pull") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
             }
             Some("settings-git-commits") => {
@@ -470,6 +476,14 @@ impl CanopyApp {
             }
             Some("settings-repository") => {
                 app.settings_screen = Some(SettingsScreen::awaiting_repository());
+            }
+            Some("settings-repository-pull" | "settings-repository-diffs") => {
+                let group = if launch.overlay.as_deref() == Some("settings-repository-pull") {
+                    "Pull and fetch"
+                } else {
+                    "Diffs"
+                };
+                app.settings_screen = Some(SettingsScreen::awaiting_repository_at(group));
             }
             Some("settings-search") => {
                 app.settings_screen = Some(SettingsScreen::searching("pull"));
@@ -1221,6 +1235,20 @@ impl eframe::App for CanopyApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         if self.screenshot.is_some() || self.glass_soak.is_some() {
             return;
+        }
+        for tab in &self.tabs {
+            if tab.sidebar_restored
+                && let Some(key) = tab.sidebar_key()
+            {
+                // The default needs no entry, so repositories left as they opened do not pile up.
+                if tab.sidebar_is_default() {
+                    self.settings.repo_sidebar.remove(key);
+                } else {
+                    self.settings
+                        .repo_sidebar
+                        .insert(key.to_path_buf(), tab.collapsed.iter().cloned().collect());
+                }
+            }
         }
         self.settings.open_tabs = self.tabs.iter().map(|t| t.path.clone()).collect();
         eframe::set_value(storage, settings::KEY, &self.settings);

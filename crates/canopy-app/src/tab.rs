@@ -37,7 +37,8 @@ pub enum SidebarItem {
 }
 
 /// The sidebar sections a new tab starts with closed: only Branches is the daily surface. The
-/// user's own opening or closing of a section replaces this in [`RepoTab::collapsed`].
+/// user's own opening or closing of a section replaces this in [`RepoTab::collapsed`]. A saved
+/// set lists the closed sections, so a section added here opens in repositories that have one.
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
@@ -808,6 +809,10 @@ pub struct RepoTab {
     /// The sidebar sections and remotes the user (or the tab's start, [`SIDEBAR_CLOSED_AT_START`])
     /// closed, by key.
     pub collapsed: HashSet<String>,
+    /// The saved sidebar state has been applied after the first repository snapshot.
+    pub sidebar_restored: bool,
+    /// A section was toggled this frame, awaiting persistence by the app.
+    pub sidebar_changed: bool,
     /// The sidebar row last clicked ([`RepoTab::sidebar_shows`]).
     pub sidebar_pick: Option<SidebarItem>,
     /// GitHub and GitLab remotes: (remote name, forge).
@@ -924,6 +929,8 @@ impl RepoTab {
             scroll_to_selected: false,
             reveal_selected: false,
             collapsed: SIDEBAR_CLOSED_AT_START.map(str::to_owned).into(),
+            sidebar_restored: false,
+            sidebar_changed: false,
             sidebar_pick: None,
             forges: Vec::new(),
             host: None,
@@ -1612,6 +1619,37 @@ impl RepoTab {
             } else {
                 self.deselect_file();
             }
+        }
+    }
+
+    /// The repository identity from the worker; no path resolution happens on the UI thread.
+    pub fn sidebar_key(&self) -> Option<&std::path::Path> {
+        self.snap.as_ref().map(|s| {
+            if s.common_dir.as_os_str().is_empty() {
+                s.workdir.as_path()
+            } else {
+                s.common_dir.as_path()
+            }
+        })
+    }
+
+    /// Whether the sidebar is as a new tab opens it.
+    pub fn sidebar_is_default(&self) -> bool {
+        self.collapsed.len() == SIDEBAR_CLOSED_AT_START.len()
+            && SIDEBAR_CLOSED_AT_START
+                .iter()
+                .all(|k| self.collapsed.contains(*k))
+    }
+
+    /// Changes a sidebar section only on a toggle, keeping steady frames allocation-free.
+    pub fn set_sidebar_open(&mut self, key: &str, open: bool) {
+        if open == self.collapsed.contains(key) {
+            if open {
+                self.collapsed.remove(key);
+            } else {
+                self.collapsed.insert(key.to_owned());
+            }
+            self.sidebar_changed = true;
         }
     }
 

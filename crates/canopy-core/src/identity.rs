@@ -120,8 +120,6 @@ impl Scope {
 /// repository whose configuration makes git block must not hold it for ever.
 /// A name shorter than this is taken for a placeholder.
 const MIN_NAME_CHARS: usize = 2;
-/// A listed config entry is its key, a newline and its value.
-const KEY_VALUE_PARTS: usize = 2;
 const GIT_LIMIT: Duration = Duration::from_secs(15);
 
 fn git(workdir: Option<&Path>, args: &[&str]) -> Result<cli::Output> {
@@ -392,44 +390,27 @@ fn env_field(key: &'static str) -> Option<Field> {
 /// Every `user.*`, `author.*` and `committer.*` name and email Git knows, with the scope and file
 /// each came from. `workdir` of `None` reads the global configuration only.
 fn read_config(workdir: Option<&Path>) -> Result<Configured> {
-    let mut args = vec!["config"];
-    if workdir.is_none() {
-        args.push("--global");
-    }
-    args.extend([
-        "-z",
-        "--show-scope",
-        "--show-origin",
-        "--get-regexp",
-        "^(user|author|committer)\\.(name|email)$",
-    ]);
-    let out = git(workdir, &args)?;
-    if out.code == Some(1) {
-        return Ok(Vec::new());
-    }
-    if out.code != Some(0) {
-        return Err(out.error(&args));
-    }
-    // Each entry is `scope NUL origin NUL key NL value NUL`.
-    let mut parts = out.stdout.split(|b| *b == 0);
-    let mut entries = Vec::new();
-    while let (Some(scope), Some(origin), Some(pair)) = (parts.next(), parts.next(), parts.next()) {
-        let mut pair = pair.splitn(KEY_VALUE_PARTS, |b| *b == b'\n');
-        let (Some(key), Some(value)) = (pair.next(), pair.next()) else {
-            continue;
-        };
-        entries.push((
-            String::from_utf8_lossy(key).into_owned(),
-            Field {
-                value: String::from_utf8_lossy(value).into_owned(),
-                source: Some(Source::Config {
-                    scope: String::from_utf8_lossy(scope).into_owned(),
-                    origin: String::from_utf8_lossy(origin).into_owned(),
-                }),
-            },
-        ));
-    }
-    Ok(entries)
+    let global_dir = std::env::temp_dir();
+    let entries = crate::config::read(
+        workdir.unwrap_or(&global_dir),
+        workdir.is_none(),
+        crate::config::Query::Matching(r"^(user|author|committer)\.(name|email)$"),
+    )?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| {
+            Some((
+                entry.key,
+                Field {
+                    value: entry.value?,
+                    source: Some(Source::Config {
+                        scope: entry.scope,
+                        origin: entry.origin,
+                    }),
+                },
+            ))
+        })
+        .collect())
 }
 
 fn parse_ident(ident: &str) -> Option<(&str, &str)> {
@@ -453,6 +434,27 @@ mod tests {
             .status()
             .expect("git runs");
         assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn config_origins_are_absolute_in_non_ascii_repository() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dir = root.path().join("répo");
+        std::fs::create_dir(&dir).expect("directory");
+        run_git(&dir, &["init", "-q", "-b", "main"]);
+        run_git(&dir, &["config", "user.name", "Ada"]);
+        let values = read_config(Some(&dir)).expect("read config");
+        let (_, name) = values
+            .iter()
+            .rfind(|(key, _)| key == "user.name")
+            .expect("name");
+        assert_eq!(
+            name.source,
+            Some(Source::Config {
+                scope: "local".into(),
+                origin: format!("file:{}", dir.join(".git/config").display()),
+            })
+        );
     }
 
     #[test]

@@ -1,0 +1,35 @@
+# Mandatory Linux tests for the exact commit being tagged or published, independent of CI toggles.
+name: Test release commit
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: Full commit SHA to test
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  test:
+    name: Release tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Configure git for tests
+        run: |
+          export GIT_CONFIG_GLOBAL="$RUNNER_TEMP/gitconfig"
+          echo "GIT_CONFIG_GLOBAL=$GIT_CONFIG_GLOBAL" >> "$GITHUB_ENV"
+          echo "GIT_CONFIG_NOSYSTEM=1" >> "$GITHUB_ENV"
+          git config --global user.name "Canopy CI"
+          git config --global user.email "ci@canopy.invalid"
+          git config --global init.defaultBranch main
+      - run: cargo test --workspace --locked --no-fail-fast

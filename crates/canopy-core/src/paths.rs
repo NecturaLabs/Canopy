@@ -134,7 +134,7 @@ pub(crate) fn refuse_link(file: &Path) -> Result<()> {
 
 /// A path from raw bytes as git or libgit2 report it, without assuming UTF-8 on Unix (other
 /// systems store paths as Unicode, which git reports as UTF-8).
-pub(crate) fn os_path(bytes: &[u8]) -> PathBuf {
+pub fn os_path(bytes: &[u8]) -> PathBuf {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;

@@ -117,6 +117,15 @@ jobs:
           path: notes.md
           if-no-files-found: error
 
+  test:
+    name: Test before publishing
+    needs: [identity]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-release.yml
+    with:
+      commit: ${{ needs.identity.outputs.commit }}
+
   # The platforms to build follow the same repository variables as CI's test job: Linux unless
   # CI_LINUX is '0', macOS and Windows only when CI_MACOS or CI_WINDOWS is '1'. Ubuntu 22.04,
   # hosted or as the self-hosted container, keeps the glibc requirement at 2.35; aarch64 Linux
@@ -367,7 +376,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [identity, build]
+    needs: [identity, build, test]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

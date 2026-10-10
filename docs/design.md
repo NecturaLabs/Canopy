@@ -110,6 +110,9 @@ text. A web link (`LinkButton::url`) ends in an arrow, shows its address in a to
 Copy link in its context menu (Copy address for an e-mail link). Every link is at least 24 points
 tall (`theme::MIN_TARGET`), WCAG 2.5.8's 24 CSS pixels read as 24 points at 100% scale.
 
+`LinkButton::max_text_width` elides long labels while retaining the whole accessible name; the
+commit header uses it for long committer names and provides their full text in a tooltip.
+
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
 syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
 in both styles; `Palette::ink` keeps coloured text readable on its own tint.
@@ -333,15 +336,16 @@ in the density's metrics:
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
-- Commit details use a compact author, SHA and date above the changed files, and nothing twice:
-  the author's email (and the committer, when someone else made the commit) is the name's tooltip,
-  the full date with its zone the date's. The commit message's body sits flush under them, takes
-  its natural height up to the room left above two changed files and the "N files changed" line
-  (at least one line) and scrolls past it behind a faded edge, never cutting a line through its
-  glyphs. It repeats the commit summary only when the pane header cannot show it whole (or, in a
-  compact window, has no header). History prefers six visible rows and can retain the split with
-  two rows in a short window. Automatic inspector height adapts when the diff arrives; a manual
-  resize takes precedence.
+- Commit details keep the summary, copyable commit id, parent links and committer's picture and
+  name in the pane header. The summary elides first, with its full text in a tooltip; facts wrap
+  below it when their controls cannot fit. Dates remain in the History row's tooltip. Compact
+  windows move the same facts into the card's top. The name opens the commit identity card with
+  the original author, signature status, profile link and picture explanation.
+- The details card holds only the description and the Changed files section: the description
+  scrolls independently behind a fade, leaving room for the stats and two file rows. A commit
+  without a body goes directly to its files. File names take precedence over folders and have
+  full-path tooltips; status badges and line counts use the kit. Automatic inspector height
+  follows the header and card contents; a manual resize takes precedence.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
   available width, leaving the rest for the diff or request details. The Changes file list and the
   request list are resized with `kit::split::SplitHandle` (drag, the arrow keys while it has focus,
@@ -451,14 +455,15 @@ in the density's metrics:
   chosen option shows a check. The resolver footer's "Save resolved file" is the one Primary.
 - Without a GitHub or GitLab remote, Requests offers Publish… (no remote at all) or Add remote…
   (remotes elsewhere) under its empty-state illustration.
-- A clean working tree gives the main pane its own state: the illustration, "Working tree
-  clean", where the branch stands (up to date, N to push or pull with that button, or local only
-  with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet
-  composer, "Nothing to commit" and the Amend choice, which expands to the full composer when
-  ticked or when text is typed.
-- The clean summary scrolls in a short pane so Publish/Push/Pull and the last commit remain
-  reachable at maximum zoom. The conflict resolver's body can shrink below its normal scroll
-  minimum rather than painting code across its fixed Save footer.
+- A clean working tree uses one kit `EmptyState` across the main pane, with the clean
+  illustration (the check icon in short panes), branch sync status and Push, Pull or Fetch.
+  A local-only repository offers Publish. Amend last commit is a quiet secondary link into
+  the composer; empty file lists and composer fields stay out of this state.
+
+- Short clean panes use the kit’s compact icon instead of the illustration, keeping the sync
+  and amend actions reachable. The primary action uses `EmptyState::action_min_width` to keep
+  its button width even with a short label. The conflict resolver’s body can shrink below its
+  normal scroll minimum rather than painting code across its fixed Save footer.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon
@@ -513,16 +518,24 @@ opening with the mouse as well as from the keyboard, and the highlighted option 
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
 
+A select can mark one option with the kit's Recommended badge; its accessible description
+announces the recommendation without repeating the option name. The list reserves room for the
+badge and check, truncating only the painted label while keeping its full accessible name.
+Repository selects show the effective value once. Explicit selection pins even the current value;
+only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
+controls name their setting. Context lines and whitespace are one saved diff preset, with one
+shared reset that returns both to the app defaults.
+
 ### Popover and the smaller components
 
-`Popover` is a small panel anchored to a control (diff options, the author card, the theme
+`Popover` is a small panel anchored to a control (diff options, the commit identity card, the theme
 quick-pick): the overlay surface with `card_pad` inside, 6 pt from the anchor and at least as wide.
 Clicking the anchor toggles it; a click outside or Esc closes it and gives focus back to the
-anchor. One popover is open at a time. The author card in the commit details is one: the name is a
-link button, the card holds the email with a copy button, who committed, the signature, a profile
+anchor. One popover is open at a time. The identity card in the commit details is one: the committer's name is a
+link button, the card holds the email with a copy button, the original author, the signature, a profile
 or user-search link and the picture settings; signature results get distinct glyphs and spoken
 names (verified: green seal, invalid: danger X, unavailable: muted question, untrusted or expired:
-warning). The author card names the result and signer. The same result mark appears beside
+warning). The identity card names the result and signer. The same result mark appears beside
 the name; unsigned commits have no mark.
 
 The rest of the kit, each with the states `--overlay gallery` shows:

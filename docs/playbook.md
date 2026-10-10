@@ -115,6 +115,14 @@ or how flows feel end to end.
 
 ## Releasing, and the app-updates repository
 
+- Release enforcement uses mandatory Linux workspace tests on the exact commit, in a read-only
+  GitHub-hosted job. Create release waits for them before tagging; Release runs them again before
+  publishing, including a direct dispatch or rebuild of an existing tag. Failed or cancelled tests
+  prevent the tag or publication. Dry runs do not run these tests and cannot tag.
+- Push CI's platform test job remains opt-in with repository variable `CI_TESTS=1`
+  (`gh variable set CI_TESTS --body 1`); unset or `0` skips it. Its per-platform toggles still
+  apply. This toggle never disables release tests. The local pre-commit hook is an early check,
+  while the mandatory release job is the enforced publication gate.
 - Read the `release` skill first. A release publishes to users: confirm the build and channel with
   the owner, then `gh workflow run create-release.yml --ref main -f channel=beta -f dry-run=true`,
   and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`. It can
@@ -138,3 +146,16 @@ or how flows feel end to end.
   as build 120. A release job's composite actions come from the tag's own commit, so a workflow fix
   needs a new build, not a rerun of the old tag.
 - `APP_UPDATES_TOKEN` must exist in the Canopy repository's secrets or the feed step is skipped.
+
+For the expanded commit-details layout, render with `--overlay commit-expanded`; it activates
+the header’s Expand button by its accessible name. Use `--size 960x640` for compact details.
+
+Use `--overlay commit-compact --size 960x400` to select Commit details in the compact
+History layout through its accessible control.
+
+Use `--overlay amend-commit` with a clean fixture to open the amend composer through its
+secondary action and capture the message read by the worker.
+
+Use `--overlay settings-git-pull` or `--overlay settings-repository-pull` to capture the
+Pull strategy option list through its accessible control. `--overlay settings-repository-diffs`
+opens the repository's Diffs group.

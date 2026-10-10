@@ -85,7 +85,10 @@ class Handler(BaseHTTPRequestHandler):
         parts = path.strip("/").split("/")
         if len(parts) == 4 and parts[3] == "commits":
             sha = parse_qs(urlsplit(self.path).query).get("sha", [""])[0]
-            return self.reply([{"sha": sha, "author": {"avatar_url": f"http://127.0.0.1:{self.server.server_port}/avatar.png"}}])
+            picture = {"avatar_url": f"http://127.0.0.1:{self.server.server_port}/avatar.png"}
+            return self.reply([{"sha": sha, "author": picture, "committer": picture,
+                                "commit": {"author": {"email": "maya.chen@example.com"},
+                                           "committer": {"email": "maya.chen@example.com"}}}])
         if path == "/avatar.png":
             # A bundled PNG fixture; never fetch a real person's picture for the demo.
             body = (Path(__file__).resolve().parent.parent / "assets" / "icon-512.png").read_bytes()

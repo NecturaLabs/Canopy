@@ -312,6 +312,14 @@ impl CanopyApp {
                 self.toasts
                     .push_for(ctx, kind, topic, n.title, n.body, Some(&tab.path));
             }
+            if !tab.sidebar_restored
+                && let Some(key) = tab.sidebar_key()
+            {
+                if let Some(closed) = self.settings.repo_sidebar.get(key) {
+                    tab.collapsed = closed.iter().cloned().collect();
+                }
+                tab.sidebar_restored = true;
+            }
             // Taken after the poll that set it, so the dialog shows in this frame.
             if let Some(d) = tab.pull_decision.take() {
                 self.dialogs.open(if d.diverged {

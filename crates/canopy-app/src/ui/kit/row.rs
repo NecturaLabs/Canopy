@@ -2786,7 +2786,8 @@ mod tests {
         assert_eq!(grounds, vec![p.standard.pane]);
     }
 
-    /// Override O2 (shell F1): Tab from a section header lands on its action (the test gives it "Add remote…"),
+    /// Override O2 (shell F1): Tab from a section header lands on its action
+    /// (the test gives it "Add remote…"),
     /// which stays shown while it has focus, the next Tab leaves it and Shift+Tab comes back to
     /// it; with full and reduced motion.
     #[test]
