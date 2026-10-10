@@ -162,6 +162,7 @@ of that preview limit.
 | Interactive rebase editor | Planned | Yes | Yes | Yes |
 | Merge modes: fast-forward when possible, no fast-forward, fast-forward only, squash | Done | ? | ? | ? |
 | Built-in 3-way conflict resolver | Done | Yes | Yes | No |
+| Choices and unfinished edits stay with their conflicted file while another one is open in Changes, and come back when it is picked again | Done | Yes | Yes | No |
 | Drag a branch onto another to merge or rebase | Planned | Yes | Yes | ? |
 | git-flow | Planned (backend merged) | Yes | Yes | Yes |
 | Bisect | Planned | ? | ? | ? |
