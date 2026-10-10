@@ -10,7 +10,10 @@ use crate::tab::{RepoTab, SidebarItem};
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Skeleton;
-use crate::ui::kit::row::{ListRow, Roving, RowKind, SectionHeader, TreeNav, TreeRow};
+use crate::ui::kit::row::{
+    ListRow, Roving, RowKind, SectionHeader, TreeNav, TreeRow, section_item_indent,
+    section_tree_indent,
+};
 use crate::ui::kit::{Button, KitResponse, Size, Tone, a11y, menu};
 use crate::ui::theme::{self, palette};
 use crate::ui::widgets::forge_icon;
@@ -171,13 +174,15 @@ fn row(ui: &mut Ui, r: &Row<'_>, list: Option<(Roving, usize)>) -> egui::Respons
         )
         .size()
         .x;
-    let room = ui.available_width() - 2.0 * theme::MD - m.icon_md - theme::SM;
+    let room =
+        ui.available_width() - section_item_indent() - 2.0 * theme::MD - m.icon_md - theme::SM;
     let tip = r
         .hint
         .map(str::to_owned)
         .or_else(|| (label_w > room - badges_w).then(|| r.label.to_owned()));
     let mut row = ListRow::new(r.id)
         .kind(RowKind::Sidebar)
+        .indent(section_item_indent())
         .selected(r.selected)
         .current(r.current)
         .icon(r.glyph)
@@ -440,6 +445,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 };
                 let remote_at = at;
                 let shown = TreeRow::new(("remote", &r.name), 0)
+                    .indent(section_tree_indent())
                     .open(&mut open)
                     .toggle_on_click(true)
                     .label(label)
@@ -487,6 +493,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     let b = &snap.remote_branches[branches[i]];
                     let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::RemoteBranch { remote, branch } if *remote == b.remote && *branch == b.branch), b.target);
                     let shown = TreeRow::new(("remote-branch", &b.remote, &b.branch), 1)
+                        .indent(section_tree_indent())
                         .icon(icon::GIT_BRANCH)
                         .label(b.branch.clone())
                         .selected(selected)
@@ -976,6 +983,98 @@ mod tests {
             "Shift+Tab goes back to the header: {back:?}"
         );
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// The text a painted shape holds, with where it is.
+    fn painted_text(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+        match shape {
+            egui::Shape::Text(t) => {
+                out.push((t.galley.text().to_owned(), t.visual_bounding_rect()));
+            }
+            egui::Shape::Vec(v) => v.iter().for_each(|s| painted_text(s, out)),
+            _ => {}
+        }
+    }
+
+    /// #139: the rows of a section sit right of its header's icon in every section, and a
+    /// remote's branches one level right of the remote.
+    #[test]
+    fn items_sit_right_of_their_section_headers() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        ctx.enable_accesskit();
+        let mut tab = branch_tab();
+        tab.collapsed.clear();
+        let remote = tab_with(vec![origin()]).snap.expect("snapshot");
+        if let Some(snap) = tab.snap.as_mut() {
+            let snap = std::sync::Arc::make_mut(snap);
+            snap.remotes = remote.remotes.clone();
+            snap.remote_branches = vec![canopy_core::RemoteBranchInfo {
+                remote: "origin".into(),
+                branch: "main".into(),
+                target: Some(oid(1)),
+            }];
+            snap.tags = vec![canopy_core::TagInfo {
+                name: "v1".into(),
+                target: Some(oid(1)),
+                message: None,
+            }];
+            snap.stashes = vec![canopy_core::StashInfo {
+                index: 0,
+                message: "On main: wip".into(),
+                oid: oid(5),
+            }];
+        }
+        tab.snap_index = crate::tab::SnapIndex::new(tab.snap.as_ref().expect("snapshot"));
+        let mut actions = Vec::new();
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let shapes = crate::ui::kit::testkit::frame(&ctx, Vec::new(), |ui| {
+                ui.set_max_size(egui::vec2(260.0, 700.0));
+                show(ui, &mut tab, &mut actions);
+            });
+            texts.clear();
+            for c in &shapes {
+                painted_text(&c.shape, &mut texts);
+            }
+        }
+        // The glyphs of `glyph`, top to bottom.
+        let lefts = |glyph: &str| -> Vec<f32> {
+            let mut found: Vec<_> = texts.iter().filter(|(t, _)| t == glyph).collect();
+            found.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+            found.into_iter().map(|(_, r)| r.left()).collect()
+        };
+        let left_of = |label: &str| {
+            texts
+                .iter()
+                .find(|(t, _)| t == label)
+                .unwrap_or_else(|| panic!("{label}: {texts:?}"))
+                .1
+                .left()
+        };
+        let step = theme::metrics().tree_indent / 2.0;
+        // Branches: the header's glyph first, then the rows' (branch and remote branch).
+        let branch = lefts(icon::GIT_BRANCH);
+        assert!(branch.len() >= 3, "{branch:?}");
+        let (header, rows) = branch.split_first().expect("glyphs");
+        assert!(rows[0] > header + step, "branches {header} {rows:?}");
+        let worktrees = lefts(icon::FOLDERS)[0];
+        assert!(
+            lefts(icon::FOLDER_SIMPLE)[0] > worktrees + step,
+            "worktrees"
+        );
+        let tags = lefts(icon::TAG);
+        assert!(tags[1] > tags[0] + step, "tags {tags:?}");
+        let stashes = lefts(icon::ARCHIVE);
+        assert!(stashes[1] > stashes[0] + step, "stashes {stashes:?}");
+        // Remotes: the remote's name lines up with the items, its branch is one level further.
+        let cloud = lefts(icon::CLOUD)[0];
+        let origin = left_of("origin");
+        assert!(origin > cloud + step, "remote {cloud} {origin}");
+        let remote_branch = rows.last().copied().expect("remote branch glyph");
+        assert!(
+            remote_branch > origin + step,
+            "remote branch {origin} {remote_branch}"
+        );
     }
 
     /// A11Y-3: each section's rows are one Tab stop (the checked-out branch for Branches), the

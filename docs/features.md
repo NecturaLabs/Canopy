@@ -154,6 +154,7 @@ of that preview limit.
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
 | Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Done | Yes | Yes | Yes |
+| Sidebar rows sit indented under their section header, a remote's branches one level further | Done | ? | ? | ? |
 | A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Done | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |

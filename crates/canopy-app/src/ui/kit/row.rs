@@ -148,6 +148,24 @@ const CHEVRON_GAP: f32 = 4.0;
 /// The gap after a section header's chevron.
 const SECTION_CHEVRON_GAP: f32 = 6.0;
 
+/// Where the icon of a sidebar section's item sits from the row's left edge: one tree level right
+/// of the section header's icon, so the header reads as the items' parent.
+fn section_item_x() -> f32 {
+    CHEVRON_INSET + CHEVRON_WIDTH + SECTION_CHEVRON_GAP + theme::metrics().tree_indent
+}
+
+/// The [`ListRow::indent`] of a sidebar section's item. The selection and hover fills keep the
+/// row's full width; only the content moves.
+pub fn section_item_indent() -> f32 {
+    section_item_x() - PAD
+}
+
+/// The [`TreeRow::indent`] of a sidebar section's top-level row (a remote): its label lines up
+/// with the section's other items.
+pub fn section_tree_indent() -> f32 {
+    section_item_x() - CHEVRON_INSET - CHEVRON_WIDTH - CHEVRON_GAP
+}
+
 /// Everything rows share up to their content: allocation, interaction, the ground layers.
 struct Frame {
     rect: Rect,
@@ -814,6 +832,7 @@ pub struct TreeRow<'a> {
     label: String,
     accessible: Option<String>,
     trailing: Option<String>,
+    indent: f32,
     selected: bool,
     cursor: bool,
     enabled: bool,
@@ -846,6 +865,7 @@ impl<'a> TreeRow<'a> {
             label: String::new(),
             accessible: None,
             trailing: None,
+            indent: 0.0,
             selected: false,
             cursor: false,
             enabled: true,
@@ -903,6 +923,11 @@ impl<'a> TreeRow<'a> {
         self.trailing = Some(text.into());
         self
     }
+    /// Extra left indent for the content (the fills keep the full width), on top of the depth's.
+    pub fn indent(mut self, indent: f32) -> Self {
+        self.indent = indent;
+        self
+    }
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
@@ -952,8 +977,10 @@ impl<'a> TreeRow<'a> {
         let id = f.response.id;
         let has_children = self.open.is_some();
         let mut open_now = self.open.as_deref().copied().unwrap_or(false);
-        let chevron_x =
-            f.rect.left() + CHEVRON_INSET + crate::ui::count_f32(self.depth) * m.tree_indent;
+        let chevron_x = f.rect.left()
+            + CHEVRON_INSET
+            + self.indent
+            + crate::ui::count_f32(self.depth) * m.tree_indent;
         let chevron = Rect::from_center_size(
             pos2(chevron_x + CHEVRON_WIDTH / 2.0, f.rect.center().y),
             vec2(16.0, f.rect.height()),
