@@ -251,9 +251,20 @@ state) with the lines in the added and removed colours, as the commit and file d
 
 The request list stays current without pressing Reload: a fetch (manual or the background one),
 pull or push that succeeds refreshes it, and the open request, quietly (no spinner or toast; the
-list, selection and open request stay on screen, and a failed refresh keeps them), and opening
-the Requests view reloads a list older than a minute. These use the same list and details calls
-as Reload, and only with hosting on and a list already loaded.
+list, selection and open request stay on screen, and a failed refresh keeps them), opening
+the Requests view reloads a list older than a minute, and while the view stays open and the window
+is focused the list refreshes on a timer: at the background fetch's interval when that is on,
+every minute when it is off, doubling after a failed refresh (up to fifteen minutes) and back to
+normal once one succeeds. The timer needs a hosting token: without one the requests would spend
+the host's small anonymous rate limit, which Reload, actions and author pictures share, so
+without a token the list refreshes only on Reload, when the Requests view opens on a stale list
+and after a fetch, pull or push. The timer pauses while another view is shown or the window is
+unfocused, and while a fetch, pull or push runs (that one refreshes the list when it ends); a
+Settings page or a dialog over the Requests view does not pause it. A rate limit holds it until
+the host says the limit lifts (an hour at most), else for fifteen minutes; opening the Requests
+view and a refresh after a Git sync wait out the same backoff. These use the same list and
+details calls as Reload, and only
+with hosting on and a list already loaded.
 
 Going back to a request opened within the last minute (A, then B, then A again) shows its details
 at once from a small cache of the last 16 loads, without asking the host again. The cache is keyed

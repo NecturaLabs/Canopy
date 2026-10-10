@@ -5,6 +5,7 @@ use super::*;
 use canopy_core::identity::{Scope, Source};
 
 use crate::identity_worker::Event as IdentityEvent;
+use crate::tab::REQUESTS_REFRESH_EVERY;
 use crate::views::settings_screen::source_label;
 
 /// What the first-launch identity question should do now.
@@ -303,6 +304,8 @@ impl CanopyApp {
         self.poll_config_reads(ctx);
         self.poll_identity(ctx);
         for tab in &mut self.tabs {
+            tab.requests.refresh.interval =
+                requests_refresh_interval(self.settings.auto_fetch_for(&tab.path));
             for n in tab.poll(&self.gitlab_hosts) {
                 let (kind, topic) = if n.ok {
                     (ToastKind::Success, Topic::Finished)
@@ -509,6 +512,31 @@ impl CanopyApp {
             ctx.request_repaint_after(Duration::from_secs(30));
         }
     }
+
+    /// Refreshes the active tab's open request list on a timer: as often as the background
+    /// fetch runs, or every minute when that is off. Wakes the frame loop only when it falls due.
+    pub(super) fn auto_refresh_requests(&mut self, ctx: &egui::Context) {
+        if self.screenshot.is_some() {
+            return;
+        }
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        let interval = requests_refresh_interval(self.settings.auto_fetch_for(&t.path));
+        if let Some(next) = t.refresh_requests_on_timer(Instant::now(), interval, focused) {
+            ctx.request_repaint_after(next);
+        }
+    }
+}
+
+/// How often the open request list refreshes when the background fetch runs every `minutes`
+/// (0: off, so every [`REQUESTS_REFRESH_EVERY`]).
+fn requests_refresh_interval(minutes: u32) -> Duration {
+    match minutes {
+        0 => REQUESTS_REFRESH_EVERY,
+        minutes => Duration::from_secs(u64::from(minutes) * 60),
+    }
 }
 
 #[cfg(test)]
@@ -538,6 +566,18 @@ mod tests {
             author: person.clone(),
             committer: person,
         }
+    }
+
+    #[test]
+    fn the_request_list_refreshes_with_the_background_fetch_or_every_minute() {
+        for (minutes, secs) in [(0, 60), (1, 60), (5, 300), (30, 1_800)] {
+            assert_eq!(
+                requests_refresh_interval(minutes),
+                Duration::from_secs(secs),
+                "{minutes} minutes"
+            );
+        }
+        assert_eq!(requests_refresh_interval(0), REQUESTS_REFRESH_EVERY);
     }
 
     #[test]
