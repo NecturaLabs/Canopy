@@ -1384,8 +1384,32 @@ struct Note {
     warn: bool,
 }
 
+/// How a note opens when git's own configuration decides a choice.
+const DECIDES: &str = "Your git configuration decides";
+
 impl Note {
+    /// Whether this note says git's configuration decides the choice.
+    fn decided(&self) -> bool {
+        self.text.starts_with(DECIDES)
+    }
+
+    /// The note, with a button that stops following the git configuration when it decides.
     fn show(&self, ui: &mut Ui) {
+        self.show_text(ui);
+        if self.decided()
+            && Button::new("Stop following my git config")
+                .ghost()
+                .size(Size::Sm)
+                .id_salt(("stop-following", &self.text))
+                .show(ui)
+                .clicked()
+        {
+            ui.data_mut(|d| d.insert_temp(stop_following_id(), true));
+            ui.ctx().request_repaint();
+        }
+    }
+
+    fn show_text(&self, ui: &mut Ui) {
         let p = palette(ui.ctx());
         let m = theme::metrics();
         let (glyph, color) = if self.warn {
@@ -1406,6 +1430,30 @@ impl Note {
             );
         });
     }
+}
+
+/// Set by a note's button; [`git`] turns Follow my git config off on the next frame.
+fn stop_following_id() -> egui::Id {
+    egui::Id::new("settings-stop-following-git-config")
+}
+
+/// What a choice's control shows: the value the git configuration sets while it decides, else
+/// Canopy's own.
+fn shown<T>(decides: bool, configured: Option<T>, own: T) -> T {
+    configured.filter(|_| decides).unwrap_or(own)
+}
+
+/// The mode the Pull strategy select shows: what pulls use while the git configuration decides,
+/// else Canopy's own choice.
+fn pull_mode_shown(
+    configured: Option<canopy_core::PullStrategy>,
+    decides: bool,
+    own: PullMode,
+) -> PullMode {
+    configured
+        .filter(|_| decides)
+        .and_then(|c| PullMode::ALL.into_iter().find(|m| m.strategy() == c))
+        .unwrap_or(own)
 }
 
 /// `key = value (where it is set)`, for a note.
@@ -1617,10 +1665,7 @@ fn config_note(
             format!(" Recommended: {recommendation}.")
         };
         return Some(Note {
-            text: format!(
-                "Your git configuration decides: {}.{advice}",
-                phrases(values)
-            ),
+            text: format!("{DECIDES}: {}.{advice}", phrases(values)),
             warn: false,
         });
     }
@@ -2902,6 +2947,12 @@ fn git(
         actions,
     );
     group_gap(ui, theme::LG);
+    if ui
+        .data_mut(|d| d.remove_temp::<bool>(stop_following_id()))
+        .unwrap_or(false)
+    {
+        s.follow_git_config = false;
+    }
     let facts = screen.facts.global(ui.ctx()).cloned();
     let f = facts.as_deref();
     let follow = s.follow_git_config;
@@ -2923,6 +2974,28 @@ fn git(
             switch(ui, &mut s.follow_git_config, "Follow my git config");
         },
     );
+    row(
+        ui,
+        "Recommended settings",
+        "Every choice on this page back to Canopy's recommendation, Follow my git config included. Choices a repository made for itself stay.",
+        |ui| {
+            if s.git_choices_are_recommended() {
+                Button::new("Use recommended")
+                    .icon(icon::ARROW_COUNTER_CLOCKWISE)
+                    .enabled(false)
+                    .disabled_reason("Every choice already is the recommendation.")
+                    .id_salt("use-recommended-git")
+                    .show(ui);
+            } else if confirm_button(
+                ui,
+                "use-recommended-git",
+                "Use recommended",
+                "Replace my Git choices",
+            ) {
+                s.use_recommended_git_choices();
+            }
+        },
+    );
     heading(ui, "Remote");
     default_row(
         ui,
@@ -2930,11 +3003,19 @@ fn git(
         "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward. Recommended: fast-forward only; when the branches diverged, Canopy asks how to combine them.",
         f.and_then(|f| pull_note(f, s.pull_default())).as_ref(),
         |ui| {
-            let set = f.is_some_and(|f| f.pull.as_ref().is_some_and(|p| p.strategy.is_some()));
-            ui.add_enabled_ui(!decided(set), |ui| {
+            let configured = f.and_then(|f| f.pull.as_ref()).and_then(|p| p.strategy);
+            let decides = decided(configured.is_some());
+            // While the git configuration decides, the select shows what pulls will use.
+            let mut shown = pull_mode_shown(configured, decides, s.pull_mode);
+            ui.add_enabled_ui(!decides, |ui| {
                 revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
                 let options = PullMode::ALL.map(|m| (m, m.label()));
-                Select::new(&mut s.pull_mode, &options)
+                let target = if decides {
+                    &mut shown
+                } else {
+                    &mut s.pull_mode
+                };
+                Select::new(target, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Pull strategy")
                     .id_salt("pull-strategy")
@@ -2952,6 +3033,12 @@ fn git(
         f.and_then(|f| prune_note(f, s.prune_on_fetch, follow))
             .as_ref(),
         |ui| {
+            let mut effective_prune_on_fetch = shown(
+                decided(prune_set),
+                f.and_then(|f| f.fetch_prune.as_ref())
+                    .and_then(ConfigValue::as_bool),
+                s.prune_on_fetch,
+            );
             ui.add_enabled_ui(!decided(prune_set), |ui| {
                 revert(
                     ui,
@@ -2959,7 +3046,15 @@ fn git(
                     &DEFAULTS.prune_on_fetch,
                     "Prune on fetch",
                 );
-                switch(ui, &mut s.prune_on_fetch, "Prune on fetch");
+                switch(
+                    ui,
+                    if decided(prune_set) {
+                        &mut effective_prune_on_fetch
+                    } else {
+                        &mut s.prune_on_fetch
+                    },
+                    "Prune on fetch",
+                );
             });
         },
     );
@@ -2971,6 +3066,12 @@ fn git(
             .as_ref(),
         |ui| {
             let set = f.is_some_and(|f| !f.prune_tags.is_empty());
+            let mut effective_prune_tags = shown(
+                decided(set),
+                f.and_then(|f| f.prune_tags.first())
+                    .and_then(ConfigValue::as_bool),
+                s.prune_tags,
+            );
             ui.add_enabled_ui(!decided(set), |ui| {
                 revert(
                     ui,
@@ -2978,7 +3079,15 @@ fn git(
                     &DEFAULTS.prune_tags,
                     "Prune tags too",
                 );
-                switch(ui, &mut s.prune_tags, "Prune tags too");
+                switch(
+                    ui,
+                    if decided(set) {
+                        &mut effective_prune_tags
+                    } else {
+                        &mut s.prune_tags
+                    },
+                    "Prune tags too",
+                );
             });
         },
     );
@@ -3019,6 +3128,12 @@ fn git(
         .as_ref(),
         |ui| {
             let set = f.is_some_and(|f| f.follow_tags.is_some());
+            let mut effective_follow_tags = shown(
+                decided(set),
+                f.and_then(|f| f.follow_tags.as_ref())
+                    .and_then(ConfigValue::as_bool),
+                s.follow_tags,
+            );
             ui.add_enabled_ui(!decided(set), |ui| {
                 revert(
                     ui,
@@ -3026,7 +3141,15 @@ fn git(
                     &DEFAULTS.follow_tags,
                     "Push tags with their commits",
                 );
-                switch(ui, &mut s.follow_tags, "Push tags with their commits");
+                switch(
+                    ui,
+                    if decided(set) {
+                        &mut effective_follow_tags
+                    } else {
+                        &mut s.follow_tags
+                    },
+                    "Push tags with their commits",
+                );
             });
         },
     );
@@ -3052,6 +3175,12 @@ fn git(
         .as_ref(),
         |ui| {
             let set = f.is_some_and(|f| f.submodule_recurse.is_some());
+            let mut effective_recurse_submodules = shown(
+                decided(set),
+                f.and_then(|f| f.submodule_recurse.as_ref())
+                    .and_then(ConfigValue::as_bool),
+                s.recurse_submodules,
+            );
             ui.add_enabled_ui(!decided(set), |ui| {
                 revert(
                     ui,
@@ -3059,7 +3188,15 @@ fn git(
                     &DEFAULTS.recurse_submodules,
                     "Update submodules",
                 );
-                switch(ui, &mut s.recurse_submodules, "Update submodules");
+                switch(
+                    ui,
+                    if decided(set) {
+                        &mut effective_recurse_submodules
+                    } else {
+                        &mut s.recurse_submodules
+                    },
+                    "Update submodules",
+                );
             });
         },
     );
@@ -3082,14 +3219,32 @@ fn git(
         .as_ref(),
         |ui| {
             let set = f.is_some_and(|f| f.push_default.is_some());
+            let mut effective_push_default = shown(
+                decided(set),
+                f.and_then(|f| f.push_default.as_ref()).and_then(|v| {
+                    PushMode::ALL.into_iter().find(|m| {
+                        m.push_default()
+                            .value()
+                            .eq_ignore_ascii_case(v.value.trim())
+                    })
+                }),
+                s.push_default,
+            );
             ui.add_enabled_ui(!decided(set), |ui| {
                 revert(ui, &mut s.push_default, &DEFAULTS.push_default, "Push to");
                 let options = PushMode::ALL.map(|m| (m, m.label()));
-                Select::new(&mut s.push_default, &options)
-                    .width(select_width(ui, options.iter().map(|(_, l)| *l)))
-                    .name("Push to")
-                    .id_salt("push-default")
-                    .show(ui);
+                Select::new(
+                    if decided(set) {
+                        &mut effective_push_default
+                    } else {
+                        &mut s.push_default
+                    },
+                    &options,
+                )
+                .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                .name("Push to")
+                .id_salt("push-default")
+                .show(ui);
             });
         },
     );
@@ -3156,6 +3311,15 @@ fn git(
         .as_ref(),
         |ui| {
             let set = f.is_some_and(|f| f.conflict_style.is_some());
+            let mut effective_conflict_style = shown(
+                decided(set),
+                f.and_then(|f| f.conflict_style.as_ref()).and_then(|v| {
+                    ConflictMode::ALL.into_iter().find(|m| {
+                        canopy_core::ConflictStyle::from_value(&v.value) == Some(m.style())
+                    })
+                }),
+                s.conflict_style,
+            );
             ui.add_enabled_ui(!decided(set), |ui| {
                 revert(
                     ui,
@@ -3164,11 +3328,18 @@ fn git(
                     "Conflict style",
                 );
                 let options = ConflictMode::ALL.map(|m| (m, m.label()));
-                Select::new(&mut s.conflict_style, &options)
-                    .width(select_width(ui, options.iter().map(|(_, l)| *l)))
-                    .name("Conflict style")
-                    .id_salt("conflict-style")
-                    .show(ui);
+                Select::new(
+                    if decided(set) {
+                        &mut effective_conflict_style
+                    } else {
+                        &mut s.conflict_style
+                    },
+                    &options,
+                )
+                .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                .name("Conflict style")
+                .id_salt("conflict-style")
+                .show(ui);
             });
         },
     );
@@ -3192,14 +3363,30 @@ fn git(
         .as_ref(),
         |ui| {
             let set = f.is_some_and(|f| f.cleanup.is_some());
+            let mut effective_cleanup = shown(
+                decided(set),
+                f.and_then(|f| f.cleanup.as_ref()).and_then(|v| {
+                    CleanupMode::ALL
+                        .into_iter()
+                        .find(|m| m.cleanup().value().eq_ignore_ascii_case(v.value.trim()))
+                }),
+                s.cleanup,
+            );
             ui.add_enabled_ui(!decided(set), |ui| {
                 revert(ui, &mut s.cleanup, &DEFAULTS.cleanup, "Message cleanup");
                 let options = CleanupMode::ALL.map(|m| (m, m.label()));
-                Select::new(&mut s.cleanup, &options)
-                    .width(select_width(ui, options.iter().map(|(_, l)| *l)))
-                    .name("Message cleanup")
-                    .id_salt("commit-cleanup")
-                    .show(ui);
+                Select::new(
+                    if decided(set) {
+                        &mut effective_cleanup
+                    } else {
+                        &mut s.cleanup
+                    },
+                    &options,
+                )
+                .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                .name("Message cleanup")
+                .id_salt("commit-cleanup")
+                .show(ui);
             });
         },
     );
@@ -3222,6 +3409,11 @@ fn git(
         .as_ref(),
         |ui| {
             let set = f.is_some_and(|f| f.initial_branch.is_some());
+            let mut effective_initial_branch = f
+                .and_then(|f| f.initial_branch.as_ref())
+                .map(|v| v.value.clone())
+                .filter(|_| decided(set))
+                .unwrap_or_else(|| s.initial_branch.clone());
             ui.add_enabled_ui(!decided(set), |ui| {
                 revert(
                     ui,
@@ -3229,7 +3421,14 @@ fn git(
                     &DEFAULTS.initial_branch,
                     "First branch of a new repository",
                 );
-                initial_branch_field(ui, &mut s.initial_branch);
+                initial_branch_field(
+                    ui,
+                    if decided(set) {
+                        &mut effective_initial_branch
+                    } else {
+                        &mut s.initial_branch
+                    },
+                );
             });
         },
     );
@@ -3764,7 +3963,8 @@ fn repo_row(
     let help_text = |ui: &mut Ui| {
         help_label(ui, help);
         if let Some(note) = note {
-            note.show(ui);
+            // A repository follows through its own switch, not the global one.
+            note.show_text(ui);
         }
     };
     row_layout(ui, title, None, help, &help_text, "", control);
@@ -5282,9 +5482,7 @@ pub(crate) fn against_recommendation(
     .into_iter()
     .filter_map(|(name, note)| {
         note.filter(|n| n.text.contains("Recommended")).map(|n| {
-            let text = n
-                .text
-                .trim_start_matches("Your git configuration decides: ");
+            let text = n.text.trim_start_matches(DECIDES).trim_start_matches(": ");
             format!("{name}: {text}")
         })
     })
@@ -5294,6 +5492,44 @@ pub(crate) fn against_recommendation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A choice the git configuration decides offers to stop following it; a plain note, and
+    /// the notes of a repository's rows, do not.
+    #[test]
+    fn a_decided_note_offers_to_stop_following_the_git_config() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let decided = Note {
+            text: format!("{DECIDES}: pull.rebase = true (global)."),
+            warn: false,
+        };
+        let plain = Note {
+            text: "Matches your git configuration: pull.rebase = true (global).".to_owned(),
+            warn: false,
+        };
+        let label = "Stop following my git config";
+        assert!(testkit::find(&testkit::spoken(&ctx, |ui| plain.show(ui)), label).is_none());
+        assert!(testkit::find(&testkit::spoken(&ctx, |ui| decided.show_text(ui)), label).is_none());
+        let nodes = testkit::spoken(&ctx, |ui| decided.show(ui));
+        let at = testkit::find(&nodes, label)
+            .and_then(|n| n.bounds)
+            .expect("the button is offered")
+            .center();
+        testkit::click(&ctx, at, |ui| decided.show(ui));
+        assert_eq!(
+            ctx.data_mut(|d| d.remove_temp::<bool>(stop_following_id())),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn the_pull_select_shows_what_pulls_use_while_git_decides() {
+        use canopy_core::PullStrategy;
+        let shown = |c, decides| pull_mode_shown(c, decides, PullMode::Merge);
+        assert_eq!(shown(Some(PullStrategy::Rebase), true), PullMode::Rebase);
+        assert_eq!(shown(Some(PullStrategy::Rebase), false), PullMode::Merge);
+        assert_eq!(shown(None, true), PullMode::Merge);
+    }
 
     /// Every preview theme needs an outlined selection marker; merely changing the
     /// card border is not enough to distinguish it from an unselected miniature.
@@ -6838,6 +7074,25 @@ mod tests {
             );
         }
     }
+    /// A greyed choice shows what git will do, not Canopy's stored value.
+    #[test]
+    fn a_choice_the_git_configuration_decides_shows_its_value() {
+        use egui::accesskit::Toggled;
+        let facts = GitFacts {
+            fetch_prune: Some(fact("fetch.prune", "false")),
+            follow_tags: Some(fact("push.followTags", "false")),
+            ..GitFacts::default()
+        };
+        let nodes = git_page(facts, true);
+        for name in ["Prune on fetch", "Push tags with their commits"] {
+            let node = crate::ui::kit::testkit::find(&nodes, name).expect(name);
+            assert!(node.disabled, "{name}");
+            assert_eq!(node.toggled, Some(Toggled::False), "{name} is off in git");
+        }
+        // Canopy's own choice for both is on.
+        assert!(Settings::default().prune_on_fetch && Settings::default().follow_tags);
+    }
+
     /// #42: the notification center lists what the git configuration decides against the
     /// recommendation, only while Canopy follows it.
     #[test]

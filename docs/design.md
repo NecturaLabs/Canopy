@@ -259,7 +259,7 @@ kit's helpers in `ui/kit/anim.rs`.
 | `TAB_CLOSE` | 250ms | A closed repository tab collapsing |
 | `EXIT_POPUP` / `EXIT_DIALOG` / `EXIT_TOAST` | 100 / 120 / 160ms | Exits |
 | `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay (Settings' Tooltip delay: Quick 150ms, Normal, Slow 1s); no delay right after one closed |
-| `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Spinners appear late and stay a minimum time |
+| `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Passive loading (skeleton rows, a field checking its value) appears late and stays a minimum time. A button's own operation (Fetch, Pull) is the user's action: its spinner starts at the click and crossfades in over `BASE` |
 
 Curves are cubic Béziers (`EASE_OUT` by default); springs (`SWITCH`, `PRESS`, the indicator
 pair) use the exact damped solution and repaint only while moving. Buttons scale their content

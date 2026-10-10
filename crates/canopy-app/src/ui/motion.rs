@@ -38,7 +38,9 @@ pub const EXIT_TOAST: f32 = 0.16;
 /// A tooltip's first delay, and the window after one closes in which the next shows at once.
 pub const TOOLTIP_DELAY: f32 = 0.45;
 pub const TOOLTIP_SKIP: f32 = 0.30;
-/// Spinners and skeletons appear only after this long and then stay at least `LOADING_MIN`.
+/// Passive loading (skeleton rows, a field checking its value) appears only after this long and
+/// then stays at least `LOADING_MIN`. A button's own operation does not wait: its spinner starts
+/// at the click.
 pub const LOADING_DELAY: f32 = 0.15;
 pub const LOADING_MIN: f32 = 0.40;
 /// The second of two toasts arriving together enters this much later.

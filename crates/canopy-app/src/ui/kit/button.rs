@@ -130,8 +130,30 @@ pub(super) fn paint_scaled(painter: &Painter, shapes: Vec<Shape>, pivot: Pos2, s
     }));
 }
 
-/// When a loading spinner may show: after `LOADING_DELAY` of loading (instantly with reduced
-/// motion, where nothing would show the wait otherwise).
+/// How far a spinner has faded in over the icon (`None` while nothing runs). An action the user
+/// just took shows its work at once: the spinner starts with the click and crossfades in over
+/// `BASE` (full at once with reduced motion), never after a wait.
+pub(super) fn spinner_fade(ctx: &egui::Context, id: Id, loading: bool) -> Option<f32> {
+    let key = id.with("kit-loading-since");
+    if !loading {
+        ctx.data_mut(|d| d.remove::<f64>(key));
+        return None;
+    }
+    let now = ctx.input(|i| i.time);
+    let since = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
+    let fade = motion::time(motion::BASE);
+    if fade <= 0.0 {
+        return Some(1.0);
+    }
+    let t = (crate::ui::to_f32(now - since) / fade).clamp(0.0, 1.0);
+    if t < 1.0 {
+        ctx.request_repaint();
+    }
+    Some(motion::EASE_OUT.at(t))
+}
+
+/// When a passive spinner (a field checking its value as the user types) may show: after
+/// `LOADING_DELAY` of loading, so a quick check never flashes it (instantly with reduced motion).
 pub(super) fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
     let key = id.with("kit-loading-since");
     if !loading {
@@ -161,7 +183,7 @@ pub enum Operation {
     /// At rest: the button's own icon.
     #[default]
     Idle,
-    /// Running: a spinner after `LOADING_DELAY`; clicks are ignored, focus stays.
+    /// Running: a spinner from the click; clicks are ignored, focus stays.
     Running,
     /// Finished at `at` (`ctx.input(|i| i.time)` when the result arrived): a check in `success`
     /// for [`OUTCOME_HOLD`], then the icon again.
@@ -190,7 +212,10 @@ impl Operation {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mark {
     Icon,
-    Spinner,
+    /// The spinner at `show` strength (0..=1), crossfading with the icon.
+    Spinner {
+        show: f32,
+    },
     /// An outcome's mark at `show` strength (0..=1: popping in, then fading back to the icon),
     /// shifted `dx` sideways by the failure shake.
     Outcome {
@@ -204,20 +229,16 @@ enum Mark {
 fn mark(ctx: &egui::Context, id: Id, operation: Operation) -> Mark {
     let (ok, at) = match operation {
         Operation::Idle => {
-            spinner_due(ctx, id, false);
+            spinner_fade(ctx, id, false);
             return Mark::Icon;
         }
         Operation::Running => {
-            return if spinner_due(ctx, id, true) {
-                Mark::Spinner
-            } else {
-                Mark::Icon
-            };
+            return spinner_fade(ctx, id, true).map_or(Mark::Icon, |show| Mark::Spinner { show });
         }
         Operation::Succeeded { at } => (true, at),
         Operation::Failed { at } => (false, at),
     };
-    spinner_due(ctx, id, false);
+    spinner_fade(ctx, id, false);
     let age = crate::ui::to_f32(ctx.input(|i| i.time) - at).max(0.0);
     if age >= OUTCOME_HOLD {
         return Mark::Icon;
@@ -279,7 +300,18 @@ fn paint_mark(
     };
     match mark {
         Mark::Icon => icon_at(shapes, 1.0),
-        Mark::Spinner => paint::spinner(painter, center, spin, paint::SPINNER_WIDTH, color),
+        Mark::Spinner { show } => {
+            if show < 1.0 {
+                icon_at(shapes, 1.0 - show);
+            }
+            paint::spinner(
+                painter,
+                center,
+                spin,
+                paint::SPINNER_WIDTH,
+                color.gamma_multiply(show),
+            );
+        }
         Mark::Outcome { ok, show, dx } => {
             if show < 1.0 {
                 icon_at(shapes, 1.0 - show);
@@ -422,7 +454,7 @@ impl Button {
         self.enabled = enabled;
         self
     }
-    /// Busy: the spinner replaces the icon after `LOADING_DELAY`; clicks are ignored, focus and
+    /// Busy: the spinner fades in over the icon from the click; clicks are ignored, focus and
     /// width are kept.
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
@@ -1512,7 +1544,7 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                 egui::Rangef::new(rect.top() + 5.0, rect.bottom() - 5.0),
                 Stroke::new(1.0, seam),
             );
-            if self.loading && spinner_due(&ctx, main.id, true) {
+            if let Some(show) = spinner_fade(&ctx, main.id, self.loading) {
                 paint::spinner(
                     &painter,
                     pos2(
@@ -1521,7 +1553,7 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                     ),
                     m.icon_md * 0.33,
                     paint::SPINNER_WIDTH,
-                    on,
+                    on.gamma_multiply(show),
                 );
             }
             painter.galley(
@@ -2180,7 +2212,40 @@ mod tests {
         }
     }
 
-    /// Running shows the spinner (after the loading delay); success then shows a check in
+    /// A running operation's spinner starts with the click and is at full strength after `BASE`
+    /// (at once with reduced motion); nothing running has none.
+    #[test]
+    fn the_spinner_fades_in_from_the_click() {
+        let ctx = testkit::ctx();
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            theme::Appearance {
+                reduce_motion: false,
+                ..theme::Appearance::STILL
+            },
+        );
+        let id = Id::new("spinner-fade");
+        let at = |time: f64, loading: bool| {
+            let mut fade = None;
+            let _ = frame_at(&ctx, time, Vec::new(), |_| {
+                fade = spinner_fade(&ctx, id, loading);
+            });
+            fade
+        };
+        assert_eq!(at(1.0, false), None);
+        assert_eq!(at(2.0, true), Some(0.0), "begins at the click, not later");
+        let mid = at(2.0 + f64::from(motion::time(motion::BASE)) / 2.0, true);
+        assert!(mid.is_some_and(|f| f > 0.0 && f < 1.0), "{mid:?}");
+        let full = at(2.0 + f64::from(motion::time(motion::BASE)) + 0.01, true);
+        assert_eq!(full, Some(1.0));
+        assert_eq!(at(3.0, false), None);
+        motion::set_reduced(true);
+        assert_eq!(at(4.0, true), Some(1.0), "full strength at once");
+        motion::set_reduced(false);
+    }
+
+    /// Running shows the spinner (at once); success then shows a check in
     /// `success`, failure a warning mark in `danger` (the label colour on a filled button), each
     /// for `OUTCOME_HOLD`, and then the icon is back.
     #[test]
@@ -2203,11 +2268,8 @@ mod tests {
             })
         };
         let _ = tool(Operation::Idle, 1.0);
-        assert!(!spun(&tool(Operation::Running, 2.0)), "no spinner at once");
-        assert!(
-            spun(&tool(Operation::Running, 2.5)),
-            "a spinner once it runs"
-        );
+        assert!(spun(&tool(Operation::Running, 2.0)), "a spinner at once");
+        assert!(spun(&tool(Operation::Running, 2.5)), "and while it runs");
         let has = |shapes: &[egui::epaint::ClippedShape], glyph: &str| {
             glyphs(shapes)
                 .into_iter()
