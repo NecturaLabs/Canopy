@@ -954,10 +954,13 @@ mod tests {
         let mut actions = Vec::new();
         let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        // Where the adapter speaks the expanded state, the name is the bare label for both
+        // states, so the node's own expanded property is what tells them apart.
         let state = |nodes: &[egui::accesskit::Node], title: &str| {
-            [true, false]
-                .into_iter()
-                .find(|open| named(nodes, &a11y::disclosure_name(title, *open)).is_some())
+            [true, false].into_iter().find_map(|open| {
+                named(nodes, &a11y::disclosure_name(title, open))
+                    .map(|n| n.is_expanded().unwrap_or(open))
+            })
         };
         assert_eq!(state(&nodes, "Branches"), Some(true));
         for title in ["Worktrees", "Remotes", "Tags", "Stashes", "Submodules"] {
