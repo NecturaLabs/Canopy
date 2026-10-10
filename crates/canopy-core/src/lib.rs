@@ -16,6 +16,7 @@ pub mod config;
 pub mod conflict;
 pub mod diff;
 mod error;
+mod file_history;
 pub mod flow;
 pub mod forge;
 pub mod graph;
@@ -47,6 +48,7 @@ pub use conflict::{
 };
 pub use diff::{DiffLine, DiffSource, FileDiff, Hunk, HunkKey, LineKind, Whitespace};
 pub use error::{Error, Result};
+pub use file_history::{FileHistory, FileHistoryEntry};
 pub use flow::{FlowConfig, FlowFinish, FlowKind};
 pub use forge::{AuthorPage, Forge, ForgeKind};
 pub use git2::Oid;

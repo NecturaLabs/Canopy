@@ -40,6 +40,14 @@ pub enum Action {
         view: crate::request_view::RequestView,
     },
     RepositoryInsights(PathBuf),
+    /// The history of this file of the active repository, through renames, from this commit
+    /// (`HEAD` when `None`).
+    FileHistory {
+        from: Option<Oid>,
+        path: String,
+    },
+    /// A commit of a file's history, opened in History with the file's diff there.
+    ShowFileVersion(canopy_core::FileHistoryEntry),
     /// Show who last changed each line of the selected file, in place of its diff.
     BlameFile,
     ReadIgnore {

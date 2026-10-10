@@ -71,6 +71,18 @@ impl CanopyApp {
                         }
                     }
                 }
+                Action::FileHistory { from, path } => {
+                    if let Some(tab) = self.tab() {
+                        tab.read_file_history(from, path.clone());
+                        let repo = tab.path.clone();
+                        self.dialogs.open(Dialog::FileHistory { repo, path });
+                    }
+                }
+                Action::ShowFileVersion(entry) => {
+                    if let Some(tab) = self.tab() {
+                        tab.show_file_version(&entry);
+                    }
+                }
                 Action::BlameFile => {
                     if let Some(tab) = self.tab() {
                         tab.blame_file();
@@ -1049,5 +1061,27 @@ mod tests {
         app.dialogs.close();
         assert!(app.dialogs.current().is_none());
         assert_eq!(app.active, 0);
+    }
+
+    #[test]
+    fn file_history_reads_off_the_ui_thread_and_opens_its_dialog() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_tab();
+        let (worker, _, jobs) = crate::worker::Worker::detached();
+        app.tabs[0].worker = worker;
+        app.apply(
+            &ctx,
+            vec![Action::FileHistory {
+                from: None,
+                path: "a.txt".into(),
+            }],
+        );
+        assert!(matches!(
+            jobs.try_recv(),
+            Ok(Job::FileHistory { from: None, path, .. }) if path == "a.txt"
+        ));
+        assert!(
+            matches!(app.dialogs.current(), Some(Dialog::FileHistory { repo, path }) if path == "a.txt" && repo == &app.tabs[0].path)
+        );
     }
 }

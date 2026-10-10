@@ -32,6 +32,7 @@ use crate::worker::Op;
 mod common;
 pub(crate) use common::{tilde_in, valid_ref_name};
 mod credential;
+mod file_history;
 mod ignore;
 mod insights;
 mod reader;
@@ -130,6 +131,12 @@ pub enum Dialog {
     CleanStale(Box<StaleForm>),
     Insights {
         repo: std::path::PathBuf,
+    },
+    /// The commits that changed a file, through renames; what is shown is the tab's
+    /// `file_history`.
+    FileHistory {
+        repo: std::path::PathBuf,
+        path: String,
     },
     Ignore(Box<IgnoreForm>),
     Open {
@@ -478,6 +485,7 @@ pub fn show(
     let outcome = match dialog {
         Dialog::CleanStale(form) => return stale::show(ctx, salt, form, tab),
         Dialog::Insights { .. } => return insights::show(ctx, dialog, tab),
+        Dialog::FileHistory { .. } => return file_history::show(ctx, dialog, tab),
         Dialog::Ignore(form) => return ignore::show(ctx, salt, form, tab),
         Dialog::Identity {
             name,

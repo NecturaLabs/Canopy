@@ -84,7 +84,7 @@ git would run on every `git status`.
 | Commit details: summary, copyable commit id, parent links and committer picture/name in the header; scrolling description and changed-file card, per-file diff, expand/return and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
-| File history | Planned | Yes | Yes | Yes |
+| File history: the commits that changed a file, followed back through renames (`git log --follow`), from the Changes file menu, a commit's file menu or the command palette; choosing one opens that commit's diff of the file, leaving the working tree alone | Done | Yes | Yes | Yes |
 | Blame: a file's lines with the short id, author and date of the commit that last changed each (follows renames); the Blame button in a file's diff header, or "Blame selected file" in the command palette, shows it in place of the diff, as of the commit being viewed or the working tree; clicking a line's commit opens it in History; changes not committed yet are marked | Done | Yes | Yes | Yes |
 | Reflog view | Planned | ? | ? | ? |
 | Undo last operation | Planned | ? | Yes | No |

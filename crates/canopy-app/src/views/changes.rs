@@ -917,6 +917,19 @@ fn list(
             if m.item(icon::COPY, "Copy path").show(m.ui).clicked() {
                 actions.push(Action::Copy(entry.path.clone()));
             }
+            // A working-tree rename is in `HEAD` under its old name.
+            if entry.kind != canopy_core::ChangeKind::Untracked
+                && entry.kind != canopy_core::ChangeKind::Added
+                && !conflicted
+                && m.item(icon::CLOCK_COUNTER_CLOCKWISE, "File history…")
+                    .show(m.ui)
+                    .clicked()
+            {
+                actions.push(Action::FileHistory {
+                    from: None,
+                    path: entry.old_path.clone().unwrap_or_else(|| entry.path.clone()),
+                });
+            }
             m.separator();
             if m.item(icon::EYE_SLASH, "Ignore…").show(m.ui).clicked() {
                 actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Ignore(

@@ -895,6 +895,9 @@ pub fn folder_name(path: &std::path::Path) -> String {
 pub struct RepoTab {
     pub stale_serial: u64,
     pub stale_result: Option<Result<Arc<[canopy_core::StaleCandidate]>, String>>,
+    file_history_serial: u64,
+    /// The newest [`Self::read_file_history`] answer, `None` while it is on its way.
+    pub file_history: Option<Result<Arc<canopy_core::FileHistory>, String>>,
     insights_serial: u64,
     pub insights: Option<Result<Arc<crate::worker::Insights>, String>>,
     blame_serial: u64,
@@ -1072,6 +1075,8 @@ impl RepoTab {
         let name = folder_name(&path);
         Self {
             path,
+            file_history_serial: 0,
+            file_history: None,
             insights_serial: 0,
             insights: None,
             blame_serial: 0,
@@ -1191,6 +1196,42 @@ impl RepoTab {
     /// Queues a mutation.
     pub fn op(&self, op: Op) {
         self.worker.send(Job::Op(op));
+    }
+
+    /// Asks for the history of `path` (relative to the repository root), through renames, from
+    /// the commit `from` (`HEAD` when `None`).
+    pub fn read_file_history(&mut self, from: Option<Oid>, path: String) {
+        self.file_history_serial = self.file_history_serial.wrapping_add(1);
+        self.file_history = None;
+        self.worker.send(Job::FileHistory {
+            serial: self.file_history_serial,
+            from,
+            path,
+        });
+    }
+
+    /// Opens `entry`'s commit in History with the file's diff at that commit: the working tree
+    /// is only read, never changed.
+    pub fn show_file_version(&mut self, entry: &canopy_core::FileHistoryEntry) {
+        self.view = View::History;
+        self.history_layout.show_list();
+        self.filter.clear();
+        self.select_commit(entry.oid);
+        self.scroll_to_selected = true;
+        self.select_file(FileSelection {
+            source: DiffSource::Commit(entry.oid),
+            entry: FileEntry {
+                path: entry.path.clone(),
+                old_path: entry.old_path.clone(),
+                kind: entry.kind,
+                additions: 0,
+                deletions: 0,
+                lfs: false,
+                old_mode: None,
+                new_mode: None,
+            },
+            conflicted: false,
+        });
     }
 
     /// Asks for the blame of `path` as of `rev` (the working tree when `None`).
@@ -2280,6 +2321,19 @@ impl RepoTab {
                         self.pull_config = None;
                     }
                 },
+                Event::FileHistory { serial, result } => {
+                    if serial != self.file_history_serial {
+                        continue;
+                    }
+                    if let Err(error) = &result {
+                        notices.push(Notice {
+                            ok: false,
+                            title: "Could not read the file's history".into(),
+                            body: error.clone(),
+                        });
+                    }
+                    self.file_history = Some(result);
+                }
                 Event::Blame { serial, result } => {
                     if serial != self.blame_serial {
                         continue;
@@ -4689,6 +4743,83 @@ mod tests {
         })?;
         assert_eq!(tab.poll(&[]).len(), 0);
         assert!(matches!(tab.insights, Some(Ok(ref result)) if Arc::ptr_eq(result, &data)));
+        Ok(())
+    }
+
+    #[test]
+    fn file_history_rejects_superseded_replies_and_surfaces_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.read_file_history(None, "a.txt".into());
+        let Job::FileHistory { serial: old, .. } = jobs.recv()? else {
+            panic!("file history job");
+        };
+        tab.read_file_history(Some(Oid::ZERO_SHA1), "b.txt".into());
+        let Job::FileHistory {
+            serial: current,
+            from,
+            path,
+        } = jobs.recv()?
+        else {
+            panic!("file history job");
+        };
+        assert_eq!((from, path.as_str()), (Some(Oid::ZERO_SHA1), "b.txt"));
+        events.send(Event::FileHistory {
+            serial: old,
+            result: Err("old read".into()),
+        })?;
+        assert_eq!(tab.poll(&[]).len(), 0);
+        assert!(tab.file_history.is_none());
+        events.send(Event::FileHistory {
+            serial: current,
+            result: Err("fatal: bad revision".into()),
+        })?;
+        let notices = tab.poll(&[]);
+        assert_eq!(notices.len(), 1);
+        assert!(!notices[0].ok && notices[0].body == "fatal: bad revision");
+        assert!(matches!(tab.file_history, Some(Err(_))));
+        tab.read_file_history(None, "b.txt".into());
+        assert!(tab.file_history.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_file_version_opens_in_history_at_its_commit_and_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, _events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.view = View::Changes;
+        let oid = Oid::from_bytes(&[7; 20])?;
+        tab.show_file_version(&canopy_core::FileHistoryEntry {
+            oid,
+            summary: "move".into(),
+            author: "Ada".into(),
+            time: 1,
+            path: "new.txt".into(),
+            old_path: Some("old.txt".into()),
+            kind: canopy_core::ChangeKind::Renamed,
+        });
+        assert_eq!((tab.view, tab.selected_commit), (View::History, Some(oid)));
+        let file = tab.file.as_ref().expect("the file opens");
+        assert_eq!(file.source, DiffSource::Commit(oid));
+        assert_eq!(file.entry.old_path.as_deref(), Some("old.txt"));
+        let mut diffs = Vec::new();
+        while let Ok(job) = jobs.try_recv() {
+            if let Job::Diff(key) = job {
+                diffs.push((key.source, key.path, key.old_path));
+            }
+        }
+        assert_eq!(
+            diffs,
+            [(
+                DiffSource::Commit(oid),
+                "new.txt".to_owned(),
+                Some("old.txt".to_owned())
+            )]
+        );
         Ok(())
     }
 
