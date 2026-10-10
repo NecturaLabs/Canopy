@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use canopy_core::forge::Forge;
 use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, PullConfig, RepoSnapshot};
@@ -520,7 +520,78 @@ pub struct Finished {
 }
 
 /// How old the request list may be when its view opens before it is loaded again.
-const REQUESTS_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+const REQUESTS_STALE_AFTER: Duration = Duration::from_secs(60);
+
+/// How often the open Requests view refreshes its list while automatic fetching is off.
+pub const REQUESTS_REFRESH_EVERY: Duration = Duration::from_secs(60);
+
+/// The longest wait between timed refreshes after repeated failures (never below the interval).
+const REQUESTS_REFRESH_BACKOFF_CAP: Duration = Duration::from_mins(15);
+
+/// What the timed refresh of the open Requests view may do right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshStep {
+    /// A condition is not met (another view, an unfocused window, a load under way, ...).
+    Paused,
+    /// Nothing to do yet; the next refresh falls due after this long.
+    Wait(Duration),
+    /// Refresh now.
+    Due,
+}
+
+/// The conditions under which the open Requests view refreshes itself.
+#[derive(Debug, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of the frame, each a plain yes or no"
+)]
+pub struct RefreshGate {
+    pub view: View,
+    pub focused: bool,
+    /// The tab has a hosting thread (hosting on, consent given, a forge).
+    pub hosting: bool,
+    /// The list on screen loaded without error.
+    pub loaded: bool,
+    /// A list load is under way.
+    pub busy: bool,
+}
+
+/// The timed refresh's bookkeeping, apart from the clock.
+#[derive(Debug, Default)]
+pub struct RefreshTimer {
+    /// A quiet refresh was sent and its list has not come back.
+    pub in_flight: bool,
+    /// Quiet refreshes in a row that failed; each doubles the wait.
+    pub failures: u32,
+    /// When the newest quiet refresh failed.
+    pub failed_at: Option<Instant>,
+}
+
+/// Decides, from instants and flags alone, whether the open Requests view refreshes now: the
+/// wait is `interval`, doubled per failure up to [`REQUESTS_REFRESH_BACKOFF_CAP`], counted from
+/// `last` (the newest load or failed attempt).
+pub fn request_refresh_step(
+    now: Instant,
+    last: Instant,
+    interval: Duration,
+    failures: u32,
+    gate: RefreshGate,
+) -> RefreshStep {
+    let ready =
+        gate.view == View::Requests && gate.focused && gate.hosting && gate.loaded && !gate.busy;
+    if !ready {
+        return RefreshStep::Paused;
+    }
+    let wait = interval
+        .saturating_mul(1_u32.checked_shl(failures).unwrap_or(u32::MAX))
+        .min(REQUESTS_REFRESH_BACKOFF_CAP.max(interval));
+    let due = last + wait;
+    if now >= due {
+        RefreshStep::Due
+    } else {
+        RefreshStep::Wait(due - now)
+    }
+}
 
 /// An unsent comment, isolated by forge project and request number.
 #[derive(Debug, Clone)]
@@ -565,6 +636,8 @@ pub struct Requests {
     /// The newest load was a quiet refresh (no spinner): if it fails, the list on screen stays.
     /// Any load the user asked for clears it.
     pub quiet_refresh: bool,
+    /// The timer that refreshes the list while the view stays open.
+    pub refresh: RefreshTimer,
 }
 
 impl Default for Requests {
@@ -586,6 +659,7 @@ impl Default for Requests {
             token_rejected: false,
             loaded_at: None,
             quiet_refresh: false,
+            refresh: RefreshTimer::default(),
         }
     }
 }
@@ -1168,6 +1242,7 @@ impl RepoTab {
             return;
         }
         self.requests.quiet_refresh = true;
+        self.requests.refresh.in_flight = true;
         self.host_job(HostJob::List(self.requests.filter));
         if let Some(n) = self.requests.selected
             && self.requests.details.is_some()
@@ -1186,6 +1261,36 @@ impl RepoTab {
                 .is_some_and(|at| at.elapsed() >= REQUESTS_STALE_AFTER)
         {
             self.refresh_requests_quietly();
+        }
+    }
+
+    /// Refreshes the list quietly when the timer is due (see [`request_refresh_step`]); returns
+    /// how long until it next falls due so the frame loop can wake then, or `None` when paused.
+    pub fn refresh_requests_on_timer(
+        &mut self,
+        now: Instant,
+        interval: Duration,
+        focused: bool,
+    ) -> Option<Duration> {
+        let timer = &self.requests.refresh;
+        let last = match (self.requests.loaded_at, timer.failed_at) {
+            (Some(loaded), Some(failed)) => loaded.max(failed),
+            (loaded, failed) => loaded.or(failed)?,
+        };
+        let gate = RefreshGate {
+            view: self.view,
+            focused,
+            hosting: self.host.is_some(),
+            loaded: matches!(self.requests.list, Some(Ok(_))),
+            busy: self.requests.loading || timer.in_flight,
+        };
+        match request_refresh_step(now, last, interval, timer.failures, gate) {
+            RefreshStep::Paused => None,
+            RefreshStep::Wait(d) => Some(d),
+            RefreshStep::Due => {
+                self.refresh_requests_quietly();
+                None
+            }
         }
     }
 
@@ -2166,9 +2271,17 @@ impl RepoTab {
                         // screen is still the best there is. The next sync tries again.
                         tracing::debug!("a quiet request refresh failed; keeping the list");
                         self.requests.quiet_refresh = false;
+                        let timer = &mut self.requests.refresh;
+                        timer.in_flight = false;
+                        timer.failures = timer.failures.saturating_add(1);
+                        timer.failed_at = Some(Instant::now());
                     } else if filter == self.requests.filter {
                         self.requests.loading = false;
                         self.requests.loaded_at = Some(Instant::now());
+                        self.requests.refresh.in_flight = false;
+                        if result.is_ok() {
+                            self.requests.refresh.failures = 0;
+                        }
                         let first = result
                             .as_ref()
                             .ok()
@@ -2689,10 +2802,10 @@ mod tests {
         let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
         tab.snap = Some(Arc::new(RepoSnapshot::default()));
         tab.worker.send(Job::SquashMessage("topic".into()));
-        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(3);
         while tab.commit_summary.is_empty() && Instant::now() < deadline {
             tab.poll(&[]);
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(5));
         }
         assert!(!tab.amend, "a squash is a new commit, not an amend");
         assert_eq!(tab.commit_summary, "Merge topic (squashed)");
@@ -4490,6 +4603,274 @@ mod tests {
                 .any(|j| matches!(j, HostJob::List(_)))
         );
         assert!(!tab.requests.loading);
+    }
+
+    fn gate() -> RefreshGate {
+        RefreshGate {
+            view: View::Requests,
+            focused: true,
+            hosting: true,
+            loaded: true,
+            busy: false,
+        }
+    }
+
+    #[test]
+    fn the_timed_refresh_falls_due_once_the_interval_has_passed() {
+        let last = Instant::now();
+        let every = Duration::from_secs(60);
+        let step = |after: u64| {
+            request_refresh_step(last + Duration::from_secs(after), last, every, 0, gate())
+        };
+        assert_eq!(step(0), RefreshStep::Wait(every));
+        assert_eq!(step(45), RefreshStep::Wait(Duration::from_secs(15)));
+        assert_eq!(step(60), RefreshStep::Due);
+        assert_eq!(step(500), RefreshStep::Due);
+    }
+
+    #[test]
+    fn the_timed_refresh_waits_for_every_condition() {
+        let last = Instant::now();
+        let every = Duration::from_secs(60);
+        let now = last + every * 2;
+        let step = |g: RefreshGate| request_refresh_step(now, last, every, 0, g);
+        assert_eq!(step(gate()), RefreshStep::Due);
+        let cases = [
+            (
+                "another view",
+                RefreshGate {
+                    view: View::History,
+                    ..gate()
+                },
+            ),
+            (
+                "the changes view",
+                RefreshGate {
+                    view: View::Changes,
+                    ..gate()
+                },
+            ),
+            (
+                "an unfocused window",
+                RefreshGate {
+                    focused: false,
+                    ..gate()
+                },
+            ),
+            (
+                "hosting off",
+                RefreshGate {
+                    hosting: false,
+                    ..gate()
+                },
+            ),
+            (
+                "no list loaded",
+                RefreshGate {
+                    loaded: false,
+                    ..gate()
+                },
+            ),
+            (
+                "a load under way",
+                RefreshGate {
+                    busy: true,
+                    ..gate()
+                },
+            ),
+        ];
+        for (why, g) in cases {
+            assert_eq!(step(g), RefreshStep::Paused, "{why}");
+        }
+    }
+
+    #[test]
+    fn failures_double_the_wait_up_to_the_cap_and_never_below_the_interval() {
+        let last = Instant::now();
+        let every = Duration::from_secs(60);
+        let wait = |failures: u32, interval: Duration| match request_refresh_step(
+            last,
+            last,
+            interval,
+            failures,
+            gate(),
+        ) {
+            RefreshStep::Wait(d) => d,
+            other => panic!("expected a wait, got {other:?}"),
+        };
+        assert_eq!(wait(0, every), every);
+        assert_eq!(wait(1, every), every * 2);
+        assert_eq!(wait(3, every), every * 8);
+        assert_eq!(wait(4, every), REQUESTS_REFRESH_BACKOFF_CAP);
+        assert_eq!(wait(u32::MAX, every), REQUESTS_REFRESH_BACKOFF_CAP);
+        let hourly = Duration::from_secs(3600);
+        assert_eq!(wait(0, hourly), hourly);
+        assert_eq!(
+            wait(5, hourly),
+            hourly,
+            "the cap never shortens the interval"
+        );
+    }
+
+    /// A tab on the Requests view with a loaded list that was loaded at `loaded`.
+    fn timed_tab(
+        loaded: Instant,
+    ) -> (
+        RepoTab,
+        crossbeam_channel::Sender<HostEvent>,
+        crossbeam_channel::Receiver<HostJob>,
+    ) {
+        let (mut tab, _events, _jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            unreachable!("tab_showing_requests gives the tab a host")
+        };
+        let (host, host_events, host_jobs) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        tab.view = View::Requests;
+        tab.requests.loaded_at = Some(loaded);
+        (tab, host_events, host_jobs)
+    }
+
+    fn lists_in(host_jobs: &crossbeam_channel::Receiver<HostJob>) -> usize {
+        jobs_of(host_jobs)
+            .iter()
+            .filter(|j| matches!(j, HostJob::List(_)))
+            .count()
+    }
+
+    #[test]
+    fn the_open_requests_view_refreshes_quietly_when_the_timer_is_due()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        let every = Duration::from_secs(60);
+        let (mut tab, host_events, host_jobs) = timed_tab(start);
+
+        assert_eq!(
+            tab.refresh_requests_on_timer(start + Duration::from_secs(10), every, true),
+            Some(Duration::from_secs(50))
+        );
+        assert_eq!(lists_in(&host_jobs), 0, "not due yet");
+
+        let due = start + every;
+        assert_eq!(tab.refresh_requests_on_timer(due, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 1);
+        assert!(!tab.requests.loading, "a timed refresh shows no spinner");
+        assert!(tab.requests.quiet_refresh);
+
+        // Under way: it does not ask again however long the answer takes.
+        assert_eq!(
+            tab.refresh_requests_on_timer(due + every * 3, every, true),
+            None
+        );
+        assert_eq!(lists_in(&host_jobs), 0, "one refresh in flight at a time");
+
+        // The answer restarts the wait from when it arrived.
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        tab.poll(&[]);
+        assert!(!tab.requests.refresh.in_flight);
+        let Some(loaded) = tab.requests.loaded_at else {
+            unreachable!("a list answer sets loaded_at")
+        };
+        assert_eq!(
+            tab.refresh_requests_on_timer(loaded + Duration::from_secs(1), every, true),
+            Some(Duration::from_secs(59))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_timer_stays_quiet_while_a_condition_fails() {
+        let start = Instant::now();
+        let every = Duration::from_secs(60);
+        let late = start + every * 2;
+
+        let (mut tab, _events, host_jobs) = timed_tab(start);
+        assert_eq!(tab.refresh_requests_on_timer(late, every, false), None);
+        assert_eq!(lists_in(&host_jobs), 0, "an unfocused window");
+
+        tab.view = View::History;
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 0, "another view");
+
+        tab.view = View::Requests;
+        tab.requests.loading = true;
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 0, "a load under way");
+
+        tab.requests.loading = false;
+        tab.requests.list = None;
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 0, "no list loaded");
+
+        tab.requests.list = Some(Err("Not Found".into()));
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(
+            lists_in(&host_jobs),
+            0,
+            "a list that failed is not refreshed"
+        );
+
+        tab.requests.list = Some(Ok(Arc::from(Vec::new())));
+        tab.host = None;
+        assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
+        assert_eq!(lists_in(&host_jobs), 0, "hosting off");
+    }
+
+    #[test]
+    fn a_failed_timed_refresh_backs_off_and_a_success_resets_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        let every = Duration::from_secs(60);
+        let (mut tab, host_events, host_jobs) = timed_tab(start);
+        let fail = |tab: &mut RepoTab| -> Result<(), Box<dyn std::error::Error>> {
+            host_events.send(HostEvent::List(
+                StateFilter::Open,
+                Err("rate limited".into()),
+            ))?;
+            tab.poll(&[]);
+            Ok(())
+        };
+
+        assert_eq!(
+            tab.refresh_requests_on_timer(start + every, every, true),
+            None
+        );
+        assert_eq!(lists_in(&host_jobs), 1);
+        fail(&mut tab)?;
+        assert!(
+            matches!(tab.requests.list, Some(Ok(_))),
+            "the shown list stays"
+        );
+        assert_eq!(tab.requests.refresh.failures, 1);
+        assert!(!tab.requests.refresh.in_flight);
+        let Some(failed_at) = tab.requests.refresh.failed_at else {
+            unreachable!("a failure records when it happened")
+        };
+
+        // One failure: the next attempt waits twice as long, counted from the failure.
+        assert_eq!(
+            tab.refresh_requests_on_timer(failed_at + every, every, true),
+            Some(every)
+        );
+        assert_eq!(
+            tab.refresh_requests_on_timer(failed_at + every * 2, every, true),
+            None
+        );
+        assert_eq!(lists_in(&host_jobs), 1);
+        fail(&mut tab)?;
+        assert_eq!(tab.requests.refresh.failures, 2);
+
+        // A success clears the backoff.
+        tab.requests.refresh.failed_at = Some(start);
+        assert_eq!(
+            tab.refresh_requests_on_timer(start + every * 4, every, true),
+            None
+        );
+        assert_eq!(lists_in(&host_jobs), 1);
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        tab.poll(&[]);
+        assert_eq!(tab.requests.refresh.failures, 0);
+        Ok(())
     }
 }
 

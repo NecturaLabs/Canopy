@@ -5,6 +5,7 @@ use super::*;
 use canopy_core::identity::{Scope, Source};
 
 use crate::identity_worker::Event as IdentityEvent;
+use crate::tab::REQUESTS_REFRESH_EVERY;
 use crate::views::settings_screen::source_label;
 
 /// What the first-launch identity question should do now.
@@ -499,6 +500,25 @@ impl CanopyApp {
         }
         if any {
             ctx.request_repaint_after(Duration::from_secs(30));
+        }
+    }
+
+    /// Refreshes the active tab's open request list on a timer: as often as the background
+    /// fetch runs, or every minute when that is off. Wakes the frame loop only when it falls due.
+    pub(super) fn auto_refresh_requests(&mut self, ctx: &egui::Context) {
+        if self.screenshot.is_some() {
+            return;
+        }
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        let Some(t) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        let interval = match self.settings.auto_fetch_for(&t.path) {
+            0 => REQUESTS_REFRESH_EVERY,
+            minutes => Duration::from_secs(u64::from(minutes) * 60),
+        };
+        if let Some(next) = t.refresh_requests_on_timer(Instant::now(), interval, focused) {
+            ctx.request_repaint_after(next);
         }
     }
 }

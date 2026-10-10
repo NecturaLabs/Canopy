@@ -895,6 +895,7 @@ impl eframe::App for CanopyApp {
         }
         self.apply_repo_looks();
         self.auto_fetch(&ctx);
+        self.auto_refresh_requests(&ctx);
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
 

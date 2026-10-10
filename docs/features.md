@@ -231,9 +231,12 @@ state) with the lines in the added and removed colours, as the commit and file d
 
 The request list stays current without pressing Reload: a fetch (manual or the background one),
 pull or push that succeeds refreshes it, and the open request, quietly (no spinner or toast; the
-list, selection and open request stay on screen, and a failed refresh keeps them), and opening
-the Requests view reloads a list older than a minute. These use the same list and details calls
-as Reload, and only with hosting on and a list already loaded.
+list, selection and open request stay on screen, and a failed refresh keeps them), opening
+the Requests view reloads a list older than a minute, and while the view stays open and the window
+is focused the list refreshes on a timer: at the background fetch's interval when that is on,
+every minute when it is off, doubling after a failed refresh (up to fifteen minutes) and back to
+normal once one succeeds. These use the same list and details calls as Reload, and only with
+hosting on and a list already loaded.
 
 Hosting error messages hide the client token after normalizing invisible characters. Profile
 lookup errors also hide private request paths and email addresses after that normalization.
