@@ -424,6 +424,25 @@ impl CanopyApp {
                 Action::ClearIdentity { repo, scope } => {
                     self.request_identity(IdentityJob::Clear { repo, scope });
                 }
+                Action::SaveGitConfig {
+                    repo,
+                    scope,
+                    setting,
+                    value,
+                } => {
+                    self.request_git_config(
+                        ctx,
+                        IdentityJob::Config {
+                            repo,
+                            scope,
+                            setting,
+                            value,
+                        },
+                    );
+                }
+                Action::UseRecommendedGitConfig => {
+                    self.request_git_config(ctx, IdentityJob::Recommendations);
+                }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();
                     if crate::trust::add(&mut self.settings.trusted_folders, &folder) {

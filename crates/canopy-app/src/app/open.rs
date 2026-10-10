@@ -347,7 +347,7 @@ impl CanopyApp {
 
     /// Starts reading the repository's git configuration, to report what goes against
     /// Canopy's recommendation. A screenshot run reads nothing.
-    fn read_config_for(&mut self, ctx: &egui::Context, root: &std::path::Path) {
+    pub(super) fn read_config_for(&mut self, ctx: &egui::Context, root: &std::path::Path) {
         if self.screenshot.is_none() {
             let rx = crate::repo_config::read_async(ctx, Some(root.to_path_buf()));
             self.config_reads.push((root.to_path_buf(), rx));

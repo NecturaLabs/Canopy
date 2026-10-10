@@ -152,6 +152,7 @@ impl Settings {
     }
 
     /// Whether every choice of Settings → Git is Canopy's recommendation.
+    #[cfg(test)]
     pub fn git_choices_are_recommended(&self) -> bool {
         self.git_choices() == Self::default().git_choices()
     }

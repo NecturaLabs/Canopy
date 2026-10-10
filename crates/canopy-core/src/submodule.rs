@@ -345,7 +345,7 @@ impl Repo {
     /// covers a pull that merges, which git would not recurse for.)
     /// A failure says the pull or checkout itself succeeded.
     pub fn follow_submodules(&self, progress: impl FnMut(&str)) -> Result<()> {
-        if !self.recurses_into_submodules() {
+        if !self.recurses_into_submodules()? {
             return Ok(());
         }
         if self.submodules(false)?.is_empty() {

@@ -5,6 +5,7 @@
 //! Canopy's own choice and say which one applies (AGENTS.md, "Git settings"). Read through the
 //! same `git` that runs the operations, on a thread of its own: the UI thread never runs git.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use crossbeam_channel::{Receiver, bounded};
@@ -72,7 +73,7 @@ pub struct GitFacts {
     pub signing: Option<Signing>,
     /// `fetch.pruneTags`, and `remote.<name>.pruneTags` for each remote that sets it.
     pub prune_tags: Vec<ConfigValue>,
-    /// `rebase.autoStash` (rebases) and `merge.autoStash` (merges and merging pulls).
+    /// `pull.autoStash` (overrides the other two for pulls), rebase and merge autostash.
     pub autostash: Vec<ConfigValue>,
     /// `push.followTags`.
     pub follow_tags: Option<ConfigValue>,
@@ -86,6 +87,12 @@ pub struct GitFacts {
     pub cleanup: Option<ConfigValue>,
     /// `init.defaultBranch`.
     pub initial_branch: Option<ConfigValue>,
+    /// Effective supported values, including inherited and included configuration.
+    pub values: Vec<ConfigValue>,
+    /// Supported values written directly in the editor scope (global or local).
+    pub direct: Vec<ConfigValue>,
+    /// A configured hooks path is informational; Canopy never changes it.
+    pub hooks_path: Option<ConfigValue>,
     pub remotes: Vec<Remote>,
     /// The installed git's major and minor version, for the values Canopy would pass.
     pub git: Option<(u32, u32)>,
@@ -267,18 +274,20 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
     } else {
         &["--global"]
     };
-    let get = |key: &str| get_value(dir, scope, key);
+    let errors = RefCell::new(Vec::new());
+    let record = |key: &str, result: Result<Option<ConfigValue>, String>| {
+        result.unwrap_or_else(|error| {
+            errors.borrow_mut().push(format!("{key}: {error}"));
+            None
+        })
+    };
+    let get = |key: &str| record(key, get_value(dir, scope, key));
+    let boolean = |key: &str| record(key, get_bool(dir, scope, key));
     let mut facts = GitFacts {
         git: canopy_core::cli::version_number(),
+        fetch_prune: boolean("fetch.prune"),
         ..GitFacts::default()
     };
-    match get_bool(dir, scope, "fetch.prune") {
-        Ok(v) => facts.fetch_prune = v,
-        Err(e) => {
-            facts.error = Some(e);
-            return facts;
-        }
-    }
     if workdir.is_some() {
         facts.branch =
             canopy_core::cli::run_unchecked(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"])
@@ -287,56 +296,113 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
                 .filter(|b| !b.is_empty());
         facts.remotes = remotes(dir);
-        match remote_prune_values(&facts.remotes, |key| get_bool(dir, scope, key)) {
-            Ok(values) => facts.remote_prune = values,
-            Err(e) => {
-                facts.error = Some(e);
-                return facts;
+        for remote in &facts.remotes {
+            if let Some(value) = boolean(&format!("remote.{}.prune", remote.name)) {
+                facts.remote_prune.push(value);
             }
         }
     }
-    facts.prune_tags = get_bool(dir, scope, "fetch.pruneTags")
-        .ok()
-        .flatten()
+    facts.prune_tags = boolean("fetch.pruneTags")
         .into_iter()
-        .chain(facts.remotes.iter().filter_map(|r| {
-            get_bool(dir, scope, &format!("remote.{}.pruneTags", r.name))
-                .ok()
-                .flatten()
-        }))
+        .chain(
+            facts
+                .remotes
+                .iter()
+                .filter_map(|r| boolean(&format!("remote.{}.pruneTags", r.name))),
+        )
         .collect();
     let pull = match workdir {
         Some(w) => canopy_core::Repo::open(w).and_then(|r| r.pull_config()),
         None => canopy_core::global_pull_config(dir),
     };
-    facts.pull = pull
-        .inspect_err(|e| tracing::debug!(error = %e, "pull settings not read"))
-        .ok();
-    facts.gpg_sign = get_bool(dir, scope, "commit.gpgsign").ok().flatten();
-    facts.gpg_format = get("gpg.format").ok().flatten();
+    match pull {
+        Ok(pull) => facts.pull = Some(pull),
+        Err(error) => errors
+            .borrow_mut()
+            .push(format!("Pull configuration: {error}")),
+    }
+    facts.gpg_sign = boolean("commit.gpgsign");
+    facts.gpg_format = get("gpg.format");
     if let Some(w) = workdir
         && facts.signs_commits()
     {
-        // The tool check reads configuration and `PATH` only; it never runs the program.
         let missing = canopy_core::Repo::open(w)
             .map(|r| r.missing_tools())
             .unwrap_or_default();
         facts.signing = Some(signing_from(
-            &|key| get(key).ok().flatten(),
+            &get,
             &|program| missing.iter().any(|m| m.program == program),
             &|path| w.join(path).metadata().is_ok(),
         ));
     }
-    facts.autostash = ["rebase.autoStash", "merge.autoStash"]
+    facts.autostash = ["pull.autoStash", "rebase.autoStash", "merge.autoStash"]
         .into_iter()
-        .filter_map(|key| get_bool(dir, scope, key).ok().flatten())
+        .filter_map(boolean)
         .collect();
-    facts.follow_tags = get_bool(dir, scope, "push.followTags").ok().flatten();
-    facts.submodule_recurse = get_bool(dir, scope, "submodule.recurse").ok().flatten();
-    facts.push_default = get("push.default").ok().flatten();
-    facts.conflict_style = get("merge.conflictStyle").ok().flatten();
-    facts.cleanup = get("commit.cleanup").ok().flatten();
-    facts.initial_branch = get("init.defaultBranch").ok().flatten();
+    facts.follow_tags = boolean("push.followTags");
+    facts.submodule_recurse = boolean("submodule.recurse");
+    facts.push_default = get("push.default");
+    facts.conflict_style = get("merge.conflictStyle");
+    facts.cleanup = get("commit.cleanup");
+    facts.initial_branch = get("init.defaultBranch");
+    facts.hooks_path = get("core.hooksPath");
+    for setting in canopy_core::config::Setting::ALL {
+        let value = match setting {
+            canopy_core::config::Setting::FetchPrune => facts.fetch_prune.clone(),
+            canopy_core::config::Setting::PushFollowTags => facts.follow_tags.clone(),
+            canopy_core::config::Setting::SubmoduleRecurse => facts.submodule_recurse.clone(),
+            canopy_core::config::Setting::CommitSigning => facts.gpg_sign.clone(),
+            canopy_core::config::Setting::SigningFormat => facts.gpg_format.clone(),
+            canopy_core::config::Setting::PushDefault => facts.push_default.clone(),
+            canopy_core::config::Setting::ConflictStyle => facts.conflict_style.clone(),
+            canopy_core::config::Setting::CommitCleanup => facts.cleanup.clone(),
+            canopy_core::config::Setting::InitialBranch => facts.initial_branch.clone(),
+            canopy_core::config::Setting::FetchPruneTags => facts
+                .prune_tags
+                .iter()
+                .find(|v| v.key.eq_ignore_ascii_case(setting.key()))
+                .cloned(),
+            canopy_core::config::Setting::PullAutostash
+            | canopy_core::config::Setting::RebaseAutostash
+            | canopy_core::config::Setting::MergeAutostash => facts
+                .autostash
+                .iter()
+                .find(|v| v.key.eq_ignore_ascii_case(setting.key()))
+                .cloned(),
+            _ => get(setting.key()),
+        };
+        facts.values.extend(value);
+    }
+    let edit_scope = if workdir.is_some() {
+        canopy_core::identity::Scope::Local
+    } else {
+        canopy_core::identity::Scope::Global
+    };
+    match canopy_core::config::read_direct(
+        dir,
+        edit_scope,
+        canopy_core::config::Query::Matching(".*"),
+    ) {
+        Ok(entries) => {
+            facts.direct = entries
+                .into_iter()
+                .filter(|entry| {
+                    canopy_core::config::Setting::ALL
+                        .iter()
+                        .any(|s| entry.key.eq_ignore_ascii_case(s.key()))
+                })
+                .map(ConfigValue::from)
+                .collect();
+        }
+        Err(error) => errors
+            .borrow_mut()
+            .push(format!("Editable configuration: {error}")),
+    }
+    let errors = errors.into_inner();
+    if !errors.is_empty() {
+        facts.error = Some(errors.join("\n"));
+    }
+
     facts
 }
 
@@ -354,6 +420,7 @@ fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue
 }
 
 /// Reads each remote's pruning preference without silently dropping a failed git config read.
+#[cfg(test)]
 fn remote_prune_values(
     remotes: &[Remote],
     mut get: impl FnMut(&str) -> Result<Option<ConfigValue>, String>,
@@ -371,20 +438,9 @@ fn remote_prune_values(
 /// [`get_value`] for a boolean key, with the value as git reads it: a key written without `=`
 /// is true, one with an empty value false, and both print as an empty value.
 fn get_bool(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>, String> {
-    let mut found = get_value(dir, scope, key)?;
-    if let Some(v) = found.as_mut().filter(|v| v.value.is_empty()) {
-        let mut args = vec!["config"];
-        args.extend_from_slice(scope);
-        args.extend(["--bool", "--get", key]);
-        if let Ok(out) = canopy_core::cli::run_unchecked(dir, &args)
-            && out.code == Some(0)
-        {
-            String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .clone_into(&mut v.value);
-        }
-    }
-    Ok(found)
+    canopy_core::config::read_bool(dir, scope.contains(&"--global"), key)
+        .map(|entry| entry.map(ConfigValue::from))
+        .map_err(|error| error.to_string())
 }
 
 impl From<canopy_core::config::Entry> for ConfigValue {
@@ -443,6 +499,36 @@ fn parse_remotes(out: &str) -> Vec<Remote> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_git_booleans_show_the_value_git_uses() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        canopy_core::cli::run(dir.path(), &["init", "-q", "-b", "main"]).expect("init");
+        canopy_core::cli::run(dir.path(), &["config", "fetch.prune", "2"]).expect("config");
+        let facts = read(Some(dir.path()));
+        assert_eq!(facts.error, None);
+        assert_eq!(
+            facts.fetch_prune.as_ref().and_then(ConfigValue::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn an_invalid_boolean_is_reported_instead_of_hidden() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        canopy_core::cli::run(dir.path(), &["init", "-q", "-b", "main"]).expect("init");
+        canopy_core::cli::run(dir.path(), &["config", "fetch.prune", "true"]).expect("config");
+        canopy_core::cli::run(dir.path(), &["config", "push.followTags", "invalid"])
+            .expect("config");
+        let facts = read(Some(dir.path()));
+        assert!(
+            facts
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("push.followTags")),
+            "{facts:?}"
+        );
+    }
 
     #[test]
     fn values_and_where_they_are_set_are_read() {
@@ -813,7 +899,7 @@ mod tests {
         assert_eq!(key_label("~/.ssh/id.pub").as_deref(), Some("id.pub"));
 
         let ssh = values(&[("gpg.format", "ssh"), ("user.signingkey", "keys/id.pub")]);
-        let seen = std::cell::RefCell::new(None);
+        let seen = RefCell::new(None);
         let signing = signing_from(&ssh, &|_| false, &|p| {
             *seen.borrow_mut() = Some(p.to_path_buf());
             false
@@ -834,7 +920,7 @@ mod tests {
         git(&["init", "-q"]);
         git(&["config", "commit.gpgsign", "true"]);
         git(&["config", "gpg.format", "ssh"]);
-        git(&["config", "gpg.ssh.program", "sh"]);
+        git(&["config", "gpg.ssh.program", "git"]);
         git(&["config", "user.signingkey", "keys/id.pub"]);
         let signing = read(Some(dir.path())).signing.expect("signing is on");
         assert_eq!(signing.problem, Some(SigningProblem::KeyFileMissing));

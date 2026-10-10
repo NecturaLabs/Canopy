@@ -21,6 +21,8 @@ use crate::{Error, Result, status};
 pub const MAX_STAT_FILES: usize = 200;
 /// The most commits a history read reserves room for up front, however many it may return.
 const MAX_PREALLOCATED_COMMITS: usize = 4096;
+/// A configuration read before init must not delay repository creation indefinitely.
+const INIT_CONFIG_LIMIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// An open repository with a working directory.
 pub struct Repo {
@@ -67,43 +69,62 @@ impl Repo {
 
     /// Creates a new repository in `path` (creating the directory) and opens it. Its first
     /// branch is `initial_branch`, unless `follow_config` and `init.defaultBranch` names one. A
-    /// name git would not accept as a branch is refused before anything is created.
+    /// known invalid configured or fallback name is refused before anything is created.
+    /// Destination-dependent includes are selected by Git while creating the repository.
     pub fn init(path: &Path, initial_branch: &str, follow_config: bool) -> Result<Self> {
         // Where git can run before `path` exists: its nearest folder that does.
         let existing = path
             .ancestors()
             .find(|p| p.is_dir())
             .unwrap_or_else(|| Path::new("."));
-        let configured = follow_config
-            && crate::cli::run_unchecked(existing, &["config", "--get", "init.defaultBranch"])
-                .is_ok_and(|o| o.code == Some(0));
-        if !configured {
-            // Not `--branch`: that expands `@{-1}` and `@{upstream}` against whichever repository
-            // `existing` is in, and `git init` refuses such a name only after creating the folder.
-            let ref_name = format!("refs/heads/{initial_branch}");
-            let valid = !initial_branch.starts_with('-')
-                && initial_branch != "HEAD"
-                && crate::cli::run_unchecked(existing, &["check-ref-format", &ref_name])
-                    .is_ok_and(|o| o.code == Some(0));
-            if !valid {
-                return Err(Error::invalid(format!(
-                    "'{initial_branch}' is not a valid branch name"
-                )));
+        let configured = if follow_config {
+            // Git init reads configuration for the new gitdir, never the containing repository.
+            let mut command = crate::cli::command(Some(existing));
+            command.env("GIT_DIR", std::path::absolute(path)?.join(".git"));
+            let out = crate::cli::output_within(
+                command,
+                &["config", "--get", "init.defaultBranch"],
+                INIT_CONFIG_LIMIT,
+            )?;
+            match out.code {
+                Some(0) => Some(
+                    String::from_utf8_lossy(out.stdout.strip_suffix(b"\n").unwrap_or(&out.stdout))
+                        .into_owned(),
+                ),
+                Some(1) => None,
+                _ => return Err(out.error(&["config", "--get", "init.defaultBranch"])),
             }
-        }
+        } else {
+            None
+        };
+        crate::config::validate_branch(existing, configured.as_deref().unwrap_or(initial_branch))?;
+        let reinitializing = path.join(".git").exists();
         std::fs::create_dir_all(path)?;
-        if configured {
+        if follow_config {
+            // Conditional includes for a destination are resolved only after Git creates its
+            // gitdir. Let init select them, then apply Canopy's fallback only if still unset.
             crate::cli::run(path, &["init", "-q"])?;
+            let out = crate::cli::run_unchecked(path, &["config", "--get", "init.defaultBranch"])?;
+            match out.code {
+                Some(1) if !reinitializing => {
+                    let head = format!("refs/heads/{initial_branch}");
+                    crate::cli::run(path, &["symbolic-ref", "HEAD", &head])?;
+                }
+                Some(0 | 1) => {}
+                _ => return Err(out.error(&["config", "--get", "init.defaultBranch"])),
+            }
         } else if crate::cli::version_number()
             .is_some_and(|v| v >= crate::cli::INITIAL_BRANCH_SINCE)
         {
             let branch = format!("--initial-branch={initial_branch}");
             crate::cli::run(path, &["init", "-q", &branch])?;
         } else {
-            // `--initial-branch` is git 2.28's; an older git names the unborn branch afterwards.
+            // --initial-branch is Git 2.28's; an older Git names the unborn branch afterwards.
             crate::cli::run(path, &["init", "-q"])?;
-            let head = format!("refs/heads/{initial_branch}");
-            crate::cli::run(path, &["symbolic-ref", "HEAD", &head])?;
+            if !reinitializing {
+                let head = format!("refs/heads/{initial_branch}");
+                crate::cli::run(path, &["symbolic-ref", "HEAD", &head])?;
+            }
         }
         Self::open(path)
     }

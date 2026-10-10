@@ -134,6 +134,26 @@ fn force_push_dialog(repo: &std::path::Path, target: canopy_core::PushTarget) ->
 }
 
 impl CanopyApp {
+    pub(super) fn request_git_config(&mut self, ctx: &egui::Context, job: IdentityJob) {
+        if self
+            .identity_worker
+            .as_ref()
+            .is_some_and(|worker| worker.send(job))
+        {
+            return;
+        }
+        if let Some(screen) = &mut self.settings_screen {
+            screen.git_config_finished();
+        }
+        self.toasts.push(
+            ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Git settings were not saved",
+            "The Git settings helper is unavailable. Restart Canopy and try again.",
+        );
+    }
+
     pub(super) fn request_identity(&mut self, job: IdentityJob) {
         if self
             .identity_worker
@@ -191,6 +211,40 @@ impl CanopyApp {
         let events: Vec<_> = worker.events.try_iter().collect();
         for event in events {
             match event {
+                IdentityEvent::ConfigChanged {
+                    repo,
+                    recommended,
+                    result,
+                } => {
+                    if recommended && result.is_ok() {
+                        self.settings.use_recommended_git_choices();
+                    }
+                    if let Some(screen) = &mut self.settings_screen {
+                        screen.git_config_finished();
+                    }
+                    match result {
+                        Ok(()) => self.toasts.push(ctx, ToastKind::Success, Topic::Confirmation,
+                            "Git settings saved", if recommended {
+                                "Recommended values were saved globally. Repository overrides remain in force."
+                            } else { "The selected Git configuration was updated." }),
+                        Err(error) => self.toasts.push(ctx, ToastKind::Error, Topic::Error,
+                            "Git settings were not fully saved", error),
+                    }
+                    let paths: Vec<_> = self
+                        .tabs
+                        .iter()
+                        .filter(|tab| repo.as_ref().is_none_or(|path| tab.path == *path))
+                        .map(|tab| {
+                            tab.refresh();
+                            tab.path.clone()
+                        })
+                        .collect();
+                    for path in paths {
+                        self.request_identity(IdentityJob::ReadRepo(path.clone()));
+                        self.read_config_for(ctx, &path);
+                    }
+                    self.request_identity(IdentityJob::ReadGlobal);
+                }
                 IdentityEvent::Repo { path, result } => {
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.path == path) {
                         match result {

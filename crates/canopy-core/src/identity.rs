@@ -108,7 +108,7 @@ pub enum Scope {
 }
 
 impl Scope {
-    fn flag(self) -> &'static str {
+    pub(crate) fn flag(self) -> &'static str {
         match self {
             Self::Local => "--local",
             Self::Global => "--global",

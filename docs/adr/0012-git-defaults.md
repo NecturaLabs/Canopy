@@ -1,6 +1,6 @@
 # ADR 0012: Canopy's git defaults are today's recommended practice, and pulls look before they leap
 
-**Status:** accepted, amended 2026-10-07 (the user's git configuration decides what it sets)
+**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration)
 **Date:** 2026-10-06
 
 ## Context
@@ -35,12 +35,12 @@ its own choice explicitly:
 | Pull strategy | Fast-forward only; when the branches diverged Canopy asks Rebase (recommended) or Merge (optionally remembered for the repository or, where Canopy's setting asked for fast-forwards, every repository) | `branch.<name>.rebase`, `pull.rebase`, `pull.ff` | strategy flags |
 | Prune on fetch | on | `remote.<name>.prune`, else `fetch.prune` | `-c fetch.prune=…` while following, else `--prune` / `--no-prune` |
 | Prune tags too | off | `remote.<name>.pruneTags`, else `fetch.pruneTags` | `-c fetch.pruneTags=…` while following, else `--prune-tags` / `--no-prune-tags` |
-| Autostash for pull and rebase | on | `rebase.autoStash` (rebases), `merge.autoStash` (merges) | `--autostash` / `--no-autostash` (merges: git 2.27 and later) |
+| Autostash for pull and rebase | on | `pull.autoStash` for pulls when set, else `rebase.autoStash` / `merge.autoStash`; direct rebase/merge use their own key | `--autostash` / `--no-autostash` (merges: git 2.27 and later) |
 | Push annotated tags with their commits | on | `push.followTags` | `--follow-tags` / `--no-follow-tags` |
 | Update submodules after a pull or checkout, and in a clone | on | `submodule.recurse` (pull and checkout only: git ignores it for `clone`) | after a pull or checkout, `git submodule update --init --recursive` unless the configuration decides; `clone --recurse-submodules` |
 | Push to | the branch's upstream, when the names match | `push.default` (a force push follows only `simple`, `upstream` or `current`, so it never sends other branches) | `-c push.default=simple` (or upstream, current) |
 | Conflict style | both sides and the original, trimmed | `merge.conflictStyle` | `-c merge.conflictStyle=zdiff3` (`diff3` before git 2.35) |
-| First branch of a new repository | `main` | `init.defaultBranch` | `git init --initial-branch=<name>` (`symbolic-ref` before git 2.28) |
+| First branch of a new repository | `main` | `init.defaultBranch` | native `git init` when following configuration; `symbolic-ref` sets Canopy's fallback only for a newly initialized, unconfigured repository |
 | Message cleanup | trailing spaces and surrounding blank lines only | `commit.cleanup` | `--cleanup=whitespace` (or strip, verbatim) |
 
 `rerere`, `rebase.updateRefs` and `diff.algorithm` stay off or unused: the first two change results
@@ -55,8 +55,25 @@ A pull or rebase that still stops on conflicts, or whose stashed changes conflic
 back, takes the user to Changes with a plain message.
 
 Settings shows every choice with Canopy's recommendation; where the user's configuration sets
-it, the note names the setting, its value and where it is set, and the control is unavailable
-while that configuration decides.
+it, the note names the setting, its value and where it is set. Supported values stay editable:
+Settings → Git writes the main global file, This repository writes the common local file.
+Unset/Inherit removes only that file's values. Included, system, worktree and command values
+remain in force according to Git's precedence. Global Settings shows global values; the
+repository page shows the effective configuration across scopes.
+
+Use recommended confirms and writes the non-sensitive recommendations globally on the Git
+worker. It leaves identity, signing, hooks and line endings alone. A failed batch reports saved
+progress; Settings rereads actual state. Canopy fallback controls remain available when Follow
+my git config is off. Existing repository preferences remain compatible.
+
+The recommendations are product choices, not universal Git requirements. The primary basis is
+[Git pull](https://git-scm.com/docs/git-pull) for fast-forward-only integration,
+[Git fetch](https://git-scm.com/docs/git-fetch) for branch pruning and the risk of deleting local
+tags, [Git config](https://git-scm.com/docs/git-config) for `simple` pushes, autostash precedence,
+submodule recursion and conflict styles, [Git init](https://git-scm.com/docs/git-init) for the
+first branch, and [Git commit](https://git-scm.com/docs/git-commit) for cleanup preserving `#`
+lines. Autostash, follow-tags, recursive updates, `main` and whitespace cleanup remain explicit
+Canopy defaults; projects may prefer other values.
 
 ## Consequences
 
