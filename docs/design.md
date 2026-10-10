@@ -742,7 +742,10 @@ up to four lines of text (all of it in the tooltip), and buttons
 only for what can be done: a decision's own two as Xs (tonal Primary and Ghost), and Copy (Ghost)
 on a failure, whose output is worth keeping; their labels line up with the text. Rows part by
 `SM` space and a hairline at 8% of the text colour over the surface, the same in every theme. A
-header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors,
+header holds a Ghost Clear all and the settings gear. The list keeps its scroll bar's own room
+(`solid_scroll`) beside the rows, so it never covers a dismiss button, and fades a row cut by
+its edge. The same notice again straight after itself from one repository is one row, with its
+count (`5×`) after the title and the latest time. Notifications of a counting topic (errors,
 attention, updates) that showed no card, and decisions whose card ran out, raise a strong count
 badge on the bell, solid `danger_solid` with `on_danger` text when an unread one is an error, else
 `accent`, kept inside the status bar. Read state is saved per entry, preserving unread counts and
