@@ -140,13 +140,15 @@ jobs:
     name: Test (${{ matrix.os }})
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/') || !matrix.self-hosted) && matrix.hosted || fromJSON(matrix.self-hosted) }}
     needs: changes
-    if: needs.changes.outputs.code == 'true' && (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1' || vars.CI_WINDOWS == '1')
+    if: needs.changes.outputs.code == 'true' && vars.CI_TESTS == '1' && (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1' || vars.CI_WINDOWS == '1')
     timeout-minutes: 45
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      # One toggle per platform, as repository variables: Linux runs unless CI_LINUX is '0';
+      # The whole job is off unless the repository variable CI_TESTS is '1' (the owner's call: the
+      # pre-commit hook runs the tests before every commit; set CI_TESTS=1 to run them here again).
+      # Then one toggle per platform, as repository variables: Linux runs unless CI_LINUX is '0';
       # macOS and Windows run only when CI_MACOS or CI_WINDOWS is '1' (both off for now, the
       # owner's call).
       matrix:
