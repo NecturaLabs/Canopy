@@ -1363,7 +1363,7 @@ impl<'a> SectionHeader<'a> {
         self.open = Some(open);
         self
     }
-    /// An icon button at the right that shows on hover ("+" Add remote…); `label` is its tooltip.
+    /// An icon button at the right that shows on hover; `label` is its tooltip.
     pub fn action(mut self, glyph: &str, label: impl Into<String>) -> Self {
         self.action = Some((glyph.to_owned(), label.into()));
         self
@@ -2786,7 +2786,7 @@ mod tests {
         assert_eq!(grounds, vec![p.standard.pane]);
     }
 
-    /// Override O2 (shell F1): Tab from a section header lands on its action ("+" Add remote…),
+    /// Override O2 (shell F1): Tab from a section header lands on its action (the test gives it "Add remote…"),
     /// which stays shown while it has focus, the next Tab leaves it and Shift+Tab comes back to
     /// it; with full and reduced motion.
     #[test]
