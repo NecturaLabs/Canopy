@@ -65,10 +65,16 @@ runs:
           root="$RUNNER_TOOL_CACHE/rust"
         fi
         export CARGO_HOME="$root/cargo" RUSTUP_HOME="$root/rustup"
-        if [[ ! -x "$CARGO_HOME/bin/rustup" ]]; then
-          curl --proto '=https' --tlsv1.2 --retry 10 --location --silent --show-error --fail https://sh.rustup.rs \
-            | sh -s -- --default-toolchain none --no-modify-path -y
-        fi
+        # The installer script downloads rustup-init with no time limit, and one such download
+        # stalled for an hour (#144): each try gets five minutes where `timeout` exists.
+        limited() { if command -v timeout > /dev/null; then timeout -k 10 300 "$@"; else "$@"; fi; }
+        for try in 1 2 3; do
+          [[ -x "$CARGO_HOME/bin/rustup" ]] && break
+          (( try == 1 )) || echo "::warning::Installing rustup failed or stalled; try $try of 3."
+          limited bash -c "set -o pipefail; curl --proto '=https' --tlsv1.2 --retry 10 --connect-timeout 30 --location --silent --show-error --fail https://sh.rustup.rs \
+            | sh -s -- --default-toolchain none --no-modify-path -y" || true
+        done
+        [[ -x "$CARGO_HOME/bin/rustup" ]] || { echo "::error::Installing rustup failed three times."; exit 1; }
         echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
         echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
         echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"

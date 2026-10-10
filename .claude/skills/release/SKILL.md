@@ -94,8 +94,12 @@ same feed release) unless beta already offers a newer build.
      `aarch64-apple-darwin` and `x86_64-apple-darwin` (cross-compiled on the Apple silicon
      runner); Windows is `x86_64-pc-windows-msvc`. The Linux and Windows builds use the
      self-hosted runners from an empty workspace and job-local toolchain, macOS runs hosted. The
-     two cross-compiled targets are `experimental`: their failure shows as a failed job but does
-     not stop the release, and the installer reports that platform as having no build;
+     two cross-compiled targets are `experimental`: they build in a job of their own (20 minute
+     limit) that publishing does not wait for, so their failure or a hang never holds back the
+     release. Once the release and the feed are out, "Add the experimental builds" adds the
+     archives that built to both releases (with a new `SHA256SUMS`) and to every feed manifest
+     that still names the build, and warns about each target that did not build; until then, or
+     without it, the installer reports that platform as having no build;
    - builds with the number, the commit's short hash and the notes embedded
      (`crates/canopy-app/build.rs`), so `canopy --version` prints `canopy build <n> (<hash>)`;
    - packages `canopy-build-<number>-<target>.tar.gz` (Linux, macOS) or `.zip` (Windows):
@@ -118,12 +122,13 @@ same feed release) unless beta already offers a newer build.
 - The Create release run succeeded (`gh run view <id>`). Release runs inside it as a reusable
   workflow, so its jobs appear there as "Build and publish / …", not under
   `gh run list --workflow release.yml` (that lists only manual reruns). Every job is green except
-  possibly an experimental build, and `Publish to the update feed` did not warn that the token is
-  missing.
+  possibly an experimental build and "Add the experimental builds" (both are allowed to fail),
+  and `Publish to the update feed` did not warn that the token is missing.
 - `git fetch --tags` locally; the tag `build-<number>` is on the commit you meant to release.
 - `gh release view build-<number>` lists one archive per target built (two for Linux, two for macOS,
   one for Windows, for the platforms that were on; one fewer for each experimental build that
-  failed: check why), `install.sh`, `install.ps1` and `SHA256SUMS`; the notes match
+  failed: check why; an experimental archive arrives after the others), `install.sh`,
+  `install.ps1` and `SHA256SUMS`; the notes match
   `tools/release.py notes build-<number>`; `gh release view build-<number> --json isPrerelease`
   is `true` for a beta and `false` for a stable release.
 - If Linux was built, download its archive: `sha256sum -c` against `SHA256SUMS`,
@@ -147,6 +152,9 @@ same feed release) unless beta already offers a newer build.
   channel=stable|beta`). Do not run Create release again: it would stop, since HEAD is a tagged
   build. Release refuses a tag whose number is not the commit count of its commit, or whose
   commit is not on `main`.
+- An experimental build failed or ran out of time: the release is out without it. Re-running that
+  run's failed jobs (`gh run rerun <id> --failed`) builds it again and, through "Add the
+  experimental builds", adds it; or leave it for the next build.
 - The code is wrong after a release was published: never move or delete a published tag. Merge the
   fix and cut a new build.
 - A tag that never produced a published release may be deleted
