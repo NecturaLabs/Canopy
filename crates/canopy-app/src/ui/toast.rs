@@ -531,7 +531,8 @@ impl Toasts {
     }
 
     /// Like [`Self::push_offer`] (an Info notice), about `repo`, and only when the center does not already hold
-    /// the same notice for it (one kept from an earlier run included).
+    /// the same notice (one kept from an earlier run included): the same words from several
+    /// repositories, as one global git setting makes, are one notice.
     pub fn push_offer_for(
         &mut self,
         ctx: &egui::Context,
@@ -547,7 +548,7 @@ impl Toasts {
         if self
             .history
             .iter()
-            .any(|e| e.title == title && e.source == source)
+            .any(|e| e.title == title && e.body == body)
         {
             return;
         }
@@ -2248,28 +2249,33 @@ mod tests {
     }
 
     #[test]
-    fn a_notice_about_a_repository_is_kept_once() {
+    fn a_notice_with_the_same_words_is_kept_once() {
         let ctx = egui::Context::default();
         let mut toasts = Toasts::default();
-        for _ in 0..2 {
+        let push = |toasts: &mut Toasts, body: &str, repo: &str| {
             toasts.push_offer_for(
                 &ctx,
                 Topic::Attention,
                 "Git settings differ",
-                "Prune: x".into(),
+                body.into(),
                 Offer::GitSettings,
-                Path::new("/work/canopy"),
+                Path::new(repo),
             );
-        }
-        toasts.push_offer_for(
-            &ctx,
-            Topic::Attention,
-            "Git settings differ",
-            "Prune: x".into(),
-            Offer::GitSettings,
-            Path::new("/work/other"),
+        };
+        push(&mut toasts, "Prune: x", "/work/canopy");
+        push(&mut toasts, "Prune: x", "/work/canopy");
+        push(&mut toasts, "Prune: x", "/work/other");
+        assert_eq!(
+            toasts.history.len(),
+            1,
+            "one global setting is one notice, not one per repository"
         );
-        assert_eq!(toasts.history.len(), 2, "once per repository");
+        push(&mut toasts, "Prune: y", "/work/other");
+        assert_eq!(
+            toasts.history.len(),
+            2,
+            "different words are another notice"
+        );
     }
 
     /// The bell opens the center, which marks everything read and lists the notifications; while
