@@ -513,13 +513,19 @@ impl CanopyApp {
         let Some(t) = self.tabs.get_mut(self.active) else {
             return;
         };
-        let interval = match self.settings.auto_fetch_for(&t.path) {
-            0 => REQUESTS_REFRESH_EVERY,
-            minutes => Duration::from_secs(u64::from(minutes) * 60),
-        };
+        let interval = requests_refresh_interval(self.settings.auto_fetch_for(&t.path));
         if let Some(next) = t.refresh_requests_on_timer(Instant::now(), interval, focused) {
             ctx.request_repaint_after(next);
         }
+    }
+}
+
+/// How often the open request list refreshes when the background fetch runs every `minutes`
+/// (0: off, so every [`REQUESTS_REFRESH_EVERY`]).
+fn requests_refresh_interval(minutes: u32) -> Duration {
+    match minutes {
+        0 => REQUESTS_REFRESH_EVERY,
+        minutes => Duration::from_secs(u64::from(minutes) * 60),
     }
 }
 
@@ -550,6 +556,18 @@ mod tests {
             author: person.clone(),
             committer: person,
         }
+    }
+
+    #[test]
+    fn the_request_list_refreshes_with_the_background_fetch_or_every_minute() {
+        for (minutes, secs) in [(0, 60), (1, 60), (5, 300), (30, 1_800)] {
+            assert_eq!(
+                requests_refresh_interval(minutes),
+                Duration::from_secs(secs),
+                "{minutes} minutes"
+            );
+        }
+        assert_eq!(requests_refresh_interval(0), REQUESTS_REFRESH_EVERY);
     }
 
     #[test]

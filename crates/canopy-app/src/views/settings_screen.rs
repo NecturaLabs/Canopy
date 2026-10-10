@@ -3243,7 +3243,7 @@ fn git(
     default_row(
         ui,
         "Fetch in the background",
-        "Fetches every remote of open repositories while Canopy is idle, and refreshes the open request list on the same interval (every minute when this is off).",
+        "Fetches every remote of open repositories while Canopy is idle, and, with a hosting token, refreshes the open request list on the same interval (every minute when this is off).",
         None,
         |ui| {
             revert(
@@ -3636,7 +3636,7 @@ fn repository(
     repo_row(
         ui,
         "Fetch in the background",
-        "Fetches this repository's remotes while Canopy is idle, and refreshes its request list on the same interval (every minute when this is off).",
+        "Fetches this repository's remotes while Canopy is idle, and, with a hosting token, refreshes its request list on the same interval (every minute when this is off).",
         None,
         |ui| {
             override_select(
