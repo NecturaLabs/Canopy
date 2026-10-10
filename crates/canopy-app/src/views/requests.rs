@@ -1380,9 +1380,16 @@ struct CredentialProblem {
 }
 
 /// The credential problem to show under the request's actions: none while the credential works
-/// (its source is Settings' to say), else no token or a token the host refused.
+/// (its source is Settings' to say), else no token or a token the host refused. Without a token
+/// nothing was refused, whatever the host answered (a GitLab that wants a sign-in answers 401).
 fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
-    if tab.requests.token_rejected {
+    if tab.requests.token == Some(None) {
+        Some(CredentialProblem {
+            title: "No token",
+            text: "Without one Canopy can only read this request. Approving, merging and commenting need a token.".into(),
+            fix: "Add a token…",
+        })
+    } else if tab.requests.token_rejected {
         Some(CredentialProblem {
             title: "The host refused the token",
             // Which one, so the fix goes to the right place.
@@ -1394,12 +1401,6 @@ fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
                     .map_or("Canopy sends", |source| source.label()),
             ),
             fix: "Replace the token…",
-        })
-    } else if tab.requests.token == Some(None) {
-        Some(CredentialProblem {
-            title: "No token",
-            text: "Without one Canopy can only read this request. Approving, merging and commenting need a token.".into(),
-            fix: "Add a token…",
         })
     } else {
         None
@@ -2160,6 +2161,8 @@ mod tests {
     fn a_missing_or_refused_token_is_shown_with_its_fix() {
         for (rejected, token, fix) in [
             (false, Some(None), "Add a token…"),
+            // A host that wants a sign-in refuses a tokenless read; there is nothing to replace.
+            (true, Some(None), "Add a token…"),
             (
                 true,
                 Some(Some(crate::hosting::TokenSource::Saved)),
