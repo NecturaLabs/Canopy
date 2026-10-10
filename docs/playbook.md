@@ -152,3 +152,6 @@ the header’s Expand button by its accessible name. Use `--size 960x640` for co
 
 Use `--overlay commit-compact --size 960x400` to select Commit details in the compact
 History layout through its accessible control.
+
+Use `--overlay amend-commit` with a clean fixture to open the amend composer through its
+secondary action and capture the message read by the worker.

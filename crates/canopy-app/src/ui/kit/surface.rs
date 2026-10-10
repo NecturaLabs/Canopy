@@ -941,6 +941,7 @@ pub struct EmptyState {
     art: Option<Art>,
     icon: Option<String>,
     action: Option<String>,
+    action_min_width: f32,
     link: Option<String>,
     hints: Vec<(Command, String)>,
     compact: bool,
@@ -957,6 +958,7 @@ impl EmptyState {
             art: None,
             icon: None,
             action: None,
+            action_min_width: 0.0,
             link: None,
             hints: Vec::new(),
             compact: false,
@@ -997,6 +999,11 @@ impl EmptyState {
     }
     pub fn action(mut self, label: impl Into<String>) -> Self {
         self.action = Some(label.into());
+        self
+    }
+    /// Minimum width of the primary action, bounded by the available pane.
+    pub fn action_min_width(mut self, width: f32) -> Self {
+        self.action_min_width = width.max(0.0);
         self
     }
     pub fn link(mut self, label: impl Into<String>) -> Self {
@@ -1075,6 +1082,7 @@ impl EmptyState {
         if let Some(a) = &self.action
             && Button::new(a.clone())
                 .primary()
+                .min_width(self.action_min_width.min(width))
                 .id_salt((self.id_salt, "action"))
                 .show(&mut child)
                 .clicked()

@@ -61,6 +61,11 @@ impl MenuShot {
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
             "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
+            "amend-commit" => (
+                "Amend last commit",
+                View::Changes,
+                egui::PointerButton::Primary,
+            ),
             "commit-compact" => (
                 "Commit details",
                 View::History,

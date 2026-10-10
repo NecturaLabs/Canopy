@@ -276,3 +276,7 @@ Author pictures are fetched after consent when enabled in Privacy, through the r
 
 Request review and merge shortcuts use the selected request's refreshed details when available,
 matching the state displayed by the action buttons. Merge controls wrap within narrow panes.
+
+A clean Changes view uses one empty state with the branch’s sync status and Push, Pull or Fetch
+as the next action (Publish for a local-only repository). Amend last commit is a secondary link
+that opens the composer with the last message; an existing draft is preserved.

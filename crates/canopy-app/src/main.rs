@@ -51,7 +51,7 @@ OPTIONS:
                               diff-options,
                               settings-integrations, settings-accounts, settings-updates,
                               settings-keyboard, settings-backup, settings-repository,
-                              settings-search, about, repository-insights, clean-stale, author-card, commit-expanded, commit-compact, toasts, notifications, branch-selected,
+                              settings-search, about, repository-insights, clean-stale, author-card, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
                               long-message,
                               gallery, menu-branch, menu-commit, menu-file, open,
                               open-error, clone,

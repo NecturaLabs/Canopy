@@ -455,14 +455,15 @@ in the density's metrics:
   chosen option shows a check. The resolver footer's "Save resolved file" is the one Primary.
 - Without a GitHub or GitLab remote, Requests offers Publish… (no remote at all) or Add remote…
   (remotes elsewhere) under its empty-state illustration.
-- A clean working tree gives the main pane its own state: the illustration, "Working tree
-  clean", where the branch stands (up to date, N to push or pull with that button, or local only
-  with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet
-  composer, "Nothing to commit" and the Amend choice, which expands to the full composer when
-  ticked or when text is typed.
-- The clean summary scrolls in a short pane so Publish/Push/Pull and the last commit remain
-  reachable at maximum zoom. The conflict resolver's body can shrink below its normal scroll
-  minimum rather than painting code across its fixed Save footer.
+- A clean working tree uses one kit `EmptyState` across the main pane, with the clean
+  illustration (the check icon in short panes), branch sync status and Push, Pull or Fetch.
+  A local-only repository offers Publish. Amend last commit is a quiet secondary link into
+  the composer; empty file lists and composer fields stay out of this state.
+
+- Short clean panes use the kit’s compact icon instead of the illustration, keeping the sync
+  and amend actions reachable. The primary action uses `EmptyState::action_min_width` to keep
+  its button width even with a short label. The conflict resolver’s body can shrink below its
+  normal scroll minimum rather than painting code across its fixed Save footer.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon

@@ -74,6 +74,7 @@ pub const OVERLAYS: &[&str] = &[
     "author-card",
     "commit-expanded",
     "commit-compact",
+    "amend-commit",
     "toasts",
     "notifications",
     "branch-selected",
