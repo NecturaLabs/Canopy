@@ -17,7 +17,7 @@ use egui_phosphor::regular as icon;
 const LIST_HEIGHT: f32 = 320.0;
 
 pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) -> Outcome {
-    let Dialog::FileHistory { path } = dialog else {
+    let Dialog::FileHistory { path, .. } = dialog else {
         return Outcome::Close;
     };
     let p = palette(ctx);

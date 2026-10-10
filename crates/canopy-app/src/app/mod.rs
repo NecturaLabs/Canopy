@@ -1129,7 +1129,9 @@ impl eframe::App for CanopyApp {
             crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
             let consent = is_consent(d);
             let dialog_tab = match d {
-                Dialog::Insights { repo } => self.tabs.iter().find(|t| t.path == *repo),
+                Dialog::Insights { repo } | Dialog::FileHistory { repo, .. } => {
+                    self.tabs.iter().find(|t| t.path == *repo)
+                }
                 Dialog::Ignore(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::CleanStale(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 _ => self.tabs.get(self.active),

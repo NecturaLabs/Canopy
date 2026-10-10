@@ -181,10 +181,11 @@ impl CanopyApp {
             repo.clone_from(&tab.path);
             tab.read_insights();
         }
-        if let Some(Dialog::FileHistory { path }) = self.dialogs.current_mut()
+        if let Some(Dialog::FileHistory { repo, path }) = self.dialogs.current_mut()
             && let Some(tab) = self.tabs.get_mut(self.active)
             && path.is_empty()
         {
+            repo.clone_from(&tab.path);
             // A file with several commits in the fixture repository.
             "Cargo.toml".clone_into(path);
             tab.read_file_history(None, path.clone());
@@ -347,6 +348,7 @@ impl CanopyApp {
         }
         if name == "file-history" {
             self.dialogs.open(Dialog::FileHistory {
+                repo: PathBuf::new(),
                 path: String::new(),
             });
             return;

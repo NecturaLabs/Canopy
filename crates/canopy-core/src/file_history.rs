@@ -5,6 +5,9 @@ use git2::Oid;
 use crate::cli;
 use crate::{ChangeKind, Repo, Result};
 
+/// The longest a history read may take.
+const TIME_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// One commit in a file's history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileHistoryEntry {
@@ -35,32 +38,39 @@ pub struct FileHistory {
 
 impl Repo {
     /// The commits reachable from `from` (`HEAD` when `None`) that changed `path` (relative to
-    /// the repository root), at most `limit`, following the file back through renames. Each entry carries the path the file
-    /// had in that commit, so its diff can be opened with [`crate::DiffSource::Commit`].
+    /// the repository root), at most `limit`, following the file back through renames. Each
+    /// entry carries the path the file had in that commit, so its diff can be opened with
+    /// [`crate::DiffSource::Commit`]. A partial clone downloads nothing for it.
     ///
     /// # Errors
-    /// Git's own message when the history cannot be read (an unborn branch, for one).
+    /// Git's own message when the history cannot be read (an unborn branch, objects a partial
+    /// clone has not downloaded), or that git took over a minute.
     pub fn file_history(&self, from: Option<Oid>, path: &str, limit: usize) -> Result<FileHistory> {
         let count = format!("-n{}", limit.saturating_add(1));
         let start = from.map_or_else(|| "HEAD".to_owned(), |oid| oid.to_string());
-        let out = cli::run(
-            self.workdir(),
-            &[
-                "--literal-pathspecs",
-                "log",
-                "--follow",
-                "-M",
-                "--name-status",
-                "-z",
-                "--no-show-signature",
-                &count,
-                "--format=%x1e%H%x1f%an%x1f%at%x1f%s",
-                &start,
-                "--",
-                path,
-            ],
-        )?;
-        let mut entries = parse(&out, path);
+        let args = [
+            "--literal-pathspecs",
+            "log",
+            "--follow",
+            "-M",
+            "--name-status",
+            "-z",
+            "--no-show-signature",
+            &count,
+            "--format=%x1e%H%x1f%an%x1f%at%x1f%s",
+            &start,
+            "--",
+            path,
+        ];
+        // Rename detection reads blobs, which a partial clone would download: not from here, and
+        // not without an end, since `--follow` may walk the whole history.
+        let mut cmd = cli::command(Some(self.workdir()));
+        cmd.env("GIT_NO_LAZY_FETCH", "1");
+        let out = cli::output_within(cmd, &args, TIME_LIMIT)?;
+        if out.code != Some(0) {
+            return Err(out.error(&args));
+        }
+        let mut entries = parse(&String::from_utf8_lossy(&out.stdout), path);
         let truncated = entries.len() > limit;
         entries.truncate(limit);
         Ok(FileHistory { entries, truncated })

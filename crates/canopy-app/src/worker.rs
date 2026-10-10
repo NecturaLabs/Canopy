@@ -1259,10 +1259,14 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
     let mut details_seen = false;
     let mut signature_seen = false;
     let mut ignore_seen = false;
+    let mut file_history_seen = false;
     let mut diff_sources = Vec::new();
     for (i, job) in jobs.iter().enumerate().rev() {
         match job {
             Job::Ignore { .. } => keep[i] = !std::mem::replace(&mut ignore_seen, true),
+            Job::FileHistory { .. } => {
+                keep[i] = !std::mem::replace(&mut file_history_seen, true);
+            }
             Job::Details(_) => keep[i] = !std::mem::replace(&mut details_seen, true),
             Job::Signature(_) => keep[i] = !std::mem::replace(&mut signature_seen, true),
             Job::Diff(key) => {
@@ -2079,6 +2083,23 @@ mod read_tests {
                 other => other.kind().to_owned(),
             })
             .collect()
+    }
+
+    #[test]
+    fn only_the_last_queued_file_history_runs() {
+        let history = |serial| Job::FileHistory {
+            serial,
+            from: None,
+            path: "a.txt".into(),
+        };
+        let kept = coalesce_reads(vec![history(1), Job::HeadMessage, history(2)]);
+        assert!(
+            matches!(
+                kept.as_slice(),
+                [Job::HeadMessage, Job::FileHistory { serial: 2, .. }]
+            ),
+            "{kept:?}"
+        );
     }
 
     #[test]

@@ -213,3 +213,70 @@ fn history_can_start_at_an_older_commit_under_its_old_name() {
         .expect("history");
     assert_eq!(from.entries, all.entries[2..]);
 }
+
+/// Blobs a clone does not have (`git rev-list --missing=print` prefixes them with `?`).
+fn missing_objects(p: &Path) -> usize {
+    git(p, &["rev-list", "--objects", "--all", "--missing=print"])
+        .lines()
+        .filter(|l| l.starts_with('?'))
+        .count()
+}
+
+#[test]
+fn a_partial_clone_downloads_nothing_to_follow_a_rename() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let source = dir.path().join("source");
+    fs::create_dir(&source).expect("dir");
+    git(&source, &["init", "-q", "-b", "main"]);
+    git(&source, &["config", "uploadpack.allowFilter", "true"]);
+    let text = |n: usize| {
+        let rows: Vec<String> = (1..=n).map(|i| format!("line {i}")).collect();
+        format!("{}\n", rows.join("\n"))
+    };
+    write(&source, "a.txt", &text(30));
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-q", "-m", "add a"]);
+    // Renamed and edited in one commit: finding the rename means reading both blobs.
+    git(&source, &["mv", "a.txt", "b.txt"]);
+    write(&source, "b.txt", &text(31));
+    git(&source, &["commit", "-q", "-am", "rename and edit"]);
+
+    let clone = dir.path().join("clone");
+    let url = format!("file://{}", source.display());
+    git(
+        dir.path(),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "clone",
+            "-q",
+            "--filter=blob:none",
+            "--no-checkout",
+            &url,
+            "clone",
+        ],
+    );
+    let before = missing_objects(&clone);
+    assert!(before > 0, "the clone has every blob");
+
+    let repo = Repo::open(&clone).expect("repo");
+    // Git either follows the rename from what it has or says what it lacks; it never downloads.
+    let _ = repo.file_history(None, "b.txt", 10);
+    assert_eq!(missing_objects(&clone), before);
+}
+
+#[test]
+fn a_deleted_file_lists_its_deletion_first() {
+    let dir = tempfile::tempdir().expect("tmp");
+    renamed_twice(dir.path());
+    git(dir.path(), &["rm", "-q", "docs/c d.txt"]);
+    git(dir.path(), &["commit", "-q", "-m", "remove c"]);
+    let repo = Repo::open(dir.path()).expect("repo");
+    let history = repo
+        .file_history(None, "docs/c d.txt", 100)
+        .expect("history");
+    assert_eq!(history.entries[0].summary, "remove c");
+    assert_eq!(history.entries[0].kind, ChangeKind::Deleted);
+    let ids: Vec<String> = history.entries.iter().map(|e| e.oid.to_string()).collect();
+    assert_eq!(ids, oracle(dir.path(), "docs/c d.txt"));
+}

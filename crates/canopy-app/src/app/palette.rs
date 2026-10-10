@@ -207,14 +207,12 @@ impl CanopyApp {
                 e(icon::CHART_BAR, "Repository insights", "Repository", None),
                 Action::RepositoryInsights(tab.path.clone()),
             ));
-            if let Some(action) = tab.file.as_ref().and_then(file_history_action) {
+            if let Some(action) = tab.file.as_ref().and_then(file_history_action)
+                && let Action::FileHistory { path, .. } = &action
+            {
+                let label = format!("File history: {path}…");
                 v.push((
-                    e(
-                        icon::CLOCK_COUNTER_CLOCKWISE,
-                        "File history…",
-                        "Repository",
-                        None,
-                    ),
+                    e(icon::CLOCK_COUNTER_CLOCKWISE, &label, "Repository", None),
                     action,
                 ));
             }

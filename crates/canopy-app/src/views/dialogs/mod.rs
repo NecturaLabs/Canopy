@@ -135,6 +135,7 @@ pub enum Dialog {
     /// The commits that changed a file, through renames; what is shown is the tab's
     /// `file_history`.
     FileHistory {
+        repo: std::path::PathBuf,
         path: String,
     },
     Ignore(Box<IgnoreForm>),

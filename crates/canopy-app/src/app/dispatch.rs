@@ -74,7 +74,8 @@ impl CanopyApp {
                 Action::FileHistory { from, path } => {
                     if let Some(tab) = self.tab() {
                         tab.read_file_history(from, path.clone());
-                        self.dialogs.open(Dialog::FileHistory { path });
+                        let repo = tab.path.clone();
+                        self.dialogs.open(Dialog::FileHistory { repo, path });
                     }
                 }
                 Action::ShowFileVersion(entry) => {
@@ -1075,7 +1076,7 @@ mod tests {
             Ok(Job::FileHistory { from: None, path, .. }) if path == "a.txt"
         ));
         assert!(
-            matches!(app.dialogs.current(), Some(Dialog::FileHistory { path }) if path == "a.txt")
+            matches!(app.dialogs.current(), Some(Dialog::FileHistory { repo, path }) if path == "a.txt" && repo == &app.tabs[0].path)
         );
     }
 }
