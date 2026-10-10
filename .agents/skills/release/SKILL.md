@@ -46,7 +46,9 @@ same feed release) unless beta already offers a newer build.
    `python3 tools/release.py notes` on an up-to-date `main` (full history, not a shallow clone) and
    show the result. A release is public and cannot be unpublished cleanly.
 2. `main` is clean, up to date and has a green CI run on its tip: the workflow refuses otherwise
-   (`gh run list --workflow ci.yml --branch main`). CI includes cargo-deny and the licence-notice
+   (`gh run list --workflow ci.yml --branch main`). Merging a branch that was up to date with
+   `main` gives a commit with the branch's tree, whose CI run takes under a minute: it takes the
+   branch's passing run as proof and runs only the documentation and site checks. CI includes cargo-deny and the licence-notice
    check, so a dependency change must already have regenerated
    `docs/legal/third-party-notices.txt` (`python3 tools/notices.py`).
 3. The notes read well for users: they are the commit subjects (see above), so a poorly worded

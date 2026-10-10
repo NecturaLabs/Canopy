@@ -36,9 +36,10 @@ env:
 jobs:
   # A push that changes only documentation (docs/ other than docs/legal/, and Markdown other than
   # CHANGELOG.md, both of which the app embeds) or the landing site (site/, which site.yml checks
-  # and deploys) runs only the documentation and site checks. The run still exists and passes,
-  # which is what a release checks for. When the changed files cannot be listed (no passing run on
-  # the branch yet, or one a force-push left behind), everything runs.
+  # and deploys), or whose tree CI already passed, runs only the documentation and site checks.
+  # The run still exists and passes, which is what a release checks for. When the changed files
+  # cannot be listed (no passing run on the branch yet, or one a force-push left behind), everything
+  # runs.
   changes:
     name: What changed
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
@@ -87,6 +88,30 @@ jobs:
                 esac
               done <<<"$files"
             fi
+          fi
+          # Nor does a commit whose tree CI already passed: the same commit pushed to another branch
+          # before (main fast-forwarded to it), or a parent with the same tree (a branch merged into
+          # main after it was brought up to date with main).
+          same_tree_passed() {
+            local commit tree c n
+            commit=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$HEAD" --jq '.tree.sha, .parents[].sha') || return 1
+            tree=$(head -n 1 <<<"$commit")
+            [[ $tree =~ ^[0-9a-f]{40}$ ]] || return 1
+            mapfile -t candidates < <(echo "$HEAD"; tail -n +2 <<<"$commit")
+            for c in "${candidates[@]}"; do
+              [[ $c =~ ^[0-9a-f]{40}$ ]] || continue
+              [[ $c == "$HEAD" || $(gh api "repos/$GITHUB_REPOSITORY/git/commits/$c" --jq '.tree.sha') == "$tree" ]] || continue
+              n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$c&event=push&status=success&per_page=1" \
+                --jq '.total_count') || continue
+              if [[ $n =~ ^[1-9][0-9]*$ ]]; then
+                echo "CI passed on $c, which has the same tree."
+                return 0
+              fi
+            done
+            return 1
+          }
+          if [[ $code == true ]] && same_tree_passed; then
+            code=false
           fi
           echo "Rust jobs run: $code"
           echo "code=$code" >> "$GITHUB_OUTPUT"
