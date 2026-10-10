@@ -545,11 +545,15 @@ impl Toasts {
         let source = repo
             .file_name()
             .map(|name| name.to_string_lossy().into_owned());
-        if self
+        if let Some(held) = self
             .history
-            .iter()
-            .any(|e| e.title == title && e.body == body)
+            .iter_mut()
+            .find(|e| e.title == title && e.body == body)
         {
+            // The same words from another repository are about none of them in particular.
+            if held.source != source {
+                held.source = None;
+            }
             return;
         }
         self.notify(
@@ -2269,6 +2273,10 @@ mod tests {
             toasts.history.len(),
             1,
             "one global setting is one notice, not one per repository"
+        );
+        assert_eq!(
+            toasts.history[0].source, None,
+            "and it is about none of them in particular"
         );
         push(&mut toasts, "Prune: y", "/work/other");
         assert_eq!(
