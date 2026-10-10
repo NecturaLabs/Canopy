@@ -539,7 +539,8 @@ badge and check, truncating only the painted label while keeping its full access
 Repository selects show the effective value once. Explicit selection pins even the current value;
 only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
 controls name their setting. Context lines and whitespace are one saved diff preset, with one
-shared reset that returns both to the app defaults.
+shared reset that returns both to the app defaults. Help text never types the recommendation
+("Recommended: …"); the badge in the list is the only mark, in Settings → Git as well.
 
 ### Popover and the smaller components
 
