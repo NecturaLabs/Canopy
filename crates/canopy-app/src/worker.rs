@@ -887,12 +887,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     });
                 }
                 Job::Blame { serial, path, rev } => {
-                    let missing = if allowed() {
-                        MissingObjects::Download
-                    } else {
-                        MissingObjects::Fail
-                    };
-                    let result = repo.blame(&path, rev, missing);
+                    let trusted = allowed();
+                    let result = read_downloading(&emit, &allowed, |missing| {
+                        repo.blame(&path, rev, missing, trusted)
+                    });
                     if let Err(error) = &result {
                         tracing::warn!(error = %redacted(error), "blame failed");
                     }

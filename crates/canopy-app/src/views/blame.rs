@@ -39,7 +39,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, sel: &FileSelection, actions: &mut V
         return;
     };
     if header(ui, sel, read.rev) {
-        tab.blame = None;
+        tab.close_blame();
         return;
     }
     match &read.result {
@@ -62,7 +62,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, sel: &FileSelection, actions: &mut V
                 .compact(true)
                 .show(ui);
         }
-        Some(Ok(blame)) => lines(ui, &read.path, blame, actions),
+        Some(Ok(blame)) => lines(ui, &read.path, blame, read.longest, actions),
     }
 }
 
@@ -164,7 +164,7 @@ fn tooltip(commit: &BlameCommit) -> String {
     )
 }
 
-fn lines(ui: &mut Ui, path: &str, blame: &Blame, actions: &mut Vec<Action>) {
+fn lines(ui: &mut Ui, path: &str, blame: &Blame, longest: usize, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let row_h = m.diff_line_height;
@@ -175,12 +175,6 @@ fn lines(ui: &mut Ui, path: &str, blame: &Blame, actions: &mut Vec<Action>) {
         .layout_no_wrap("M".into(), mono.clone(), p.text)
         .size()
         .x;
-    let longest = blame
-        .lines
-        .iter()
-        .map(|l| l.text.chars().count())
-        .max()
-        .unwrap_or(0);
     let gutter = ID_W + AUTHOR_W + DATE_W + NUMBER_W + CODE_GAP;
     let content_w = gutter + crate::ui::count_f32(longest) * char_w + theme::XL;
     // Rows touch: the height `show_rows` lays them out by is the row's alone.
@@ -230,7 +224,9 @@ fn lines(ui: &mut Ui, path: &str, blame: &Blame, actions: &mut Vec<Action>) {
                 } else {
                     egui::CursorIcon::PointingHand
                 });
-                response.kit_tooltip(tooltip(commit)).show();
+                if response.hovered() {
+                    response.kit_tooltip(tooltip(commit)).show();
+                }
 
                 let painter = ui.painter();
                 if starts {

@@ -368,11 +368,13 @@ fn blame_downloads_only_when_allowed_and_matches_the_source() {
     let before = missing(&dir);
     let repo = Repo::open(&dir).expect("open");
 
-    repo.blame("a.txt", None, Fail)
+    let err = repo
+        .blame("a.txt", None, Fail, true)
         .expect_err("a.txt's old blobs are missing");
+    assert_not_downloaded(&err, Some("origin"), false);
     assert_eq!(missing(&dir), before, "Fail must not download anything");
 
-    let ours = repo.blame("a.txt", None, Download).expect("blame");
+    let ours = repo.blame("a.txt", None, Download, true).expect("blame");
     let oracle: Vec<String> = git(&fx.src, &["blame", "--root", "-l", "--", "a.txt"])
         .lines()
         .map(|l| l.chars().take(40).collect())

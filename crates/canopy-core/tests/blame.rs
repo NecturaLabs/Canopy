@@ -88,7 +88,7 @@ fn every_line_names_the_commit_and_author_git_blames() {
     );
 
     let blame = repo
-        .blame("f.txt", None, MissingObjects::Fail)
+        .blame("f.txt", None, MissingObjects::Fail, true)
         .expect("blame");
     assert_eq!(
         ids(&blame),
@@ -119,7 +119,7 @@ fn a_revision_blames_the_file_as_it_was_then() {
     commit(p, "Bo", "f.txt", "one\ntwo\nthree\n", "add three");
 
     let then = repo
-        .blame("f.txt", Some(first), MissingObjects::Fail)
+        .blame("f.txt", Some(first), MissingObjects::Fail, true)
         .expect("blame");
     assert_eq!(then.lines.len(), 2);
     assert_eq!(
@@ -130,7 +130,7 @@ fn a_revision_blames_the_file_as_it_was_then() {
         )
     );
     assert_eq!(
-        repo.blame("f.txt", None, MissingObjects::Fail)
+        repo.blame("f.txt", None, MissingObjects::Fail, true)
             .expect("blame")
             .lines
             .len(),
@@ -147,7 +147,7 @@ fn renames_are_followed_and_odd_names_are_safe() {
     git_as(p, "Bo", &["commit", "-q", "-m", "rename"]);
 
     let blame = repo
-        .blame("-new name.txt", None, MissingObjects::Fail)
+        .blame("-new name.txt", None, MissingObjects::Fail, true)
         .expect("blame");
     assert_eq!(
         ids(&blame),
@@ -164,7 +164,7 @@ fn uncommitted_lines_are_marked_and_a_missing_file_is_git_s_error() {
     fs::write(p.join("f.txt"), "one\nlocal\n").expect("write");
 
     let blame = repo
-        .blame("f.txt", None, MissingObjects::Fail)
+        .blame("f.txt", None, MissingObjects::Fail, true)
         .expect("blame");
     assert!(!blame.commits[blame.lines[0].commit].is_uncommitted());
     assert!(blame.commits[blame.lines[1].commit].is_uncommitted());
@@ -174,7 +174,48 @@ fn uncommitted_lines_are_marked_and_a_missing_file_is_git_s_error() {
     );
 
     let error = repo
-        .blame("nope.txt", None, MissingObjects::Fail)
+        .blame("nope.txt", None, MissingObjects::Fail, true)
         .expect_err("no such file");
     assert!(error.to_string().contains("no such path"), "{error}");
+}
+
+#[test]
+fn an_untrusted_folder_never_runs_the_repository_s_programs() {
+    let (dir, repo) = repository();
+    let p = dir.path();
+    fs::write(p.join(".gitattributes"), "f.txt filter=x diff=y\n").expect("write");
+    git_as(p, "Ada", &["add", "--", ".gitattributes"]);
+    commit(p, "Ada", "f.txt", "one\n", "add f");
+    // Programs that leave a marker when git runs them.
+    let marker = |name: &str| format!("sh -c 'touch {}/{name}; cat' --", p.display());
+    git_as(p, "Ada", &["config", "filter.x.clean", &marker("CLEAN")]);
+    git_as(
+        p,
+        "Ada",
+        &["config", "diff.y.textconv", &marker("TEXTCONV")],
+    );
+    fs::write(p.join("f.txt"), "one\nlocal\n").expect("write");
+
+    // A commit is read without the textconv, trusted or not.
+    repo.blame("f.txt", Some(git_oid(p)), MissingObjects::Fail, false)
+        .expect("a commit blames");
+    repo.blame("f.txt", Some(git_oid(p)), MissingObjects::Fail, true)
+        .expect("a commit blames");
+    assert!(!p.join("TEXTCONV").exists());
+
+    // The working tree needs the clean filter: refused until the folder is trusted.
+    let error = repo
+        .blame("f.txt", None, MissingObjects::Fail, false)
+        .expect_err("refused");
+    assert!(error.to_string().contains("Trust the folder"), "{error}");
+    assert!(!p.join("CLEAN").exists());
+    let blame = repo
+        .blame("f.txt", None, MissingObjects::Fail, true)
+        .expect("trusted");
+    assert_eq!(blame.lines.len(), 2);
+    assert!(p.join("CLEAN").exists());
+}
+
+fn git_oid(dir: &Path) -> git2::Oid {
+    git2::Oid::from_str(git_as(dir, "Ada", &["rev-parse", "HEAD"]).trim()).expect("id")
 }

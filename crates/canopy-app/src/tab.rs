@@ -94,6 +94,8 @@ pub struct BlameRead {
     pub rev: Option<Oid>,
     /// `None` while the worker reads it.
     pub result: Option<Result<Arc<canopy_core::Blame>, String>>,
+    /// The characters of the longest line of `result`, for the width of the view.
+    pub longest: usize,
 }
 
 /// A file whose diff is shown.
@@ -1189,17 +1191,28 @@ impl RepoTab {
 
     /// Asks for the blame of `path` as of `rev` (the working tree when `None`).
     pub fn read_blame(&mut self, path: String, rev: Option<Oid>) {
-        self.blame_serial = self.blame_serial.wrapping_add(1);
-        self.worker.send(Job::Blame {
-            serial: self.blame_serial,
-            path: path.clone(),
-            rev,
-        });
+        self.send_blame(path.clone(), rev);
         self.blame = Some(BlameRead {
             path,
             rev,
             result: None,
+            longest: 0,
         });
+    }
+
+    fn send_blame(&mut self, path: String, rev: Option<Oid>) {
+        self.blame_serial = self.blame_serial.wrapping_add(1);
+        self.worker.send(Job::Blame {
+            serial: self.blame_serial,
+            path,
+            rev,
+        });
+    }
+
+    /// Back to the file's diff; a reply still on its way is ignored.
+    pub fn close_blame(&mut self) {
+        self.blame = None;
+        self.blame_serial = self.blame_serial.wrapping_add(1);
     }
 
     /// Shows the blame of the selected file in place of its diff, when it has one.
@@ -1614,6 +1627,7 @@ impl RepoTab {
     /// way for that file is no longer wanted.
     pub fn deselect_file(&mut self) {
         self.file = None;
+        self.close_blame();
         self.marked.clear();
         self.diff = None;
         self.diff_error = None;
@@ -1741,6 +1755,7 @@ impl RepoTab {
         }
         if self.file.as_ref() != Some(&sel) {
             self.line_sel = None;
+            self.close_blame();
         }
         if !self.file.as_ref().is_some_and(|f| {
             f.source == sel.source
@@ -1771,6 +1786,11 @@ impl RepoTab {
 
     /// Reloads the open diff, keeping the old one on screen until the new one arrives.
     pub fn reload_diff(&mut self) {
+        // A blame of the working tree goes stale with the file; the old one stays until the new
+        // one arrives.
+        if let Some(read) = self.blame.as_ref().filter(|b| b.rev.is_none()) {
+            self.send_blame(read.path.clone(), None);
+        }
         if let Some(sel) = self.file.clone() {
             if sel.conflicted {
                 self.worker.send(Job::Conflict(sel.entry.path.clone()));
@@ -2243,6 +2263,14 @@ impl RepoTab {
                         });
                     }
                     if let Some(read) = &mut self.blame {
+                        read.longest = result.as_ref().map_or(0, |blame| {
+                            blame
+                                .lines
+                                .iter()
+                                .map(|l| l.text.chars().count())
+                                .max()
+                                .unwrap_or(0)
+                        });
                         read.result = Some(result);
                     }
                 }
@@ -4429,6 +4457,63 @@ mod tests {
             tab.blame,
             Some(BlameRead { result: Some(Err(ref error)), .. }) if error == "no such path"
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_blame_follows_its_file_and_is_refreshed_with_the_working_tree()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let file = |path: &str, source| FileSelection {
+            source,
+            entry: FileEntry {
+                path: path.into(),
+                old_path: None,
+                kind: canopy_core::ChangeKind::Modified,
+                additions: 0,
+                deletions: 0,
+                lfs: false,
+                old_mode: None,
+                new_mode: None,
+            },
+            conflicted: false,
+        };
+        tab.select_file(file("a.rs", DiffSource::Unstaged));
+        tab.blame_file();
+        assert!(tab.blame.is_some());
+        let mut serials = Vec::new();
+        while let Ok(job) = jobs.try_recv() {
+            if let Job::Blame { serial, .. } = job {
+                serials.push(serial);
+            }
+        }
+        assert_eq!(serials.len(), 1);
+
+        // The working tree changed: the same blame is read again, the old one stays meanwhile.
+        tab.reload_diff();
+        assert!(tab.blame.is_some());
+        let again = std::iter::from_fn(|| jobs.try_recv().ok())
+            .find_map(|job| match job {
+                Job::Blame { serial, .. } => Some(serial),
+                _ => None,
+            })
+            .expect("a new blame job");
+        assert_ne!(again, serials[0]);
+
+        // Another file, another source, or none: the blame goes, and its late reply is ignored.
+        tab.select_file(file("a.rs", DiffSource::Staged));
+        assert!(tab.blame.is_none());
+        events.send(Event::Blame {
+            serial: again,
+            result: Err("late".into()),
+        })?;
+        assert!(tab.poll(&[]).is_empty(), "no toast for a view that is gone");
+        tab.blame_file();
+        assert!(tab.blame.is_some());
+        tab.deselect_file();
+        assert!(tab.blame.is_none());
         Ok(())
     }
 

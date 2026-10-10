@@ -7,8 +7,8 @@ use std::time::Duration;
 use git2::Oid;
 
 use crate::cli;
-use crate::partial::MissingObjects;
-use crate::{Repo, Result};
+use crate::partial::{self, MissingObjects};
+use crate::{Error, Repo, Result};
 
 /// How long git may take: blame walks the history of the file.
 const LIMIT: Duration = Duration::from_mins(10);
@@ -55,11 +55,27 @@ pub struct Blame {
 impl Repo {
     /// Blames `path` (relative to the working directory) as of `rev`, or as it is in the working
     /// tree when `rev` is `None`. Git follows the file through renames. Slow on long histories:
-    /// call it from the worker. In a partial clone git would download the file's old versions
-    /// from the remote on its own; with [`MissingObjects::Fail`] it may not.
-    pub fn blame(&self, path: &str, rev: Option<Oid>, missing: MissingObjects) -> Result<Blame> {
+    /// call it from the worker.
+    ///
+    /// Git would run programs the repository's configuration names: a textconv (never run here)
+    /// and, to read the working tree, the clean filter of a file that has one. That is refused
+    /// unless `trusted` (the folder is one the user trusts). In a partial clone git would also
+    /// download the file's old versions on its own: with [`MissingObjects::Fail`] it fails with
+    /// [`Error::NotDownloaded`] instead.
+    pub fn blame(
+        &self,
+        path: &str,
+        rev: Option<Oid>,
+        missing: MissingObjects,
+        trusted: bool,
+    ) -> Result<Blame> {
+        if rev.is_none() && !trusted && self.has_filter(path)? {
+            return Err(Error::invalid(format!(
+                "Blaming uncommitted changes to {path} would run the filter this repository sets for it. Trust the folder in Settings, or blame a commit."
+            )));
+        }
         let id = rev.map(|oid| oid.to_string());
-        let mut args = vec!["blame", "--porcelain"];
+        let mut args = vec!["blame", "--porcelain", "--no-textconv"];
         args.extend(id.as_deref());
         args.extend(["--", path]);
         let mut cmd = cli::command(Some(self.workdir()));
@@ -68,9 +84,21 @@ impl Repo {
         }
         let out = cli::output_within(cmd, &args, LIMIT)?;
         if out.code != Some(0) {
-            return Err(out.error(&args));
+            let error = out.error(&args);
+            let unread = String::from_utf8_lossy(&out.stderr).contains("Cannot read");
+            if missing == MissingObjects::Fail && unread && partial::is_partial_clone(self.git()) {
+                return Err(partial::not_downloaded(self.git(), None));
+            }
+            return Err(error);
         }
         Ok(parse(&String::from_utf8_lossy(&out.stdout)))
+    }
+
+    /// Whether the attributes name a filter driver for `path` (which `git check-attr` finds
+    /// without running anything).
+    fn has_filter(&self, path: &str) -> Result<bool> {
+        let out = cli::run(self.workdir(), &["check-attr", "filter", "--", path])?;
+        Ok(!out.trim_end().ends_with(": unspecified") && !out.trim_end().ends_with(": unset"))
     }
 }
 
