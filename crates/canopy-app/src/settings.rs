@@ -5,7 +5,7 @@
 //! is ignored; the first save after launch (eframe saves every 30 seconds) writes the file again
 //! without either.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -522,6 +522,9 @@ pub struct Settings {
     pub diff: DiffPrefs,
     /// Per-repository diff options, keyed by working directory.
     pub repo_diff: HashMap<PathBuf, DiffPrefs>,
+    /// Closed sidebar sections, keyed by shared Git directory so worktrees follow one choice.
+    /// An empty set means every section is open.
+    pub repo_sidebar: HashMap<PathBuf, BTreeSet<String>>,
     /// Per-repository choices that differ from the defaults above, keyed by working directory.
     pub repos: HashMap<PathBuf, RepoSettings>,
     /// Show diffs side by side (old left, new right) instead of unified.
@@ -631,6 +634,7 @@ impl Default for Settings {
             commit_page: 2000,
             diff: DiffPrefs::default(),
             repo_diff: HashMap::new(),
+            repo_sidebar: HashMap::new(),
             repos: HashMap::new(),
             split_diff: false,
             syntax_highlight: true,

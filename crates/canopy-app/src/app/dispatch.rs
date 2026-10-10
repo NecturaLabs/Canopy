@@ -342,6 +342,16 @@ impl CanopyApp {
                         ));
                     }
                 }
+                Action::RememberSidebar { repo, closed } => {
+                    self.settings
+                        .repo_sidebar
+                        .insert(repo.clone(), closed.clone());
+                    for tab in &mut self.tabs {
+                        if tab.sidebar_key() == Some(repo.as_path()) {
+                            tab.collapsed = closed.iter().cloned().collect();
+                        }
+                    }
+                }
                 Action::SetRepoDiff { path, prefs } => {
                     match prefs {
                         Some(prefs) => self.settings.repo_diff.insert(path.clone(), prefs),

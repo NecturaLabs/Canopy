@@ -30,6 +30,10 @@ pub enum AppearanceChoice {
 #[derive(Debug, Clone)]
 pub enum Action {
     CleanStale,
+    RememberSidebar {
+        repo: PathBuf,
+        closed: std::collections::BTreeSet<String>,
+    },
     RepositoryInsights(PathBuf),
     ReadIgnore {
         repo: PathBuf,

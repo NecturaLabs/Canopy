@@ -636,6 +636,108 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_sections_survive_saving_and_reopening_a_repository() {
+        #[derive(Default)]
+        struct Stored(std::collections::HashMap<String, String>);
+        impl eframe::Storage for Stored {
+            fn get_string(&self, key: &str) -> Option<String> {
+                self.0.get(key).cloned()
+            }
+            fn set_string(&mut self, key: &str, value: String) {
+                self.0.insert(key.to_owned(), value);
+            }
+            fn remove_string(&mut self, key: &str) {
+                self.0.remove(key);
+            }
+            fn flush(&mut self) {}
+        }
+        let ctx = egui::Context::default();
+        let snap = canopy_core::RepoSnapshot {
+            workdir: PathBuf::from("/fixture/main"),
+            common_dir: PathBuf::from("/fixture/main/.git"),
+            ..Default::default()
+        };
+        let mut app = test_app();
+        let mut tab = test_tab(snap.clone());
+        tab.collapsed.clear();
+        tab.collapsed.insert("branches".into());
+        tab.collapsed.insert("remote:origin".into());
+        let wanted = tab.collapsed.clone();
+        tab.sidebar_restored = true;
+        app.tabs.push(tab);
+        let other_snap = canopy_core::RepoSnapshot {
+            workdir: PathBuf::from("/fixture/other"),
+            common_dir: PathBuf::from("/fixture/other/.git"),
+            ..Default::default()
+        };
+        let mut other = test_tab(other_snap.clone());
+        other.sidebar_restored = true;
+        other.collapsed.clear();
+        app.tabs.push(other);
+        let mut untouched = test_tab(canopy_core::RepoSnapshot {
+            workdir: PathBuf::from("/fixture/untouched"),
+            common_dir: PathBuf::from("/fixture/untouched/.git"),
+            ..Default::default()
+        });
+        untouched.sidebar_restored = true;
+        app.tabs.push(untouched);
+        let mut storage = Stored::default();
+        eframe::App::save(&mut app, &mut storage);
+        assert!(
+            !app.settings
+                .repo_sidebar
+                .contains_key(&PathBuf::from("/fixture/untouched/.git")),
+            "a sidebar left as it opened stores nothing"
+        );
+        let mut reopened = test_app();
+        reopened.settings = eframe::get_value(&storage, settings::KEY).expect("saved settings");
+        let mut linked = snap.clone();
+        linked.workdir = PathBuf::from("/fixture/linked");
+        reopened.tabs.push(test_tab(snap));
+        reopened.tabs.push(test_tab(linked));
+        reopened.tabs.push(test_tab(other_snap));
+        eframe::App::save(&mut reopened, &mut Stored::default());
+        assert_eq!(
+            reopened.settings.repo_sidebar[&PathBuf::from("/fixture/main/.git")],
+            wanted
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "saving before the first snapshot keeps the stored state"
+        );
+        reopened.poll(&ctx);
+        assert_eq!(reopened.tabs[0].collapsed, wanted);
+        assert_eq!(
+            reopened.tabs[1].collapsed, wanted,
+            "worktrees share the repository's state"
+        );
+        assert!(
+            reopened.tabs[2].collapsed.is_empty(),
+            "all-open state survives independently"
+        );
+        let closed = std::collections::BTreeSet::from(["tags".to_owned()]);
+        reopened.apply(
+            &ctx,
+            vec![Action::RememberSidebar {
+                repo: PathBuf::from("/fixture/main/.git"),
+                closed: closed.clone(),
+            }],
+        );
+        assert_eq!(reopened.tabs[0].collapsed, closed.iter().cloned().collect());
+        assert_eq!(reopened.tabs[1].collapsed, reopened.tabs[0].collapsed);
+        assert!(reopened.tabs[2].collapsed.is_empty());
+        assert_eq!(
+            reopened.settings.repo_sidebar[&PathBuf::from("/fixture/main/.git")],
+            closed
+        );
+        reopened.poll(&ctx);
+        assert_eq!(
+            reopened.tabs[0].collapsed, reopened.tabs[1].collapsed,
+            "refresh does not restore old state"
+        );
+    }
+
+    #[test]
     fn switching_worktrees_reuses_the_source_tab() {
         let ctx = egui::Context::default();
         let dir = tempfile::tempdir().expect("a folder");

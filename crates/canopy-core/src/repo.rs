@@ -500,6 +500,7 @@ impl Repo {
 
         Ok(RepoSnapshot {
             workdir: self.workdir.clone(),
+            common_dir: self.git.commondir().to_path_buf(),
             name: self.name(),
             state: self.state(),
             head,

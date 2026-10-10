@@ -2927,6 +2927,18 @@ fn worktrees_list_every_working_folder_main_first() {
         ]
     );
 
+    let common = repo.snapshot(1).expect("main snapshot").common_dir;
+    let linked_common = from_linked.snapshot(1).expect("linked snapshot").common_dir;
+    assert_eq!(
+        common, linked_common,
+        "a linked worktree has the same repository identity"
+    );
+    let git_common = git(
+        &wt,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    );
+    assert_eq!(canonical(&common), canonical(Path::new(git_common.trim())));
+
     // A plain repository has only its own folder.
     let (_plain_dir, plain) = fixture();
     assert_eq!(plain.snapshot(1).expect("snapshot").worktrees.len(), 1);

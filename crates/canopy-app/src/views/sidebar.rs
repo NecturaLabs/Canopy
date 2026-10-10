@@ -64,11 +64,7 @@ fn section_with_action(
         header = header.action(glyph, label);
     }
     let shown = header.show(ui);
-    if open {
-        tab.collapsed.remove(key);
-    } else {
-        tab.collapsed.insert(key.to_owned());
-    }
+    tab.set_sidebar_open(key, open);
     (open, shown)
 }
 
@@ -440,11 +436,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 if shown.value == Some(TreeNav::FirstChild) {
                     list.focus(ui.ctx(), remote_at + 1);
                 }
-                if open {
-                    tab.collapsed.remove(&key);
-                } else {
-                    tab.collapsed.insert(key.clone());
-                }
+                tab.set_sidebar_open(&key, open);
                 let resp = match r.url.as_deref() {
                     Some(url) => shown.response.kit_tooltip(url).show(),
                     None => shown.response,
@@ -676,6 +668,15 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     });
     if pick.is_some() {
         tab.sidebar_pick = pick;
+    }
+    if tab.sidebar_changed {
+        if let Some(repo) = tab.sidebar_key() {
+            actions.push(Action::RememberSidebar {
+                repo: repo.to_path_buf(),
+                closed: tab.collapsed.iter().cloned().collect(),
+            });
+        }
+        tab.sidebar_changed = false;
     }
 }
 
@@ -980,6 +981,19 @@ mod tests {
         assert_eq!(state(&nodes, "Tags"), Some(true));
         assert_eq!(state(&nodes, "Branches"), Some(false));
         assert_eq!(state(&nodes, "Remotes"), Some(false));
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::RememberSidebar { closed, .. }
+            if closed.contains("branches") && !closed.contains("tags"))),
+            "the user's toggle is queued for persistence"
+        );
+        actions.clear();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert!(
+            actions.is_empty(),
+            "drawing steady state does not write preferences"
+        );
     }
 
     /// The text a painted shape holds, with where it is.

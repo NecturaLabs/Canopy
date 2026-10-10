@@ -1236,6 +1236,20 @@ impl eframe::App for CanopyApp {
         if self.screenshot.is_some() || self.glass_soak.is_some() {
             return;
         }
+        for tab in &self.tabs {
+            if tab.sidebar_restored
+                && let Some(key) = tab.sidebar_key()
+            {
+                // The default needs no entry, so repositories left as they opened do not pile up.
+                if tab.sidebar_is_default() {
+                    self.settings.repo_sidebar.remove(key);
+                } else {
+                    self.settings
+                        .repo_sidebar
+                        .insert(key.to_path_buf(), tab.collapsed.iter().cloned().collect());
+                }
+            }
+        }
         self.settings.open_tabs = self.tabs.iter().map(|t| t.path.clone()).collect();
         eframe::set_value(storage, settings::KEY, &self.settings);
         storage.set_string(

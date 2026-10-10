@@ -162,7 +162,7 @@ thread.
 | `ui/notes.rs` | Release notes ("What's new") and the small Markdown renderer for notes and request text. |
 | `views/welcome.rs` | Welcome screen and recent repositories. |
 | `views/toolbar.rs` | Tab strip and top toolbar: fetch, pull, push, branch, stash, view switch. |
-| `views/sidebar.rs` | Branches, remotes, tags and stashes. |
+| `views/sidebar.rs` | Branches, worktrees, remotes, tags, stashes and submodules; expansion changes are persisted per shared Git directory, supplied by the repository worker snapshot. |
 | `views/history.rs` | Virtualised commit-graph table. |
 | `views/commit_detail.rs` | Selected commit: metadata, parents, changed files, diff. Also the views' shared file rows and screen-reader helpers: `without_icons` (keeps icon glyphs out of a label's spoken name) and `say_unavailable` (a disabled button says ", unavailable" and why, which the Linux AT-SPI adapter does not). |
 | `views/changes.rs` | Staging area and commit composer. |
