@@ -10,6 +10,7 @@
 //! Every function here may block on disk or network I/O. Callers with a user interface must run
 //! them off the UI thread.
 
+pub mod blame;
 pub mod cli;
 pub mod config;
 pub mod conflict;
@@ -40,6 +41,7 @@ pub mod submodule;
 pub mod tools;
 pub mod update;
 
+pub use blame::{Blame, BlameCommit, BlameLine};
 pub use conflict::{
     Choice, ConflictFile, ConflictKind, ConflictRegion, Segment, Side, has_conflict_markers,
 };

@@ -85,7 +85,7 @@ git would run on every `git status`.
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
 | File history | Planned | Yes | Yes | Yes |
-| Blame | Planned | Yes | Yes | Yes |
+| Blame: a file's lines with the short id, author and date of the commit that last changed each (follows renames); the Blame button in a file's diff header, or "Blame selected file" in the command palette, shows it in place of the diff, as of the commit being viewed or the working tree; clicking a line's commit opens it in History; changes not committed yet are marked | Done | Yes | Yes | Yes |
 | Reflog view | Planned | ? | ? | ? |
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |
@@ -162,6 +162,7 @@ of that preview limit.
 | Interactive rebase editor | Planned | Yes | Yes | Yes |
 | Merge modes: fast-forward when possible, no fast-forward, fast-forward only, squash | Done | ? | ? | ? |
 | Built-in 3-way conflict resolver | Done | Yes | Yes | No |
+| Choices and unfinished edits stay with their conflicted file while another one is open in Changes, and come back when it is picked again | Done | Yes | Yes | No |
 | Drag a branch onto another to merge or rebase | Planned | Yes | Yes | ? |
 | git-flow | Planned (backend merged) | Yes | Yes | Yes |
 | Bisect | Planned | ? | ? | ? |
@@ -178,7 +179,7 @@ The git-flow UI remains planned.
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
 | Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Done | ? | ? | ? |
 | Git configuration: editable supported values in Settings → Git (global) and This repository (local), with values, scopes, files and recommendations; Use recommended writes the non-sensitive recommendations globally after confirmation; Unset/Inherit removes only the selected file's override, preserving included configuration and repository choices; canonical Git booleans and configuration errors are displayed accurately | Unreleased | ? | ? | ? |
-| Repository settings selects show each value once, mark recommended options in their lists, and distinguish a pinned value from an inherited one with Overridden and a named reset; context lines and whitespace pin and reset together | Done | ? | ? | ? |
+| Repository and Git settings selects show each value once, mark recommended options in their lists (no "Recommended:" sentence in the help text), and distinguish a pinned value from an inherited one with Overridden and a named reset; context lines and whitespace pin and reset together | Done | ? | ? | ? |
 | Settings → This repository → Commit signing states what git will do (signs or not) with the format (OpenPGP, SSH, X.509), the key's id or file name (an inline SSH key is never shown), the program and where `commit.gpgsign` is set, and warns with its fix when signing would fail: the program is not installed, an SSH key is not set or its file is missing, or `gpg.format` is unknown; read from the configuration and `PATH` only, never by running the program; a button opens the file that sets it, preserving non-UTF-8 file names; identity, pull and repository settings share absolute, unquoted configuration origins | Done | ? | ? | ? |
 | A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Done | ? | ? | ? |
 | A rebase that stops on conflicts takes you to Changes, like a pull | Done | ? | ? | ? |

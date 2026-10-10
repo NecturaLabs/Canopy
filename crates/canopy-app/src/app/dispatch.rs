@@ -71,6 +71,11 @@ impl CanopyApp {
                         }
                     }
                 }
+                Action::BlameFile => {
+                    if let Some(tab) = self.tab() {
+                        tab.blame_file();
+                    }
+                }
                 Action::OpenDialog(mut d) => {
                     self.folder_picker.cancel();
                     if let Dialog::Open { recent, .. } = &mut d {

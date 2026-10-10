@@ -331,6 +331,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         }
         return;
     };
+    if super::blame::shown(tab, &sel).is_some() {
+        super::blame::show(ui, tab, &sel, actions);
+        return;
+    }
     header(ui, tab, &sel, actions);
 
     if let Some(e) = tab.diff_error.clone() {
@@ -631,6 +635,19 @@ fn header(
                         && !d.too_large
                     {
                         DiffStat::new(d.additions, d.deletions).show(ui);
+                    }
+                    if Button::new("Blame")
+                        .secondary()
+                        .size(Size::Sm)
+                        .icon(icon::USER_LIST)
+                        .enabled(sel.can_blame())
+                        .disabled_reason("Git has no history for this file yet")
+                        .tooltip("Show who last changed each line")
+                        .id_salt("diff-blame")
+                        .show(ui)
+                        .clicked()
+                    {
+                        actions.push(Action::BlameFile);
                     }
                 }
                 let path = sel.entry.path.clone();

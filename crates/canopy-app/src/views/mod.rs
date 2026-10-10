@@ -1,5 +1,6 @@
 //! Screens and panels. Views read tab state and push [`crate::action::Action`]s; they never call git.
 
+pub mod blame;
 pub mod changes;
 pub mod commit_detail;
 pub mod dialogs;
