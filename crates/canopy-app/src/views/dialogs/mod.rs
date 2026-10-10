@@ -168,6 +168,15 @@ pub enum Dialog {
         start: Start,
         checkout: bool,
     },
+    /// A linked working folder on a new or an existing branch.
+    NewWorktree {
+        /// A new branch (`name`) rather than an existing one (`existing`).
+        create: bool,
+        name: String,
+        existing: String,
+        /// The folder; empty means the one beside the repository, named for the branch.
+        folder: String,
+    },
     Rename {
         old: String,
         new: String,
@@ -435,6 +444,16 @@ impl Dialog {
             *publish = true;
         }
         self
+    }
+
+    /// A new worktree, on a new branch to begin with.
+    pub fn new_worktree() -> Self {
+        Self::NewWorktree {
+            create: true,
+            name: String::new(),
+            existing: String::new(),
+            folder: String::new(),
+        }
     }
 
     /// New branch starting at `start`.
@@ -778,6 +797,111 @@ pub fn show(
                 } else {
                     Outcome::Keep
                 }
+            })
+        }
+        Dialog::NewWorktree {
+            create,
+            name,
+            existing,
+            folder,
+        } => {
+            let repo = tab.map(|t| t.path.as_path());
+            let op = repo.and_then(|r| worktree_op(r, *create, name, existing, folder));
+            let from = tab
+                .and_then(|t| t.snap.as_ref())
+                .map_or_else(|| "HEAD".into(), |s| s.head.label());
+            let result = KitDialog::new(salt)
+                .title("New worktree")
+                .icon(icon::FOLDERS)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .description(
+                    "Checks a branch out in a second folder, so two branches can be open at once.",
+                )
+                .body(|ui| {
+                    let kinds = [(true, "New branch"), (false, "Existing branch")];
+                    Segmented::new(create, &kinds)
+                        .label("Branch")
+                        .id_salt("worktree-kind")
+                        .show(ui);
+                    if *create {
+                        let error = (!name.is_empty() && !valid_ref_name(name.trim()))
+                            .then_some("Not a valid branch name");
+                        field_with_error(ui, "Name", name, "feature/something", true, error);
+                        note(
+                            ui,
+                            format!("{}  Starts at {from}", icon::GIT_COMMIT),
+                            p.text_faint,
+                        );
+                    } else {
+                        // A branch another folder has checked out is not offered: git refuses it.
+                        let free: Vec<&str> = tab
+                            .and_then(|t| t.snap.as_ref())
+                            .map(|s| {
+                                s.branches
+                                    .iter()
+                                    .filter(|b| !b.is_head && b.worktree.is_none())
+                                    .map(|b| b.name.as_str())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let options: Vec<(&str, &str)> = free.iter().map(|n| (*n, *n)).collect();
+                        let mut pick = free.iter().copied().find(|n| *n == existing).unwrap_or("");
+                        let mut branch = Select::new(&mut pick, &options)
+                            .label("Branch")
+                            .placeholder("Choose a branch…")
+                            .enabled(!options.is_empty())
+                            .id_salt("worktree-branch");
+                        if options.is_empty() {
+                            branch = branch.helper("Every other branch is checked out already.");
+                        }
+                        branch.show(ui);
+                        if pick != existing.as_str() {
+                            pick.clone_into(existing);
+                        }
+                    }
+                    let suggestion = repo.map(|r| {
+                        let branch = if *create {
+                            name.trim()
+                        } else {
+                            existing.as_str()
+                        };
+                        tilde(&worktree_folder(r, branch))
+                    });
+                    let typed = folder.trim();
+                    let problem = (!typed.is_empty()
+                        && !crate::settings::expand_home(typed).is_absolute())
+                    .then_some("Enter a full path, such as ~/src/my-project-topic");
+                    let start = repo.and_then(std::path::Path::parent).map_or_else(
+                        || crate::settings::expand_home(&home()),
+                        std::path::Path::to_path_buf,
+                    );
+                    folder_row(
+                        ui,
+                        picker,
+                        "worktree",
+                        folder,
+                        &start,
+                        FolderField {
+                            label: "Folder",
+                            hint: suggestion.as_deref().unwrap_or("~/src/my-project-topic"),
+                            helper: Some("A new or empty folder. Empty uses the one shown."),
+                            error: problem,
+                            focus: false,
+                        },
+                    );
+                })
+                .footer(|f| {
+                    confirm(
+                        f,
+                        "Create worktree",
+                        op.is_some(),
+                        "Choose a branch and a folder",
+                    );
+                })
+                .show(ctx);
+            answer(result, || {
+                op.map_or(Outcome::Keep, |op| Outcome::Run(vec![Action::Op(op)]))
             })
         }
         Dialog::Rename { old, new } => {
@@ -1680,6 +1804,48 @@ pub(crate) fn salt(dialog: &Dialog) -> (&'static str, std::mem::Discriminant<Dia
 #[cfg(test)]
 fn area_id(dialog: &Dialog) -> egui::Id {
     egui::Id::new(("kit-dialog", egui::Id::new(salt(dialog)))).with("modal")
+}
+
+/// The folder a worktree of `repo` on `branch` gets when none is typed: beside the repository,
+/// `<repository>-<branch>` (a `/` in the branch becomes `-`; `worktree` before one is chosen).
+fn worktree_folder(repo: &std::path::Path, branch: &str) -> std::path::PathBuf {
+    let name = repo
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let branch = branch.replace('/', "-");
+    let branch = if branch.is_empty() {
+        "worktree"
+    } else {
+        &branch
+    };
+    repo.parent()
+        .unwrap_or(repo)
+        .join(format!("{name}-{branch}"))
+}
+
+/// The operation the new-worktree dialog would run, or `None` while the branch or folder is not
+/// usable: a valid new name or a chosen branch, and a full path (typed, or the suggestion).
+fn worktree_op(
+    repo: &std::path::Path,
+    create: bool,
+    name: &str,
+    existing: &str,
+    folder: &str,
+) -> Option<Op> {
+    let branch = if create { name.trim() } else { existing };
+    if branch.is_empty() || (create && !valid_ref_name(branch)) {
+        return None;
+    }
+    let folder = match folder.trim() {
+        "" => worktree_folder(repo, branch),
+        typed => crate::settings::expand_home(typed),
+    };
+    folder.is_absolute().then(|| Op::AddWorktree {
+        folder,
+        branch: branch.to_owned(),
+        create,
+        start: None,
+    })
 }
 
 /// Where a clone goes: the URL and `parent`/`name`, once both are known.
@@ -2615,6 +2781,54 @@ mod tests {
             Dialog::NewBranch { start: Start::Commit(o), .. } if o == oid
         ));
         Ok(())
+    }
+
+    /// #138: the new-worktree dialog runs `AddWorktree` only for a usable branch and folder, and
+    /// without a typed folder puts it beside the repository, named for the branch.
+    #[test]
+    fn the_new_worktree_dialog_needs_a_branch_and_a_full_folder() {
+        use super::worktree_op;
+        use crate::worker::Op;
+        use std::path::Path;
+        let repo = Path::new("/work/canopy");
+        let run =
+            |create, name, existing, folder| worktree_op(repo, create, name, existing, folder);
+
+        assert_eq!(
+            super::worktree_folder(repo, ""),
+            Path::new("/work/canopy-worktree"),
+            "never the repository itself"
+        );
+        assert!(run(true, "", "", "").is_none(), "a new branch needs a name");
+        assert!(run(true, "bad..name", "", "").is_none(), "and a valid one");
+        assert!(
+            run(false, "", "", "").is_none(),
+            "an existing one must be chosen"
+        );
+        assert!(
+            run(true, "topic", "", "relative/dir").is_none(),
+            "a full path"
+        );
+
+        let new = run(true, " feature/x ", "ignored", "").expect("beside the repository");
+        assert!(
+            matches!(
+                &new,
+                Op::AddWorktree { folder, branch, create: true, start: None }
+                    if folder == Path::new("/work/canopy-feature-x") && branch == "feature/x"
+            ),
+            "{new:?}"
+        );
+
+        let old = run(false, "ignored", "main", " /elsewhere/wt ").expect("typed folder");
+        assert!(
+            matches!(
+                &old,
+                Op::AddWorktree { folder, branch, create: false, .. }
+                    if folder == Path::new("/elsewhere/wt") && branch == "main"
+            ),
+            "{old:?}"
+        );
     }
 
     #[test]

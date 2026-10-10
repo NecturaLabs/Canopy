@@ -559,6 +559,42 @@ impl Repo {
         }
     }
 
+    /// Adds a linked working folder (`git worktree add`) at `folder`: on a new branch `branch`
+    /// started at `start` (`HEAD` when `None`), or, with `create` off, on the existing local
+    /// branch `branch`. A new branch never gets an upstream, as with [`Self::create_branch`].
+    /// Git refuses a branch another folder has checked out and a folder that is not empty, and
+    /// says so.
+    pub fn add_worktree(
+        &self,
+        folder: &Path,
+        branch: &str,
+        create: bool,
+        start: Option<&str>,
+    ) -> Result<()> {
+        if branch.is_empty() || branch.starts_with('-') {
+            return Err(Error::invalid(format!(
+                "'{branch}' is not a valid branch name."
+            )));
+        }
+        if start.is_some_and(|s| s.is_empty() || s.starts_with('-')) {
+            return Err(Error::invalid(format!(
+                "'{}' is not a valid start point.",
+                start.unwrap_or_default()
+            )));
+        }
+        let folder = folder
+            .to_str()
+            .ok_or_else(|| Error::invalid("The folder's name is not valid text."))?;
+        let mut args = vec!["worktree", "add", "-q"];
+        if create {
+            args.extend(["--no-track", "-b", branch, "--", folder]);
+            args.extend(start);
+        } else {
+            args.extend(["--", folder, branch]);
+        }
+        self.git_cmd(&args).map(drop)
+    }
+
     /// Switches to a local branch.
     pub fn checkout_branch(&self, name: &str) -> Result<()> {
         self.switch_cmd(&["-q", "--", name]).map(drop)

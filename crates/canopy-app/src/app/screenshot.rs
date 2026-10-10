@@ -62,6 +62,7 @@ impl MenuShot {
             "menu-branch" => ("feature/auth", View::History, secondary),
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
+            "blame" => ("Blame", View::Changes, egui::PointerButton::Primary),
             "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
             "amend-commit" => (
                 "Amend last commit",
@@ -247,6 +248,7 @@ impl CanopyApp {
                         && t.requests.list.is_some());
                 t.snap.is_some()
                     && t.running.is_none()
+                    && t.blame.as_ref().is_none_or(|b| b.result.is_some())
                     && (t.diff.is_some() || t.file.is_none())
                     && requests_ready
                     && !t.avatars.pending()
@@ -303,6 +305,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "clone-error",
     "init",
     "new-branch",
+    "new-worktree",
     "rename",
     "add-submodule",
     "git-missing",
@@ -431,6 +434,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         }
         "init" => Dialog::new_repository("~/src/tidepool".into()),
         "new-branch" => Dialog::new_branch_at(Start::Head),
+        "new-worktree" => Dialog::new_worktree(),
         "rename" => Dialog::Rename {
             old: "feature/search".into(),
             new: "feature/search-v2".into(),

@@ -387,7 +387,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 }
                 tool_divider(ui);
                 let new_branch = ToolButton::new(icon::GIT_BRANCH, "Branch")
-                    .tooltip("New branch")
+                    .tooltip("New branch: a line of work in this folder. Use it for most changes")
                     .enabled(snap.is_some())
                     .disabled_reason("The repository is still loading");
                 if running.show(ui, new_branch, Tool::Branch, Some(Command::NewBranch)) {
@@ -395,6 +395,24 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                         crate::views::dialogs::Dialog::new_branch_at(
                             crate::views::dialogs::Start::Head,
                         ),
+                    ));
+                }
+                if ToolButton::new(icon::FOLDERS, "Worktree")
+                    .tooltip(
+                        "New worktree: a branch in a second folder, so this one stays as it is. \
+                         Use it to work on two branches at once",
+                    )
+                    .enabled(snap.is_some() && !busy)
+                    .disabled_reason(if busy {
+                        busy_reason
+                    } else {
+                        "The repository is still loading"
+                    })
+                    .show(ui)
+                    .clicked()
+                {
+                    actions.push(Action::OpenDialog(
+                        crate::views::dialogs::Dialog::new_worktree(),
                     ));
                 }
                 let merge = ToolButton::new(icon::GIT_MERGE, "Merge")
@@ -1463,7 +1481,7 @@ mod tests {
             }
             shapes.iter().any(|c| find(&c.shape, text))
         };
-        let wide = bar(1150.0);
+        let wide = bar(1240.0);
         assert!(painted(&wide, "Changes") && painted(&wide, "Local only"));
         let narrow = bar(560.0);
         assert!(
@@ -1475,7 +1493,7 @@ mod tests {
             "the other views give up theirs"
         );
         assert!(!painted(&narrow, "Local only"), "the badge goes");
-        let wide = bar(1150.0);
+        let wide = bar(1240.0);
         assert!(painted(&wide, "Changes") && painted(&wide, "Local only"));
     }
     /// F1: with Tooltips at the default Helpful, resting the pointer on the toolbar's Fetch and

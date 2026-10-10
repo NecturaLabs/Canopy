@@ -87,12 +87,51 @@ pub struct DetailsError {
     pub can_download: bool,
 }
 
+/// A file's blame, as asked for and as read.
+#[derive(Debug, Clone)]
+pub struct BlameRead {
+    pub path: String,
+    pub rev: Option<Oid>,
+    /// `None` while the worker reads it.
+    pub result: Option<Result<Arc<canopy_core::Blame>, String>>,
+    /// The characters of the longest line of `result`, for the width of the view.
+    pub longest: usize,
+}
+
 /// A file whose diff is shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileSelection {
     pub source: DiffSource,
     pub entry: FileEntry,
     pub conflicted: bool,
+}
+
+impl FileSelection {
+    /// The commit to blame the file at: the one whose diff is shown, else the working tree.
+    pub fn blame_rev(&self) -> Option<Oid> {
+        match self.source {
+            DiffSource::Commit(oid) => Some(oid),
+            _ => None,
+        }
+    }
+
+    /// Whether git has history to blame the file by: not a file the commit deleted, and in the
+    /// working tree not one that is new, untracked, deleted or conflicted.
+    pub fn can_blame(&self) -> bool {
+        match self.source {
+            DiffSource::Commit(_) => self.entry.kind != canopy_core::ChangeKind::Deleted,
+            _ => {
+                !self.conflicted
+                    && !matches!(
+                        self.entry.kind,
+                        canopy_core::ChangeKind::Added
+                            | canopy_core::ChangeKind::Untracked
+                            | canopy_core::ChangeKind::Deleted
+                            | canopy_core::ChangeKind::Conflicted
+                    )
+            }
+        }
+    }
 }
 
 /// Lines picked in one hunk of the shown diff, for staging, unstaging or discarding just them.
@@ -861,6 +900,10 @@ pub struct RepoTab {
     pub file_history: Option<Result<Arc<canopy_core::FileHistory>, String>>,
     insights_serial: u64,
     pub insights: Option<Result<Arc<crate::worker::Insights>, String>>,
+    blame_serial: u64,
+    /// The blame being shown: of this file, as of this commit (`None`: the working tree), and
+    /// what the worker read; the result is `None` while it is read.
+    pub blame: Option<BlameRead>,
     pub ignore_query: Option<crate::worker::IgnoreQuery>,
     pub ignore_result: Option<Result<Arc<crate::worker::IgnoreData>, String>>,
     ignore_serial: u64,
@@ -921,6 +964,9 @@ pub struct RepoTab {
     pub line_sel: Option<LineSelection>,
     /// The selected conflict resolver, retained while hidden if it has authored work.
     pub resolver: Option<Resolver>,
+    /// Resolvers with authored work for the other conflicted files, kept until their file leaves
+    /// the conflicted list.
+    pub parked_resolvers: Vec<Resolver>,
     /// Side-by-side diff and syntax highlighting (from the settings).
     pub split_diff: bool,
     pub highlight_diff: bool,
@@ -1033,6 +1079,8 @@ impl RepoTab {
             file_history: None,
             insights_serial: 0,
             insights: None,
+            blame_serial: 0,
+            blame: None,
             ignore_query: None,
             stale_serial: 0,
             stale_result: None,
@@ -1070,6 +1118,7 @@ impl RepoTab {
             line_sel: None,
             marked: BTreeSet::new(),
             resolver: None,
+            parked_resolvers: Vec::new(),
             split_diff: false,
             highlight_diff: true,
             check_message: true,
@@ -1183,6 +1232,40 @@ impl RepoTab {
             },
             conflicted: false,
         });
+    }
+
+    /// Asks for the blame of `path` as of `rev` (the working tree when `None`).
+    pub fn read_blame(&mut self, path: String, rev: Option<Oid>) {
+        self.send_blame(path.clone(), rev);
+        self.blame = Some(BlameRead {
+            path,
+            rev,
+            result: None,
+            longest: 0,
+        });
+    }
+
+    fn send_blame(&mut self, path: String, rev: Option<Oid>) {
+        self.blame_serial = self.blame_serial.wrapping_add(1);
+        self.worker.send(Job::Blame {
+            serial: self.blame_serial,
+            path,
+            rev,
+        });
+    }
+
+    /// Back to the file's diff; a reply still on its way is ignored.
+    pub fn close_blame(&mut self) {
+        self.blame = None;
+        self.blame_serial = self.blame_serial.wrapping_add(1);
+    }
+
+    /// Shows the blame of the selected file in place of its diff, when it has one.
+    pub fn blame_file(&mut self) {
+        if let Some(sel) = self.file.as_ref().filter(|sel| sel.can_blame()) {
+            let (path, rev) = (sel.entry.path.clone(), sel.blame_rev());
+            self.read_blame(path, rev);
+        }
     }
 
     pub fn read_insights(&mut self) {
@@ -1589,6 +1672,7 @@ impl RepoTab {
     /// way for that file is no longer wanted.
     pub fn deselect_file(&mut self) {
         self.file = None;
+        self.close_blame();
         self.marked.clear();
         self.diff = None;
         self.diff_error = None;
@@ -1705,6 +1789,19 @@ impl RepoTab {
         }
     }
 
+    /// Forgets parked resolvers of files that are no longer conflicted. An unreadable status says
+    /// nothing about the conflicts, so it keeps them.
+    fn prune_parked(&mut self) {
+        if let Some(snap) = self
+            .snap
+            .as_ref()
+            .filter(|s| s.status_unavailable.is_none())
+        {
+            self.parked_resolvers
+                .retain(|r| snap.status.conflicted.iter().any(|f| f.path == r.path));
+        }
+    }
+
     /// Shows the diff of a file.
     pub fn select_file(&mut self, sel: FileSelection) {
         let key = self.diff_key(&sel);
@@ -1716,6 +1813,7 @@ impl RepoTab {
         }
         if self.file.as_ref() != Some(&sel) {
             self.line_sel = None;
+            self.close_blame();
         }
         if !self.file.as_ref().is_some_and(|f| {
             f.source == sel.source
@@ -1730,7 +1828,17 @@ impl RepoTab {
                 .as_ref()
                 .is_none_or(|r| r.path != sel.entry.path)
             {
-                self.resolver = Some(Resolver::new(sel.entry.path.clone()));
+                let next = self
+                    .parked_resolvers
+                    .iter()
+                    .position(|r| r.path == sel.entry.path)
+                    .map_or_else(
+                        || Resolver::new(sel.entry.path.clone()),
+                        |i| self.parked_resolvers.remove(i),
+                    );
+                if let Some(left) = self.resolver.replace(next).filter(Resolver::has_draft) {
+                    self.parked_resolvers.push(left);
+                }
             }
             self.worker.send(Job::Conflict(sel.entry.path.clone()));
         } else if self.resolver.as_ref().is_none_or(|r| !r.has_draft()) {
@@ -1746,6 +1854,11 @@ impl RepoTab {
 
     /// Reloads the open diff, keeping the old one on screen until the new one arrives.
     pub fn reload_diff(&mut self) {
+        // A blame of the working tree goes stale with the file; the old one stays until the new
+        // one arrives.
+        if let Some(read) = self.blame.as_ref().filter(|b| b.rev.is_none()) {
+            self.send_blame(read.path.clone(), None);
+        }
         if let Some(sel) = self.file.clone() {
             if sel.conflicted {
                 self.worker.send(Job::Conflict(sel.entry.path.clone()));
@@ -1995,6 +2108,7 @@ impl RepoTab {
                     self.snap_index = SnapIndex::new(&s);
                     self.snap = Some(s);
                     self.prune_marked();
+                    self.prune_parked();
                     self.generation += 1;
                     self.update_forges(gitlab_hosts);
                     self.load_error = None;
@@ -2044,6 +2158,7 @@ impl RepoTab {
                         s.status_unavailable = None;
                         self.snap_index.update_submodules(s);
                     }
+                    self.prune_parked();
                     self.reconcile_file_selection();
                     self.clear_obsolete_refusal();
                 }
@@ -2218,6 +2333,29 @@ impl RepoTab {
                         });
                     }
                     self.file_history = Some(result);
+                }
+                Event::Blame { serial, result } => {
+                    if serial != self.blame_serial {
+                        continue;
+                    }
+                    if let Err(error) = &result {
+                        notices.push(Notice {
+                            ok: false,
+                            title: "Could not blame the file".into(),
+                            body: error.clone(),
+                        });
+                    }
+                    if let Some(read) = &mut self.blame {
+                        read.longest = result.as_ref().map_or(0, |blame| {
+                            blame
+                                .lines
+                                .iter()
+                                .map(|l| l.text.chars().count())
+                                .max()
+                                .unwrap_or(0)
+                        });
+                        read.result = Some(result);
+                    }
                 }
                 Event::Insights { serial, result } => {
                     if serial != self.insights_serial {
@@ -3465,6 +3603,99 @@ mod tests {
         assert_eq!(tab.commit_summary, "Typed draft");
     }
 
+    fn conflicted_entry(path: &str) -> FileEntry {
+        FileEntry {
+            path: path.into(),
+            old_path: None,
+            kind: canopy_core::ChangeKind::Modified,
+            additions: 0,
+            deletions: 0,
+            lfs: false,
+            old_mode: None,
+            new_mode: None,
+        }
+    }
+
+    fn conflicted(path: &str) -> FileSelection {
+        FileSelection {
+            source: DiffSource::Unstaged,
+            entry: conflicted_entry(path),
+            conflicted: true,
+        }
+    }
+
+    /// #132: choices and an unfinished edit survive picking another conflicted file and coming
+    /// back; a file with no authored work leaves nothing behind.
+    #[test]
+    fn selecting_another_conflicted_file_keeps_the_resolver_draft() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let text = "<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n";
+        tab.select_file(conflicted("a.rs"));
+        events
+            .send(Event::Conflict {
+                path: "a.rs".into(),
+                kind: None,
+                file: Ok(Arc::new(ConflictFile::parse(text))),
+            })
+            .expect("conflict");
+        tab.poll(&[]);
+        let r = tab.resolver.as_mut().expect("resolver for a");
+        r.choose(Choice::Theirs);
+        r.editing = Some((0, "unfinished".into()));
+
+        tab.select_file(conflicted("b.rs"));
+        assert_eq!(tab.resolver.as_ref().map(|r| r.path.as_str()), Some("b.rs"));
+        tab.select_file(conflicted("a.rs"));
+        let r = tab.resolver.as_ref().expect("resolver for a again");
+        assert_eq!(r.path, "a.rs");
+        assert_eq!(r.choices, vec![Some(Choice::Theirs)]);
+        assert_eq!(r.editing, Some((0, "unfinished".into())));
+        assert!(tab.parked_resolvers.is_empty(), "b had no draft to park");
+    }
+
+    /// A parked draft goes when its file stops being conflicted (snapshot or status), but not
+    /// when the status could not be read.
+    #[test]
+    fn parked_resolvers_follow_the_conflicted_list() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let draft = || {
+            let mut r = Resolver::new("a.rs".into());
+            r.choices = vec![Some(Choice::Ours)];
+            r
+        };
+        let snap = |conflicted: &[&str], unavailable: bool| {
+            let mut s = RepoSnapshot::default();
+            s.status.conflicted = conflicted.iter().map(|p| conflicted_entry(p)).collect();
+            if unavailable {
+                s.status_unavailable = Some(canopy_core::StatusUnavailable {
+                    message: "unreadable".into(),
+                    can_download: false,
+                });
+            }
+            Arc::new(s)
+        };
+        tab.parked_resolvers = vec![draft()];
+        events
+            .send(Event::Snapshot(snap(&[], true)))
+            .expect("snapshot");
+        tab.poll(&[]);
+        assert_eq!(tab.parked_resolvers.len(), 1, "unreadable status keeps it");
+        events
+            .send(Event::Snapshot(snap(&["a.rs"], false)))
+            .expect("snapshot");
+        tab.poll(&[]);
+        assert_eq!(tab.parked_resolvers.len(), 1, "still conflicted");
+        events
+            .send(Event::Status(canopy_core::WorkingStatus::default()))
+            .expect("status");
+        tab.poll(&[]);
+        assert!(tab.parked_resolvers.is_empty(), "resolved elsewhere");
+    }
+
     #[test]
     fn reloading_discards_an_edit_for_a_changed_conflict() {
         let mut resolver = Resolver::new("f".into());
@@ -4362,6 +4593,103 @@ mod tests {
         assert_eq!(tab.view, View::Changes);
         assert_eq!(notices.len(), 1);
         assert!(!notices[0].ok, "it needs the user");
+        Ok(())
+    }
+
+    #[test]
+    fn blame_rejects_superseded_replies_and_surfaces_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.read_blame("old.rs".into(), None);
+        let Job::Blame { serial: old, .. } = jobs.recv()? else {
+            panic!("blame job");
+        };
+        tab.read_blame("new.rs".into(), None);
+        let Job::Blame {
+            serial: current,
+            path,
+            rev: None,
+        } = jobs.recv()?
+        else {
+            panic!("blame job");
+        };
+        assert_eq!(path, "new.rs");
+        events.send(Event::Blame {
+            serial: old,
+            result: Err("old read".into()),
+        })?;
+        assert_eq!(tab.poll(&[]).len(), 0);
+        assert!(tab.blame.as_ref().is_some_and(|b| b.result.is_none()));
+        events.send(Event::Blame {
+            serial: current,
+            result: Err("no such path".into()),
+        })?;
+        let notices = tab.poll(&[]);
+        assert_eq!(notices.len(), 1);
+        assert!(!notices[0].ok);
+        assert!(matches!(
+            tab.blame,
+            Some(BlameRead { result: Some(Err(ref error)), .. }) if error == "no such path"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_blame_follows_its_file_and_is_refreshed_with_the_working_tree()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let file = |path: &str, source| FileSelection {
+            source,
+            entry: FileEntry {
+                path: path.into(),
+                old_path: None,
+                kind: canopy_core::ChangeKind::Modified,
+                additions: 0,
+                deletions: 0,
+                lfs: false,
+                old_mode: None,
+                new_mode: None,
+            },
+            conflicted: false,
+        };
+        tab.select_file(file("a.rs", DiffSource::Unstaged));
+        tab.blame_file();
+        assert!(tab.blame.is_some());
+        let mut serials = Vec::new();
+        while let Ok(job) = jobs.try_recv() {
+            if let Job::Blame { serial, .. } = job {
+                serials.push(serial);
+            }
+        }
+        assert_eq!(serials.len(), 1);
+
+        // The working tree changed: the same blame is read again, the old one stays meanwhile.
+        tab.reload_diff();
+        assert!(tab.blame.is_some());
+        let again = std::iter::from_fn(|| jobs.try_recv().ok())
+            .find_map(|job| match job {
+                Job::Blame { serial, .. } => Some(serial),
+                _ => None,
+            })
+            .expect("a new blame job");
+        assert_ne!(again, serials[0]);
+
+        // Another file, another source, or none: the blame goes, and its late reply is ignored.
+        tab.select_file(file("a.rs", DiffSource::Staged));
+        assert!(tab.blame.is_none());
+        events.send(Event::Blame {
+            serial: again,
+            result: Err("late".into()),
+        })?;
+        assert!(tab.poll(&[]).is_empty(), "no toast for a view that is gone");
+        tab.blame_file();
+        assert!(tab.blame.is_some());
+        tab.deselect_file();
+        assert!(tab.blame.is_none());
         Ok(())
     }
 

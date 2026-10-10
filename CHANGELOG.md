@@ -13,6 +13,9 @@ commits since the previous build.
 - File history: right-click a file in Changes or in a commit's file list, or use the command palette,
   to list the commits that changed it, followed back through renames. Choosing one opens that
   commit with the file's diff; the working tree is not touched.
+- Blame: the Blame button in a file's diff header (or "Blame selected file" in the command palette)
+  shows who last changed each line, with the commit id, author and date, in place of the diff; click
+  a line's commit to open it in History.
 - A pull or merge request whose checks and reviews are not loaded (before they arrive, or without a
   token and never opened) shows a faint question mark with that tooltip, instead of looking like a
   request that has none.
