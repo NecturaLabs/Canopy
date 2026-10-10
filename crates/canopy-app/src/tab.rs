@@ -36,6 +36,11 @@ pub enum SidebarItem {
     Worktree(PathBuf),
 }
 
+/// The sidebar sections a new tab starts with closed: only Branches is the daily surface. The
+/// user's own opening or closing of a section replaces this in [`RepoTab::collapsed`].
+const SIDEBAR_CLOSED_AT_START: [&str; 5] =
+    ["worktrees", "remotes", "tags", "stashes", "submodules"];
+
 /// How the history list and selected commit share the content area.
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryLayout {
@@ -789,6 +794,8 @@ pub struct RepoTab {
     pub scroll_to_selected: bool,
     /// Scroll just enough to show the selected commit next frame.
     pub reveal_selected: bool,
+    /// The sidebar sections and remotes the user (or the tab's start, [`SIDEBAR_CLOSED_AT_START`])
+    /// closed, by key.
     pub collapsed: HashSet<String>,
     /// The sidebar row last clicked ([`RepoTab::sidebar_shows`]).
     pub sidebar_pick: Option<SidebarItem>,
@@ -905,7 +912,7 @@ impl RepoTab {
             commit_limit,
             scroll_to_selected: false,
             reveal_selected: false,
-            collapsed: HashSet::new(),
+            collapsed: SIDEBAR_CLOSED_AT_START.map(str::to_owned).into(),
             sidebar_pick: None,
             forges: Vec::new(),
             host: None,

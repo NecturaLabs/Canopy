@@ -320,7 +320,9 @@ in the density's metrics:
   the toolbar's navigation menu, preserving room for repository content. It stays open for
   section toggles, double-click checkout and context menus. A section's items sit one
   `tree_indent` right of its header's icon (the header reads as their parent; a remote's branches
-  one level further) with their selection and hover fills at full width.
+  one level further) with their selection and hover fills at full width; a new tab opens only
+  Branches, and a section the user opened or closed keeps its state. The Remotes header carries no
+  button and no menu.
 - History column widths follow the currently visible rows: graph lane spans, ref pills and
   messages, author names and formatted dates. Metadata sits after the measured message width
   instead of at the far window edge. Narrow views omit lower-priority columns; long messages

@@ -402,26 +402,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             });
         }
 
-        // Remotes: "+" on the header (hover or focus) and its context menu add one; a
-        // repository with none says so and offers Publish and Add remote as links instead, so
-        // the header has no second "Add remote…".
+        // Remotes: a repository with none says so and offers Publish and Add remote…; the header
+        // has no action or menu of its own (Add remote… is in the palette too).
         let local_only = snap.remotes.is_empty();
-        let (open, header) = section_with_action(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false, (!local_only).then_some((icon::PLUS, "Add remote…")));
-        if header.value {
-            actions.push(Action::AddRemoteDialog);
-        }
-        menu::context(&header.response, |m| {
-            if m.item(icon::PLUS, "Add remote…").show(m.ui).clicked() {
-                actions.push(Action::AddRemoteDialog);
-            }
-            if local_only {
-                if m.item(icon::CLOUD_ARROW_UP, "Publish…").show(m.ui).clicked() {
-                    actions.push(Action::Publish);
-                }
-            } else if m.item(icon::ARROWS_CLOCKWISE, "Fetch all remotes").shortcut(Command::Fetch).show(m.ui).clicked() {
-                actions.push(Action::Fetch);
-            }
-        });
+        let open = section(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false);
         if open {
             if local_only {
                 no_remotes(ui, actions);
@@ -787,6 +771,8 @@ mod tests {
             crate::settings::DiffPrefs::default(),
             worker,
         );
+        // A new tab starts with all but Branches closed; these fixtures show every section.
+        tab.collapsed.clear();
         tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
             remotes,
             ..Default::default()
@@ -899,10 +885,10 @@ mod tests {
         );
     }
 
-    /// O9: with remotes the Remotes header's "+" is reachable at rest (keyboard and screen
-    /// readers, kit-polish Override O2), shows on hover, and a click on it opens the dialog.
+    /// #138: the Remotes header has no "+" and no context menu; "Add remote…" stays in the
+    /// palette and the local-only block.
     #[test]
-    fn the_remotes_header_adds_a_remote_from_its_hover_button() {
+    fn the_remotes_header_has_no_button_and_no_menu() {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
@@ -911,78 +897,86 @@ mod tests {
         let mut actions = Vec::new();
         let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
-        assert_eq!(
-            named(&nodes, "Add remote…").map(egui::accesskit::Node::role),
-            Some(Role::Button),
-            "the header's + is in the tree at rest"
-        );
         let header =
             center(named(&nodes, &a11y::disclosure_name("Remotes", true)).expect("remotes header"));
+        assert!(
+            named(&nodes, "Add remote…").is_none(),
+            "no + on the header at rest"
+        );
         let hover = vec![egui::Event::PointerMoved(header)];
         let _ = sidebar_frame(&ctx, &mut tab, hover.clone(), &mut actions);
         let nodes = sidebar_frame(&ctx, &mut tab, hover, &mut actions);
-        let add = center(named(&nodes, "Add remote…").expect("the header's + on hover"));
-        let _ = sidebar_frame(&ctx, &mut tab, click(add), &mut actions);
+        assert!(named(&nodes, "Add remote…").is_none(), "none on hover");
+        let right_click = [true, false].map(|pressed| egui::Event::PointerButton {
+            pos: header,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        });
+        let _ = sidebar_frame(&ctx, &mut tab, right_click.to_vec(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         crate::ui::motion::set_reduced(false);
-        assert!(
-            matches!(actions.as_slice(), [Action::AddRemoteDialog]),
-            "{actions:?}"
-        );
+        for label in ["Add remote…", "Fetch all remotes", "Publish…"] {
+            assert!(named(&nodes, label).is_none(), "a menu opened with {label}");
+        }
+        assert!(actions.is_empty(), "{actions:?}");
     }
 
-    /// O9, KPL-F13: the Remotes header's "+" is reachable from the keyboard: Tab from the header
-    /// lands on it, and Shift+Tab goes back to the header.
+    /// #138: a new tab starts with every section closed except Branches, and a section the user
+    /// opens stays open.
     #[test]
-    fn the_remotes_header_button_is_reachable_by_tab_and_shift_tab() {
+    fn a_new_tab_opens_only_branches_and_keeps_the_users_choice() {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
         crate::ui::motion::set_reduced(true);
-        let mut tab = tab_with(vec![origin()]);
-        tab.collapsed.insert("branches".into());
-        let mut actions = Vec::new();
-        let key = |shift: bool| egui::Event::Key {
-            key: egui::Key::Tab,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: if shift {
-                egui::Modifiers::SHIFT
-            } else {
-                egui::Modifiers::default()
-            },
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.snap = branch_tab().snap;
+        let sub = canopy_core::SubmoduleInfo {
+            name: "deps/lib".into(),
+            path: "deps/lib".into(),
+            url: None,
+            head_id: Some(oid(7)),
+            index_id: Some(oid(7)),
+            workdir_id: Some(oid(7)),
+            conflicted: false,
+            dirty: None,
         };
-        let mut focused = Vec::new();
-        for _ in 0..6 {
-            let _ = sidebar_frame(&ctx, &mut tab, vec![key(false)], &mut actions);
-            let now = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions).1;
-            let reached = now.as_deref() == Some("Add remote…");
-            focused.push(now);
-            if reached {
-                break;
-            }
+        if let Some(snap) = tab.snap.as_mut() {
+            std::sync::Arc::make_mut(snap).submodules = vec![sub];
         }
-        assert_eq!(
-            focused.last().cloned().flatten().as_deref(),
-            Some("Add remote…"),
-            "Tab never reached the header's +: {focused:?}"
-        );
-        assert!(
-            focused
-                .iter()
-                .rev()
-                .nth(1)
-                .is_some_and(|l| l.as_deref().is_some_and(|l| l.starts_with("Remotes"))),
-            "the + comes right after its header: {focused:?}"
-        );
-        let _ = sidebar_frame(&ctx, &mut tab, vec![key(true)], &mut actions);
-        let back = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions).1;
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let state = |nodes: &[egui::accesskit::Node], title: &str| {
+            [true, false]
+                .into_iter()
+                .find(|open| named(nodes, &a11y::disclosure_name(title, *open)).is_some())
+        };
+        assert_eq!(state(&nodes, "Branches"), Some(true));
+        for title in ["Worktrees", "Remotes", "Tags", "Stashes", "Submodules"] {
+            assert_eq!(state(&nodes, title), Some(false), "{title}");
+        }
+
+        // The user opens Tags and closes Branches: both stay as chosen.
+        for title in ["Tags", "Branches"] {
+            let open = state(&nodes, title) == Some(true);
+            let at = center(named(&nodes, &a11y::disclosure_name(title, open)).expect(title));
+            let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
+            let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+            assert_eq!(state(&nodes, title), Some(!open), "{title} toggled");
+        }
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         crate::ui::motion::set_reduced(false);
-        assert!(
-            back.as_deref().is_some_and(|l| l.starts_with("Remotes")),
-            "Shift+Tab goes back to the header: {back:?}"
-        );
-        assert!(actions.is_empty(), "{actions:?}");
+        assert_eq!(state(&nodes, "Tags"), Some(true));
+        assert_eq!(state(&nodes, "Branches"), Some(false));
+        assert_eq!(state(&nodes, "Remotes"), Some(false));
     }
 
     /// The text a painted shape holds, with where it is.

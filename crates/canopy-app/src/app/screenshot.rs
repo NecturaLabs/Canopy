@@ -57,7 +57,6 @@ impl MenuShot {
     fn of(overlay: &str) -> Option<Self> {
         let secondary = egui::PointerButton::Secondary;
         let (name, view, button) = match overlay {
-            "menu-remotes" => ("Remotes", View::History, secondary),
             "menu-branch" => ("feature/auth", View::History, secondary),
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
@@ -656,7 +655,7 @@ mod tests {
         use eframe::App as _;
         // (The other menus need a repository's commits, branches or a loaded diff: their
         // pictures are checked with tools/screenshot.sh.)
-        let (overlay, item) = ("menu-remotes", "Add remote…");
+        let (overlay, item) = ("menu-branch", "New branch from here…");
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         ctx.enable_accesskit();
@@ -666,12 +665,15 @@ mod tests {
         app.settings.crash_reports = Some(false);
         app.settings.crash_reports_version = crate::crash_reports::DATA_VERSION;
         app.settings.seen_intro = true;
-        // A remote, so "Add remote…" is only in the header's menu (not a local-only link).
         let mut tab = test_tab(canopy_core::RepoSnapshot {
-            remotes: vec![canopy_core::RemoteInfo {
-                name: "origin".into(),
-                url: Some("https://example.com/r.git".into()),
-                default_branch: None,
+            branches: vec![canopy_core::BranchInfo {
+                name: "feature/auth".into(),
+                target: None,
+                is_head: false,
+                upstream: None,
+                ahead: 0,
+                behind: 0,
+                worktree: None,
             }],
             ..Default::default()
         });
