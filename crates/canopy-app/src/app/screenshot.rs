@@ -182,14 +182,21 @@ impl CanopyApp {
             repo.clone_from(&tab.path);
             tab.read_insights();
         }
-        if let Some(Dialog::FileHistory { repo, path }) = self.dialogs.current_mut()
+        if let Some(Dialog::FileHistory { repo, path, from }) = self.dialogs.current_mut()
             && let Some(tab) = self.tabs.get_mut(self.active)
             && path.is_empty()
+            && tab.snap.is_some()
         {
             repo.clone_from(&tab.path);
             // A file with several commits in the fixture repository.
             "Cargo.toml".clone_into(path);
-            tab.read_file_history(None, path.clone());
+            // `file-history-commit` asks from the commit the History view selected, else HEAD's.
+            if from.is_some() {
+                *from = tab
+                    .selected_commit
+                    .or_else(|| tab.snap.as_ref().and_then(|s| s.head.oid));
+            }
+            tab.read_file_history(*from, path.clone());
         }
         if matches!(self.dialogs.current(), Some(Dialog::CleanStale(form)) if form.repo.as_os_str().is_empty())
             && !self.tabs.is_empty()
@@ -349,10 +356,12 @@ impl CanopyApp {
             });
             return;
         }
-        if name == "file-history" {
+        if name == "file-history" || name == "file-history-commit" {
             self.dialogs.open(Dialog::FileHistory {
                 repo: PathBuf::new(),
                 path: String::new(),
+                // A placeholder: the selected commit replaces it once the tab has one.
+                from: (name == "file-history-commit").then_some(canopy_core::Oid::ZERO_SHA1),
             });
             return;
         }
@@ -508,7 +517,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         },
         "diverged" => Dialog::Diverged {
             repo: PathBuf::new(),
-            mode: settings::PullMode::Rebase,
+            mode: settings::PullMode::RECOMMENDED_WHEN_DIVERGED,
             remember: crate::action::Remember::Repository,
             everywhere: true,
             preview: canopy_core::PullPreview {

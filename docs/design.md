@@ -509,6 +509,8 @@ Rows separate selection from being current: `ListRow::selected` is the selection
 (the sidebar row last clicked, while History shows its commit), `ListRow::current` the checked-out
 branch's accent icon and semibold label, announced as current rather than selected. A selected row
 that has keyboard focus also draws the focus ring.
+A row's detail (a worktree's branch, a commit's author and date) is cut after its label by default;
+`ListRow::whole_detail` cuts the label first instead, leaving the label at least 40% of the row.
 
 Keyboard and screen readers (`kit::a11y`): a list is one Tab stop (`kit::row::Roving`, used by
 History's commits, each sidebar section and card grids): Tab lands on the row last visited (else the

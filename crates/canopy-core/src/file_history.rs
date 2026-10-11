@@ -23,9 +23,8 @@ pub struct FileHistoryEntry {
     pub path: String,
     /// The path before this commit, when it renamed or copied the file.
     pub old_path: Option<String>,
-    /// What the commit did to the file ([`ChangeKind::Modified`] where git lists no change, as for
-    /// a merge).
-    pub kind: ChangeKind,
+    /// What the commit did to the file; `None` where git lists no change, as for a merge.
+    pub kind: Option<ChangeKind>,
 }
 
 /// A file's history, newest first.
@@ -102,11 +101,12 @@ fn parse(out: &str, path: &str) -> Vec<FileHistoryEntry> {
             None
         };
         let kind = match status.chars().next() {
-            Some('A') => ChangeKind::Added,
-            Some('D') => ChangeKind::Deleted,
-            Some('R' | 'C') => ChangeKind::Renamed,
-            Some('T') => ChangeKind::Typechange,
-            _ => ChangeKind::Modified,
+            Some('A') => Some(ChangeKind::Added),
+            Some('D') => Some(ChangeKind::Deleted),
+            Some('R' | 'C') => Some(ChangeKind::Renamed),
+            Some('T') => Some(ChangeKind::Typechange),
+            Some(_) => Some(ChangeKind::Modified),
+            None => None,
         };
         entries.push(FileHistoryEntry {
             oid,
@@ -122,4 +122,20 @@ fn parse(out: &str, path: &str) -> Vec<FileHistoryEntry> {
         }
     }
     entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Git lists no change for a merge: the entry has no status, rather than a made-up one.
+    #[test]
+    fn a_record_without_a_status_has_no_kind() {
+        let id = "1".repeat(40);
+        let out = format!(
+            "\x1e{id}\x1fAda\x1f2\x1fmerge side\0\n\x1e{id}\x1fAda\x1f1\x1fedit\0\nM\0a.txt\0"
+        );
+        let kinds: Vec<_> = parse(&out, "a.txt").into_iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, [None, Some(ChangeKind::Modified)]);
+    }
 }

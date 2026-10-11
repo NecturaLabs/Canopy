@@ -345,6 +345,9 @@ impl Frame {
     }
 }
 
+/// The most of a row's width a [`ListRow::whole_detail`] may take from its label.
+const WHOLE_DETAIL_SHARE: f32 = 0.6;
+
 /// Paints `text` on one line from `x`, ellipsized at `right`; returns where it ends.
 fn paint_text(
     painter: &Painter,
@@ -437,6 +440,7 @@ pub struct ListRow<'a> {
     label: String,
     accessible: Option<String>,
     detail: Option<String>,
+    whole_detail: bool,
     trailing: Option<String>,
     badge: Option<Badge>,
     widgets: Option<(f32, Actions<'a>)>,
@@ -478,6 +482,7 @@ impl<'a> ListRow<'a> {
             label: String::new(),
             accessible: None,
             detail: None,
+            whole_detail: false,
             trailing: None,
             badge: None,
             widgets: None,
@@ -588,6 +593,12 @@ impl<'a> ListRow<'a> {
     }
     pub fn detail(mut self, text: impl Into<String>) -> Self {
         self.detail = Some(text.into());
+        self
+    }
+    /// The detail is cut last: when the row is too narrow, the label gives way to it (up to
+    /// [`WHOLE_DETAIL_SHARE`] of the row).
+    pub fn whole_detail(mut self) -> Self {
+        self.whole_detail = true;
         self
     }
     /// Right-aligned mono text (a count, a SHA): `text_faint`, `accent` when selected.
@@ -707,10 +718,23 @@ impl<'a> ListRow<'a> {
                 (true, false) => theme::medium(),
                 _ => FontFamily::Proportional,
             };
+            let detail_room = self
+                .detail
+                .as_ref()
+                .filter(|_| self.whole_detail)
+                .map_or(0.0, |d| {
+                    f.painter
+                        .layout_no_wrap(d.clone(), FontId::proportional(m.meta_size), rc.dim)
+                        .size()
+                        .x
+                        + GAP
+                })
+                // Past this the label would vanish: the detail is cut then.
+                .min(((right - x) * WHOLE_DETAIL_SHARE).max(0.0));
             let end = paint_text(
                 &f.painter,
                 x,
-                right,
+                right - detail_room,
                 cy,
                 &self.label,
                 FontId::new(m.body_size, family),
@@ -2144,6 +2168,28 @@ mod tests {
         );
         out.textures_delta.clear();
         out
+    }
+
+    /// A row too narrow for its label and detail cuts the label first when asked to keep the
+    /// detail whole.
+    #[test]
+    fn a_whole_detail_survives_a_long_label() {
+        let detail = "Sam Okafor · Aug 13, 2026";
+        for (whole, kept) in [(true, true), (false, false)] {
+            let ctx = ctx();
+            let out = run(&ctx, Vec::new(), |ui| {
+                ui.set_max_width(320.0);
+                let row = ListRow::new("long")
+                    .label("a summary far too long to share the row with anything else at all")
+                    .detail(detail);
+                (if whole { row.whole_detail() } else { row }).show(ui);
+            });
+            let shown = out
+                .shapes
+                .iter()
+                .any(|c| matches!(&c.shape, Shape::Text(t) if t.galley.text() == detail));
+            assert_eq!(shown, kept, "whole detail: {whole}");
+        }
     }
 
     /// The label of the node with keyboard focus after one frame of `f` with `events`, and the

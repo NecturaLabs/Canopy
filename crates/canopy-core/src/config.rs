@@ -106,14 +106,26 @@ impl Setting {
     }
 
     /// Recommendations change neither signing nor line endings, which need an explicit choice.
+    /// `pull.rebase` has none: the pull recommendation is `pull.ff = only` (ADR 0012), and a
+    /// diverged pull then asks Rebase (recommended) or Merge. Neither value of `pull.rebase`
+    /// is better than the other, so no list marks one; see [`Self::recommended_write`].
     pub fn recommendation(self) -> Option<&'static str> {
         self.recommendation_for(cli::version_number())
+    }
+
+    /// What Use recommended writes: the recommendation, and for `pull.rebase` the `false` that
+    /// lets `pull.ff = only` take effect (git lets a configured rebase win over it).
+    pub fn recommended_write(self) -> Option<&'static str> {
+        match self {
+            Self::PullRebase => Some("false"),
+            _ => self.recommendation(),
+        }
     }
 
     /// Pure metadata for a UI that already received the installed Git version from its worker.
     pub fn recommendation_for(self, git: Option<(u32, u32)>) -> Option<&'static str> {
         match self {
-            Self::PullRebase | Self::FetchPruneTags => Some("false"),
+            Self::FetchPruneTags => Some("false"),
             Self::PullFastForward => Some("only"),
             Self::PullAutostash
             | Self::FetchPrune
@@ -125,7 +137,7 @@ impl Setting {
             Self::ConflictStyle => Some(crate::ConflictStyle::default().value(git)),
             Self::InitialBranch => Some("main"),
             Self::CommitCleanup => Some("whitespace"),
-            Self::Autocrlf | Self::CommitSigning | Self::SigningFormat => None,
+            Self::PullRebase | Self::Autocrlf | Self::CommitSigning | Self::SigningFormat => None,
         }
     }
 }
@@ -189,7 +201,7 @@ pub(crate) fn validate_branch(dir: &Path, branch: &str) -> Result<()> {
 pub fn apply_recommended(dir: &Path) -> Result<()> {
     for (saved, (setting, value)) in Setting::ALL
         .into_iter()
-        .filter_map(|setting| setting.recommendation().map(|value| (setting, value)))
+        .filter_map(|setting| setting.recommended_write().map(|value| (setting, value)))
         .enumerate()
     {
         if let Err(err) = set(dir, Scope::Global, setting, Some(value)) {
@@ -200,7 +212,7 @@ pub fn apply_recommended(dir: &Path) -> Result<()> {
         }
     }
     for setting in Setting::ALL {
-        let Some(expected) = setting.recommendation() else {
+        let Some(expected) = setting.recommended_write() else {
             continue;
         };
         let query = Query::Get(setting.key());

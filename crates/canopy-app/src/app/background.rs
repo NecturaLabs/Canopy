@@ -329,6 +329,8 @@ impl CanopyApp {
 
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
         self.toasts.set_prefs(self.settings.notifications);
+        self.toasts
+            .set_settings_open(self.settings_screen.is_some());
         crate::ui::kit::overlay::set_tooltip_level(self.settings.tooltips);
         keymap::apply_saved(&self.settings.keybindings);
         let delay = self.settings.tooltip_delay.seconds();
@@ -390,7 +392,7 @@ impl CanopyApp {
                 self.dialogs.open(if d.diverged {
                     Dialog::Diverged {
                         repo: tab.path.clone(),
-                        mode: settings::PullMode::Rebase,
+                        mode: settings::PullMode::RECOMMENDED_WHEN_DIVERGED,
                         remember: crate::action::Remember::Repository,
                         everywhere: !d.configured,
                         preview: d.preview,

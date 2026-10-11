@@ -2710,7 +2710,11 @@ fn source_label_in(source: Option<&Source>, home: &Path) -> String {
                 "worktree" => "this worktree",
                 other => other,
             };
-            format!("{scope}: {file}")
+            if scope.is_empty() {
+                file
+            } else {
+                format!("{scope}: {file}")
+            }
         }
         Some(Source::Guessed) => "guessed by Git from this computer".into(),
         None => "not set".into(),
@@ -2785,6 +2789,11 @@ fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
 const FIELD_WIDTH: f32 = 280.0;
 /// The width of a select in a settings row.
 const SELECT_WIDTH: f32 = 220.0;
+/// The Git editor's selects, wide enough for "Rebase preserving merges" and "Unset (Canopy's default)".
+const GIT_SELECT_WIDTH: f32 = 240.0;
+/// Room for the Save button and its gap beside the first-branch field, which together are as
+/// wide as a select, so every Unset button sits in one column.
+const BRANCH_SAVE_WIDTH: f32 = 64.0;
 
 /// A select's width in a settings row: [`SELECT_WIDTH`], so a column of rows lines up, or wider
 /// when its longest option needs it (`kit::select::fit_width`).
@@ -2987,36 +2996,44 @@ fn git_config_editor(
             "Repository Git configuration"
         },
     );
-    help_label(
-        ui,
-        if scope == Scope::Global {
-            "Changes affect Git in every application. Included files stay intact; Unset removes only the value in your main global file."
-        } else {
-            "Changes affect this repository in every application, including its linked worktrees. Inherit removes the local override. Worktree and command settings can still take precedence."
-        },
-    );
+    // Captions are not settings: a search shows only the rows.
+    if !Filter::searching(ui.ctx()) {
+        help_label(
+            ui,
+            if scope == Scope::Global {
+                "Changes affect Git in every application. Included files stay intact; Unset removes only the value in your main global file."
+            } else {
+                "Changes affect this repository in every application, including its linked worktrees. Inherit removes the local override. Worktree and command settings can still take precedence."
+            },
+        );
+    }
     // A read error stays editable: saving a valid value is how the user repairs it.
     let ready = facts.is_some() && !screen.git_config_pending;
-    if screen.git_config_pending {
+    if screen.git_config_pending && !Filter::searching(ui.ctx()) {
         help_label(ui, "Saving Git configuration…");
     }
     for setting in Setting::ALL {
         let value = facts.and_then(|facts| editor_value(facts, setting));
         let recommended = setting.recommendation_for(facts.and_then(|facts| facts.git));
-        let note = Note {
-            text: value.map_or_else(
-                || format!("{} is unset.", setting.key()),
-                |value| {
-                    format!(
-                        "{} = {} ({}; {}).",
-                        setting.key(),
-                        value.value,
-                        value.scope,
-                        value.origin
-                    )
-                },
-            ),
-            warn: false,
+        let invalid = facts.and_then(|facts| {
+            facts
+                .invalid
+                .iter()
+                .find(|value| value.key.eq_ignore_ascii_case(setting.key()))
+        });
+        let note = match (invalid, value) {
+            (Some(raw), _) => Note {
+                text: format!("{}. Git does not accept this value.", config_phrase(raw)),
+                warn: true,
+            },
+            (None, Some(value)) => Note {
+                text: format!("{}.", config_phrase(value)),
+                warn: false,
+            },
+            (None, None) => Note {
+                text: format!("{} is unset.", setting.key()),
+                warn: false,
+            },
         };
         let help = git_setting_help(setting);
         row_with_note(ui, setting.label(), help, Some(&note), |ui| {
@@ -3033,7 +3050,7 @@ fn git_config_editor(
                     let mut text = draft.map_or_else(|| saved.clone(), |draft| draft.text);
                     let problem = initial_branch_problem(&text);
                     TextField::new(&mut text)
-                        .width(FIELD_WIDTH)
+                        .width(GIT_SELECT_WIDTH - BRANCH_SAVE_WIDTH)
                         .name(setting.label())
                         .placeholder("Unset")
                         .error(problem)
@@ -3068,11 +3085,17 @@ fn git_config_editor(
                         .map(|(value, label)| (Some((*value).to_owned()), label.as_str()))
                         .collect();
                     let mut select = Select::new(&mut selected, &options)
-                        .width(SELECT_WIDTH)
+                        .width(GIT_SELECT_WIDTH)
                         .name(setting.label())
                         .report_reselection()
-                        .placeholder(value.map_or_else(
-                            || "Unset — Canopy uses its fallback".to_owned(),
+                        .placeholder(invalid.or(value).map_or_else(
+                            || {
+                                if recommended.is_some() {
+                                    "Unset (Canopy's default)".to_owned()
+                                } else {
+                                    "Unset".to_owned()
+                                }
+                            },
                             |value| format!("Configured: {}", value.value),
                         ))
                         .id_salt(("git-setting", setting, scope == Scope::Global));
@@ -3118,10 +3141,7 @@ fn git_config_editor(
     }
     if let Some(hooks) = facts.and_then(|facts| facts.hooks_path.as_ref()) {
         let note = Note {
-            text: format!(
-                "{} = {} ({}; {}).",
-                hooks.key, hooks.value, hooks.scope, hooks.origin
-            ),
+            text: format!("{}.", config_phrase(hooks)),
             warn: false,
         };
         row_with_note(
@@ -3143,7 +3163,7 @@ fn editor_value(facts: &GitFacts, setting: Setting) -> Option<&ConfigValue> {
 
 fn git_value_label(setting: Setting, value: &str) -> String {
     match (setting, value) {
-        (Setting::PullRebase, "false") => "Merge",
+        (Setting::PullRebase, "false") => "Don't rebase",
         (Setting::PullRebase, "true") => "Rebase",
         (Setting::PullRebase, "merges") => "Rebase preserving merges",
         (Setting::PullRebase, "interactive") => "Interactive rebase",
@@ -3203,7 +3223,7 @@ fn git(
     row(
         ui,
         "Recommended settings",
-        "Save the recommended pull, fetch, push, conflict and message choices to your global Git configuration. Repository overrides stay. Signing, hooks, identity and line endings stay as you chose them.",
+        "Save the recommended pull, fetch, push, conflict and message choices to your global Git configuration. Pull is set to fast-forward only, and pull.rebase to false so it cannot override that. Repository overrides stay. Signing, hooks, identity and line endings stay as you chose them.",
         |ui| {
             ui.add_enabled_ui(!screen.git_config_pending && f.is_some(), |ui| {
                 if confirm_button(
@@ -4908,6 +4928,14 @@ fn launch_choice(
     }
 }
 
+/// Whether `app` is what the system would open: it is listed as the default, not again by name.
+fn is_system_choice(
+    system: Option<&crate::system_apps::SystemChoice>,
+    app: &crate::system_apps::App,
+) -> bool {
+    system.is_some_and(|s| s.command.as_deref() == Some(app.command.as_str()))
+}
+
 /// An editor, terminal or file manager: the system's (named, with where that comes from), one of
 /// the installed ones, or a command of the user's in a field that opens below.
 fn launcher_row(
@@ -4932,12 +4960,20 @@ fn launcher_row(
         (Some(_), Some(choice)) => format!("Default · {}", choice.name),
         (Some(_), None) => "Default".to_owned(),
     };
-    let current = launch_choice(value, custom.contains(&kind), &installed);
+    // The system's own choice is listed once, as the default: not again as an installed app.
+    let is_default = |app: &crate::system_apps::App| is_system_choice(system, app);
+    let current = match launch_choice(value, custom.contains(&kind), &installed) {
+        LaunchChoice::App(i) if installed.get(i).is_some_and(|a| is_default(a)) => {
+            LaunchChoice::System
+        }
+        other => other,
+    };
     let mut labels = vec![(LaunchChoice::System, system_label)];
     labels.extend(
         installed
             .iter()
             .enumerate()
+            .filter(|(_, a)| !is_default(a))
             .map(|(i, a)| (LaunchChoice::App(i), a.name.clone())),
     );
     labels.push((LaunchChoice::Custom, "Custom command…".to_owned()));
@@ -5836,6 +5872,11 @@ pub(crate) fn against_recommendation(
         "--follow-tags",
         "pushes",
     );
+    // The pull recommendation is the one the editor marks and Use recommended writes.
+    let pull_recommended = Setting::PullFastForward
+        .recommendation_for(facts.git)
+        .map(|value| lowercase_label(&git_value_label(Setting::PullFastForward, value)))
+        .unwrap_or_default();
     let mut lines: Vec<String> = [
         (
             "Pull",
@@ -5896,7 +5937,7 @@ pub(crate) fn against_recommendation(
             format!(
                 "{name}: {text} Recommended: {}.",
                 match name {
-                    "Pull" => "fast-forward only",
+                    "Pull" => pull_recommended.as_str(),
                     "Prune tags" => "off",
                     _ => "on",
                 }
@@ -5915,12 +5956,9 @@ pub(crate) fn against_recommendation(
             && value.value != recommended
         {
             lines.push(format!(
-                "{}: {} = {} ({}; {}). Recommended: {}.",
+                "{}: {}. Recommended: {}.",
                 setting.label(),
-                value.key,
-                value.value,
-                value.scope,
-                value.origin,
+                config_phrase(value),
                 git_value_label(setting, recommended)
             ));
         }
@@ -7645,6 +7683,18 @@ mod tests {
     }
 
     #[test]
+    fn a_source_without_a_scope_name_is_just_its_file() {
+        let source = Source::Config {
+            scope: String::new(),
+            origin: "file:/etc/gitconfig".into(),
+        };
+        assert_eq!(
+            source_label_in(Some(&source), Path::new("")),
+            "/etc/gitconfig"
+        );
+    }
+
+    #[test]
     fn the_editor_offers_chosen_values_and_never_a_guess() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
@@ -7767,7 +7817,7 @@ mod tests {
             nodes
                 .iter()
                 .filter_map(|node| node.value.as_deref())
-                .any(|text| text.contains("file:/home/me/.gitconfig")),
+                .any(|text| text.contains("global: /home/me/.gitconfig")),
             "the source is available: {nodes:?}"
         );
     }
@@ -7803,6 +7853,161 @@ mod tests {
         }
     }
 
+    /// One recommendation for how a pull combines: the editor's marks, Use recommended, the
+    /// notification center and the diverged-pull dialog all read it from the same places
+    /// (ADR 0012: fast-forward only, then Rebase when the branches diverged).
+    #[test]
+    fn the_pull_recommendation_is_one_choice_everywhere() {
+        use canopy_core::PullStrategy;
+        let git = Some((2, 55));
+        // The editor marks nothing on pull.rebase and fast-forward only on pull.ff.
+        assert_eq!(Setting::PullRebase.recommendation_for(git), None);
+        assert_eq!(
+            Setting::PullFastForward.recommendation_for(git),
+            Some("only")
+        );
+        assert_eq!(
+            git_value_label(Setting::PullFastForward, "only"),
+            DEFAULTS.pull_mode.label()
+        );
+        assert_eq!(DEFAULTS.pull_mode, PullMode::FastForwardOnly);
+        // Use recommended writes pull.rebase only so that fast-forward only takes effect.
+        assert_eq!(Setting::PullRebase.recommended_write(), Some("false"));
+        // The dialog recommends one way to combine diverged branches, and marks only that one.
+        let marked = [PullMode::Rebase, PullMode::Merge]
+            .into_iter()
+            .filter(|mode| crate::views::dialogs::diverged_label(*mode).contains("(recommended)"))
+            .collect::<Vec<_>>();
+        assert_eq!(marked, [PullMode::RECOMMENDED_WHEN_DIVERGED]);
+        // The notification center flags every strategy but the recommended one, and names it
+        // as the editor does.
+        let pulls_with = |strategy| {
+            let facts = GitFacts {
+                pull: Some(canopy_core::PullConfig {
+                    strategy: Some(strategy),
+                    sources: Vec::new(),
+                    invalid: Vec::new(),
+                }),
+                git,
+                ..GitFacts::default()
+            };
+            against_recommendation(&facts, &Settings::default(), Path::new("fixture"))
+        };
+        assert_eq!(
+            pulls_with(PullStrategy::FastForwardOnly),
+            Vec::<String>::new()
+        );
+        for strategy in [PullStrategy::Merge, PullStrategy::Rebase] {
+            let lines = pulls_with(strategy);
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.ends_with("Recommended: fast-forward only.")),
+                "{strategy:?}: {lines:?}"
+            );
+        }
+    }
+
+    /// A search shows rows only: the editor's captions would sit apart from every result.
+    #[test]
+    fn a_search_leaves_the_git_editors_captions_out() {
+        for scope in [Scope::Global, Scope::Local] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+            let mut screen = SettingsScreen::default();
+            let drawn = |ctx: &egui::Context, screen: &mut SettingsScreen| {
+                crate::ui::kit::testkit::spoken(ctx, |ui| {
+                    git_config_editor(ui, screen, None, scope, None, &mut Vec::new());
+                })
+            };
+            let shown = format!("{:?}", drawn(&ctx, &mut screen));
+            assert!(
+                shown.contains("Changes affect"),
+                "{scope:?}: captions without a search"
+            );
+            Filter::set(
+                &ctx,
+                Filter {
+                    words: vec!["xyzzy".to_owned()],
+                    section: Some(Section::Git),
+                    ..Filter::default()
+                },
+            );
+            let found = format!("{:?}", drawn(&ctx, &mut screen));
+            assert!(!found.contains("Changes affect"), "{scope:?}: {found}");
+        }
+    }
+
+    /// A value git refuses is shown as written, with the problem, on its own row.
+    #[test]
+    fn an_invalid_git_value_shows_its_value_and_problem_on_its_row() {
+        let mut facts = GitFacts {
+            error: Some("fetch.prune: bad boolean config value 'maybe'".to_owned()),
+            ..GitFacts::default()
+        };
+        facts.invalid = vec![fact("fetch.prune", "maybe")];
+        facts.direct = vec![fact("fetch.prune", "maybe")];
+        let nodes = git_page(facts, true);
+        let row = format!("{nodes:?}");
+        assert!(
+            row.contains("fetch.prune = maybe") && row.contains("does not accept"),
+            "{row}"
+        );
+        assert!(!row.contains("fetch.prune is unset"), "{row}");
+    }
+
+    /// Where a value is set reads as the signing row says it, never as git's raw `file:` origin.
+    #[test]
+    fn a_configured_values_origin_is_a_friendly_path() {
+        let facts = GitFacts {
+            values: vec![fact("fetch.prune", "false")],
+            ..GitFacts::default()
+        };
+        let row = format!("{:?}", git_page(facts, true));
+        assert!(row.contains("global: /home/me/.gitconfig"), "{row}");
+        assert!(!row.contains("file:/home/me/.gitconfig"), "{row}");
+    }
+
+    /// Unset removes the value of the file being edited: with nothing there, it has nothing to do.
+    #[test]
+    fn unset_is_disabled_where_the_file_sets_nothing() {
+        let facts = GitFacts {
+            values: vec![
+                fact("fetch.prune", "false"),
+                fact("push.followTags", "true"),
+            ],
+            direct: vec![fact("push.followTags", "true")],
+            ..GitFacts::default()
+        };
+        let nodes = git_page(facts, true);
+        let unset: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.label.as_deref().is_some_and(|l| l.starts_with("Unset")))
+            .collect();
+        assert_eq!(unset.len(), Setting::ALL.len(), "{unset:?}");
+        assert_eq!(unset.iter().filter(|n| !n.disabled).count(), 1, "{unset:?}");
+    }
+
+    /// The system's own program is the Default entry of a launcher's list, and only that.
+    #[test]
+    fn the_system_program_is_listed_once_in_a_launchers_list() {
+        use crate::system_apps::{App, Kind, Origin, SystemChoice};
+        let app = |name: &str, command: &str| App {
+            kind: Kind::Editor,
+            name: name.to_owned(),
+            command: command.to_owned(),
+        };
+        let system = SystemChoice {
+            name: "Zed".to_owned(),
+            command: Some("zed".to_owned()),
+            origin: Origin::Desktop,
+        };
+        assert!(is_system_choice(Some(&system), &app("Zed", "zed")));
+        assert!(!is_system_choice(Some(&system), &app("Vim", "vim")));
+        assert!(!is_system_choice(None, &app("Zed", "zed")));
+    }
+
     #[test]
     fn notifications_cover_all_remaining_recommended_git_choices() {
         let facts = GitFacts {
@@ -7825,7 +8030,7 @@ mod tests {
             assert!(
                 lines
                     .iter()
-                    .any(|line| line.contains(key) && line.contains("file:/home/me/.gitconfig")),
+                    .any(|line| line.contains(key) && line.contains("global: /home/me/.gitconfig")),
                 "missing {key}: {lines:?}"
             );
         }

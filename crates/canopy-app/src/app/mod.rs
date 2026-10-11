@@ -57,6 +57,7 @@ pub const OVERLAYS: &[&str] = &[
     "settings-git",
     "settings-git-pull",
     "settings-git-commits",
+    "settings-git-config",
     "clear-identity",
     "update-installed",
     "update-running",
@@ -71,9 +72,11 @@ pub const OVERLAYS: &[&str] = &[
     "settings-repository-pull",
     "settings-repository-diffs",
     "settings-search",
+    "settings-search-none",
     "about",
     "repository-insights",
     "file-history",
+    "file-history-commit",
     "clean-stale",
     "author-card",
     "request-filters",
@@ -395,6 +398,12 @@ impl CanopyApp {
                     "Commits",
                 ));
             }
+            Some("settings-git-config") => {
+                app.settings_screen = Some(SettingsScreen::at_group(
+                    settings_screen::Section::Git,
+                    "Global Git configuration",
+                ));
+            }
             Some("settings-integrations") => {
                 app.settings_screen =
                     Some(SettingsScreen::at(settings_screen::Section::Integrations));
@@ -489,6 +498,9 @@ impl CanopyApp {
                     "Diffs"
                 };
                 app.settings_screen = Some(SettingsScreen::awaiting_repository_at(group));
+            }
+            Some("settings-search-none") => {
+                app.settings_screen = Some(SettingsScreen::searching("xyzzy"));
             }
             Some("settings-search") => {
                 app.settings_screen = Some(SettingsScreen::searching("pull"));

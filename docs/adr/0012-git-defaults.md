@@ -1,6 +1,6 @@
 # ADR 0012: Canopy's git defaults are today's recommended practice, and pulls look before they leap
 
-**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration)
+**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration) and 2026-10-11 (one pull recommendation)
 **Date:** 2026-10-06
 
 ## Context
@@ -60,6 +60,11 @@ Settings → Git writes the main global file, This repository writes the common 
 Unset/Inherit removes only that file's values. Included, system, worktree and command values
 remain in force according to Git's precedence. Global Settings shows global values; the
 repository page shows the effective configuration across scopes.
+
+The pull recommendation is one choice, fast-forward only (`pull.ff = only`). `pull.rebase` is
+not marked recommended in any list or notification, because neither value is better than the
+other once Canopy asks Rebase (recommended) or Merge when branches diverge; Use recommended still
+writes `pull.rebase = false` so that a `pull.rebase = true` cannot override fast-forward only.
 
 Use recommended confirms and writes the non-sensitive recommendations globally on the Git
 worker. It leaves identity, signing, hooks and line endings alone. A failed batch reports saved

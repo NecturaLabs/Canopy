@@ -1226,7 +1226,7 @@ impl RepoTab {
             entry: FileEntry {
                 path: entry.path.clone(),
                 old_path: entry.old_path.clone(),
-                kind: entry.kind,
+                kind: entry.kind.unwrap_or(canopy_core::ChangeKind::Modified),
                 additions: 0,
                 deletions: 0,
                 lfs: false,
@@ -4804,7 +4804,7 @@ mod tests {
             time: 1,
             path: "new.txt".into(),
             old_path: Some("old.txt".into()),
-            kind: canopy_core::ChangeKind::Renamed,
+            kind: Some(canopy_core::ChangeKind::Renamed),
         });
         assert_eq!((tab.view, tab.selected_commit), (View::History, Some(oid)));
         let file = tab.file.as_ref().expect("the file opens");

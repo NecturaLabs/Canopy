@@ -91,6 +91,9 @@ pub struct GitFacts {
     pub values: Vec<ConfigValue>,
     /// Supported values written directly in the editor scope (global or local).
     pub direct: Vec<ConfigValue>,
+    /// Values git refuses as the kind the setting needs (`fetch.prune = maybe`), as written, so
+    /// the editor can show the real value and problem on its row.
+    pub invalid: Vec<ConfigValue>,
     /// A configured hooks path is informational; Canopy never changes it.
     pub hooks_path: Option<ConfigValue>,
     pub remotes: Vec<Remote>,
@@ -373,6 +376,16 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
         };
         facts.values.extend(value);
     }
+    for setting in canopy_core::config::Setting::ALL {
+        let key = setting.key();
+        let failed = errors
+            .borrow()
+            .iter()
+            .any(|e| e.starts_with(&format!("{key}: ")));
+        if failed && let Ok(Some(raw)) = get_value(dir, scope, key) {
+            facts.invalid.push(raw);
+        }
+    }
     let edit_scope = if workdir.is_some() {
         canopy_core::identity::Scope::Local
     } else {
@@ -528,6 +541,23 @@ mod tests {
                 .is_some_and(|e| e.contains("push.followTags")),
             "{facts:?}"
         );
+    }
+
+    #[test]
+    fn a_value_git_refuses_is_kept_as_written_for_its_row() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        canopy_core::cli::run(dir.path(), &["init", "-q", "-b", "main"]).expect("init");
+        canopy_core::cli::run(dir.path(), &["config", "fetch.prune", "maybe"]).expect("config");
+        let facts = read(Some(dir.path()));
+        assert_eq!(facts.invalid.len(), 1, "{facts:?}");
+        assert_eq!(
+            (
+                facts.invalid[0].key.as_str(),
+                facts.invalid[0].value.as_str()
+            ),
+            ("fetch.prune", "maybe")
+        );
+        assert!(facts.values.iter().all(|v| v.key != "fetch.prune"));
     }
 
     #[test]

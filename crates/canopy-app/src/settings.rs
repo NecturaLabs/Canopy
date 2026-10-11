@@ -37,6 +37,10 @@ pub enum PullMode {
 }
 
 impl PullMode {
+    /// What the diverged-pull dialog recommends (ADR 0012); the recommended pull setting itself
+    /// is fast-forward only.
+    pub const RECOMMENDED_WHEN_DIVERGED: Self = Self::Rebase;
+
     /// In the order of [`PullStrategy::ALL`].
     pub const ALL: [Self; 5] = [
         Self::Merge,
