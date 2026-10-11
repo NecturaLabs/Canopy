@@ -184,7 +184,7 @@ fn row(ui: &mut Ui, r: &Row<'_>, list: Option<(Roving, usize)>) -> egui::Respons
         .icon(r.glyph)
         .label(r.label);
     if let Some(d) = r.detail {
-        row = row.detail(d);
+        row = row.detail(d).whole_detail();
     }
     if let Some(name) = r.spoken {
         row = row.accessible_name(name);

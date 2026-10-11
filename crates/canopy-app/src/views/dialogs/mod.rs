@@ -137,6 +137,8 @@ pub enum Dialog {
     FileHistory {
         repo: std::path::PathBuf,
         path: String,
+        /// The commit the history was asked from (`HEAD` when `None`): newer commits are not listed.
+        from: Option<Oid>,
     },
     Ignore(Box<IgnoreForm>),
     Open {
@@ -341,6 +343,17 @@ pub enum Outcome {
 }
 
 const GIT_DOWNLOADS: &str = "https://git-scm.com/downloads";
+
+/// How the diverged-pull dialog names a way of combining, marking the recommended one.
+pub(crate) fn diverged_label(mode: crate::settings::PullMode) -> &'static str {
+    use crate::settings::PullMode;
+    match (mode, mode == PullMode::RECOMMENDED_WHEN_DIVERGED) {
+        (PullMode::Rebase, true) => "Rebase (recommended)",
+        (PullMode::Rebase, false) => "Rebase",
+        (_, true) => "Merge (recommended)",
+        (_, false) => "Merge",
+    }
+}
 
 /// How to install git on this system, one line each.
 fn git_install_steps() -> [&'static str; 2] {
@@ -1419,12 +1432,12 @@ pub fn show(
             let options = [
                 (
                     PullMode::Rebase,
-                    "Rebase (recommended)",
+                    diverged_label(PullMode::Rebase),
                     Some("Replays your commits on top of the remote's, with new IDs."),
                 ),
                 (
                     PullMode::Merge,
-                    "Merge",
+                    diverged_label(PullMode::Merge),
                     Some("Joins both lines with a merge commit; every commit keeps its ID."),
                 ),
             ];

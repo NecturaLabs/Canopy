@@ -61,6 +61,11 @@ Unset/Inherit removes only that file's values. Included, system, worktree and co
 remain in force according to Git's precedence. Global Settings shows global values; the
 repository page shows the effective configuration across scopes.
 
+The pull recommendation is one choice, fast-forward only (`pull.ff = only`). `pull.rebase` is
+not marked recommended in any list or notification, because neither value is better than the
+other once Canopy asks Rebase (recommended) or Merge when branches diverge; Use recommended still
+writes `pull.rebase = false` so that a `pull.rebase = true` cannot override fast-forward only.
+
 Use recommended confirms and writes the non-sensitive recommendations globally on the Git
 worker. It leaves identity, signing, hooks and line endings alone. A failed batch reports saved
 progress; Settings rereads actual state. Canopy fallback controls remain available when Follow

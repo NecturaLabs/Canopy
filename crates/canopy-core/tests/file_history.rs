@@ -92,7 +92,7 @@ fn history_follows_a_file_through_renames_like_git() {
     assert_eq!(ids.len(), 6, "the unrelated commit is not in it: {ids:?}");
     assert!(!history.truncated);
 
-    let rows: Vec<(&str, &str, Option<&str>, ChangeKind)> = history
+    let rows: Vec<(&str, &str, Option<&str>, Option<ChangeKind>)> = history
         .entries
         .iter()
         .map(|e| {
@@ -107,17 +107,22 @@ fn history_follows_a_file_through_renames_like_git() {
     assert_eq!(
         rows,
         [
-            ("edit c", "docs/c d.txt", None, ChangeKind::Modified),
+            ("edit c", "docs/c d.txt", None, Some(ChangeKind::Modified)),
             (
                 "move to docs",
                 "docs/c d.txt",
                 Some("b.txt"),
-                ChangeKind::Renamed
+                Some(ChangeKind::Renamed)
             ),
-            ("edit b", "b.txt", None, ChangeKind::Modified),
-            ("rename to b", "b.txt", Some("a.txt"), ChangeKind::Renamed),
-            ("edit a", "a.txt", None, ChangeKind::Modified),
-            ("add a", "a.txt", None, ChangeKind::Added),
+            ("edit b", "b.txt", None, Some(ChangeKind::Modified)),
+            (
+                "rename to b",
+                "b.txt",
+                Some("a.txt"),
+                Some(ChangeKind::Renamed)
+            ),
+            ("edit a", "a.txt", None, Some(ChangeKind::Modified)),
+            ("add a", "a.txt", None, Some(ChangeKind::Added)),
         ]
     );
     assert!(history.entries.iter().all(|e| e.author == "Ada Lovelace"));
@@ -276,7 +281,7 @@ fn a_deleted_file_lists_its_deletion_first() {
         .file_history(None, "docs/c d.txt", 100)
         .expect("history");
     assert_eq!(history.entries[0].summary, "remove c");
-    assert_eq!(history.entries[0].kind, ChangeKind::Deleted);
+    assert_eq!(history.entries[0].kind, Some(ChangeKind::Deleted));
     let ids: Vec<String> = history.entries.iter().map(|e| e.oid.to_string()).collect();
     assert_eq!(ids, oracle(dir.path(), "docs/c d.txt"));
 }

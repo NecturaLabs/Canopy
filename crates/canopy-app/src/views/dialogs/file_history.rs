@@ -17,7 +17,7 @@ use egui_phosphor::regular as icon;
 const LIST_HEIGHT: f32 = 320.0;
 
 pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) -> Outcome {
-    let Dialog::FileHistory { path, .. } = dialog else {
+    let Dialog::FileHistory { path, from, .. } = dialog else {
         return Outcome::Close;
     };
     let p = palette(ctx);
@@ -33,7 +33,7 @@ pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) 
             Some(Ok(history)) if history.entries.is_empty() => {
                 note(ui, "No commit has changed this file.", p.text_dim);
             }
-            Some(Ok(history)) => chosen = list(ui, history),
+            Some(Ok(history)) => chosen = list(ui, history, *from),
         })
         .footer(|f| {
             f.cancel().cancel_label("Close");
@@ -46,7 +46,11 @@ pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) 
 }
 
 /// The commits, newest first; the one clicked.
-fn list(ui: &mut Ui, history: &FileHistory) -> Option<canopy_core::FileHistoryEntry> {
+fn list(
+    ui: &mut Ui,
+    history: &FileHistory,
+    from: Option<canopy_core::Oid>,
+) -> Option<canopy_core::FileHistoryEntry> {
     let p = palette(ui.ctx());
     note(
         ui,
@@ -54,6 +58,16 @@ fn list(ui: &mut Ui, history: &FileHistory) -> Option<canopy_core::FileHistoryEn
          your working tree is not changed.",
         p.text_dim,
     );
+    if let Some(from) = from {
+        note(
+            ui,
+            format!(
+                "Lists the commits up to {}, the one you came from; newer commits are not shown.",
+                canopy_core::short_id(from)
+            ),
+            p.text_dim,
+        );
+    }
     if history.truncated {
         note(
             ui,
@@ -83,6 +97,7 @@ fn list(ui: &mut Ui, history: &FileHistory) -> Option<canopy_core::FileHistoryEn
                         .icon(glyph(entry.kind))
                         .label(&entry.summary)
                         .detail(detail)
+                        .whole_detail()
                         .trailing(canopy_core::short_id(entry.oid))
                         .tooltip(tip)
                         .ground(ground)
@@ -97,11 +112,13 @@ fn list(ui: &mut Ui, history: &FileHistory) -> Option<canopy_core::FileHistoryEn
 }
 
 /// The row's glyph: what the commit did to the file.
-fn glyph(kind: ChangeKind) -> &'static str {
+fn glyph(kind: Option<ChangeKind>) -> &'static str {
     match kind {
-        ChangeKind::Added => icon::PLUS,
-        ChangeKind::Deleted => icon::TRASH,
-        ChangeKind::Renamed => icon::ARROWS_LEFT_RIGHT,
-        _ => icon::PENCIL_SIMPLE,
+        Some(ChangeKind::Added) => icon::PLUS,
+        Some(ChangeKind::Deleted) => icon::TRASH,
+        Some(ChangeKind::Renamed) => icon::ARROWS_LEFT_RIGHT,
+        Some(_) => icon::PENCIL_SIMPLE,
+        // A merge: git lists no change to the file for it.
+        None => icon::GIT_MERGE,
     }
 }

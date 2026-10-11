@@ -318,6 +318,9 @@ pub struct Toasts {
     unread_errors: usize,
     /// Whether the notification center was open last frame (no cards show meanwhile).
     center_open: bool,
+    /// Settings is open (kept current by the app every frame): a decision that only opens
+    /// Settings is not offered there.
+    settings_open: bool,
     /// Offers taken in the center, handed out by [`Toasts::show`].
     chosen: Vec<Offer>,
     /// When the timers last ran.
@@ -473,6 +476,11 @@ impl Toasts {
             entry.unread = true;
         }
         self.count_unread();
+    }
+
+    /// Whether Settings is open; [`Offer::GitSettings`] has nothing to open then.
+    pub fn set_settings_open(&mut self, open: bool) {
+        self.settings_open = open;
     }
 
     /// Applies new card filters immediately; hidden cards remain in the notification center.
@@ -742,7 +750,12 @@ impl Toasts {
                     .min_scrolled_height(0.0)
                     .max_height(max_height)
                     .show(ui, |ui| {
+                        let settings_open = self.settings_open;
                         for (index, t) in self.items.iter().enumerate().rev() {
+                            let offer = t
+                                .offer
+                                .as_ref()
+                                .filter(|o| !(settings_open && **o == Offer::GitSettings));
                             // Toasts that arrived together enter one after another.
                             let stagger = self.items[..index]
                                 .iter()
@@ -758,12 +771,12 @@ impl Toasts {
                                 ToastCard::new(Id::new(("notification", t.id)), tone, &t.title)
                                     .born(t.born)
                                     .stagger(u8::try_from(stagger).unwrap_or(u8::MAX))
-                                    .clickable(t.offer.is_none());
+                                    .clickable(offer.is_none());
                             let text = card_text(t.kind, &t.body, t.help);
                             if let Some(body) = text.body {
                                 card = card.body(body);
                             }
-                            if let Some(offer) = &t.offer {
+                            if let Some(offer) = offer {
                                 card = card.choice(offer.choice());
                             }
                             let layer = ui.layer_id();
@@ -783,7 +796,7 @@ impl Toasts {
                                 dismiss = Some(t.id);
                             }
                             if out.confirmed
-                                && let Some(offer) = &t.offer
+                                && let Some(offer) = offer
                             {
                                 actions.push(offer.clone());
                                 dismiss = Some(t.id);
@@ -1010,6 +1023,7 @@ impl Toasts {
             .min_scrolled_height(CENTER_LIST_HEIGHT)
             .auto_shrink([false, true])
             .show(ui, |ui| {
+                let settings_open = self.settings_open;
                 for (index, e) in self.history.iter().enumerate() {
                     if index > 0 {
                         // The same quiet hairline in every theme, contrast included: rows part
@@ -1153,13 +1167,17 @@ impl Toasts {
                                 // Only what can be done about it: the decision it asks for, and a
                                 // failure's output to take elsewhere. Clear all empties the rest.
                                 let copy = e.kind == ToastKind::Error;
-                                if e.offer.is_none() && !copy {
+                                let offer = e
+                                    .offer
+                                    .as_ref()
+                                    .filter(|o| !(settings_open && **o == Offer::GitSettings));
+                                if offer.is_none() && !copy {
                                     return;
                                 }
                                 ui.add_space(ACTIONS_GAP - TITLE_GAP);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = theme::XS;
-                                    if let Some(offer) = &e.offer {
+                                    if let Some(offer) = offer {
                                         let choice = offer.choice();
                                         let mut confirm =
                                             Button::new(choice.confirm).primary().size(Size::Xs);
@@ -1960,6 +1978,35 @@ mod tests {
                     "{button}: still offered in the center"
                 );
             }
+        }
+    }
+
+    /// Settings is where "Open Git settings" leads: its card offers nothing there, and offers it
+    /// again elsewhere.
+    #[test]
+    fn the_git_settings_offer_is_not_made_inside_settings() {
+        for (open, offered) in [(true, false), (false, true)] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+            motion::set_reduced(true);
+            let mut toasts = Toasts::default();
+            toasts.set_settings_open(open);
+            toasts.push_offer(
+                &ctx,
+                ToastKind::Info,
+                Topic::Attention,
+                "Git settings differ from the recommendation",
+                "Prune: fetch.prune = false.",
+                Offer::GitSettings,
+            );
+            let mut shown = false;
+            for n in 0..3 {
+                let (_, out) = click_text(&ctx, &mut toasts, 0.1 * f64::from(n), None);
+                shown |= text_at(&out, "Open Git settings").is_some();
+            }
+            motion::set_reduced(false);
+            assert_eq!(shown, offered, "settings open: {open}");
         }
     }
 
