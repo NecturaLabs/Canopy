@@ -79,6 +79,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
         && !tab.amend
     {
         tab.focus_summary = false;
+        tab.blur_composer = false;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| clean_home(ui, tab, &snap, actions));
@@ -1249,7 +1250,7 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     } else {
         3..=12
     };
-    TextArea::new(&mut tab.commit_body)
+    let body = TextArea::new(&mut tab.commit_body)
         .placeholder("Description (optional)")
         .name("Commit description")
         .joined(Join::Below)
@@ -1257,6 +1258,18 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .guide(72)
         .id_salt("commit-body")
         .show(ui);
+    // A single-line field lets go of focus on Enter; pass it on rather than drop it, or the next
+    // keys run as bare shortcuts. Ctrl+Enter is the commit chord and stays out of it.
+    if summary.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.command)
+    {
+        body.response.request_focus();
+    }
+    if std::mem::take(&mut tab.blur_composer) {
+        ui.memory_mut(|m| {
+            m.surrender_focus(summary.id);
+            m.surrender_focus(body.response.id);
+        });
+    }
     let hints = message_hints(tab);
     if !hints.is_empty() {
         let p = palette(ui.ctx());
@@ -2754,5 +2767,100 @@ mod tests {
             assert!(c < c0 && c > c1, "c.rs slides: {c0} -> {c} -> {c1}");
             assert!(composer1.is_some(), "the composer is there at rest");
         }
+    }
+
+    /// Draws the composer fields for one frame and names the field that has keyboard focus.
+    fn composer_focus(
+        ctx: &egui::Context,
+        tab: &mut RepoTab,
+        events: Vec<egui::Event>,
+    ) -> Option<String> {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(420.0, 700.0))),
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    composer_fields(ui, tab, &mut Vec::new());
+                });
+            },
+        );
+        out.textures_delta.clear();
+        let update = out.platform_output.accesskit_update.expect("tree");
+        update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == update.focus)
+            .and_then(|(_, n)| n.label().map(str::to_owned))
+    }
+
+    fn composer_ctx() -> (egui::Context, RepoTab) {
+        let ctx = crate::ui::kit::testkit::ctx();
+        ctx.enable_accesskit();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        (ctx, tab)
+    }
+
+    /// Usersim: Enter in the summary dropped all focus, so the next keys ran as bare shortcuts.
+    /// It moves to the description; Ctrl+Enter leaves the fields to the commit shortcut.
+    #[test]
+    fn enter_in_the_summary_moves_focus_to_the_description() {
+        let (ctx, mut tab) = composer_ctx();
+        tab.focus_summary = true;
+        for _ in 0..3 {
+            composer_focus(&ctx, &mut tab, Vec::new());
+        }
+        assert_eq!(
+            composer_focus(&ctx, &mut tab, Vec::new()).as_deref(),
+            Some("Commit summary")
+        );
+        composer_focus(
+            &ctx,
+            &mut tab,
+            crate::ui::kit::testkit::key(egui::Key::Enter),
+        );
+        assert_eq!(
+            composer_focus(&ctx, &mut tab, Vec::new()).as_deref(),
+            Some("Commit description")
+        );
+    }
+
+    /// After a commit the composer is cleared and neither text field keeps focus.
+    #[test]
+    fn a_finished_commit_takes_focus_out_of_the_text_fields() {
+        let (ctx, mut tab) = composer_ctx();
+        tab.focus_summary = true;
+        for _ in 0..3 {
+            composer_focus(&ctx, &mut tab, Vec::new());
+        }
+        composer_focus(
+            &ctx,
+            &mut tab,
+            crate::ui::kit::testkit::key(egui::Key::Enter),
+        );
+        composer_focus(&ctx, &mut tab, Vec::new());
+        let (worker, events, _jobs) = crate::worker::Worker::detached();
+        tab.worker = worker;
+        events
+            .send(crate::worker::Event::OpFinished {
+                label: "Committing".into(),
+                kind: crate::worker::OpKind::Commit,
+                announce: false,
+                result: Ok("a1b2c3d".into()),
+            })
+            .expect("commit completion");
+        tab.poll(&[]);
+        for _ in 0..2 {
+            composer_focus(&ctx, &mut tab, Vec::new());
+        }
+        assert_eq!(composer_focus(&ctx, &mut tab, Vec::new()), None);
     }
 }
