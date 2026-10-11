@@ -987,6 +987,8 @@ pub struct RepoTab {
     pub amend: bool,
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,
+    /// Take keyboard focus out of the commit boxes next frame (a commit just cleared them).
+    pub blur_composer: bool,
     pub running: Option<String>,
     pub running_kind: Option<OpKind>,
     pub finished: Option<Finished>,
@@ -1131,6 +1133,7 @@ impl RepoTab {
             template_prefill: None,
             amend: false,
             focus_summary: false,
+            blur_composer: false,
             running: None,
             running_kind: None,
             finished: None,
@@ -2460,6 +2463,7 @@ impl RepoTab {
                             if kind == OpKind::Commit {
                                 self.commit_summary.clear();
                                 self.commit_body.clear();
+                                self.blur_composer = true;
                                 self.amend = false;
                                 self.selected_commit = None;
                             }

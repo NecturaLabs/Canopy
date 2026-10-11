@@ -124,8 +124,8 @@ or how flows feel end to end.
   apply. This toggle never disables release tests. The local pre-commit hook is an early check,
   while the mandatory release job is the enforced publication gate.
 - Read the `release` skill first. A release publishes to users: confirm the build and channel with
-  the owner, then `gh workflow run create-release.yml --ref main -f channel=beta -f dry-run=true`,
-  and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`. It can
+  the owner, then dispatch it once for real (`gh workflow run create-release.yml --ref main -f
+  channel=beta -f dry-run=false`): no dry run first. Nothing is committed to `main`; the tag is `build-<n>`. It can
   be dispatched right after a merge: it waits for main's CI run (under a minute when the merged
   branch was up to date with `main`, since that run reuses the branch's).
 - The experimental builds (aarch64 Linux, Intel macOS) never hold back a release: it is published
