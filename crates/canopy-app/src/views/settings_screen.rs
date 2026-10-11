@@ -2710,7 +2710,11 @@ fn source_label_in(source: Option<&Source>, home: &Path) -> String {
                 "worktree" => "this worktree",
                 other => other,
             };
-            format!("{scope}: {file}")
+            if scope.is_empty() {
+                file
+            } else {
+                format!("{scope}: {file}")
+            }
         }
         Some(Source::Guessed) => "guessed by Git from this computer".into(),
         None => "not set".into(),
@@ -3085,7 +3089,13 @@ fn git_config_editor(
                         .name(setting.label())
                         .report_reselection()
                         .placeholder(invalid.or(value).map_or_else(
-                            || "Unset (Canopy's default)".to_owned(),
+                            || {
+                                if recommended.is_some() {
+                                    "Unset (Canopy's default)".to_owned()
+                                } else {
+                                    "Unset".to_owned()
+                                }
+                            },
                             |value| format!("Configured: {}", value.value),
                         ))
                         .id_salt(("git-setting", setting, scope == Scope::Global));
@@ -3213,7 +3223,7 @@ fn git(
     row(
         ui,
         "Recommended settings",
-        "Save the recommended pull, fetch, push, conflict and message choices to your global Git configuration. Repository overrides stay. Signing, hooks, identity and line endings stay as you chose them.",
+        "Save the recommended pull, fetch, push, conflict and message choices to your global Git configuration. Pull is set to fast-forward only, and pull.rebase to false so it cannot override that. Repository overrides stay. Signing, hooks, identity and line endings stay as you chose them.",
         |ui| {
             ui.add_enabled_ui(!screen.git_config_pending && f.is_some(), |ui| {
                 if confirm_button(
@@ -7669,6 +7679,18 @@ mod tests {
         assert_eq!(
             source_label_in(Some(&source), Path::new("")),
             "global: /etc/gitconfig"
+        );
+    }
+
+    #[test]
+    fn a_source_without_a_scope_name_is_just_its_file() {
+        let source = Source::Config {
+            scope: String::new(),
+            origin: "file:/etc/gitconfig".into(),
+        };
+        assert_eq!(
+            source_label_in(Some(&source), Path::new("")),
+            "/etc/gitconfig"
         );
     }
 

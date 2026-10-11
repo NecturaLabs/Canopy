@@ -1,6 +1,6 @@
 # ADR 0012: Canopy's git defaults are today's recommended practice, and pulls look before they leap
 
-**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration)
+**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration) and 2026-10-11 (one pull recommendation)
 **Date:** 2026-10-06
 
 ## Context

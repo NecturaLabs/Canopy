@@ -730,7 +730,7 @@ impl<'a> ListRow<'a> {
                         + GAP
                 })
                 // Past this the label would vanish: the detail is cut then.
-                .min((right - x) * WHOLE_DETAIL_SHARE);
+                .min(((right - x) * WHOLE_DETAIL_SHARE).max(0.0));
             let end = paint_text(
                 &f.painter,
                 x,
