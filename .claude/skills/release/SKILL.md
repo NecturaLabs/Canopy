@@ -47,7 +47,7 @@ same feed release) unless beta already offers a newer build.
    show the result. A release is public and cannot be unpublished cleanly.
 2. `main` is clean, up to date and has a green CI run on its tip (`gh run list --workflow ci.yml
    --branch main`). The workflow waits up to 25 minutes for a run still in progress and refuses
-   unless it passed; a dry run only looks. Merging a branch that was up to date with `main` gives a
+   unless it passed. Merging a branch that was up to date with `main` gives a
    commit with the branch's tree, whose CI run takes under a minute: it takes the branch's passing
    run as proof and runs only the documentation and site checks. CI includes cargo-deny and the
    licence-notice check, so a dependency change must already have regenerated
@@ -71,21 +71,20 @@ same feed release) unless beta already offers a newer build.
 
 ## Procedure
 
-1. Dry run, which reports the build number and changes nothing:
+1. Confirm the build and channel with the user (`python3 tools/release.py plan`), then run it for
+   real: no dry run first (the owner's rule). `-f channel=beta` for the beta channel; `-f
+   force=true` only to release without a releasable commit. A request that already names the
+   channel ("make a beta pre-release") is that confirmation once the number has been shown.
 
    ```sh
-   gh workflow run create-release.yml --ref main -f channel=stable -f dry-run=true
+   gh workflow run create-release.yml --ref main -f channel=stable -f dry-run=false
    ```
 
-   Find the run with `gh run list --workflow create-release.yml --limit 1`, wait for it with
-   `gh run watch <id>`, then read its annotations with `gh run view <id>`: "Next build: <n>", or
-   "Nothing to release". A run that ends green with "Nothing to release" made no build.
-2. After the user confirms that build and channel, run it for real (`-f dry-run=false`;
-   `-f channel=beta` for the beta channel; `-f force=true` only to release without a releasable
-   commit). A request that already names the channel ("make a beta pre-release") is that
-   confirmation once the dry run's number has been shown. The run takes several minutes: watch it
-   with `gh run watch <id> --exit-status`.
-3. The workflow then tags `build-<number>` and calls Release, which:
+   Find the run with `gh run list --workflow create-release.yml --limit 1` and watch it with
+   `gh run watch <id> --exit-status` (several minutes). A run that ends green with "Nothing to
+   release" made no build. A stable build also becomes the beta channel's manifest, so one stable
+   release serves both channels.
+2. The workflow then tags `build-<number>` and calls Release, which:
    - checks that the tag is `build-<n>` on a commit of `main` with `n` commits behind it, and
      writes the release notes;
    - builds `canopy-app` with `--locked` for the platforms its `platforms` job turns on from the
