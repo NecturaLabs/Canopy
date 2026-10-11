@@ -646,8 +646,9 @@ the layer really has (the translucent overlay over glass, else the opaque overla
 row washes match the card in both. The palette opens on whole entries, its group headings counted.
 A scrollbar's handle is never shorter than 32 points, so a long document's stays easy to see and
 grab. Scroll bars are a 4-point handle in the text colour: floating ones appear at 45% while the
-area is hovered; code, diff and detail boxes (`theme::solid_scroll`) keep theirs visible at 45%,
-with its own 8-point lane beside the content, and every handle goes to 75% while hovered or dragged.
+area is hovered; code, diff and detail boxes and the pull and merge request list (`theme::solid_scroll`)
+keep theirs visible at 45%, with its own 8-point lane beside the content (the request list's rows end
+14 points short of it and its last row scrolls clear of the bottom edge), and every handle goes to 75% while hovered or dragged.
 The commit composer's fields use the solid bars too, never egui's full-colour slab.
 
 Two edges fade further, at full strength, because what they cut is larger than a list row: a
