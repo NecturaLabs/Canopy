@@ -35,6 +35,7 @@ mod preview;
 #[cfg(test)]
 mod test_server;
 mod token;
+mod transport;
 pub mod updates;
 
 pub use client::Client;
