@@ -10,6 +10,11 @@ commits since the previous build.
 
 ### Added
 
+- Pull and merge requests use the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) as their credential,
+  before the environment, a token saved in Canopy and git's credential helper, so no second token is
+  needed. Canopy reads the CLI's token when the repository opens, keeps it in memory only and says why
+  a CLI that is signed out, short of a scope or failing was not used. The Privacy Policy says that
+  Canopy runs the CLI.
 - File history: right-click a file in Changes or in a commit's file list, or use the command palette,
   to list the commits that changed it, followed back through renames. Choosing one opens that
   commit with the file's diff; the working tree is not touched.

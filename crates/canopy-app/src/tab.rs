@@ -10,6 +10,7 @@ use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, PullConfi
 use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
+use crate::hosting::CliReport;
 use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource, rate_limit_pause};
 use crate::request_view::RequestView;
 use crate::settings::{DiffPrefs, PullChoice};
@@ -719,6 +720,9 @@ pub struct Requests {
         reason = "not yet known, known to be absent, or known, as the doc comment says"
     )]
     pub token: Option<Option<TokenSource>>,
+    /// What the provider's CLI said about its sign-in; `None` while unknown or when the CLI is
+    /// not installed.
+    pub cli: Option<CliReport>,
     /// The host refused the token on the newest read (a list or a request's details); cleared by
     /// the next read or action it accepted. An action's refusal does not set it: the host also
     /// answers 403 to a locked conversation or an archived repository.
@@ -760,6 +764,7 @@ impl Default for Requests {
             pending_comment: None,
             merge_method: MergeMethod::Merge,
             token: None,
+            cli: None,
             token_rejected: false,
             loaded_at: None,
             quiet_refresh: false,
@@ -2705,6 +2710,7 @@ impl RepoTab {
                     self.avatars.finish(&ctx, oid, email, result);
                 }
                 HostEvent::Token(t) => self.requests.token = Some(t),
+                HostEvent::Cli(report) => self.requests.cli = report,
                 HostEvent::RateLimited { reset } => {
                     let now = chrono::Utc::now().timestamp();
                     self.requests.refresh.held_until =

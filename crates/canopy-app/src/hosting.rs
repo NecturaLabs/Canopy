@@ -1,9 +1,10 @@
 //! Pull and merge requests: a background thread per repository tab that talks to the GitHub or
 //! GitLab API through `canopy-hosting`, plus token lookup and storage.
 //!
-//! Tokens come from, in order: the token saved in Canopy's settings for that host (and port, see
-//! [`TokenStore`]), the provider's environment variable (`GH_TOKEN`, `GITLAB_TOKEN`, …), and the
-//! user's git credential helper. Saved tokens live in `tokens.json` next to Canopy's other data,
+//! Tokens come from, in order: the sign-in of the provider's CLI (`gh`, `glab`; held in memory
+//! only), the provider's environment variable (`GH_TOKEN`, `GITLAB_TOKEN`, …), the token saved in
+//! Canopy's settings for that host (and port, see [`TokenStore`]), and the user's git credential
+//! helper (ADR 0013). Saved tokens live in `tokens.json` next to Canopy's other data,
 //! created readable only by the user (mode 0600) on Unix; they are not in the operating system's
 //! keychain. They are sent only to the host they belong to.
 
@@ -26,6 +27,8 @@ use canopy_hosting::{
 /// Where a token came from, shown in settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenSource {
+    /// The sign-in of the GitHub or GitLab CLI; never stored by Canopy.
+    Cli(ForgeKind),
     Saved,
     Environment,
     GitCredentials,
@@ -34,6 +37,8 @@ pub enum TokenSource {
 impl TokenSource {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Cli(ForgeKind::GitHub) => "from the GitHub CLI",
+            Self::Cli(ForgeKind::GitLab) => "from the GitLab CLI",
             Self::Saved => "saved in Canopy",
             Self::Environment => "from the environment",
             Self::GitCredentials => "from your git credential helper",
@@ -176,29 +181,105 @@ pub(crate) fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Re
     file.sync_all()
 }
 
-/// Finds a token for `forge` (blocking: may run the git credential helper). Environment tokens
-/// are used only for github.com, gitlab.com, `GITLAB_HOST` and the self-hosted GitLab hosts the
-/// user listed (`trusted_gitlab_hosts`), never for a host recognised as GitLab by its name alone.
+/// What the provider's CLI said about its sign-in, for Settings and the request view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliReport {
+    /// The account the CLI is signed in as.
+    pub user: Option<String>,
+    /// Why the CLI's sign-in could not be used (signed out, a scope missing, a failure), in words
+    /// for the user; `None` while it works.
+    pub problem: Option<String>,
+}
+
+/// A token and where it came from, with what the CLI reported on the way.
+#[derive(Default)]
+pub struct Resolved {
+    pub token: Option<(String, TokenSource)>,
+    /// `None` when the CLI is not installed.
+    pub cli: Option<CliReport>,
+}
+
+impl std::fmt::Debug for Resolved {
+    // The source only: a token must never reach a log line.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Resolved")
+            .field("token", &self.token.as_ref().map(|(_, source)| source))
+            .field("cli", &self.cli)
+            .finish()
+    }
+}
+
+/// Finds a token for `forge` (blocking: runs the provider's CLI and may run the git credential
+/// helper), in this order: the CLI's sign-in, the environment, the token `saved` in Canopy, git's
+/// credential helper. Environment tokens are used only for github.com, gitlab.com, `GITLAB_HOST`
+/// and the self-hosted GitLab hosts the user listed (`trusted_gitlab_hosts`), never for a host
+/// recognised as GitLab by its name alone.
 pub fn resolve_token(
     forge: &Forge,
     saved: Option<String>,
     trusted_gitlab_hosts: &[String],
-    use_git_credentials: bool,
-) -> Option<(String, TokenSource)> {
-    if let Some(t) = saved.filter(|t| !t.trim().is_empty()) {
-        return Some((t, TokenSource::Saved));
+    use_cli_and_git_credentials: bool,
+) -> Resolved {
+    resolve_in_order(
+        forge.kind,
+        saved,
+        || {
+            use_cli_and_git_credentials.then(|| {
+                canopy_hosting::login_from_cli(forge.kind, &forge.authority()).map(|login| {
+                    let user = login.user.clone();
+                    (login.into_token(), user)
+                })
+            })
+        },
+        || canopy_hosting::token_from_env_for(forge.kind, &forge.host, trusted_gitlab_hosts),
+        || {
+            use_cli_and_git_credentials
+                .then(|| canopy_hosting::token_from_git_credentials(&forge.authority()))
+                .flatten()
+        },
+    )
+}
+
+/// [`resolve_token`] with the sources as functions, each asked only when the ones before it gave
+/// nothing. A CLI that is signed out, lacks a scope or fails is passed over, and says why.
+fn resolve_in_order(
+    kind: ForgeKind,
+    saved: Option<String>,
+    cli: impl FnOnce() -> Option<Result<(String, Option<String>), canopy_hosting::CliError>>,
+    env: impl FnOnce() -> Option<String>,
+    git: impl FnOnce() -> Option<String>,
+) -> Resolved {
+    let mut cli_report = None;
+    match cli() {
+        Some(Ok((token, user))) => {
+            return Resolved {
+                token: Some((token, TokenSource::Cli(kind))),
+                cli: Some(CliReport {
+                    user,
+                    problem: None,
+                }),
+            };
+        }
+        Some(Err(canopy_hosting::CliError::NotInstalled { .. })) | None => {}
+        Some(Err(e)) => {
+            cli_report = Some(CliReport {
+                user: e.user().map(str::to_owned),
+                problem: Some(e.to_string()),
+            });
+        }
     }
-    if let Some(t) =
-        canopy_hosting::token_from_env_for(forge.kind, &forge.host, trusted_gitlab_hosts)
-    {
-        return Some((t, TokenSource::Environment));
+    let token = env()
+        .map(|t| (t, TokenSource::Environment))
+        .or_else(|| {
+            saved
+                .filter(|t| !t.trim().is_empty())
+                .map(|t| (t, TokenSource::Saved))
+        })
+        .or_else(|| git().map(|t| (t, TokenSource::GitCredentials)));
+    Resolved {
+        token,
+        cli: cli_report,
     }
-    if use_git_credentials
-        && let Some(t) = canopy_hosting::token_from_git_credentials(&forge.authority())
-    {
-        return Some((t, TokenSource::GitCredentials));
-    }
-    None
 }
 
 /// Where to create a token for `forge`, prefilled with a name and the scopes Canopy needs.
@@ -257,6 +338,8 @@ pub enum HostEvent {
         result: crate::avatars::Cached,
     },
     Token(Option<TokenSource>),
+    /// What the provider's CLI said about its sign-in; `None` when it is not installed.
+    Cli(Option<CliReport>),
     /// The host answered a list with a rate limit; sent just before that list's failure. `reset`
     /// is when the limit lifts (unix seconds), when the host said.
     RateLimited {
@@ -439,9 +522,10 @@ fn run(
         ctx.request_repaint();
         delivered
     };
-    // The credential helper can be slow; resolve once, lazily, on this thread.
-    let token = resolve_token(&forge, saved, trusted_gitlab_hosts, true);
+    // The CLI and the credential helper can be slow; resolve once, lazily, on this thread.
+    let Resolved { token, cli } = resolve_token(&forge, saved, trusted_gitlab_hosts, true);
     emit(HostEvent::Token(token.as_ref().map(|t| t.1)));
+    emit(HostEvent::Cli(cli));
     let token = token.map(|t| t.0);
     // Development and screenshots: talk to a local stand-in (tools/mock-hosting.py). Only a
     // plain loopback address is accepted (no user info, no look-alike host names), so the
@@ -828,6 +912,97 @@ pub fn test_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use canopy_hosting::CliError;
+
+    fn some(token: &str) -> impl FnOnce() -> Option<String> {
+        let token = token.to_owned();
+        move || Some(token)
+    }
+
+    fn nothing() -> Option<String> {
+        None
+    }
+
+    fn unreachable_source() -> Option<String> {
+        unreachable!("an earlier source already gave a token")
+    }
+
+    #[test]
+    fn the_cli_comes_first_then_environment_then_saved_then_git() {
+        let kind = ForgeKind::GitHub;
+        let signed_in = || Some(Ok(("cli".to_owned(), Some("octocat".to_owned()))));
+        let saved = || Some("saved".to_owned());
+        let r = resolve_in_order(
+            kind,
+            saved(),
+            signed_in,
+            unreachable_source,
+            unreachable_source,
+        );
+        assert_eq!(r.token, Some(("cli".into(), TokenSource::Cli(kind))));
+        assert_eq!(
+            r.cli,
+            Some(CliReport {
+                user: Some("octocat".into()),
+                problem: None
+            })
+        );
+        let r = resolve_in_order(kind, saved(), || None, some("env"), unreachable_source);
+        assert_eq!(r.token, Some(("env".into(), TokenSource::Environment)));
+        let r = resolve_in_order(kind, saved(), || None, nothing, unreachable_source);
+        assert_eq!(r.token, Some(("saved".into(), TokenSource::Saved)));
+        let r = resolve_in_order(kind, Some("  ".into()), || None, nothing, some("git"));
+        assert_eq!(r.token, Some(("git".into(), TokenSource::GitCredentials)));
+        let r = resolve_in_order(kind, None, || None, nothing, nothing);
+        assert_eq!(r.token, None);
+        assert_eq!(r.cli, None);
+    }
+
+    /// A CLI that is missing is unremarkable; one that is signed out, lacks a scope or fails is
+    /// passed over for the next source and says why.
+    #[test]
+    fn a_cli_that_cannot_be_used_is_passed_over_and_explained() {
+        let kind = ForgeKind::GitLab;
+        let missing = || Some(Err(CliError::NotInstalled { kind }));
+        let r = resolve_in_order(kind, Some("saved".into()), missing, nothing, nothing);
+        assert_eq!(r.token, Some(("saved".into(), TokenSource::Saved)));
+        assert_eq!(r.cli, None);
+
+        let errors = [
+            CliError::SignedOut {
+                kind,
+                host: "gitlab.corp".into(),
+            },
+            CliError::MissingScope {
+                kind,
+                host: "gitlab.corp".into(),
+                user: Some("tanuki".into()),
+                scope: "api",
+            },
+            CliError::Failed {
+                kind,
+                message: "it took longer than 10 seconds".into(),
+            },
+        ];
+        for error in errors {
+            let words = error.to_string();
+            let r = resolve_in_order(kind, None, || Some(Err(error)), some("env"), nothing);
+            assert_eq!(r.token, Some(("env".into(), TokenSource::Environment)));
+            assert_eq!(r.cli.and_then(|c| c.problem), Some(words));
+        }
+    }
+
+    #[test]
+    fn a_cli_token_is_labelled_by_provider() {
+        assert_eq!(
+            TokenSource::Cli(ForgeKind::GitHub).label(),
+            "from the GitHub CLI"
+        );
+        assert_eq!(
+            TokenSource::Cli(ForgeKind::GitLab).label(),
+            "from the GitLab CLI"
+        );
+    }
 
     #[test]
     fn debug_output_never_shows_tokens() {
@@ -838,6 +1013,14 @@ mod tests {
         let shown = format!("{store:?}");
         assert!(shown.contains("github.com"));
         assert!(!shown.contains("ghp_secretvalue"));
+
+        let resolved = Resolved {
+            token: Some(("ghp_secretvalue".into(), TokenSource::Saved)),
+            cli: None,
+        };
+        let shown = format!("{resolved:?} {resolved:#?}");
+        assert!(shown.contains("Saved"), "{shown}");
+        assert!(!shown.contains("ghp_secretvalue"), "{shown}");
     }
 
     fn gitlab(host: &str, port: Option<u16>) -> Forge {

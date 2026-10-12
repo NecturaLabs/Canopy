@@ -1,6 +1,6 @@
 # ADR 0004: Where hosting API tokens come from, where they are kept and where they may go
 
-**Status:** accepted
+**Status:** accepted; the order of its sources is superseded by [ADR 0013](0013-hosting-credentials-from-the-cli-first.md)
 **Date:** 2026-10-01
 
 Reconstructed from the shipped code and the Privacy Policy on the day the hosting API landed; the

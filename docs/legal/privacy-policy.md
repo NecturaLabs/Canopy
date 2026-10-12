@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 10 October 2026
+Last updated: 12 October 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -88,8 +88,9 @@ When you open a repository whose remote is on GitHub (github.com) or GitLab (git
 
 To sign in to the API, Canopy uses the first of these that it finds:
 
-- a token you saved for that server in the Accounts section of Settings
+- the account the GitHub CLI (gh) or GitLab CLI (glab) is signed in with, if you have one installed: Canopy runs gh or glab on your computer to read the signed-in token for that server, keeps it in memory only and never saves or logs it. The CLI may contact that server itself to check the token
 - a token in your environment: GH_TOKEN or GITHUB_TOKEN for github.com, and GITLAB_TOKEN or GL_TOKEN for gitlab.com, for the server named in GITLAB_HOST or for a GitLab server you listed in the Integrations section of Settings
+- a token you saved for that server in the Accounts section of Settings
 - the password your Git credential helper stores for that server, which for GitHub and GitLab is usually a token
 
 Without any of these, Canopy reads public projects without signing in. A token is only sent to the server it belongs to.

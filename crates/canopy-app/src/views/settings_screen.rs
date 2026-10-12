@@ -714,7 +714,19 @@ impl Page<'_, '_> {
                     .tabs
                     .iter()
                     .flat_map(|t| t.forges.iter().map(|(_, f)| f));
-                *tokens_changed |= accounts(ui, screen, settings, tokens, forges, actions);
+                // Which source gave each host's token on the open tabs, so a card says what is in use.
+                let sources: HashMap<String, hosting::TokenSource> = data
+                    .tabs
+                    .iter()
+                    .filter_map(|t| {
+                        Some((
+                            t.host.as_ref()?.forge.authority().to_lowercase(),
+                            t.requests.token??,
+                        ))
+                    })
+                    .collect();
+                *tokens_changed |=
+                    accounts(ui, screen, settings, tokens, forges, &sources, actions);
             }
             Section::Updates => updates(ui, settings, data.update, actions),
             Section::Privacy => {
@@ -5119,6 +5131,36 @@ fn launcher_row(
     }
 }
 
+/// The line on a host's card and whether it names a token that works. The CLI's sign-in comes
+/// before the environment, which comes before the saved token (ADR 0013); `source` is the one a
+/// tab on this host is using, when one is open.
+fn account_status(
+    kind: ForgeKind,
+    source: Option<hosting::TokenSource>,
+    env: bool,
+    saved: bool,
+) -> (String, bool) {
+    match source {
+        Some(hosting::TokenSource::Cli(cli)) => {
+            return (format!("Using the {} CLI's sign-in", cli.name()), true);
+        }
+        _ if env => {
+            let name = if kind == ForgeKind::GitHub {
+                "GH_TOKEN"
+            } else {
+                "GITLAB_TOKEN"
+            };
+            return (format!("Using the {name} environment variable"), true);
+        }
+        _ if saved => return ("Token saved".into(), true),
+        _ => {}
+    }
+    (
+        "No saved token (the git credential helper is tried)".into(),
+        false,
+    )
+}
+
 /// Returns true when a token was saved or removed.
 fn accounts<'f>(
     ui: &mut Ui,
@@ -5126,6 +5168,7 @@ fn accounts<'f>(
     settings: &Settings,
     tokens: &mut TokenStore,
     forges: impl Iterator<Item = &'f Forge> + Clone,
+    sources: &HashMap<String, hosting::TokenSource>,
     actions: &mut Vec<Action>,
 ) -> bool {
     const ABOUT: &str = "Canopy uses a personal access token to list and act on pull/merge requests. Tokens are sent only to the host they belong to. Without one, Canopy falls back to GH_TOKEN / GITLAB_TOKEN and then to your git credential helper.";
@@ -5199,13 +5242,9 @@ fn accounts<'f>(
                     ui.label(RichText::new(&host).font(theme::heading(m.subtitle_size)).color(p.text));
                     let saved = tokens.get_for(&forge).is_some();
                     let env = canopy_hosting::token_from_env_for(kind, &forge.host, &settings.gitlab_host_list()).is_some();
-                    let (status, color) = if saved {
-                        (format!("{}  Token saved", icon::CHECK_CIRCLE), p.success)
-                    } else if env {
-                        (format!("{}  Using the {} environment variable", icon::CHECK_CIRCLE, if kind == ForgeKind::GitHub { "GH_TOKEN" } else { "GITLAB_TOKEN" }), p.success)
-                    } else {
-                        (format!("{}  No saved token (the git credential helper is tried)", icon::KEY), p.text_faint)
-                    };
+                    let (status, works) = account_status(kind, sources.get(&host.to_lowercase()).copied(), env, saved);
+                    let color = if works { p.success } else { p.text_faint };
+                    let status = format!("{}  {status}", if works { icon::CHECK_CIRCLE } else { icon::KEY });
                     ui.label(RichText::new(status).size(m.meta_size).color(color));
                 });
                 let input = screen.token_input.entry(host.clone()).or_default();
@@ -6046,6 +6085,22 @@ pub(crate) fn against_recommendation(
 mod tests {
     use super::*;
     use crate::repo_config::Signing;
+
+    #[test]
+    fn a_cli_token_in_use_is_not_called_saved() {
+        use hosting::TokenSource;
+        let cli = Some(TokenSource::Cli(ForgeKind::GitLab));
+        // A saved token that is not the one in use is not what the card names.
+        assert_eq!(
+            account_status(ForgeKind::GitLab, cli, false, true),
+            ("Using the GitLab CLI's sign-in".into(), true)
+        );
+        assert_eq!(
+            account_status(ForgeKind::GitHub, None, false, true),
+            ("Token saved".into(), true)
+        );
+        assert!(!account_status(ForgeKind::GitHub, None, false, false).1);
+    }
 
     /// A choice the git configuration decides offers to stop following it; a plain note, and
     /// the notes of a repository's rows, do not.

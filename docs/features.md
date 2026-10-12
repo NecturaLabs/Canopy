@@ -255,7 +255,7 @@ A request's header actions are one group of buttons of the same size: the primar
 (Check out while it is open, Open on GitHub or GitLab otherwise), then the other, Copy link and
 More. Nothing says where the token came from while it works (Settings → Hosting does); a missing
 token, or one the host refused (expired, revoked or short of scope), shows as a warning under the
-actions with Add a token… or Replace the token…, which opens Settings.
+actions with Add a token… or Replace the token…, which opens Settings. The credential comes from the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) first, then the environment, the token saved in Canopy and git's credential helper; a CLI that is signed out, short of the `repo` (GitHub) or `api` (GitLab) scope or failing is passed over and the warning says why, with the command that fixes it. A CLI's token is held in memory only (ADR 0013).
 
 A request's details start with its summary line (commits, files changed, lines, conflict
 state) with the lines in the added and removed colours, as the commit and file diffs show them.
