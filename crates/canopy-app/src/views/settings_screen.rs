@@ -733,7 +733,7 @@ impl Page<'_, '_> {
             }
             Section::Keyboard => keyboard(ui, screen, settings),
             Section::Data => backup(ui, screen, settings, actions),
-            Section::Repository => repository(ui, screen, settings, tokens, data, actions),
+            Section::Repository => repository(ui, screen, settings, data, actions),
         }
     }
 
@@ -3813,7 +3813,6 @@ fn repository(
     ui: &mut Ui,
     screen: &mut SettingsScreen,
     s: &mut Settings,
-    tokens: &TokenStore,
     data: &SettingsData<'_>,
     actions: &mut Vec<Action>,
 ) {
@@ -3964,8 +3963,9 @@ fn repository(
         ui,
         "Pull and merge requests",
         "hosting account token github gitlab",
-    ) {
-        hosting_account(ui, screen, s, tokens, facts.as_deref());
+    ) && let Some(tab) = data.tabs.iter().find(|t| t.path == path)
+    {
+        hosting_account(ui, screen, s, tab);
     }
 }
 
@@ -4490,25 +4490,63 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
     }
 }
 
-/// The repository's hosting account: its GitHub or GitLab host and whether Canopy has a token
-/// for it (tokens belong to hosts, so they are managed under Accounts).
+/// What Settings can say about loading the repository's pull or merge requests right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostingStatus {
+    /// Integrations → Pull and merge requests is off.
+    Off,
+    /// The host refused the credential on the newest read.
+    Rejected(Option<hosting::TokenSource>),
+    /// The host asked Canopy to wait; the timed refresh resumes when the limit lifts.
+    RateLimited,
+    /// Reads work with this credential.
+    Working(hosting::TokenSource),
+    /// Nothing supplies a credential: public repositories load, private ones do not.
+    NoCredential,
+    /// The tab has not asked the host yet.
+    Unknown,
+}
+
+/// The state of the tab's host, outcome first: an off switch beats a refusal, a refusal beats a
+/// rate limit, and only then does the credential in use matter.
+#[expect(
+    clippy::option_option,
+    reason = "the tab's token: not yet known, known to be absent, or known"
+)]
+fn hosting_status(
+    enabled: bool,
+    token: Option<Option<hosting::TokenSource>>,
+    rejected: bool,
+    limited: bool,
+) -> HostingStatus {
+    let source = token.flatten();
+    if !enabled {
+        HostingStatus::Off
+    } else if rejected {
+        HostingStatus::Rejected(source)
+    } else if limited {
+        HostingStatus::RateLimited
+    } else if let Some(source) = source {
+        HostingStatus::Working(source)
+    } else if token.is_some() {
+        HostingStatus::NoCredential
+    } else {
+        HostingStatus::Unknown
+    }
+}
+
+/// One block for the repository's requests: which host and remote, whether the API is on, which
+/// credential serves it and whether reads work now, with the one action that fits the state.
 fn hosting_account(
     ui: &mut Ui,
     screen: &mut SettingsScreen,
     s: &Settings,
-    tokens: &TokenStore,
-    facts: Option<&GitFacts>,
+    tab: &crate::tab::RepoTab,
 ) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    let hosts = s.gitlab_host_list();
-    let forge = facts.and_then(|f| {
-        f.remotes
-            .iter()
-            .find_map(|r| Forge::parse(&r.url, &hosts).map(|forge| (r.name.clone(), forge)))
-    });
-    let Some((remote, forge)) = forge else {
-        let text = if facts.is_some() {
+    let Some((remote, forge)) = tab.forge() else {
+        let text = if tab.snap.is_some() {
             "No remote of this repository is on GitHub or GitLab, so there are no pull or merge requests to load."
         } else {
             "Reading the repository's remotes…"
@@ -4518,60 +4556,98 @@ fn hosting_account(
         return;
     };
     let host = forge.authority();
-    let saved = tokens.get_for(&forge).is_some();
-    let env = canopy_hosting::token_from_env_for(forge.kind, &forge.host, &hosts).is_some();
+    let plural = format!("{}s", forge.kind.request_noun());
+    let sentence = {
+        let mut chars = plural.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(chars).collect()
+        })
+    };
+    let limited = tab
+        .requests
+        .refresh
+        .held_until
+        .is_some_and(|until| Instant::now() < until);
+    let status = hosting_status(
+        s.hosting_api,
+        tab.requests.token,
+        tab.requests.token_rejected,
+        limited,
+    );
+    let (text, color, action) = match status {
+        HostingStatus::Off => (
+            format!("{sentence} are off: Canopy does not contact {host}."),
+            p.text_faint,
+            Some(("Open Integrations", Section::Integrations)),
+        ),
+        HostingStatus::Rejected(source) => (
+            format!(
+                "{host} refused the credential{}, so {plural} cannot load.",
+                source.map_or(String::new(), |s| format!(" ({})", s.label())),
+            ),
+            p.danger,
+            Some(("Open Accounts", Section::Accounts)),
+        ),
+        HostingStatus::RateLimited => (
+            format!("{host} is limiting requests; {plural} refresh again when the limit lifts."),
+            p.warning,
+            Some(("Open Accounts", Section::Accounts)),
+        ),
+        HostingStatus::Working(source) => (
+            format!(
+                "{sentence} load from {host} using the credential {}.",
+                source.label()
+            ),
+            p.success,
+            Some(("Open Accounts", Section::Accounts)),
+        ),
+        HostingStatus::NoCredential => (
+            format!(
+                "No credential for {host}: public repositories load, private ones need a token."
+            ),
+            p.text_faint,
+            Some(("Add a token", Section::Accounts)),
+        ),
+        HostingStatus::Unknown => (
+            format!("{sentence} have not been requested from {host} yet."),
+            p.text_faint,
+            Some(("Open Accounts", Section::Accounts)),
+        ),
+    };
+    let others: Vec<String> = tab
+        .forges
+        .iter()
+        .filter(|(name, _)| name != remote)
+        .map(|(name, other)| format!("{name} ({})", other.authority()))
+        .collect();
     row_layout(
         ui,
         "Pull and merge requests",
         None,
         "",
         &|ui: &mut Ui| {
-            help_label(
-                ui,
-                &format!(
-                    "{} {} on {host} (remote {remote}).",
-                    forge.kind.name(),
-                    forge.kind.request_noun(),
-                ),
-            );
-            let (text, color) = if !s.hosting_api {
-                (
-                    "Turned off in Integrations: Canopy does not contact the host.".to_owned(),
-                    p.text_faint,
-                )
-            } else if saved {
-                (
-                    format!("{}  Token saved for {host}", icon::CHECK_CIRCLE),
-                    p.success,
-                )
-            } else if env {
-                (
-                    format!(
-                        "{}  Using the token from the environment",
-                        icon::CHECK_CIRCLE
+            ui.label(RichText::new(&text).size(m.meta_size).color(color));
+            help_label(ui, &format!("{} remote {remote}.", forge.kind.name()));
+            if !others.is_empty() {
+                help_label(
+                    ui,
+                    &format!(
+                        "Other GitHub or GitLab remotes, not loaded: {}.",
+                        others.join(", ")
                     ),
-                    p.success,
-                )
-            } else {
-                (
-                    format!(
-                        "{}  No token saved: the git credential helper is tried",
-                        icon::KEY
-                    ),
-                    p.text_faint,
-                )
-            };
-            ui.label(RichText::new(text).size(m.meta_size).color(color));
+                );
+            }
         },
         "",
         |ui| {
-            if Button::new("Open Accounts")
-                .icon(forge_icon(forge.kind))
-                .id_salt("repo-open-accounts")
-                .show(ui)
-                .clicked()
+            if let Some((label, section)) = action
+                && Button::new(label)
+                    .icon(forge_icon(forge.kind))
+                    .id_salt("repo-open-accounts")
+                    .show(ui)
+                    .clicked()
             {
-                screen.section = Section::Accounts;
+                screen.section = section;
             }
         },
     );
@@ -8217,5 +8293,127 @@ mod tests {
                 .is_some_and(|l| l.starts_with("Back to the default theme"))),
             "the separate default-theme button was removed"
         );
+    }
+
+    #[test]
+    fn the_hosting_status_names_one_outcome_per_state() {
+        use crate::hosting::TokenSource::{Environment, Saved};
+        let status = hosting_status;
+        assert_eq!(
+            status(false, Some(Some(Saved)), true, true),
+            HostingStatus::Off
+        );
+        assert_eq!(
+            status(true, Some(Some(Saved)), true, true),
+            HostingStatus::Rejected(Some(Saved))
+        );
+        assert_eq!(
+            status(true, Some(Some(Saved)), false, true),
+            HostingStatus::RateLimited
+        );
+        assert_eq!(
+            status(true, Some(Some(Environment)), false, false),
+            HostingStatus::Working(Environment)
+        );
+        assert_eq!(
+            status(true, Some(None), false, false),
+            HostingStatus::NoCredential
+        );
+        assert_eq!(status(true, None, false, false), HostingStatus::Unknown);
+    }
+
+    /// The words the hosting block shows for a tab whose requests are in the given state.
+    #[expect(
+        clippy::option_option,
+        reason = "the tab's token: not yet known, known to be absent, or known"
+    )]
+    fn hosting_words(
+        enabled: bool,
+        token: Option<Option<hosting::TokenSource>>,
+        rejected: bool,
+    ) -> String {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let (worker, _events, _jobs) = crate::worker::Worker::detached();
+        let mut tab = crate::tab::RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot::default()));
+        tab.forges = [
+            "origin|https://github.com/acme/demo.git",
+            "up|https://gitlab.com/acme/demo.git",
+        ]
+        .iter()
+        .filter_map(|r| {
+            let (name, url) = r.split_once('|')?;
+            Some((name.to_owned(), Forge::parse(url, &[])?))
+        })
+        .collect();
+        tab.requests.token = token;
+        tab.requests.token_rejected = rejected;
+        let settings = Settings {
+            hosting_api: enabled,
+            ..Settings::default()
+        };
+        let mut screen = SettingsScreen::default();
+        let mut words = String::new();
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))),
+                    ..Default::default()
+                },
+                |ui| hosting_account(ui, &mut screen, &settings, &tab),
+            );
+            output.textures_delta.clear();
+            words = output
+                .platform_output
+                .accesskit_update
+                .map(|u| {
+                    u.nodes
+                        .into_iter()
+                        .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+        }
+        words
+    }
+
+    #[test]
+    fn the_hosting_block_says_the_outcome_the_remote_and_the_other_remotes() {
+        use crate::hosting::TokenSource::{GitCredentials, Saved};
+        let working = hosting_words(true, Some(Some(GitCredentials)), false);
+        assert!(
+            working.contains(
+                "load from github.com using the credential from your git credential helper"
+            ),
+            "{working}"
+        );
+        assert!(working.contains("remote origin"), "{working}");
+        assert!(working.contains("up (gitlab.com)"), "{working}");
+        assert!(working.contains("Open Accounts"), "{working}");
+        let rejected = hosting_words(true, Some(Some(Saved)), true);
+        assert!(
+            rejected.contains(
+                "github.com refused the credential (saved in Canopy), so pull requests cannot load."
+            ),
+            "{rejected}"
+        );
+        let bare = hosting_words(true, Some(None), false);
+        assert!(bare.contains("No credential for github.com"), "{bare}");
+        assert!(bare.contains("Add a token"), "{bare}");
+        let off = hosting_words(false, Some(Some(Saved)), false);
+        assert!(
+            off.contains("Pull requests are off: Canopy does not contact github.com."),
+            "{off}"
+        );
+        assert!(off.contains("Open Integrations"), "{off}");
     }
 }
