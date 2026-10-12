@@ -1475,25 +1475,6 @@ struct Note {
 /// How a note opens when git's own configuration decides a choice.
 const DECIDES: &str = "Your git configuration decides";
 
-/// What a choice's control shows: the value the git configuration sets while it decides, else
-/// Canopy's own.
-fn shown<T>(decides: bool, configured: Option<T>, own: T) -> T {
-    configured.filter(|_| decides).unwrap_or(own)
-}
-
-/// The mode the Pull strategy select shows: what pulls use while the git configuration decides,
-/// else Canopy's own choice.
-fn pull_mode_shown(
-    configured: Option<canopy_core::PullStrategy>,
-    decides: bool,
-    own: PullMode,
-) -> PullMode {
-    configured
-        .filter(|_| decides)
-        .and_then(|c| PullMode::ALL.into_iter().find(|m| m.strategy() == c))
-        .unwrap_or(own)
-}
-
 /// `key = value (where it is set)`, for a note.
 fn config_phrase(v: &ConfigValue) -> String {
     let source = source_label(Some(&v.source()));
@@ -3197,7 +3178,6 @@ fn git(
     let f = facts.as_deref();
     let follow = s.follow_git_config;
     // While Canopy follows the git configuration, a choice it sets is not Canopy's to make.
-    let decided = |set: bool| follow && set;
     heading(ui, "Your git configuration");
     facts_error(ui, f);
     row(
@@ -3244,30 +3224,16 @@ fn git(
             "How a pull combines the remote's commits with yours.",
             f.and_then(|f| pull_note(f, s.pull_default())).as_ref(),
             |ui| {
-                let configured = f.and_then(|f| f.pull.as_ref()).and_then(|p| p.strategy);
-                let decides = decided(configured.is_some());
-                // While the git configuration decides, the select shows what pulls will use.
-                let mut shown = pull_mode_shown(configured, decides, s.pull_mode);
-                ui.add_enabled_ui(!decides, |ui| {
-                    revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
-                    let options = PullMode::ALL.map(|m| (m, m.label()));
-                    let target = if decides {
-                        &mut shown
-                    } else {
-                        &mut s.pull_mode
-                    };
-                    Select::new(target, &options)
-                        .width(select_width(ui, options.iter().map(|(_, l)| *l)))
-                        .name("Pull strategy")
-                        .recommended(DEFAULTS.pull_mode)
-                        .id_salt("pull-strategy")
-                        .show(ui);
-                });
+                revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
+                let options = PullMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.pull_mode, &options)
+                    .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                    .name("Pull strategy")
+                    .recommended(DEFAULTS.pull_mode)
+                    .id_salt("pull-strategy")
+                    .show(ui);
             },
         );
-        let prune_set = f.is_some_and(|f| {
-            !fetch_values(f, f.fetch_prune.as_ref(), &f.remote_prune, "prune").is_empty()
-        });
         default_row(
             ui,
             "Prune on fetch",
@@ -3275,29 +3241,13 @@ fn git(
             f.and_then(|f| prune_note(f, s.prune_on_fetch, follow))
                 .as_ref(),
             |ui| {
-                let mut effective_prune_on_fetch = shown(
-                    decided(prune_set),
-                    f.and_then(|f| f.fetch_prune.as_ref())
-                        .and_then(ConfigValue::as_bool),
-                    s.prune_on_fetch,
+                revert(
+                    ui,
+                    &mut s.prune_on_fetch,
+                    &DEFAULTS.prune_on_fetch,
+                    "Prune on fetch",
                 );
-                ui.add_enabled_ui(!decided(prune_set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.prune_on_fetch,
-                        &DEFAULTS.prune_on_fetch,
-                        "Prune on fetch",
-                    );
-                    switch(
-                        ui,
-                        if decided(prune_set) {
-                            &mut effective_prune_on_fetch
-                        } else {
-                            &mut s.prune_on_fetch
-                        },
-                        "Prune on fetch",
-                    );
-                });
+                switch(ui, &mut s.prune_on_fetch, "Prune on fetch");
             },
         );
         row_with_note(
@@ -3307,30 +3257,13 @@ fn git(
             f.and_then(|f| prune_tags_note(f, s.prune_tags, follow))
                 .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| !f.prune_tags.is_empty());
-                let mut effective_prune_tags = shown(
-                    decided(set),
-                    f.and_then(|f| f.prune_tags.first())
-                        .and_then(ConfigValue::as_bool),
-                    s.prune_tags,
+                revert(
+                    ui,
+                    &mut s.prune_tags,
+                    &DEFAULTS.prune_tags,
+                    "Prune tags too",
                 );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.prune_tags,
-                        &DEFAULTS.prune_tags,
-                        "Prune tags too",
-                    );
-                    switch(
-                        ui,
-                        if decided(set) {
-                            &mut effective_prune_tags
-                        } else {
-                            &mut s.prune_tags
-                        },
-                        "Prune tags too",
-                    );
-                });
+                switch(ui, &mut s.prune_tags, "Prune tags too");
             },
         );
         row_with_note(
@@ -3340,12 +3273,8 @@ fn git(
             f.and_then(|f| autostash_note(f, s.autostash, follow))
                 .as_ref(),
             |ui| {
-                // Each key decides only its own kind of operation: rebases or merges.
-                let set = f.is_some_and(|f| f.autostash.len() == 2);
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(ui, &mut s.autostash, &DEFAULTS.autostash, "Autostash");
-                    switch(ui, &mut s.autostash, "Autostash");
-                });
+                revert(ui, &mut s.autostash, &DEFAULTS.autostash, "Autostash");
+                switch(ui, &mut s.autostash, "Autostash");
             },
         );
         row_with_note(
@@ -3362,30 +3291,13 @@ fn git(
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.follow_tags.is_some());
-                let mut effective_follow_tags = shown(
-                    decided(set),
-                    f.and_then(|f| f.follow_tags.as_ref())
-                        .and_then(ConfigValue::as_bool),
-                    s.follow_tags,
+                revert(
+                    ui,
+                    &mut s.follow_tags,
+                    &DEFAULTS.follow_tags,
+                    "Push tags with their commits",
                 );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.follow_tags,
-                        &DEFAULTS.follow_tags,
-                        "Push tags with their commits",
-                    );
-                    switch(
-                        ui,
-                        if decided(set) {
-                            &mut effective_follow_tags
-                        } else {
-                            &mut s.follow_tags
-                        },
-                        "Push tags with their commits",
-                    );
-                });
+                switch(ui, &mut s.follow_tags, "Push tags with their commits");
             },
         );
         row_with_note(
@@ -3402,30 +3314,13 @@ fn git(
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.submodule_recurse.is_some());
-                let mut effective_recurse_submodules = shown(
-                    decided(set),
-                    f.and_then(|f| f.submodule_recurse.as_ref())
-                        .and_then(ConfigValue::as_bool),
-                    s.recurse_submodules,
+                revert(
+                    ui,
+                    &mut s.recurse_submodules,
+                    &DEFAULTS.recurse_submodules,
+                    "Update submodules",
                 );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.recurse_submodules,
-                        &DEFAULTS.recurse_submodules,
-                        "Update submodules",
-                    );
-                    switch(
-                        ui,
-                        if decided(set) {
-                            &mut effective_recurse_submodules
-                        } else {
-                            &mut s.recurse_submodules
-                        },
-                        "Update submodules",
-                    );
-                });
+                switch(ui, &mut s.recurse_submodules, "Update submodules");
             },
         );
         row_with_note(
@@ -3443,35 +3338,14 @@ fn git(
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.push_default.is_some());
-                let mut effective_push_default = shown(
-                    decided(set),
-                    f.and_then(|f| f.push_default.as_ref()).and_then(|v| {
-                        PushMode::ALL.into_iter().find(|m| {
-                            m.push_default()
-                                .value()
-                                .eq_ignore_ascii_case(v.value.trim())
-                        })
-                    }),
-                    s.push_default,
-                );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(ui, &mut s.push_default, &DEFAULTS.push_default, "Push to");
-                    let options = PushMode::ALL.map(|m| (m, m.label()));
-                    Select::new(
-                        if decided(set) {
-                            &mut effective_push_default
-                        } else {
-                            &mut s.push_default
-                        },
-                        &options,
-                    )
+                revert(ui, &mut s.push_default, &DEFAULTS.push_default, "Push to");
+                let options = PushMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.push_default, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Push to")
                     .recommended(DEFAULTS.push_default)
                     .id_salt("push-default")
                     .show(ui);
-                });
             },
         );
     }
@@ -3532,38 +3406,19 @@ fn git(
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.conflict_style.is_some());
-                let mut effective_conflict_style = shown(
-                    decided(set),
-                    f.and_then(|f| f.conflict_style.as_ref()).and_then(|v| {
-                        ConflictMode::ALL.into_iter().find(|m| {
-                            canopy_core::ConflictStyle::from_value(&v.value) == Some(m.style())
-                        })
-                    }),
-                    s.conflict_style,
+                revert(
+                    ui,
+                    &mut s.conflict_style,
+                    &DEFAULTS.conflict_style,
+                    "Conflict style",
                 );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.conflict_style,
-                        &DEFAULTS.conflict_style,
-                        "Conflict style",
-                    );
-                    let options = ConflictMode::ALL.map(|m| (m, m.label()));
-                    Select::new(
-                        if decided(set) {
-                            &mut effective_conflict_style
-                        } else {
-                            &mut s.conflict_style
-                        },
-                        &options,
-                    )
+                let options = ConflictMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.conflict_style, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Conflict style")
                     .recommended(DEFAULTS.conflict_style)
                     .id_salt("conflict-style")
                     .show(ui);
-                });
             },
         );
         heading(ui, "Commits");
@@ -3582,33 +3437,14 @@ fn git(
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.cleanup.is_some());
-                let mut effective_cleanup = shown(
-                    decided(set),
-                    f.and_then(|f| f.cleanup.as_ref()).and_then(|v| {
-                        CleanupMode::ALL
-                            .into_iter()
-                            .find(|m| m.cleanup().value().eq_ignore_ascii_case(v.value.trim()))
-                    }),
-                    s.cleanup,
-                );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(ui, &mut s.cleanup, &DEFAULTS.cleanup, "Message cleanup");
-                    let options = CleanupMode::ALL.map(|m| (m, m.label()));
-                    Select::new(
-                        if decided(set) {
-                            &mut effective_cleanup
-                        } else {
-                            &mut s.cleanup
-                        },
-                        &options,
-                    )
+                revert(ui, &mut s.cleanup, &DEFAULTS.cleanup, "Message cleanup");
+                let options = CleanupMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.cleanup, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Message cleanup")
                     .recommended(DEFAULTS.cleanup)
                     .id_salt("commit-cleanup")
                     .show(ui);
-                });
             },
         );
         row_with_note(
@@ -3626,28 +3462,13 @@ fn git(
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.initial_branch.is_some());
-                let mut effective_initial_branch = f
-                    .and_then(|f| f.initial_branch.as_ref())
-                    .map(|v| v.value.clone())
-                    .filter(|_| decided(set))
-                    .unwrap_or_else(|| s.initial_branch.clone());
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.initial_branch,
-                        &DEFAULTS.initial_branch,
-                        "First branch of a new repository",
-                    );
-                    initial_branch_field(
-                        ui,
-                        if decided(set) {
-                            &mut effective_initial_branch
-                        } else {
-                            &mut s.initial_branch
-                        },
-                    );
-                });
+                revert(
+                    ui,
+                    &mut s.initial_branch,
+                    &DEFAULTS.initial_branch,
+                    "First branch of a new repository",
+                );
+                initial_branch_field(ui, &mut s.initial_branch);
             },
         );
     }
@@ -3843,44 +3664,57 @@ fn repository(
             );
         },
     );
-    repo_row(
-        ui,
-        "Pull strategy",
-        "How a pull combines the remote's commits with yours.",
-        None,
-        |ui| {
-            override_select(
-                ui,
-                "repo-pull",
-                "Pull strategy",
-                &mut own.pull_mode,
-                s.pull_mode,
-                DEFAULTS.pull_mode,
-                &PullMode::ALL.map(|m| (m, m.label().to_owned())),
-            );
-        },
-    );
+    // While the git configuration decides a choice, Canopy's own is not offered: the
+    // configuration's row below is where it changes, as on the Git page.
+    let configured_pull = facts
+        .as_ref()
+        .and_then(|f| f.pull.as_ref())
+        .is_some_and(|p| p.strategy.is_some());
+    if !(pull.follow_config && configured_pull) {
+        repo_row(
+            ui,
+            "Pull strategy",
+            "How a pull combines the remote's commits with yours.",
+            None,
+            |ui| {
+                override_select(
+                    ui,
+                    "repo-pull",
+                    "Pull strategy",
+                    &mut own.pull_mode,
+                    s.pull_mode,
+                    DEFAULTS.pull_mode,
+                    &PullMode::ALL.map(|m| (m, m.label().to_owned())),
+                );
+            },
+        );
+    }
     let prune = own.prune_on_fetch.unwrap_or(s.prune_on_fetch);
-    repo_row(
-        ui,
-        "Prune on fetch",
-        "Removes remote branches that were deleted on the remote.",
-        facts
-            .as_ref()
-            .and_then(|f| prune_note(f, prune, s.follow_git_config))
-            .as_ref(),
-        |ui| {
-            override_select(
-                ui,
-                "repo-prune",
-                "Prune on fetch",
-                &mut own.prune_on_fetch,
-                s.prune_on_fetch,
-                DEFAULTS.prune_on_fetch,
-                &on_off(),
-            );
-        },
-    );
+    let configured_prune = facts.as_ref().is_some_and(|f| {
+        !fetch_values(f, f.fetch_prune.as_ref(), &f.remote_prune, "prune").is_empty()
+    });
+    if !(s.follow_git_config && configured_prune) {
+        repo_row(
+            ui,
+            "Prune on fetch",
+            "Removes remote branches that were deleted on the remote.",
+            facts
+                .as_ref()
+                .and_then(|f| prune_note(f, prune, s.follow_git_config))
+                .as_ref(),
+            |ui| {
+                override_select(
+                    ui,
+                    "repo-prune",
+                    "Prune on fetch",
+                    &mut own.prune_on_fetch,
+                    s.prune_on_fetch,
+                    DEFAULTS.prune_on_fetch,
+                    &on_off(),
+                );
+            },
+        );
+    }
     repo_row(
         ui,
         "Fetch in the background",
@@ -6000,15 +5834,6 @@ mod tests {
             ("Token saved".into(), true)
         );
         assert!(!account_status(ForgeKind::GitHub, None, false, false).1);
-    }
-
-    #[test]
-    fn the_pull_select_shows_what_pulls_use_while_git_decides() {
-        use canopy_core::PullStrategy;
-        let shown = |c, decides| pull_mode_shown(c, decides, PullMode::Merge);
-        assert_eq!(shown(Some(PullStrategy::Rebase), true), PullMode::Rebase);
-        assert_eq!(shown(Some(PullStrategy::Rebase), false), PullMode::Merge);
-        assert_eq!(shown(None, true), PullMode::Merge);
     }
 
     /// Every preview theme needs an outlined selection marker; merely changing the
@@ -8506,5 +8331,90 @@ mod tests {
             }
         }
         assert!(wrapped.is_empty(), "{wrapped:#?}");
+    }
+
+    /// While this repository's git configuration decides its pulls or pruning, Canopy's own
+    /// choice is not offered beside the configuration's row, as on the Git page.
+    #[test]
+    fn a_repository_hides_canopys_choice_while_git_decides_it() {
+        use canopy_core::{ConfigScope, ConfigSource, PullConfig, PullStrategy};
+        let page = |facts: GitFacts| {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            ctx.enable_accesskit();
+            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+            let repo = Some(Path::new("/work/canopy"));
+            let mut settings = Settings::default();
+            let mut tokens = TokenStore::default();
+            let mut screen = SettingsScreen::at(Section::Repository);
+            screen.facts.global.asked = true;
+            screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
+            screen.facts.repo.asked = true;
+            screen.facts.repo.path = repo.map(Path::to_path_buf);
+            screen.facts.repo.facts = Some(Arc::new(facts));
+            screen.facts.repo.read_at = Some(Instant::now());
+            let mut last = None;
+            for time in 1..=3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(1440.0, 6000.0),
+                        )),
+                        time: Some(f64::from(time)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(
+                            ui.ctx(),
+                            &mut screen,
+                            &mut settings,
+                            &mut tokens,
+                            &SettingsData {
+                                tabs: &[],
+                                update: &UpdateState::Idle,
+                                identity: IdentityView {
+                                    repo,
+                                    identity: None,
+                                    error: None,
+                                },
+                            },
+                            &mut Vec::new(),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                last = output.platform_output.accesskit_update;
+            }
+            last.expect("accesskit")
+                .nodes
+                .iter()
+                .filter_map(|(_, n)| n.label().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        let own = page(GitFacts::default());
+        assert!(own.iter().any(|l| l == "Pull strategy"), "{own:?}");
+        assert!(own.iter().any(|l| l == "Prune on fetch"), "{own:?}");
+        let source = |key: &str, value: &str| ConfigSource {
+            key: key.into(),
+            value: value.into(),
+            scope: ConfigScope::Local,
+            origin: "file:/work/canopy/.git/config".into(),
+            file: None,
+        };
+        let decided = page(GitFacts {
+            pull: Some(PullConfig {
+                strategy: Some(PullStrategy::Rebase),
+                sources: vec![source("pull.rebase", "true")],
+                invalid: Vec::new(),
+            }),
+            fetch_prune: Some(fact("fetch.prune", "false")),
+            ..GitFacts::default()
+        });
+        assert!(!decided.iter().any(|l| l == "Pull strategy"), "{decided:?}");
+        assert!(
+            !decided.iter().any(|l| l == "Prune on fetch"),
+            "{decided:?}"
+        );
     }
 }
