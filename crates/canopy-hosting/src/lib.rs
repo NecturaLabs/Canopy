@@ -12,7 +12,8 @@
 //!   ([`avatars`]), without credentials.
 //!   Canopy's own update manifest ([`updates`]) is fetched anonymously from the public
 //!   `NecturaLabs/app-updates` repository.
-//! - It authenticates only with a token the user supplied: an environment variable
+//! - It authenticates only with a token the user supplied: the sign-in of the `gh` or `glab` CLI
+//!   ([`login_from_cli`], held in memory only), an environment variable
 //!   ([`token_from_env_for`], which offers `GH_TOKEN` only to github.com and `GITLAB_TOKEN` only
 //!   to gitlab.com, `GITLAB_HOST` or a host the user listed), git's own credential helpers
 //!   ([`token_from_git_credentials`]) or a token entered in Canopy. The token travels only in an
@@ -25,6 +26,7 @@
 //! Errors carry the server's own message ([`Error`]).
 
 pub mod avatars;
+mod cli_token;
 mod client;
 mod error;
 mod github;
@@ -37,6 +39,7 @@ mod test_server;
 mod token;
 pub mod updates;
 
+pub use cli_token::{CliError, CliLogin, login_from_cli};
 pub use client::Client;
 pub use error::{Error, Result};
 pub use http::{is_loopback_base, plain_text, set_build};
