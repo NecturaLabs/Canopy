@@ -11,6 +11,7 @@
 use std::ffi::OsStr;
 use std::io::Read;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use canopy_core::forge::ForgeKind;
@@ -19,6 +20,8 @@ use crate::http::shorten;
 
 /// How long the CLI may take in all, `auth status` and `auth token` together, before it is killed.
 const CLI_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the output is read for after the CLI has exited.
+const DRAIN_GRACE: Duration = Duration::from_millis(500);
 /// How often a running CLI is polled.
 const POLL: Duration = Duration::from_millis(10);
 /// The most output read from the CLI: a sign-in report is a few lines.
@@ -281,61 +284,87 @@ struct StatusReport {
     token: Option<String>,
 }
 
+/// One account the CLI listed for the host.
+#[derive(Default)]
+struct Account {
+    /// `Active account: true`: the one `gh auth token` answers for.
+    active: bool,
+    report: StatusReport,
+}
+
 /// Reads `gh auth status` and `glab auth status` output:
 ///
 /// ```text
 ///   ✓ Logged in to github.com account octocat (keyring)
+///   - Active account: true
 ///   - Token scopes: 'gist', 'read:org', 'repo'
 ///   ✓ Logged in to gitlab.example.com as octocat (/home/o/.config/glab-cli/config.yml)
 ///   ✓ Token found: glpat-…
 /// ```
+///
+/// Each `Logged in to` line opens an account. Only accounts of exactly `host` (name and port) are
+/// read, and a line belongs to the account above it, so another host's scopes or token are never
+/// taken for this one's. Of several accounts on the host, the active one counts, else the first.
 fn parse_status(text: &str, host: &str) -> StatusReport {
-    let host_name = host.split(':').next().unwrap_or(host).to_lowercase();
-    let mut report = StatusReport::default();
+    let host = host.to_lowercase();
+    let mut accounts: Vec<Account> = Vec::new();
+    // Whether the lines being read belong to an account of `host` (the last one in `accounts`).
+    let mut in_host = false;
     for line in text.lines() {
         let line = line
             .trim_start_matches(|c: char| !c.is_alphanumeric())
             .trim();
         let lower = line.to_lowercase();
         if let Some(rest) = lower.strip_prefix("logged in to ") {
-            if rest
-                .split_whitespace()
-                .next()
-                .map(str::to_lowercase)
-                .as_deref()
-                == Some(host.to_lowercase().as_str())
-                || rest.contains(&host_name)
-            {
-                report.signed_in = true;
-                if report.user.is_none() {
-                    report.user = line
-                        .split_whitespace()
-                        .skip_while(|w| !matches!(*w, "account" | "as"))
-                        .nth(1)
-                        .map(str::to_owned);
-                }
+            in_host = rest.split_whitespace().next() == Some(host.as_str());
+            if in_host {
+                let user = line
+                    .split_whitespace()
+                    .skip_while(|w| !matches!(*w, "account" | "as"))
+                    .nth(1)
+                    .map(str::to_owned);
+                accounts.push(Account {
+                    active: false,
+                    report: StatusReport {
+                        signed_in: true,
+                        user,
+                        ..StatusReport::default()
+                    },
+                });
             }
-        } else if let Some((key, value)) = line.split_once(':') {
+        } else if lower.starts_with("failed to log in to ") {
+            // An account that does not work: its lines are not those of the account above it.
+            in_host = false;
+        } else if in_host
+            && let Some(account) = accounts.last_mut()
+            && let Some((key, value)) = line.split_once(':')
+        {
             let value = value.trim();
             match key.trim().to_lowercase().as_str() {
+                "active account" => account.active = value.eq_ignore_ascii_case("true"),
                 "token scopes" => {
                     let scopes: Vec<String> = value
                         .split(',')
                         .map(|s| s.trim().trim_matches(['\'', '"']).to_owned())
                         .filter(|s| !s.is_empty() && s != "none")
                         .collect();
-                    report.scopes = (!scopes.is_empty()).then_some(scopes);
+                    account.report.scopes = (!scopes.is_empty()).then_some(scopes);
                 }
                 "token" | "token found"
                     if !value.is_empty() && !value.chars().all(|c| c == '*') =>
                 {
-                    report.token = Some(value.to_owned());
+                    account.report.token = Some(value.to_owned());
                 }
                 _ => {}
             }
         }
     }
-    report
+    let chosen = accounts.iter().position(|a| a.active).unwrap_or(0);
+    accounts
+        .into_iter()
+        .nth(chosen)
+        .map(|a| a.report)
+        .unwrap_or_default()
 }
 
 /// What a finished CLI printed.
@@ -376,18 +405,50 @@ fn command(program: &OsStr) -> Command {
     cmd
 }
 
-/// Reads a pipe to its end (or [`MAX_OUTPUT`]) on a thread, so a full pipe never stalls the child.
-fn read_all<R: Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(pipe) = pipe {
-            let _ = pipe.take(MAX_OUTPUT).read_to_end(&mut buf);
-        }
-        buf
-    })
+/// A pipe being read on a thread, so a full pipe never stalls the child.
+struct Drain {
+    /// What has been read so far.
+    buf: Arc<Mutex<Vec<u8>>>,
+    /// Sent to when the pipe reached its end (or [`MAX_OUTPUT`]).
+    done: mpsc::Receiver<()>,
 }
 
-/// Runs `program args` and collects its output, killing it at `deadline`.
+impl Drain {
+    fn start<R: Read + Send + 'static>(pipe: Option<R>) -> Self {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let (tx, done) = mpsc::channel();
+        let shared = Arc::clone(&buf);
+        // The thread outlives the call when a grandchild of the CLI keeps the pipe open; it
+        // holds nothing but the pipe and ends with it.
+        std::thread::spawn(move || {
+            if let Some(pipe) = pipe {
+                let mut pipe = pipe.take(MAX_OUTPUT);
+                let mut chunk = [0_u8; 4096];
+                while let Ok(n @ 1..) = pipe.read(&mut chunk) {
+                    shared
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .extend_from_slice(&chunk[..n]);
+                }
+            }
+            let _ = tx.send(());
+        });
+        Self { buf, done }
+    }
+
+    /// What was read, waiting for the end of the pipe no longer than until `until`: a program the
+    /// CLI started may hold the pipe open for good, and what the CLI itself wrote is there already.
+    fn text(&self, until: Instant) -> String {
+        let _ = self
+            .done
+            .recv_timeout(until.saturating_duration_since(Instant::now()));
+        let bytes = self.buf.lock().unwrap_or_else(PoisonError::into_inner);
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+/// Runs `program args` and collects its output, killing it at `deadline`. Reading the output ends
+/// by then too, however long a program the CLI started keeps its pipes.
 fn run_capture(program: &OsStr, args: &[&str], deadline: Instant) -> Result<Captured, RunError> {
     let mut child = command(program).args(args).spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -396,8 +457,8 @@ fn run_capture(program: &OsStr, args: &[&str], deadline: Instant) -> Result<Capt
             RunError::Io(e)
         }
     })?;
-    let out = read_all(child.stdout.take());
-    let err = read_all(child.stderr.take());
+    let out = Drain::start(child.stdout.take());
+    let err = Drain::start(child.stderr.take());
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -414,9 +475,10 @@ fn run_capture(program: &OsStr, args: &[&str], deadline: Instant) -> Result<Capt
             }
         }
     };
-    let mut text = String::from_utf8_lossy(&out.join().unwrap_or_default()).into_owned();
+    let until = (Instant::now() + DRAIN_GRACE).min(deadline);
+    let mut text = out.text(until);
     text.push('\n');
-    text.push_str(&String::from_utf8_lossy(&err.join().unwrap_or_default()));
+    text.push_str(&err.text(until));
     Ok(Captured {
         success: status.success(),
         text,
@@ -433,7 +495,6 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
-    use std::sync::Mutex;
 
     /// Fake programs are written and run one at a time: another thread forking while a script's
     /// file is still open for writing makes its `exec` fail with "text file busy".
@@ -449,9 +510,7 @@ mod tests {
 
     impl Fake {
         fn new(body: &str) -> Self {
-            let guard = ONE_AT_A_TIME
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let guard = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("cli");
             let script = format!(
@@ -577,9 +636,7 @@ esac"#,
 
     #[test]
     fn cli_not_installed() {
-        let _guard = ONE_AT_A_TIME
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("no-such-cli");
         for kind in [ForgeKind::GitHub, ForgeKind::GitLab] {
@@ -612,6 +669,91 @@ echo "  ✓ Token found: {TOKEN}" >&2"#
             fake.calls(),
             ["auth status --hostname gitlab.corp:8443 --show-token"]
         );
+    }
+
+    const GITLAB_CORP: &str =
+        "  ✓ Logged in to gitlab.corp as tanuki (/c.yml)\n  ✓ Token found: glpat-a";
+
+    #[test]
+    fn a_host_with_another_port_is_not_signed_in() {
+        assert!(parse_status(GITLAB_CORP, "gitlab.corp").signed_in);
+        assert!(!parse_status(GITLAB_CORP, "gitlab.corp:8443").signed_in);
+        let with_port = "  ✓ Logged in to gitlab.corp:8443 as tanuki (/c.yml)";
+        assert!(!parse_status(with_port, "gitlab.corp").signed_in);
+        assert!(parse_status(with_port, "GitLab.Corp:8443").signed_in);
+        // A longer name that merely contains the host is another host.
+        let longer = "  ✓ Logged in to my-gitlab.corp.example as tanuki (/c.yml)";
+        assert!(!parse_status(longer, "gitlab.corp").signed_in);
+    }
+
+    #[test]
+    fn scopes_and_token_of_another_host_are_not_used() {
+        let text = "\
+github.com
+  ✓ Logged in to github.com account octocat (keyring)
+  - Token scopes: 'repo'
+  ✓ Token found: ghp_other
+ghe.corp
+  ✓ Logged in to ghe.corp account octocat (keyring)
+  - Token scopes: 'gist'
+";
+        let report = parse_status(text, "ghe.corp");
+        assert_eq!(report.scopes, Some(vec!["gist".to_owned()]));
+        assert_eq!(report.token, None);
+        let report = parse_status(text, "github.com");
+        assert_eq!(report.scopes, Some(vec!["repo".to_owned()]));
+        assert_eq!(report.token.as_deref(), Some("ghp_other"));
+        // Lines before any account, and those of an account that failed, belong to nobody.
+        let text = "  - Token scopes: 'repo'\n  X Failed to log in to github.com account old (keyring)\n  - Token scopes: 'repo'\n  ✓ Logged in to github.com account octocat (keyring)\n";
+        assert_eq!(parse_status(text, "github.com").scopes, None);
+    }
+
+    #[test]
+    fn the_active_account_of_a_host_decides_the_scopes() {
+        // The inactive account is listed last and lacks `repo`; `gh auth token` answers for the
+        // active one.
+        let fake = Fake::new(&format!(
+            r#"case "$2" in
+status) echo "github.com"
+echo "  ✓ Logged in to github.com account hubot (keyring)"; echo "  - Active account: true"; echo "  - Token scopes: 'repo'"
+echo "  ✓ Logged in to github.com account octocat (keyring)"; echo "  - Active account: false"; echo "  - Token scopes: 'gist'";;
+token) echo "{TOKEN}";;
+esac"#
+        ));
+        let login = fake.login(ForgeKind::GitHub, "github.com").unwrap();
+        assert_eq!(login.user.as_deref(), Some("hubot"));
+        drop(fake);
+        // And the other way round: the active account lacks the scope.
+        let fake = Fake::new(
+            r#"echo "  ✓ Logged in to github.com account octocat (keyring)"; echo "  - Active account: false"; echo "  - Token scopes: 'repo'"
+echo "  ✓ Logged in to github.com account hubot (keyring)"; echo "  - Active account: true"; echo "  - Token scopes: 'gist'""#,
+        );
+        let err = fake.login(ForgeKind::GitHub, "github.com").unwrap_err();
+        assert_eq!(err.user(), Some("hubot"));
+    }
+
+    #[test]
+    fn a_program_the_cli_left_holding_its_pipe_does_not_hold_the_caller() {
+        let fake = Fake::new("sleep 20 &\necho kept; echo 'also kept' >&2");
+        for (limit, bound) in [(5000, 2500), (100, 400)] {
+            let started = Instant::now();
+            let deadline = started + Duration::from_millis(limit);
+            let out = run_capture(fake.path().as_os_str(), &["auth"], deadline)
+                .unwrap_or_else(|_| panic!("it should finish"));
+            assert!(
+                started.elapsed() < Duration::from_millis(bound),
+                "{:?}",
+                started.elapsed()
+            );
+            assert!(out.success);
+            if limit > 1000 {
+                assert!(
+                    out.text.contains("kept") && out.text.contains("also kept"),
+                    "{}",
+                    out.text
+                );
+            }
+        }
     }
 
     #[test]

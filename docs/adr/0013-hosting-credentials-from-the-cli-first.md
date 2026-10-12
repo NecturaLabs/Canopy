@@ -43,7 +43,13 @@ How the CLI is run (`canopy-hosting/src/cli_token.rs`):
   the one `glab` command that prints the token. The host is one argument, rejected when empty,
   starting with `-` or holding whitespace or control characters.
 - Without a terminal prompt, with colour off, with standard input closed, with the output capped,
-  and killed after ten seconds in all.
+  and killed after ten seconds in all. A program the CLI left running with the output pipe open
+  never holds Canopy past that: reading ends half a second after the CLI exits, or at the
+  deadline.
+- The status report is read per account: only accounts listed for exactly the host (name and
+  port) count, a scope or token line belongs to the account above it, and of several accounts on
+  one host the one marked `Active account: true` (the one `gh auth token` answers for) decides
+  the scopes, else the first.
 - Without the token variables (`GH_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `GL_TOKEN`, enterprise
   and access-token variants, `GITLAB_HOST`), so a CLI reports only its own stored sign-in and
   never answers for a host an environment token was not meant for (ADR 0004).
