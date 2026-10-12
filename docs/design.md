@@ -581,15 +581,14 @@ The rest of the kit, each with the states `--overlay gallery` shows:
 ### Text field
 
 `kit::field` draws every text input (single-line, search, secret, numeric and the commit composer);
-no view uses egui's `TextEdit` directly. The placeholder reads at 4.5:1 and the field's bottom edge
-and well at 3:1 (4.5:1 at high contrast) on every surface, tested per theme, style and contrast; the
-look is cached per palette, so a high contrast or custom theme never reuses its base theme's. In a
-dark theme the well is a faint lift of the surface; in a light theme it is a plate as light as the
-lightest surface, so a field never reads as a disabled control. The summary's character count shows
-once something is typed. The commit summary and description are one message box: two fields stacked with
-square corners at the seam (`Join`), the description's top edge being the summary's bottom edge; their
-placeholders are the short names ("Summary", "Description (optional)"), and the commit button says
-what is missing. Focus
+no view uses egui's `TextEdit` directly. The placeholder reads at 4.5:1 on every surface. At rest
+the edge is a hairline as quiet as the buttons' and selects' edges, just enough to trace the well
+(1.5:1); High contrast restores an input outline of 4.5:1. Both are tested per theme, style and
+contrast, and the look is cached per palette, so a high contrast or custom theme never reuses its
+base theme's. In a dark theme the well is a faint lift of the surface; in a light theme it is a
+plate as light as the lightest surface, so a field never reads as a disabled control. The commit
+message is two separate fields named as git names the parts, "Subject" and "Body"; the subject's
+character count shows once something is typed, and the commit button says what is missing. Focus
 shows a ring for keyboard and pointer alike; the borderless search of the palette and the
 cheatsheet, which has no box, turns the 2 pt line under it to the focus colour. An error is message text with an icon under the field,
 announced as invalid with the message as its description, and never shows before the user typed.

@@ -126,13 +126,13 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Syntax highlighting in diffs | Done | Yes | Yes | ? |
 | Image diff | Planned | Yes | Yes | ? |
 | Ignore whitespace, context lines setting | Done | Yes | Yes | Yes |
-| Commit composer with summary counter (Enter in the summary moves to the description; Ctrl+Enter commits and leaves the boxes); follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
+| Commit composer with Subject and Body fields and a subject counter (Enter in the subject moves to the body; Ctrl+Enter commits and leaves the boxes); follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
 | Unsent commit message kept when its tab closes, until the repository opens again (same session) | Done | ? | ? | ? |
 | Amend | Done | Yes | Yes | Yes |
 | Amending a commit its upstream already has asks first: it rewrites published history and the next push needs force-with-lease | Done | Yes | ? | ? |
 | The commit template (`commit.template`) fills an empty message field once per tab in trusted folders, including after trusting an open tab; a draft or an amend keeps its text | Unreleased | Yes | ? | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
-| Commit message checks: a summary or description line longer than 72 characters is reported under the fields (Settings → Git → Commits → Check commit messages, on by default); long URLs, indented and quoted lines are left alone, and a hint never blocks the commit or changes the draft | Unreleased | ? | Yes | ? |
+| Commit message checks: a subject or body line longer than 72 characters is reported under the fields (Settings → Git → Commits → Check commit messages, on by default); long URLs, indented and quoted lines are left alone, and a hint never blocks the commit or changes the draft | Unreleased | ? | Yes | ? |
 
 Unstaged diffs refuse actual symbolic links when `core.symlinks=false`, because libgit2 would
 otherwise read their targets as regular files. Git's ordinary-file link emulation still works.
@@ -239,10 +239,12 @@ offers the same. The filters and the sort are kept per repository (its worktrees
 across restarts, and stay out of settings export and import. Up and Down, j and k move through
 the list in the order shown.
 
-The list loads 100 requests at a time. When the host holds more, a note under the last row says
-how many are shown ("Showing the 100 most recently updated") and Load more fetches the next page
-only: the pages already loaded are not fetched again, the selection and the scroll position stay,
-filters and sorting cover everything loaded, and each new page gets its checks and reviews like the
+The list loads 100 requests at a time. When the host holds more, the next page loads by itself
+once the end of the list is half a view away, with a spinner at the end; pages keep loading while
+the filters show none of their rows. A page that fails is a toast, and the end of the list waits
+for the next load of the first page (the timed refresh or a reload) before asking again. Only the next page is fetched: the pages
+already loaded are not fetched again, the selection and the scroll position stay, filters and
+sorting cover everything loaded, and each new page gets its checks and reviews like the
 first. GitLab's Closed tab reads the closed and the merged requests page by page, so a page may
 carry up to twice as many rows. A reload drops the extra pages; the timed refresh keeps them.
 Searching and filtering on the host, over requests that are not loaded, is not done.

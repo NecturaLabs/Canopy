@@ -42,7 +42,7 @@ enum Scene {
     Unchecked,
     /// An open list longer than any window, to see the scroll bar beside the rows.
     Overflow,
-    /// The open list with more pages on the host: the note and the Load more button after it.
+    /// The open list with more pages on the host: the spinner at its end.
     More,
     /// The open list with a filter and a sort chosen: ready requests, A to Z by title.
     Filtered,

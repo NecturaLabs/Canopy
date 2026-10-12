@@ -496,7 +496,7 @@ pub struct Settings {
     pub stale_inactivity_days: u32,
     /// `git commit --signoff`.
     pub signoff: bool,
-    /// Hint, under the commit message fields, when a summary or description line is longer
+    /// Hint, under the commit message fields, when a subject or body line is longer
     /// than most tools show. Never blocks a commit or changes the draft.
     pub check_message: bool,
     /// Pull and rebase over uncommitted changes, stashing them around it (`--autostash`).
