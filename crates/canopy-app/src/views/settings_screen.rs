@@ -888,7 +888,9 @@ fn synonyms(title: &str) -> &'static str {
         "Name" | "Email" | "Apply identity" | "Save to" | "Committer" => {
             "identity user author git config user.name user.email"
         }
-        "Pull strategy" => "pull rebase merge fast-forward ff only",
+        "Pull strategy" | "Fast-forward when pulling" => {
+            "pull strategy rebase merge fast-forward ff only pull.ff"
+        }
         "Follow my git config" => "pull rebase pull.rebase pull.ff configuration follow default",
         "Prune on fetch" => "prune stale remote branches delete",
         "Update submodules" => "submodule recurse pull checkout clone recursive",
@@ -1264,19 +1266,20 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
 fn git_setting_help(setting: Setting) -> &'static str {
     match setting {
         Setting::Autocrlf => "Keep the line-ending convention your projects require.",
-        Setting::CommitSigning => {
-            "Git uses your existing signing key and program; choose explicitly."
-        }
         Setting::PullFastForward => {
-            "Pull strategy: when branches diverge, choose Rebase or Merge for that pull."
+            "With fast-forward only, Canopy asks Rebase or Merge when branches diverged."
         }
         Setting::FetchPruneTags => "Turning this on can delete local tags that were never pushed.",
-        Setting::PullAutostash => "Overrides rebase and merge autostash for pulls.",
+        Setting::PullAutostash => {
+            "Stashes local changes around a pull, in place of the rebase and merge autostash settings."
+        }
         Setting::PushDefault => {
             "Matching pushes all matching branches; Nothing requires an explicit destination."
         }
-        Setting::SubmoduleRecurse => "Git also updates configured submodules.",
-        Setting::SigningFormat => "Git uses your existing signing key and program.",
+        Setting::SubmoduleRecurse => "Checkout, pull and switch also update submodules.",
+        Setting::CommitSigning | Setting::SigningFormat => {
+            "Git uses your existing signing key and program."
+        }
         _ => "",
     }
 }
@@ -1410,13 +1413,10 @@ fn revert<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, default: &T, name: &
     clicked
 }
 
-/// The tag on a global setting that each repository can override.
-const DEFAULT_TAG: &str = "Default for repositories";
 const OVERRIDDEN_TIP: &str = "This repository has its own value.";
-const TAG_TIP: &str =
-    "Each repository follows this unless it chooses otherwise in Settings → This repository.";
 
-/// [`row`] for a setting that is the default for repositories: tagged as such.
+/// [`row`] for a setting that is the default for repositories (each can override it in This
+/// repository, which tags its overrides).
 fn default_row(
     ui: &mut Ui,
     title: &str,
@@ -1430,15 +1430,7 @@ fn default_row(
             note.show(ui);
         }
     };
-    row_layout(
-        ui,
-        title,
-        Some(DEFAULT_TAG),
-        &format!("{help} {DEFAULT_TAG}"),
-        &help_text,
-        "",
-        control,
-    );
+    row_layout(ui, title, None, help, &help_text, "", control);
     row_end(ui);
 }
 
@@ -1887,12 +1879,10 @@ fn row_layout(
                 ui.with_layout(line, |ui| {
                     ui.spacing_mut().item_spacing.x = theme::SM;
                     ui.label(title);
-                    let (tip, tone) = if tag == DEFAULT_TAG {
-                        (TAG_TIP, Tone::Neutral)
-                    } else {
-                        (OVERRIDDEN_TIP, Tone::Accent)
-                    };
-                    Badge::new(tag).tone(tone).tooltip(tip).show(ui);
+                    Badge::new(tag)
+                        .tone(Tone::Accent)
+                        .tooltip(OVERRIDDEN_TIP)
+                        .show(ui);
                 });
             }
             None => {
@@ -2302,7 +2292,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     let system = match motion::system() {
         Some(true) => "Your system asks for reduced motion.",
         Some(false) => "Your system asks for full motion.",
-        None => "Your system did not say whether to reduce motion.",
+        None => "Your system sets no preference, so Match system uses full motion.",
     };
     row(ui, "Motion", system, |ui| {
         revert(ui, &mut s.motion, &DEFAULTS.motion, "Motion");
@@ -2733,8 +2723,9 @@ fn source_label_in(source: Option<&Source>, home: &Path) -> String {
     }
 }
 
-/// What Git would use now for one part of an identity, and why: the value, then where it is
-/// set, cut in the middle to the column with the whole of it in a tooltip.
+/// Where Git takes one part of an identity from, cut in the middle to the column with the whole
+/// of it in a tooltip. The field above shows a configured or guessed value already; one from the
+/// environment is named here, since no field holds it.
 fn in_use(ui: &mut Ui, field: &Field) {
     let p = palette(ui.ctx());
     let size = theme::metrics().small_size;
@@ -2742,15 +2733,12 @@ fn in_use(ui: &mut Ui, field: &Field) {
         ui.label(RichText::new("Not set.").size(size).color(p.text_dim));
         return;
     }
-    ui.add(
-        egui::Label::new(
-            RichText::new(format!("In use now: {}", field.value))
-                .size(size)
-                .color(p.text_dim),
-        )
-        .truncate(),
-    );
-    let source = format!("From {}", source_label(field.source.as_ref()));
+    let from = source_label(field.source.as_ref());
+    let source = if matches!(field.source, Some(Source::Environment(_))) {
+        format!("In use: {}, from {from}", field.value)
+    } else {
+        format!("From {from}")
+    };
     let shown = elide_middle(
         ui,
         &source,
@@ -2939,7 +2927,7 @@ fn identity_group(
         row(
             ui,
             "Save to",
-            "This repository writes its own .git/config; all repositories write your global Git configuration.",
+            "Where Save identity writes it: your global Git configuration, or this repository's own.",
             |ui| {
                 Segmented::new(
                     &mut screen.identity_scope,
@@ -2958,7 +2946,7 @@ fn identity_group(
     row(
         ui,
         "Apply identity",
-        "Applies to future commits only; existing commits keep their authors. Environment variables or git author settings may override it.",
+        "Existing commits keep their authors.",
         |ui| {
             // Right to left: the primary action is rightmost.
             if Button::new("Save identity")
@@ -3013,11 +3001,12 @@ fn git_config_editor(
         help_label(
             ui,
             if scope == Scope::Global {
-                "Changes affect Git in every application. Included files stay intact; Unset removes only the value in your main global file."
+                "Changes apply to Git everywhere, not only in Canopy."
             } else {
-                "Changes affect this repository in every application, including its linked worktrees. Inherit removes the local override. Worktree and command settings can still take precedence."
+                "Changes apply to this repository everywhere, not only in Canopy. Inherit removes its own value."
             },
         );
+        ui.add_space(theme::SM);
     }
     // A read error stays editable: saving a valid value is how the user repairs it.
     let ready = facts.is_some() && !screen.git_config_pending;
@@ -3043,7 +3032,7 @@ fn git_config_editor(
                 warn: false,
             },
             (None, None) => Note {
-                text: format!("{} is unset.", setting.key()),
+                text: setting.key().to_owned(),
                 warn: false,
             },
         };
@@ -3130,15 +3119,17 @@ fn git_config_editor(
                         .iter()
                         .any(|value| value.key.eq_ignore_ascii_case(setting.key()))
                 });
-                if Button::new(if scope == Scope::Local {
-                    "Inherit"
-                } else {
-                    "Unset"
-                })
-                .enabled(direct)
-                .id_salt(("unset-git", setting, scope == Scope::Global))
-                .show(ui)
-                .clicked()
+                // Only a value this file sets can be removed; without one the select already
+                // says Unset.
+                if direct
+                    && Button::new(if scope == Scope::Local {
+                        "Inherit"
+                    } else {
+                        "Unset"
+                    })
+                    .id_salt(("unset-git", setting, scope == Scope::Global))
+                    .show(ui)
+                    .clicked()
                 {
                     actions.push(Action::SaveGitConfig {
                         repo: repo.map(Path::to_path_buf),
@@ -3235,7 +3226,7 @@ fn git(
     row(
         ui,
         "Recommended settings",
-        "Save the recommended pull, fetch, push, conflict and message choices to your global Git configuration. Pull is set to fast-forward only, and pull.rebase to false so it cannot override that. Repository overrides stay. Signing, hooks, identity and line endings stay as you chose them.",
+        "Writes the recommended pull, fetch, push, conflict and message choices to your global Git configuration, with pull.rebase set to false so fast-forward only applies. Signing, hooks, identity, line endings and each repository's own values stay.",
         |ui| {
             ui.add_enabled_ui(!screen.git_config_pending && f.is_some(), |ui| {
                 if confirm_button(
@@ -3507,7 +3498,7 @@ fn git(
     default_row(
         ui,
         "Fetch in the background",
-        "Fetches every remote of open repositories while Canopy is idle, and, with a hosting token, refreshes the open request list on the same interval (every minute when this is off).",
+        "Fetches the remotes of open repositories while Canopy is idle.",
         None,
         |ui| {
             revert(
@@ -3736,7 +3727,7 @@ fn git(
     row(
         ui,
         "Syntax highlighting",
-        "Colours code in diffs by language (Rust, TypeScript, Python, Markdown and about 200 more).",
+        "Colours code in diffs by language.",
         |ui| {
             revert(
                 ui,
@@ -4881,11 +4872,6 @@ fn integrations(
                     .id_salt("clone-dir")
                     .show(ui)
             });
-            if s.clone_dir.trim().is_empty() {
-                Badge::new("Default")
-                    .tooltip("Canopy's default: ~/src when it exists, else your home folder.")
-                    .show(ui);
-            }
         },
     );
     default_row(
@@ -5067,10 +5053,12 @@ fn launcher_row(
     labels.push((LaunchChoice::Custom, "Custom command…".to_owned()));
     let options: Vec<(LaunchChoice, &str)> = labels.iter().map(|(c, l)| (*c, l.as_str())).collect();
     let mut chosen = current;
-    // Where the system's choice comes from, under the help (the control column is narrow).
+    // An environment variable behind the system's choice, under the help (the control column is
+    // narrow); the select already says the choice is the default.
     let origin = (current == LaunchChoice::System)
         .then_some(system)
-        .flatten();
+        .flatten()
+        .filter(|c| matches!(c.origin, crate::system_apps::Origin::Env(_)));
     let help_text = |ui: &mut Ui| {
         help_label(ui, help);
         if let Some(choice) = origin {
@@ -5625,7 +5613,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     row(
         ui,
         "Check for updates",
-        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
+        "At most once a day, at start, Canopy reads a small public file on GitHub; GitHub sees your IP address and build number. Nothing is downloaded until you choose Update.",
         |ui| {
             revert(
                 ui,
@@ -5777,7 +5765,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Export settings",
-        "Saves your preferences to a file you choose, to keep or to use on another computer. Tokens, trusted folders, your answers to the Terms, the Privacy Policy and crash reports, the editor, terminal and file manager, GitLab hosts, the clone folder and per-repository settings are never in it.",
+        "Saves your preferences to a file. Tokens, consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings stay out.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Export…" })
                 .icon(icon::EXPORT)
@@ -5800,7 +5788,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Import settings",
-        "Takes the preferences from a settings file. Anything the file does not name stays as it is; a file that is not Canopy's changes nothing. A file never chooses the programs Canopy runs or the GitLab hosts trusted with a token, and never turns a network feature on.",
+        "Loads preferences from a settings file; what it leaves out stays as it is. A file never chooses the programs Canopy runs or the GitLab hosts trusted with a token, and never turns a network feature on.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Import…" })
                 .icon(icon::DOWNLOAD_SIMPLE)
@@ -5818,7 +5806,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Reset all settings",
-        "Every preference back to its default, which turns pull and merge requests, profile pictures and update checks back on. Tokens, trusted folders, recent repositories and your answers to the Terms, the Privacy Policy and crash reports stay.",
+        "Restores every preference to its default, which turns pull and merge requests, profile pictures and update checks back on. Tokens, trusted folders, repositories and your consent stay.",
         |ui| {
             if confirm_button(ui, "reset-all-settings", "Reset all", "Reset every setting") {
                 match crate::settings_file::reset(s) {
@@ -8054,7 +8042,7 @@ mod tests {
             };
             let shown = format!("{:?}", drawn(&ctx, &mut screen));
             assert!(
-                shown.contains("Changes affect"),
+                shown.contains("Changes apply"),
                 "{scope:?}: captions without a search"
             );
             Filter::set(
@@ -8066,7 +8054,7 @@ mod tests {
                 },
             );
             let found = format!("{:?}", drawn(&ctx, &mut screen));
-            assert!(!found.contains("Changes affect"), "{scope:?}: {found}");
+            assert!(!found.contains("Changes apply"), "{scope:?}: {found}");
         }
     }
 
@@ -8100,9 +8088,9 @@ mod tests {
         assert!(!row.contains("file:/home/me/.gitconfig"), "{row}");
     }
 
-    /// Unset removes the value of the file being edited: with nothing there, it has nothing to do.
+    /// Unset removes the value of the file being edited: with nothing there, it is not offered.
     #[test]
-    fn unset_is_disabled_where_the_file_sets_nothing() {
+    fn unset_is_offered_only_where_the_file_sets_a_value() {
         let facts = GitFacts {
             values: vec![
                 fact("fetch.prune", "false"),
@@ -8116,8 +8104,8 @@ mod tests {
             .iter()
             .filter(|n| n.label.as_deref().is_some_and(|l| l.starts_with("Unset")))
             .collect();
-        assert_eq!(unset.len(), Setting::ALL.len(), "{unset:?}");
-        assert_eq!(unset.iter().filter(|n| !n.disabled).count(), 1, "{unset:?}");
+        assert_eq!(unset.len(), 1, "{unset:?}");
+        assert!(!unset[0].disabled, "{unset:?}");
     }
 
     /// The system's own program is the Default entry of a launcher's list, and only that.

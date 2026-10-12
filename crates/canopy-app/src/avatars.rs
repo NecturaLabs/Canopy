@@ -167,10 +167,12 @@ pub fn explain(s: &Situation<'_>, now: i64) -> Option<Explanation> {
         })
     };
     if !s.hosting_api {
-        return off(
-            "Pictures come from the repository's GitHub or GitLab API, which is off in Settings → Integrations.",
-            Fix::Integrations,
-        );
+        // Download profile pictures may be on: the title names what is off, not the pictures.
+        return Some(Explanation {
+            title: "GitHub and GitLab API is off",
+            detail: "Profile pictures come from it; Pull and merge requests in Settings → Integrations turns it on.".to_owned(),
+            fix: Some(Fix::Integrations),
+        });
     }
     if !s.download {
         return off(
@@ -1800,7 +1802,7 @@ mod tests {
                 hosting_api: false,
                 ..base
             }),
-            Some(("Profile pictures are off", Some(Fix::Integrations)))
+            Some(("GitHub and GitLab API is off", Some(Fix::Integrations)))
         );
         assert_eq!(
             why(Situation {
