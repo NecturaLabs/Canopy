@@ -2704,9 +2704,12 @@ impl RepoTab {
                                 if page == self.requests.pages + 1 && self.requests.loading_more {
                                     self.requests.pages = page;
                                     self.requests.more = more;
+                                    // Only the page that was asked for ends the wait: the same
+                                    // page again with its checks must not enable a second click
+                                    // while the next page is on its way.
+                                    self.requests.loading_more = false;
                                 }
                                 if page <= self.requests.pages {
-                                    self.requests.loading_more = false;
                                     self.requests.add_page(rows);
                                     self.show_pages(&ctx);
                                 }
