@@ -44,7 +44,7 @@ use crate::ui::kit::row::{ListRow, Roving, RowKind};
 use crate::ui::kit::select::{self, Select};
 use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, column_label};
 use crate::ui::kit::toggle::Switch;
-use crate::ui::kit::{Button, IconButton, Size, Tone};
+use crate::ui::kit::{Button, HelpMark, IconButton, Size, Tone};
 use crate::ui::motion::{self, MotionPref};
 use crate::ui::theme::{
     self, Curve, Density, Elevation, Fill, GlassBlocked, NodeShape, Palette, Style, Surfaces,
@@ -1253,35 +1253,56 @@ fn search_field(ui: &mut Ui, screen: &mut SettingsScreen) {
     }
 }
 
-/// The widest an explanation runs: a comfortable line length, however wide the column.
-const READING_WIDTH: f32 = 560.0;
+/// What the identity rows say under their titles.
+const NAME_HELP: &str = "The author name recorded in your commits.";
+const EMAIL_HELP: &str = "Recorded in your commits; GitHub and GitLab link it to your account.";
 
 /// A preference and its controls. Compact columns stack the controls below the help.
 fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
-    row_more(ui, title, help, "", control);
+    row_explained(ui, title, help, "", control);
+}
+
+/// [`row`] with a longer explanation behind a help mark after its title.
+fn row_explained(
+    ui: &mut Ui,
+    title: &str,
+    help: &str,
+    detail: &str,
+    control: impl FnOnce(&mut Ui),
+) {
+    row_more(ui, title, help, detail, control);
     row_end(ui);
 }
 
 /// What a Git setting row says under its title; the recommended option is marked in its list.
 fn git_setting_help(setting: Setting) -> &'static str {
     match setting {
-        Setting::Autocrlf => {
-            "LF on commit stores text files with LF endings; CRLF on checkout also restores CRLF in the working tree."
+        Setting::PullRebase => {
+            "Replays your commits on top of the incoming ones instead of merging."
         }
         Setting::PullFastForward => {
             "With fast-forward only, Canopy asks Rebase or Merge when branches diverged."
         }
-        Setting::FetchPruneTags => "Turning this on can delete local tags that were never pushed.",
-        Setting::PullAutostash => {
-            "Stashes local changes around a pull, in place of the rebase and merge autostash settings."
+        Setting::PullAutostash => "Stashes local changes before a pull and restores them after.",
+        Setting::FetchPrune => "Removes remote branches that were deleted on the remote.",
+        Setting::FetchPruneTags => {
+            "Deletes local tags the remote doesn't have, even unpushed ones."
         }
-        Setting::PushDefault => {
-            "Matching pushes all matching branches; Nothing requires an explicit destination."
+        Setting::RebaseAutostash => {
+            "Stashes local changes before a rebase and restores them after."
         }
+        Setting::MergeAutostash => "Stashes local changes before a merge and restores them after.",
+        Setting::PushFollowTags => "Pushes the annotated tags on the commits being pushed.",
         Setting::SubmoduleRecurse => "Checkout, pull and switch also update submodules.",
-        Setting::CommitSigning => "Git uses your existing signing key and program.",
+        Setting::PushDefault => "Simple pushes to the upstream branch only when the names match.",
+        Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
+        Setting::InitialBranch => "The branch a new repository starts on.",
+        Setting::CommitCleanup => {
+            "Whitespace trims spaces and blank lines; Strip also removes lines starting with #."
+        }
+        Setting::Autocrlf => "Converts CRLF to LF on commit; CRLF on checkout converts back.",
+        Setting::CommitSigning => "Signs every commit with your configured key.",
         Setting::SigningFormat => "SSH signs with an SSH key; OpenPGP and X.509 need GnuPG.",
-        _ => "",
     }
 }
 
@@ -1298,7 +1319,7 @@ fn unset_value(setting: Setting, recommended: &str) -> String {
     } else {
         "Git's built-in"
     };
-    format!("{} · {source}", git_value_label(setting, builtin))
+    format!("{} ({source})", git_value_label(setting, builtin))
 }
 
 /// [`row`] with a note under its help about what git's own configuration says.
@@ -1533,11 +1554,32 @@ fn pull_mode_shown(
 
 /// `key = value (where it is set)`, for a note.
 fn config_phrase(v: &ConfigValue) -> String {
+    let source = source_label(Some(&v.source()));
+    let setting = |key: &str| {
+        Setting::ALL
+            .into_iter()
+            .find(|s| s.key().eq_ignore_ascii_case(key))
+    };
+    // A remote's own fetch value, or a branch's own pull value, names the remote or branch.
+    let (setting, owner) = match v.key.split_once('.') {
+        Some(("remote", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
+            (setting(&format!("fetch.{var}")), Some(name))
+        }),
+        Some(("branch", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
+            (setting(&format!("pull.{var}")), Some(name))
+        }),
+        _ => (setting(&v.key), None),
+    };
+    let Some(setting) = setting else {
+        return format!("{} in {source}", v.value);
+    };
+    let label = owner.map_or_else(
+        || setting.label().to_owned(),
+        |owner| format!("{} for {owner}", setting.label()),
+    );
     format!(
-        "{} = {} ({})",
-        v.key,
-        v.value,
-        source_label(Some(&v.source()))
+        "{label} set to {} in {source}",
+        lowercase_label(&git_value_label(setting, &v.value))
     )
 }
 
@@ -1599,9 +1641,7 @@ fn pull_note(facts: &GitFacts, choice: PullChoice) -> Option<Note> {
     } else {
         Note {
             text: format!(
-                "Canopy passes {}, so your git configuration's {described} does not apply to \
-                 pulls from Canopy.",
-                ours.git_args().join(" ")
+                "Canopy's pulls use this choice instead of your git configuration: {described}."
             ),
             warn: true,
         }
@@ -1613,6 +1653,14 @@ fn lowercase_label(label: &str) -> String {
     let mut chars = label.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_lowercase().chain(chars).collect()
+    })
+}
+
+/// A phrase as a sentence's start: "rebase when pulling …" -> "Rebase when pulling …".
+fn upper_first(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
     })
 }
 
@@ -1650,7 +1698,6 @@ fn prune_note(facts: &GitFacts, prune: bool, follow: bool) -> Option<Note> {
         &set,
         follow,
         |v| v.as_bool().unwrap_or(false) == prune,
-        if prune { "--prune" } else { "--no-prune" },
         "fetches",
     )
 }
@@ -1668,11 +1715,6 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
         &set,
         follow,
         |v| v.as_bool().unwrap_or(false) == prune_tags,
-        if prune_tags {
-            "--prune-tags"
-        } else {
-            "--no-prune-tags"
-        },
         "fetches",
     )
 }
@@ -1685,11 +1727,6 @@ fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Not
         &values,
         follow,
         |v| v.as_bool() == Some(autostash),
-        if autostash {
-            "--autostash"
-        } else {
-            "--no-autostash"
-        },
         "pulls and rebases",
     )?;
     if let (true, [only]) = (follow, values.as_slice()) {
@@ -1705,7 +1742,7 @@ fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Not
 
 /// What git's configuration says about one of Canopy's choices, set in `values`:
 /// - while Canopy follows it (`follow`), that it decides;
-/// - otherwise, that it matches Canopy's choice (`ours`), or that Canopy passes `passes`, so it
+/// - otherwise, that it matches Canopy's choice (`ours`), or that Canopy's own choice applies to its
 ///   does not apply to Canopy's `what`.
 ///
 /// `None` when the configuration sets nothing.
@@ -1713,7 +1750,6 @@ fn config_note(
     values: &[&ConfigValue],
     follow: bool,
     ours: impl Fn(&ConfigValue) -> bool,
-    passes: &str,
     what: &str,
 ) -> Option<Note> {
     if values.is_empty() {
@@ -1737,10 +1773,8 @@ fn config_note(
     } else {
         Note {
             text: format!(
-                "Canopy passes {passes}, so your git configuration's {} {} not apply to {what} \
-                 from Canopy.",
+                "Canopy's {what} use this choice instead of your git configuration: {}.",
                 phrases(&differ),
-                if differ.len() == 1 { "does" } else { "do" }
             ),
             warn: true,
         }
@@ -1838,8 +1872,8 @@ fn help_label(ui: &mut Ui, text: &str) {
     ui.add(egui::Label::new(job).wrap());
 }
 
-/// A row whose `help` is one sentence. A longer `detail` sits behind a "More" link and, once
-/// opened, runs beneath the row at reading width. The caller ends the row with [`row_end`].
+/// A row whose `help` is one or two sentences. A longer `detail` shows as the tooltip of a help
+/// mark after the title. The caller ends the row with [`row_end`].
 fn row_more(ui: &mut Ui, title: &str, help: &str, detail: &str, control: impl FnOnce(&mut Ui)) {
     let help_text = |ui: &mut Ui| {
         if !help.is_empty() {
@@ -1874,15 +1908,9 @@ fn row_layout(
     let m = theme::metrics();
     let words = Filter::get(ui.ctx()).words;
     let width = ui.available_width();
-    let more_id = ui.make_persistent_id(("settings-more", title));
-    let mut open = !detail.is_empty()
-        && ui
-            .ctx()
-            .data(|d| d.get_temp::<bool>(more_id))
-            .unwrap_or(false);
-    let label = |ui: &mut Ui, open: &mut bool| {
+    let label = |ui: &mut Ui| {
         ui.spacing_mut().item_spacing.y = theme::XS;
-        let title = marked(
+        let shown = marked(
             title,
             &words,
             &FontId::new(m.body_size, theme::semibold()),
@@ -1890,35 +1918,29 @@ fn row_layout(
             p.accent,
             p.accent_tint(),
         );
-        match tag {
-            Some(tag) => {
-                let line = Layout::left_to_right(Align::Center).with_main_wrap(true);
-                ui.with_layout(line, |ui| {
-                    ui.spacing_mut().item_spacing.x = theme::SM;
-                    ui.label(title);
+        ui.scope(|ui| {
+            // As tall as the title, not as a control.
+            ui.spacing_mut().interact_size.y = 0.0;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = theme::XS;
+                ui.label(shown);
+                if !detail.is_empty() {
+                    HelpMark::new(title, detail).show(ui);
+                }
+                if let Some(tag) = tag {
+                    ui.add_space(theme::XS);
                     Badge::new(tag)
                         .tone(Tone::Accent)
                         .tooltip(OVERRIDDEN_TIP)
                         .show(ui);
-                });
-            }
-            None => {
-                ui.label(title);
-            }
-        }
+                }
+            });
+        });
         help(ui);
-        if !detail.is_empty()
-            && LinkButton::new(if *open { "Less" } else { "More" })
-                .text_size(m.meta_size)
-                .show(ui)
-                .clicked()
-        {
-            *open = !*open;
-        }
     };
     ui.push_id(title, |ui| {
         if width < 620.0 {
-            label(ui, &mut open);
+            label(ui);
             ui.add_space(theme::XS);
             ui.allocate_ui_with_layout(
                 vec2(width, 0.0),
@@ -1937,7 +1959,7 @@ fn row_layout(
                         // Without this the column is only as wide as its text, and the controls
                         // of rows with short help text sit at different distances from the edge.
                         ui.set_min_width(width * 0.50);
-                        label(ui, &mut open);
+                        label(ui);
                     },
                 );
                 ui.allocate_ui_with_layout(
@@ -1951,15 +1973,7 @@ fn row_layout(
                 );
             });
         }
-        if open {
-            ui.add_space(theme::XS);
-            ui.scope(|ui| {
-                ui.set_max_width((width - 2.0 * theme::SM).min(READING_WIDTH));
-                help_label(ui, detail);
-            });
-        }
     });
-    ui.ctx().data_mut(|d| d.insert_temp(more_id, open));
 }
 
 /// An uppercase group label over a few rows. While searching it waits until a row under it
@@ -2092,23 +2106,18 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
             egui::Label::new(RichText::new(text).font(font.clone()).color(p.text_dim)),
         );
     };
-    row(
-        ui,
-        "Based on",
-        "The theme your colours start from: its backgrounds, text, lines and shapes.",
-        |ui| {
-            revert(ui, &mut c.light, &defaults.light, "Based on");
-            let options = [(false, "Midnight"), (true, "Daylight")];
-            Segmented::new(&mut c.light, &options)
-                .label("Based on")
-                .show(ui);
-        },
-    );
+    row(ui, "Based on", "The theme your colours build on.", |ui| {
+        revert(ui, &mut c.light, &defaults.light, "Based on");
+        let options = [(false, "Midnight"), (true, "Daylight")];
+        Segmented::new(&mut c.light, &options)
+            .label("Based on")
+            .show(ui);
+    });
     let accents = custom_theme::HUES.map(|(hue, name)| (hue, c.accent_sample(hue), name));
     row(
         ui,
         "Accent",
-        "Buttons, links, focus rings and the selection.",
+        "The colour of buttons, links and selections.",
         |ui| {
             revert(ui, &mut c.accent_hue, &defaults.accent_hue, "Accent");
             Swatches::new(&mut c.accent_hue, &accents)
@@ -2131,31 +2140,26 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
                 .show(ui);
         },
     );
-    row(
-        ui,
-        "Accent intensity",
-        "How vivid the accent is, against the base theme's.",
-        |ui| {
-            revert(
-                ui,
-                &mut c.accent_intensity,
-                &defaults.accent_intensity,
-                "Accent intensity",
-            );
-            value(ui, format!("{}%", c.accent_intensity));
-            Slider::new(&mut c.accent_intensity, CustomTheme::ACCENT_INTENSITY)
-                .label("Accent intensity")
-                .value_text(|v| format!("{v}%"))
-                .width(ZOOM_RAIL_WIDTH)
-                .id_salt("custom-accent-intensity")
-                .show(ui);
-        },
-    );
+    row(ui, "Accent intensity", "How vivid the accent is.", |ui| {
+        revert(
+            ui,
+            &mut c.accent_intensity,
+            &defaults.accent_intensity,
+            "Accent intensity",
+        );
+        value(ui, format!("{}%", c.accent_intensity));
+        Slider::new(&mut c.accent_intensity, CustomTheme::ACCENT_INTENSITY)
+            .label("Accent intensity")
+            .value_text(|v| format!("{v}%"))
+            .width(ZOOM_RAIL_WIDTH)
+            .id_salt("custom-accent-intensity")
+            .show(ui);
+    });
     let tints = custom_theme::HUES.map(|(hue, name)| (hue, CustomTheme::tint_sample(hue), name));
     row(
         ui,
         "Tint",
-        "A colour for backgrounds, lines and text. Text and lines keep their contrast.",
+        "Colours backgrounds, lines and text without losing contrast.",
         |ui| {
             revert(ui, &mut c.tint_hue, &defaults.tint_hue, "Tint");
             Swatches::new(&mut c.tint_hue, &tints)
@@ -2176,7 +2180,7 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
     row(
         ui,
         "Tint strength",
-        "0% keeps the base theme's neutral backgrounds.",
+        "How strongly the tint shows. 0% keeps neutral backgrounds.",
         |ui| {
             revert(ui, &mut c.tint, &defaults.tint, "Tint strength");
             value(ui, format!("{}%", c.tint));
@@ -2211,7 +2215,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     row(
         ui,
         "Style",
-        "Standard: flat, two-tone chrome. Deeper: floating panes, gradient controls and layered shadows.",
+        "Standard is flat. Deeper adds floating panes, gradients and shadows.",
         |ui| {
             revert(ui, &mut s.style, &DEFAULTS.style, "Style");
             let options = Style::ALL.map(|v| (v, v.label()));
@@ -2220,10 +2224,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
                 .show(ui);
         },
     );
-    row(
+    row_explained(
         ui,
         "High contrast",
-        "The chosen theme with stronger text, lines and focus rings, outlines instead of shadows and no translucency, for low vision and glare.",
+        "Stronger text, lines and focus rings, with outlines instead of shadows.",
+        "For low vision and bright light. It also turns off translucency.",
         |ui| {
             revert(
                 ui,
@@ -2250,7 +2255,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Translucent surfaces",
         match blocked {
             Some(why) => why.reason(),
-            None => "Blur what is behind menus, dialogs, toasts and the palette.",
+            None => "Blurs what is behind menus, dialogs and notifications.",
         },
         |ui| {
             revert(
@@ -2270,10 +2275,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             );
         },
     );
-    row(
+    row_explained(
         ui,
         "Density",
-        "Dense fits about a quarter more history: 24-point rows, a single-row toolbar and smaller text.",
+        "Dense fits about a quarter more history with smaller rows and text.",
+        "Dense uses 24-point rows, a single-row toolbar and smaller text.",
         |ui| {
             revert(ui, &mut s.density, &DEFAULTS.density, "Density");
             let options = Density::ALL.map(|v| (v, v.label()));
@@ -2297,7 +2303,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     row(
         ui,
         "Graph lines",
-        "How the history graph joins a branch to the lane it leaves or merges into.",
+        "The shape of the lines joining branches in the history graph.",
         |ui| {
             revert(ui, &mut s.graph_curve, &DEFAULTS.graph_curve, "Graph lines");
             let options = Curve::ALL.map(|v| (v, v.label()));
@@ -2309,7 +2315,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     let system = match motion::system() {
         Some(true) => "Your system asks for reduced motion.",
         Some(false) => "Your system asks for full motion.",
-        None => "Your system sets no preference, so Match system uses full motion.",
+        None => "Your system sets no preference, so Match system means full motion.",
     };
     row(ui, "Motion", system, |ui| {
         revert(ui, &mut s.motion, &DEFAULTS.motion, "Motion");
@@ -2349,10 +2355,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             .show(ui);
         },
     );
-    row(
+    row_explained(
         ui,
         "Commit date format",
-        "Calendar dates in History and commit details, including older relative dates. Exact timestamp tooltips always include the author's UTC offset.",
+        "How calendar dates appear in History and commit details.",
+        "Older commits shown with relative dates use it too. Exact-time tooltips always include the author's UTC offset.",
         |ui| {
             revert(
                 ui,
@@ -2390,10 +2397,11 @@ fn tooltips(ui: &mut Ui, s: &mut Settings) {
     use crate::ui::kit::overlay::{TooltipDelay, TooltipLevel};
     group_gap(ui, theme::LG);
     heading(ui, "Tooltips");
-    row(
+    row_explained(
         ui,
         "Show tooltips",
-        "Helpful: only what the screen does not show — an icon's name, why something is unavailable, cut-off text, shortcuts, full dates and addresses. All: also descriptions of labelled controls and how to use them. Off: none, except why something is unavailable.",
+        "Helpful explains only what the screen doesn't show. All also describes every control.",
+        "Helpful shows an icon's name, why something is unavailable, cut-off text, shortcuts, full dates and addresses. Off still says why something is unavailable.",
         |ui| {
             revert(ui, &mut s.tooltips, &DEFAULTS.tooltips, "Show tooltips");
             let options = TooltipLevel::ALL.map(|v| (v, v.label()));
@@ -2406,7 +2414,7 @@ fn tooltips(ui: &mut Ui, s: &mut Settings) {
     row(
         ui,
         "Tooltip delay",
-        "How long the pointer rests on something before its tooltip shows.",
+        "How long to hover before a tooltip appears.",
         |ui| {
             revert(
                 ui,
@@ -2429,7 +2437,7 @@ fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
     row(
         ui,
         "Notification cards",
-        "Cards in the bottom-right corner when something happens. The bell in the status bar lists every notification, whatever is chosen here.",
+        "Pop-up cards for new events. The bell in the status bar always lists every notification.",
         |ui| {
             revert(
                 ui,
@@ -2622,11 +2630,12 @@ fn theme_card(
             ui.painter().text(
                 caption.right_center(),
                 Align2::RIGHT_CENTER,
-                match (id == DEFAULTS.theme, tp.dark) {
-                    (true, true) => "Recommended · Dark",
-                    (true, false) => "Recommended · Light",
-                    (false, true) => "Dark",
-                    (false, false) => "Light",
+                if id == DEFAULTS.theme {
+                    "Recommended"
+                } else if tp.dark {
+                    "Dark"
+                } else {
+                    "Light"
                 },
                 FontId::proportional(m.small_size),
                 p.text_faint,
@@ -2806,7 +2815,7 @@ fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
 const FIELD_WIDTH: f32 = 280.0;
 /// The width of a select in a settings row.
 const SELECT_WIDTH: f32 = 220.0;
-/// The Git editor's selects, wide enough for "Fast-forward only · Recommended".
+/// The Git editor's selects, wide enough for "Fast-forward only (Recommended)".
 const GIT_SELECT_WIDTH: f32 = 280.0;
 /// Room for the Save button and its gap beside the first-branch field, which together are as
 /// wide as a select, so every Unset button sits in one column.
@@ -2874,8 +2883,9 @@ fn identity_group(
     if !Filter::searching(ui.ctx()) {
         identity_status(ui, identity, error);
     }
-    let current = |pick: fn(&Identity) -> &Field| {
+    let current = |pick: fn(&Identity) -> &Field, help: &'static str| {
         move |ui: &mut Ui| {
+            help_label(ui, help);
             if let Some(field) = identity.map(pick) {
                 in_use(ui, field);
             }
@@ -2894,7 +2904,7 @@ fn identity_group(
         "Name",
         None,
         "",
-        &current(|i| &i.author.name),
+        &current(|i| &i.author.name, NAME_HELP),
         "",
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
@@ -2913,7 +2923,7 @@ fn identity_group(
         "Email",
         None,
         "",
-        &current(|i| &i.author.email),
+        &current(|i| &i.author.email, EMAIL_HELP),
         "",
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
@@ -2944,7 +2954,7 @@ fn identity_group(
         row(
             ui,
             "Save to",
-            "Where Save identity writes it: your global Git configuration, or this repository's own.",
+            "Whether the identity applies to all repositories or only this one.",
             |ui| {
                 Segmented::new(
                     &mut screen.identity_scope,
@@ -3040,21 +3050,22 @@ fn git_config_editor(
                 .find(|value| value.key.eq_ignore_ascii_case(setting.key()))
         });
         let note = match (invalid, value) {
-            (Some(raw), _) => Note {
-                text: format!("{}. Git does not accept this value.", config_phrase(raw)),
+            (Some(raw), _) => Some(Note {
+                text: format!(
+                    "Git does not accept {} in {}.",
+                    raw.value,
+                    source_label(Some(&raw.source()))
+                ),
                 warn: true,
-            },
-            (None, Some(value)) => Note {
-                text: format!("{}.", config_phrase(value)),
+            }),
+            (None, Some(value)) => Some(Note {
+                text: format!("Set in {}.", source_label(Some(&value.source()))),
                 warn: false,
-            },
-            (None, None) => Note {
-                text: setting.key().to_owned(),
-                warn: false,
-            },
+            }),
+            (None, None) => None,
         };
         let help = git_setting_help(setting);
-        row_with_note(ui, setting.label(), help, Some(&note), |ui| {
+        row_with_note(ui, setting.label(), help, note.as_ref(), |ui| {
             ui.add_enabled_ui(ready, |ui| {
                 let mut selected = value.map(|value| value.value.clone());
                 if setting == Setting::InitialBranch {
@@ -3070,7 +3081,10 @@ fn git_config_editor(
                     TextField::new(&mut text)
                         .width(GIT_SELECT_WIDTH - BRANCH_SAVE_WIDTH)
                         .name(setting.label())
-                        .placeholder("Unset")
+                        .placeholder(format!(
+                            "{} (Recommended)",
+                            setting.recommendation_for(facts.and_then(|facts| facts.git))
+                        ))
                         .error(problem)
                         .id_salt("git-first-branch")
                         .show(ui);
@@ -3108,7 +3122,7 @@ fn git_config_editor(
                         .report_reselection()
                         .placeholder(invalid.or(value).map_or_else(
                             || unset_value(setting, recommended),
-                            |value| format!("Configured: {}", value.value),
+                            |value| format!("{} (Configured)", value.value),
                         ))
                         .id_salt(("git-setting", setting, scope == Scope::Global))
                         .recommended(Some(recommended.to_owned()));
@@ -3159,7 +3173,7 @@ fn git_config_editor(
         row_with_note(
             ui,
             "Hooks path",
-            "Git runs your configured hooks for user-requested operations.",
+            "Git runs the hooks in this folder for the operations you start.",
             Some(&note),
             |_| {},
         );
@@ -3189,7 +3203,10 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         (Setting::SigningFormat, "x509") => "X.509",
         (_, "true") => "On",
         (_, "false") => "Off",
-        _ => value,
+        // Branch names and the diff3 styles are names, not words.
+        (Setting::InitialBranch, _) => value,
+        (Setting::ConflictStyle, _) if value.contains("diff3") => value,
+        _ => return upper_first(value),
     }
     .to_owned()
 }
@@ -3226,7 +3243,7 @@ fn git(
     row(
         ui,
         "Follow my git config",
-        "Where your git configuration sets one of the choices below, it decides, and each choice here applies only where it sets none.",
+        "Where your git configuration sets one of these choices, it wins over Canopy's.",
         |ui| {
             revert(
                 ui,
@@ -3240,7 +3257,7 @@ fn git(
     row(
         ui,
         "Recommended settings",
-        "Writes the recommended pull, fetch, push, conflict and message choices to your global Git configuration, with pull.rebase set to false so fast-forward only applies. Signing, hooks, identity, line endings and each repository's own values stay.",
+        "Writes the recommended pull, fetch, push, conflict and message choices to your global git configuration. Signing, hooks, identity and line endings stay as they are.",
         |ui| {
             ui.add_enabled_ui(!screen.git_config_pending && f.is_some(), |ui| {
                 if confirm_button(
@@ -3264,7 +3281,7 @@ fn git(
         default_row(
             ui,
             "Pull strategy",
-            "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward. When branches diverge, Canopy asks how to combine them.",
+            "How a pull combines the remote's commits with yours. When branches diverge, Canopy asks.",
             f.and_then(|f| pull_note(f, s.pull_default())).as_ref(),
             |ui| {
                 let configured = f.and_then(|f| f.pull.as_ref()).and_then(|p| p.strategy);
@@ -3294,7 +3311,7 @@ fn git(
         default_row(
             ui,
             "Prune on fetch",
-            "Remove remote-tracking branches that were deleted on the remote.",
+            "Removes remote branches that were deleted on the remote.",
             f.and_then(|f| prune_note(f, s.prune_on_fetch, follow))
                 .as_ref(),
             |ui| {
@@ -3326,7 +3343,7 @@ fn git(
         row_with_note(
             ui,
             "Prune tags too",
-            "A pruning fetch also deletes local tags the remote does not have, including tags you never pushed (--prune-tags).",
+            "Also deletes local tags the remote doesn't have, even ones you never pushed.",
             f.and_then(|f| prune_tags_note(f, s.prune_tags, follow))
                 .as_ref(),
             |ui| {
@@ -3359,7 +3376,7 @@ fn git(
         row_with_note(
             ui,
             "Autostash",
-            "Pull and rebase even with uncommitted changes: git puts them aside first and back afterwards (--autostash).",
+            "Sets uncommitted changes aside before a pull or rebase and restores them after.",
             f.and_then(|f| autostash_note(f, s.autostash, follow))
                 .as_ref(),
             |ui| {
@@ -3374,17 +3391,12 @@ fn git(
         row_with_note(
             ui,
             "Push tags with their commits",
-            "A push also sends the annotated tags on the commits it pushes (--follow-tags), so a release tag is never left behind.",
+            "Pushes the annotated tags on the commits you push.",
             f.and_then(|f| {
                 config_note(
                     &f.follow_tags.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.as_bool() == Some(s.follow_tags),
-                    if s.follow_tags {
-                        "--follow-tags"
-                    } else {
-                        "--no-follow-tags"
-                    },
                     "pushes",
                 )
             })
@@ -3419,17 +3431,12 @@ fn git(
         row_with_note(
             ui,
             "Update submodules",
-            "After a pull or a checkout, and in a new clone, submodules follow the commits the repository records (git submodule update --init --recursive).",
+            "Pulls, checkouts and new clones also update submodules.",
             f.and_then(|f| {
                 config_note(
                     &f.submodule_recurse.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.as_bool() == Some(s.recurse_submodules),
-                    if s.recurse_submodules {
-                        "--recurse-submodules"
-                    } else {
-                        "--no-recurse-submodules"
-                    },
                     "pulls and checkouts",
                 )
             })
@@ -3464,14 +3471,13 @@ fn git(
         row_with_note(
             ui,
             "Push to",
-            "Where Push sends a branch that already has an upstream (push.default). Its upstream, when the names match, avoids sending a branch to another by surprise.",
+            "Where Push sends a branch that has an upstream.",
             f.and_then(|f| {
                 let ours = s.push_default.push_default().value();
                 config_note(
                     &f.push_default.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.value.trim().eq_ignore_ascii_case(ours),
-                    &format!("push.default={ours}"),
                     "pushes",
                 )
             })
@@ -3538,7 +3544,7 @@ fn git(
     row(
         ui,
         "Stale cleanup after (days)",
-        "Clean up stale… previews worktrees and branches whose last commit is older than this period. Removal always asks first.",
+        "Clean up stale… lists worktrees and branches with no commits for this long. Nothing is removed without asking.",
         |ui| {
             revert(
                 ui,
@@ -3554,15 +3560,13 @@ fn git(
         row_with_note(
             ui,
             "Conflict style",
-            "How a conflicted file shows the two sides. With the original text too you can tell what each side changed; trimmed leaves out the lines both sides agree on (zdiff3, or diff3 before git 2.35).",
+            "How conflicted files show both sides. Showing the original too makes each side's change clear.",
             f.and_then(|f| {
                 let ours = s.conflict_style.style();
                 config_note(
                     &f.conflict_style.iter().collect::<Vec<_>>(),
                     follow,
                     |v| canopy_core::ConflictStyle::from_value(&v.value) == Some(ours),
-                    // The style git reads when Canopy passes it: zdiff3 needs git 2.35.
-                    &format!("merge.conflictStyle={}", ours.value(f.git)),
                     "merges, rebases, cherry-picks, reverts and stashes",
                 )
             })
@@ -3606,14 +3610,13 @@ fn git(
         row_with_note(
             ui,
             "Message cleanup",
-            "What a commit removes from its message (commit.cleanup). Spaces and blank lines only keeps lines starting with #, including Markdown headings and issue numbers.",
+            "What git removes from commit messages. Spaces and blank lines only keeps lines starting with #.",
             f.and_then(|f| {
                 let ours = s.cleanup.cleanup().value();
                 config_note(
                     &f.cleanup.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.value.trim().eq_ignore_ascii_case(ours),
-                    &format!("--cleanup={ours}"),
                     "commits",
                 )
             })
@@ -3651,14 +3654,13 @@ fn git(
         row_with_note(
             ui,
             "First branch of a new repository",
-            "The branch a repository created in Canopy starts on (git init --initial-branch).",
+            "The branch a repository created in Canopy starts on.",
             f.and_then(|f| {
                 let ours = s.initial_branch().to_owned();
                 config_note(
                     &f.initial_branch.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.value.trim() == ours,
-                    &format!("--initial-branch={ours}"),
                     "new repositories",
                 )
             })
@@ -3693,17 +3695,18 @@ fn git(
     default_row(
         ui,
         "Add Signed-off-by",
-        "Appends a Signed-off-by trailer (git commit --signoff), as DCO projects require.",
+        "Adds a Signed-off-by line to commits, as DCO projects require.",
         None,
         |ui| {
             revert(ui, &mut s.signoff, &DEFAULTS.signoff, "Add Signed-off-by");
             switch(ui, &mut s.signoff, "Add Signed-off-by");
         },
     );
-    row(
+    row_explained(
         ui,
         "Check commit messages",
-        "Hints under the commit fields when the summary or a description line is longer than 72 characters, which most tools cut off or wrap. A hint never stops a commit or changes what you wrote.",
+        "Warns when the subject or a body line is longer than 72 characters. It never blocks a commit.",
+        "Most tools cut off or wrap longer lines. A hint never changes what you wrote.",
         |ui| {
             revert(
                 ui,
@@ -3729,15 +3732,20 @@ fn git(
         },
     );
     heading(ui, "Diffs");
-    row(ui, "Layout", "", |ui| {
-        revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
-        Segmented::new(
-            &mut s.split_diff,
-            &[(false, "Unified"), (true, "Side by side")],
-        )
-        .label("Diff layout")
-        .show(ui);
-    });
+    row(
+        ui,
+        "Layout",
+        "Old and new lines in one column, or in two.",
+        |ui| {
+            revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
+            Segmented::new(
+                &mut s.split_diff,
+                &[(false, "Unified"), (true, "Side by side")],
+            )
+            .label("Diff layout")
+            .show(ui);
+        },
+    );
     row(
         ui,
         "Syntax highlighting",
@@ -3755,7 +3763,7 @@ fn git(
     default_row(
         ui,
         "Context lines",
-        "Unchanged lines shown around each change. A repository can also change it from its diff header.",
+        "Unchanged lines shown around each change.",
         None,
         |ui| {
             revert(
@@ -3783,7 +3791,7 @@ fn git(
     default_row(
         ui,
         "Whitespace",
-        "Ignoring whitespace turns off hunk staging, since such a diff cannot be applied.",
+        "Ignoring whitespace hides space-only changes but turns off hunk staging.",
         None,
         |ui| {
             revert(
@@ -3861,7 +3869,7 @@ fn repository(
     repo_row(
         ui,
         "Follow my git config for pulls",
-        "Pull with the strategy this repository's git configuration sets, when it sets one.",
+        "Pulls use this repository's git configuration when it sets a strategy.",
         facts.as_ref().and_then(|f| pull_note(f, pull)).as_ref(),
         |ui| {
             override_select(
@@ -3878,7 +3886,7 @@ fn repository(
     repo_row(
         ui,
         "Pull strategy",
-        "How a pull brings in the remote's commits; while it follows the git configuration, only where that sets none. When branches diverge, Canopy asks how to combine them.",
+        "How a pull combines the remote's commits with yours. When branches diverge, Canopy asks.",
         None,
         |ui| {
             override_select(
@@ -3896,7 +3904,7 @@ fn repository(
     repo_row(
         ui,
         "Prune on fetch",
-        "Remove remote-tracking branches that were deleted on the remote.",
+        "Removes remote branches that were deleted on the remote.",
         facts
             .as_ref()
             .and_then(|f| prune_note(f, prune, s.follow_git_config))
@@ -3916,7 +3924,7 @@ fn repository(
     repo_row(
         ui,
         "Fetch in the background",
-        "Fetches this repository's remotes while Canopy is idle, and, with a hosting token, refreshes its request list on the same interval (every minute when this is off).",
+        "Fetches this repository's remotes while Canopy is idle. Its request list refreshes on the same interval.",
         None,
         |ui| {
             override_select(
@@ -3933,7 +3941,7 @@ fn repository(
     repo_row(
         ui,
         "Remote protocol",
-        "Used for remote URLs Canopy builds from owner/repository when you add a remote or publish.",
+        "The protocol for remote URLs Canopy builds when you add a remote or publish.",
         None,
         |ui| {
             override_select(
@@ -3951,7 +3959,7 @@ fn repository(
     repo_row(
         ui,
         "Add Signed-off-by",
-        "Appends a Signed-off-by trailer (git commit --signoff), as DCO projects require.",
+        "Adds a Signed-off-by line to commits, as DCO projects require.",
         None,
         |ui| {
             override_select(
@@ -4318,17 +4326,16 @@ fn program_label(program: &str) -> String {
 }
 
 fn signing_look(facts: &GitFacts) -> SigningLook {
-    const APPLIES: &str = "Canopy commits with git, so this applies.";
     if !facts.signs_commits() {
         let state = facts
             .gpg_sign
             .as_ref()
-            .map_or_else(|| "commit.gpgsign is not set".to_owned(), config_phrase);
+            .map_or_else(String::new, |v| format!(" ({})", config_phrase(v)));
         return SigningLook {
             badge: "Not signing",
             tone: Tone::Neutral,
             help: format!(
-                "Commits are not signed here ({state}). {APPLIES} To sign, turn commit.gpgsign on in your git configuration."
+                "Commits are not signed here{state}. To sign, turn on Sign commits under Git configuration."
             ),
             note: None,
         };
@@ -4337,7 +4344,7 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
         return SigningLook {
             badge: "Signing",
             tone: Tone::Success,
-            help: format!("Git signs commits here. {APPLIES}"),
+            help: "Git signs commits here.".to_owned(),
             note: None,
         };
     };
@@ -4363,7 +4370,7 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
         .as_ref()
         .map_or_else(String::new, |v| format!(" ({})", config_phrase(v)));
     let help = format!(
-        "Commits are signed as {} with {key}, by {program}{setting}. {APPLIES} Commit details show whether each signature verifies.",
+        "Commits are signed as {} with {key}, by {program}{setting}.",
         signing.format_label()
     );
     let program_key = match signing.format.as_str() {
@@ -4439,7 +4446,7 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
     repo_row(
         ui,
         "Context lines",
-        "Unchanged lines shown around each change. Context and whitespace follow the defaults together; selecting either pins both. The diff header changes them too.",
+        "Unchanged lines shown around each change in this repository.",
         None,
         |ui| {
             let labels = (0..=25)
@@ -4462,7 +4469,7 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
     repo_row(
         ui,
         "Whitespace",
-        "Ignoring whitespace turns off hunk staging, since such a diff cannot be applied.",
+        "Ignoring whitespace hides space-only changes but turns off hunk staging.",
         None,
         |ui| {
             let options = WhitespaceMode::ALL.map(|w| (w, w.label()));
@@ -4481,7 +4488,7 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
         repo_row(
             ui,
             "Diff defaults",
-            "Reset context lines and whitespace together to follow Settings → Git.",
+            "Returns context lines and whitespace to the values in Settings → Git.",
             None,
             |ui| {
                 if IconButton::new(icon::ARROW_COUNTER_CLOCKWISE, "Use default diff options")
@@ -4702,8 +4709,9 @@ fn repo_identity(
         identity_status(ui, identity, view.error);
     }
     let has_own = identity.is_some_and(|i| local(&i.author.name) || local(&i.author.email));
-    let current = |pick: fn(&Identity) -> &Field| {
+    let current = |pick: fn(&Identity) -> &Field, help: &'static str| {
         move |ui: &mut Ui| {
+            help_label(ui, help);
             if let Some(field) = identity.map(pick) {
                 in_use(ui, field);
             }
@@ -4727,7 +4735,7 @@ fn repo_identity(
         "Name",
         name_tag,
         "identity user.name author",
-        &current(|i| &i.author.name),
+        &current(|i| &i.author.name, NAME_HELP),
         "",
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
@@ -4749,7 +4757,7 @@ fn repo_identity(
         "Email",
         email_tag,
         "identity user.email author",
-        &current(|i| &i.author.email),
+        &current(|i| &i.author.email, EMAIL_HELP),
         "",
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
@@ -4767,7 +4775,7 @@ fn repo_identity(
     row(
         ui,
         "Apply identity",
-        "Saves the name and email to this repository's .git/config, where they win over your global identity for future commits here.",
+        "Saves the name and email for this repository only.",
         |ui| {
             if Button::new("Save to this repository")
                 .primary()
@@ -4863,7 +4871,7 @@ fn integrations(
     row(
         ui,
         "Default clone folder",
-        "Where the clone dialog puts new repositories. Empty uses ~/src when it exists, else your home folder.",
+        "Where new clones go. Empty uses ~/src if it exists, else your home folder.",
         |ui| {
             let right = ui.cursor().max.x;
             if let Some(dir) = picker.show(
@@ -4891,7 +4899,7 @@ fn integrations(
     default_row(
         ui,
         "Clone protocol",
-        "Used for URLs Canopy builds from owner/repository when you clone, add a remote or publish. SSH needs a key added to your account.",
+        "The protocol for URLs Canopy builds when you clone, add a remote or publish. SSH needs a key on your account.",
         None,
         |ui| {
             revert(
@@ -4912,7 +4920,7 @@ fn integrations(
     row(
         ui,
         "Self-hosted GitLab",
-        "Hosts to treat as GitLab, comma-separated. Hosts whose name starts with \"gitlab\" are recognised anyway.",
+        "Comma-separated hosts to treat as GitLab. Hosts starting with \"gitlab\" are recognised anyway.",
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut s.gitlab_hosts)
@@ -4924,10 +4932,11 @@ fn integrations(
             });
         },
     );
-    row(
+    row_explained(
         ui,
         "Pull and merge requests",
-        "Load, review and act on pull/merge requests through the GitHub and GitLab APIs. Requests load when you open a repository hosted there. Off keeps Canopy offline apart from git itself.",
+        "Loads pull and merge requests through the GitHub and GitLab APIs. Off keeps Canopy offline apart from git.",
+        "Requests load when you open a repository hosted on GitHub or GitLab.",
         |ui| {
             revert(
                 ui,
@@ -5044,9 +5053,8 @@ fn launcher_row(
         .map(|a| a.installed(kind).collect())
         .unwrap_or_default();
     let system_label = match (apps, system) {
-        (None, _) => "Recommended (looking…)".to_owned(),
-        (Some(_), Some(choice)) => format!("Recommended · {}", choice.name),
-        (Some(_), None) => "Recommended".to_owned(),
+        (Some(_), Some(choice)) => format!("{} (Recommended)", choice.name),
+        _ => "Recommended".to_owned(),
     };
     // The system's own choice is listed once, as the default: not again as an installed app.
     let is_default = |app: &crate::system_apps::App| is_system_choice(system, app);
@@ -5480,7 +5488,7 @@ fn privacy(
         ui,
         "Trusted folders",
         "Canopy downloads a partial clone's missing files on its own only inside these folders.",
-        "In a partial clone, opening a commit or a diff downloads the files the clone left on the server. git then follows the repository's own configuration, which can run programs and contact servers, so Canopy does this on its own only for repositories inside these folders. Trust a folder only if everything in it comes from you or from people you trust. Elsewhere you see what is already on disk, with a Trust… button in the status bar.",
+        "Opening a commit or diff in a partial clone downloads the missing files, and git then follows the repository's configuration, which can run programs and contact servers. Trust a folder only if everything in it comes from you or people you trust; elsewhere, Trust… in the status bar asks first.",
         |ui| {
             if let Some(dir) = picker.show_labelled(
                 ui,
@@ -5499,7 +5507,7 @@ fn privacy(
     }
     row_end(ui);
     heading(ui, "Profile pictures");
-    let help = "Fetch GitHub or GitLab account pictures for visible authors.";
+    let help = "Shows GitHub or GitLab account pictures next to authors.";
     let open_accounts = std::cell::Cell::new(false);
     let help_text = |ui: &mut Ui| {
         help_label(ui, help);
@@ -5513,7 +5521,7 @@ fn privacy(
         None,
         help,
         &help_text,
-        "Sends commit IDs to GitHub or author emails to GitLab. Pictures, and authors without one, are remembered for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
+        "Sends commit IDs to GitHub or author emails to GitLab. Pictures, and authors without one, are remembered for 12 hours, and a failed refresh keeps the previous picture. Off shows initials and needs Pull and merge requests on to turn back on.",
         |ui| {
             revert(
                 ui,
@@ -5627,7 +5635,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     row(
         ui,
         "Check for updates",
-        "At most once a day, at start, Canopy reads a small public file on GitHub; GitHub sees your IP address and build number. Nothing is downloaded until you choose Update.",
+        "Once a day at start, Canopy reads a small public file on GitHub, which sees your IP address and build number. Nothing downloads until you choose Update.",
         |ui| {
             revert(
                 ui,
@@ -5776,10 +5784,11 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
         ui.add_space(theme::SM);
     }
     heading(ui, "Settings file");
-    row(
+    row_explained(
         ui,
         "Export settings",
-        "Saves your preferences to a file. Tokens, consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings stay out.",
+        "Saves your preferences to a file, without tokens or consent.",
+        "Left out: tokens, consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Export…" })
                 .icon(icon::EXPORT)
@@ -5799,10 +5808,11 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
             }
         },
     );
-    row(
+    row_explained(
         ui,
         "Import settings",
-        "Loads preferences from a settings file; what it leaves out stays as it is. A file never chooses the programs Canopy runs or the GitLab hosts trusted with a token, and never turns a network feature on.",
+        "Loads preferences from a settings file.",
+        "What the file leaves out stays as it is. A file never chooses the programs Canopy runs or the hosts a token goes to, and never turns a network feature on.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Import…" })
                 .icon(icon::DOWNLOAD_SIMPLE)
@@ -5820,7 +5830,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Reset all settings",
-        "Restores every preference to its recommended value, which turns pull and merge requests, profile pictures and update checks back on. Tokens, trusted folders, repositories and your consent stay.",
+        "Restores every preference to its recommended value. Tokens, trusted folders, repositories and consent stay.",
         |ui| {
             if confirm_button(ui, "reset-all-settings", "Reset all", "Reset every setting") {
                 match crate::settings_file::reset(s) {
@@ -5988,7 +5998,6 @@ pub(crate) fn against_recommendation(
         &facts.follow_tags.iter().collect::<Vec<_>>(),
         follow,
         |v| v.as_bool() == Some(settings.follow_tags),
-        "--follow-tags",
         "pushes",
     );
     // The pull recommendation is the one the editor marks and Use recommended writes.
@@ -6054,7 +6063,8 @@ pub(crate) fn against_recommendation(
         note.map(|n| {
             let text = n.text.trim_start_matches(DECIDES).trim_start_matches(": ");
             format!(
-                "{name}: {text} Recommended: {}.",
+                "{} Recommended: {}.",
+                upper_first(text),
                 match name {
                     "Pull" => pull_recommended.as_str(),
                     "Prune tags" => "off",
@@ -6076,9 +6086,8 @@ pub(crate) fn against_recommendation(
             && value.value != recommended
         {
             lines.push(format!(
-                "{}: {}. Recommended: {}.",
-                setting.label(),
-                config_phrase(value),
+                "{}. Recommended: {}.",
+                upper_first(&config_phrase(value)),
                 git_value_label(setting, recommended)
             ));
         }
@@ -7060,16 +7069,16 @@ mod tests {
         assert!(!followed.warn);
         assert_eq!(
             followed.text,
-            "Your git configuration decides: pull.rebase = true (global: \
-             /home/me/.gitconfig), so pulls use rebase."
+            "Your git configuration decides: Rebase when pulling set to rebase in global: \
+             /home/me/.gitconfig, so pulls use rebase."
         );
         assert!(!pull_note(&facts, own(PullMode::Rebase)).unwrap().warn);
         let overridden = pull_note(&facts, own(PullMode::Merge)).unwrap();
         assert!(overridden.warn);
         assert_eq!(
             overridden.text,
-            "Canopy passes --no-rebase --ff, so your git configuration's pull.rebase = true \
-             (global: /home/me/.gitconfig) does not apply to pulls from Canopy."
+            "Canopy's pulls use this choice instead of your git configuration: Rebase when \
+             pulling set to rebase in global: /home/me/.gitconfig."
         );
     }
 
@@ -7375,7 +7384,7 @@ mod tests {
         assert!(
             recommended
                 .text
-                .starts_with("Your git configuration decides: fetch.prune = true")
+                .starts_with("Your git configuration decides: Prune remote branches set to on")
                 && !recommended.text.contains("Recommended"),
             "{}",
             recommended.text
@@ -7385,7 +7394,7 @@ mod tests {
         let tags = prune_tags_note(&facts, false, true).expect("a note");
         assert!(!tags.warn);
         assert!(
-            tags.text.contains("fetch.pruneTags = true") && !tags.text.contains("Recommended:"),
+            tags.text.contains("Prune local tags set to on") && !tags.text.contains("Recommended:"),
             "{}",
             tags.text
         );
@@ -7393,7 +7402,9 @@ mod tests {
         let replaced = prune_tags_note(&facts, false, false).expect("a note");
         assert!(replaced.warn);
         assert!(
-            replaced.text.starts_with("Canopy passes --no-prune-tags"),
+            replaced
+                .text
+                .starts_with("Canopy's fetches use this choice"),
             "{}",
             replaced.text
         );
@@ -7427,7 +7438,8 @@ mod tests {
         let off = prune_note(&facts, false, false).unwrap();
         assert!(off.warn);
         assert!(
-            off.text.starts_with("Canopy passes --no-prune"),
+            off.text.starts_with("Canopy's fetches use this choice")
+                && off.text.contains("set to on"),
             "{}",
             off.text
         );
@@ -7436,7 +7448,7 @@ mod tests {
         assert!(!prune_note(&facts, false, false).unwrap().warn);
         let on = prune_note(&facts, true, false).unwrap();
         assert!(on.warn);
-        assert!(on.text.starts_with("Canopy passes --prune"), "{}", on.text);
+        assert!(on.text.contains("set to off"), "{}", on.text);
     }
 
     fn signing(format: &str, key: Option<&str>, problem: Option<SigningProblem>) -> GitFacts {
@@ -7462,7 +7474,7 @@ mod tests {
         let off = signing_look(&GitFacts::default());
         assert_eq!((off.badge, off.tone), ("Not signing", Tone::Neutral));
         assert!(
-            off.help.contains("commit.gpgsign is not set"),
+            off.help.starts_with("Commits are not signed here. "),
             "{}",
             off.help
         );
@@ -7475,7 +7487,7 @@ mod tests {
         assert!(
             signing_look(&explicit)
                 .help
-                .contains("commit.gpgsign = false"),
+                .contains("Sign commits set to off in global"),
             "{}",
             signing_look(&explicit).help
         );
@@ -7543,11 +7555,16 @@ mod tests {
         let off = prune_note(&facts, false, false).expect("a note");
         assert!(off.warn);
         assert!(
-            off.text.contains("remote.origin.prune = true"),
+            off.text
+                .contains("Prune remote branches for origin set to on"),
             "{}",
             off.text
         );
-        assert!(off.text.contains(" does not apply"), "{}", off.text);
+        assert!(
+            off.text.contains("instead of your git configuration"),
+            "{}",
+            off.text
+        );
         assert!(!prune_note(&facts, true, false).expect("a note").warn);
 
         // Every remote sets its own, so fetch.prune decides nothing and is not named.
@@ -7560,21 +7577,29 @@ mod tests {
         facts.remotes.push(remote("mirror"));
         let on = prune_note(&facts, true, false).expect("a note");
         assert!(on.warn);
-        assert!(on.text.contains("fetch.prune = false"), "{}", on.text);
-        assert!(!on.text.contains("remote.origin.prune"), "{}", on.text);
+        assert!(
+            on.text.contains("Prune remote branches set to off"),
+            "{}",
+            on.text
+        );
+        assert!(!on.text.contains("for origin"), "{}", on.text);
         let off = prune_note(&facts, false, false).expect("a note");
         assert!(off.warn);
         assert!(
-            off.text.contains("remote.origin.prune = true") && !off.text.contains("fetch.prune"),
+            off.text
+                .contains("Prune remote branches for origin set to on")
+                && !off.text.contains("set to off"),
             "{}",
             off.text
         );
         facts.remote_prune.push(fact("remote.mirror.prune", "true"));
         let off = prune_note(&facts, false, false).expect("a note");
         assert!(
-            off.text.contains("remote.origin.prune = true (")
-                && off.text.contains(" and remote.mirror.prune = true (")
-                && off.text.contains(" do not apply"),
+            off.text
+                .contains("Prune remote branches for origin set to on in ")
+                && off
+                    .text
+                    .contains(" and Prune remote branches for mirror set to on in "),
             "{}",
             off.text
         );
@@ -7983,6 +8008,10 @@ mod tests {
     fn git_setting_help_does_not_type_the_recommendation() {
         for setting in Setting::ALL {
             assert!(
+                !git_setting_help(setting).is_empty(),
+                "{setting:?} has no help"
+            );
+            assert!(
                 !git_setting_help(setting).contains("Recommended"),
                 "{setting:?}: the list marks the recommended option"
             );
@@ -8083,11 +8112,23 @@ mod tests {
         facts.direct = vec![fact("fetch.prune", "maybe")];
         let nodes = git_page(facts, true);
         let row = format!("{nodes:?}");
-        assert!(
-            row.contains("fetch.prune = maybe") && row.contains("does not accept"),
-            "{row}"
-        );
+        assert!(row.contains("Git does not accept maybe in"), "{row}");
         assert!(!row.contains("fetch.prune is unset"), "{row}");
+    }
+
+    /// Rows name settings by their labels, never by git's keys.
+    #[test]
+    fn the_git_page_never_shows_a_configuration_key() {
+        let facts = GitFacts {
+            direct: vec![fact("pull.rebase", "true"), fact("fetch.prune", "false")],
+            fetch_prune: Some(fact("fetch.prune", "false")),
+            push_default: Some(fact("push.default", "matching")),
+            ..GitFacts::default()
+        };
+        let page = format!("{:?}", git_page(facts, true));
+        for setting in Setting::ALL {
+            assert!(!page.contains(setting.key()), "{} in {page}", setting.key());
+        }
     }
 
     /// Where a value is set reads as the signing row says it, never as git's raw `file:` origin.
@@ -8154,12 +8195,14 @@ mod tests {
         };
         let lines = against_recommendation(&facts, &Settings::default(), Path::new("fixture"));
         for key in [
-            "push.default",
-            "merge.conflictStyle",
-            "commit.cleanup",
-            "init.defaultBranch",
-            "submodule.recurse",
-        ] {
+            Setting::PushDefault,
+            Setting::ConflictStyle,
+            Setting::CommitCleanup,
+            Setting::InitialBranch,
+            Setting::SubmoduleRecurse,
+        ]
+        .map(Setting::label)
+        {
             assert!(
                 lines
                     .iter()
@@ -8210,7 +8253,8 @@ mod tests {
         let lines = against_recommendation(&facts, &follow, repo);
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(
-            lines[0].starts_with("Prune: fetch.prune = false") && lines[0].contains("Recommended"),
+            lines[0].starts_with("Prune remote branches set to off")
+                && lines[0].contains("Recommended"),
             "{lines:?}"
         );
         let ours = Settings {

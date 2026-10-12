@@ -285,7 +285,7 @@ unavailable, cut-off text, shortcuts, and details such as full dates, addresses 
 tooltip that only describes a labelled control (a kit button, toggle, field or chip with its name
 on screen and no shortcut) or says how to use something is `Tooltip::extra` and shows only at
 All. Every level, Off included, shows why a control is unavailable, also for kit buttons that
-draw themselves disabled. A truncated label's tooltip shows only when
+draw themselves disabled, and a help mark's explanation (`Tooltip::always`). A truncated label's tooltip shows only when
 the label is actually cut.
 
 A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
@@ -879,8 +879,9 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
 ### Git configuration editing
 
 The Git page edits the main global Git file; This repository edits its common local Git file.
-Rows use the existing Select/TextField and row layout, with the configured value, scope and
-source below the help. Enumerated values have one option each; unsupported configured values
+Rows use the existing Select/TextField and row layout, with where a value is set below the help.
+An unset row's select reads "Value (Recommended)", or "Value (Git's built-in)" where Canopy leaves
+the choice to Git. Enumerated values have one option each; unsupported configured values
 remain visible as text. Recommendations are badges, never a reason to lock a control. Unset and
 Inherit remove the direct override, leaving includes and higher-priority scopes intact. The
 first-branch field requires Save and validates before writing. Writes temporarily disable the
@@ -897,11 +898,13 @@ on release, so the control stays under the pointer; typing a percentage applies 
 when the field loses focus. A row's label column is always half the width, so controls of different
 rows line up on the right however short their help text is.
 
-A row's help is one sentence; longer explanation sits behind a "More" link and opens beneath the
-row at reading width (560 points). Settings → Keyboard shows one key column of the cheatsheet's
+Every row has help of one or two plain sentences that names settings by their labels, never by
+git keys or flags. A longer explanation sits in a help mark (`HelpMark`, a faint "?" at `icon_md`
+right after the title, `XS` apart) whose tooltip shows on hover and on keyboard focus at every
+Tooltips level; screen readers hear it as the mark's description. Settings → Keyboard shows one key column of the cheatsheet's
 keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo
 and a tick; hover is a neutral hairline. Cards fill the row in whole columns and reflow with the
-width, using a 180-point minimum so the theme name and default/dark/light caption stay apart. Text-field placeholders are italic and faint, and fields in a section share one width.
+width, using a 180-point minimum so the theme name and Recommended/Dark/Light caption stay apart. Text-field placeholders are italic and faint, and fields in a section share one width.
 Long paths in settings are cut in the middle with the whole path in a tooltip.
 
 Browse opens the native folder chooser on a background thread. The requesting button displays
