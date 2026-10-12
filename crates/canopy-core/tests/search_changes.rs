@@ -114,3 +114,33 @@ fn text_that_looks_like_an_option_is_searched_for_not_run() {
     repo.search_changes(None, "", false, 10)
         .expect_err("an empty query");
 }
+
+/// A repository that names a textconv program for `*.txt` must not make the search run it.
+#[cfg(unix)]
+#[test]
+fn a_repositorys_textconv_program_does_not_run() {
+    let dir = fixture();
+    let p = dir.path();
+    let marker = p.join("textconv-ran");
+    let script = p.join("conv.sh");
+    fs::write(
+        &script,
+        format!("#!/bin/sh\ntouch '{}'\ncat \"$1\"\n", marker.display()),
+    )
+    .expect("script");
+    git(
+        p,
+        &[
+            "config",
+            "diff.evil.textconv",
+            &format!("sh {}", script.display()),
+        ],
+    );
+    write(p, ".gitattributes", "*.txt diff=evil\n");
+    let repo = Repo::open(p).expect("repo");
+    let found = repo
+        .search_changes(None, "needle", false, 10)
+        .expect("search");
+    assert_eq!(found.hits.len(), 3);
+    assert!(!marker.exists(), "the textconv program ran");
+}

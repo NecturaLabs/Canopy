@@ -35,7 +35,8 @@ impl Repo {
     /// The commits reachable from `from` (`HEAD` when `None`) that added or removed `query`
     /// (a count change of the text, `git log -S`), or with `regex` whose changed lines match it
     /// (`git log -G`), at most `limit` commits, one hit per matching file. Merge commits show no
-    /// diff to search. A partial clone downloads nothing for it: missing objects are skipped.
+    /// diff to search. A partial clone downloads nothing for it; an object it lacks makes the search
+    /// fail with git's own message.
     ///
     /// # Errors
     /// An empty query or one with a NUL, git's own message when the search cannot run (an unborn
@@ -60,6 +61,10 @@ impl Repo {
             "-z",
             "--no-show-signature",
             "--no-color",
+            // A repository's own textconv or external diff program must not run here: the
+            // search reads the stored bytes, in a folder that may not be trusted.
+            "--no-textconv",
+            "--no-ext-diff",
             &pickaxe,
             &count,
             "--format=%x1e%H%x1f%an%x1f%at%x1f%s",
