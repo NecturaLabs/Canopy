@@ -29,7 +29,7 @@ use crate::tab::RepoTab;
 static CHOSEN: OnceLock<Scenario> = OnceLock::new();
 
 /// What `--demo-requests` accepts, for `--help` and the error message.
-pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, list-overflow, list-more, filtered, no-match, \
+pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, list-overflow, list-more, list-search, filtered, no-match, \
 <number>, busy, loading, details-loading, details-error, error, no-token or empty; prefix gitlab: for \
 merge requests";
 
@@ -44,6 +44,8 @@ enum Scene {
     Overflow,
     /// The open list with more pages on the host: the note and the Load more button after it.
     More,
+    /// A search the host answered, with more matches to load.
+    Search,
     /// The open list with a filter and a sort chosen: ready requests, A to Z by title.
     Filtered,
     /// The open list with a text filter that matches nothing.
@@ -105,6 +107,7 @@ impl Scenario {
             "list-unchecked" => Scene::Unchecked,
             "list-overflow" => Scene::Overflow,
             "list-more" => Scene::More,
+            "list-search" => Scene::Search,
             "filtered" => Scene::Filtered,
             "no-match" => Scene::NoMatch,
             "busy" => Scene::Busy,
@@ -220,6 +223,12 @@ impl Scenario {
             Scene::More => {
                 requests.list = list(StateFilter::Open);
                 requests.more = true;
+            }
+            Scene::Search => {
+                requests.list = list(StateFilter::Open);
+                requests.more = true;
+                "update".clone_into(&mut tab.request_view.text);
+                requests.query = tab.request_view.host_query();
             }
             Scene::Filtered | Scene::NoMatch => {
                 requests.list = list(StateFilter::Open);
@@ -961,6 +970,7 @@ mod tests {
             "list-unchecked",
             "list-overflow",
             "list-more",
+            "list-search",
             "filtered",
             "no-match",
             "428",
