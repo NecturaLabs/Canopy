@@ -538,6 +538,10 @@ press and release in one frame can leave it there) is raised above it at once.
 A select can mark one option with the kit's Recommended badge; its accessible description
 announces the recommendation without repeating the option name. The list reserves room for the
 badge and check, truncating only the painted label while keeping its full accessible name.
+
+Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
+open and closed; app-launcher selects stop at the 280-pixel text-field width. Number fields are
+120 pixels and the first-branch field 160, so a control is never much wider than what it holds.
 Repository selects show the effective value once. Explicit selection pins even the current value;
 only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
 controls name their setting. Context lines and whitespace are one saved diff preset, with one
