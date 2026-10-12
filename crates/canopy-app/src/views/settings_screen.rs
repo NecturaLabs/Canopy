@@ -2813,22 +2813,19 @@ fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
 
 /// The width of a text field in a settings row.
 const FIELD_WIDTH: f32 = 280.0;
-/// The width of a select in a settings row.
-const SELECT_WIDTH: f32 = 220.0;
-/// The Git editor's selects, wide enough for "Fast-forward only (Recommended)".
-const GIT_SELECT_WIDTH: f32 = 280.0;
-/// Room for the Save button and its gap beside the first-branch field, which together are as
-/// wide as a select, so every Unset button sits in one column.
-const BRANCH_SAVE_WIDTH: f32 = 64.0;
+/// The narrowest a settings select gets, so a short one is still an easy target.
+const SELECT_MIN_WIDTH: f32 = 120.0;
+/// The first-branch field: room for a branch name such as "main" or "develop".
+const BRANCH_FIELD_WIDTH: f32 = 160.0;
 
-/// A select's width in a settings row: [`SELECT_WIDTH`], so a column of rows lines up, or wider
-/// when its longest option needs it (`kit::select::fit_width`).
+/// A select's width in a settings row: as wide as its longest option needs
+/// (`kit::select::fit_width`), as desktop pop-up buttons size to their content.
 fn select_width<'l>(ui: &Ui, labels: impl IntoIterator<Item = &'l str>) -> f32 {
-    SELECT_WIDTH.max(select::fit_width(ui, labels))
+    SELECT_MIN_WIDTH.max(select::fit_width(ui, labels))
 }
 
 /// The width of the commits-per-page field, its steppers included.
-const COUNT_FIELD_WIDTH: f32 = 160.0;
+const COUNT_FIELD_WIDTH: f32 = 120.0;
 
 /// What is wrong with the identity, or that it is still being read.
 fn identity_status(ui: &mut Ui, identity: Option<&Identity>, error: Option<&str>) {
@@ -3079,7 +3076,7 @@ fn git_config_editor(
                     let mut text = draft.map_or_else(|| saved.clone(), |draft| draft.text);
                     let problem = initial_branch_problem(&text);
                     TextField::new(&mut text)
-                        .width(GIT_SELECT_WIDTH - BRANCH_SAVE_WIDTH)
+                        .width(BRANCH_FIELD_WIDTH)
                         .name(setting.label())
                         .placeholder(format!(
                             "{} (Recommended)",
@@ -3117,7 +3114,7 @@ fn git_config_editor(
                         .map(|(value, label)| (Some((*value).to_owned()), label.as_str()))
                         .collect();
                     let select = Select::new(&mut selected, &options)
-                        .width(GIT_SELECT_WIDTH)
+                        .fit_to_options()
                         .name(setting.label())
                         .report_reselection()
                         .placeholder(invalid.or(value).map_or_else(
@@ -3533,7 +3530,7 @@ fn git(
             let current = fetch_interval_label(s.auto_fetch_minutes);
             Select::new(&mut s.auto_fetch_minutes, &options)
                 .placeholder(current)
-                .width(SELECT_WIDTH)
+                .fit_to_options()
                 .name("Fetch in the background")
                 .recommended(DEFAULTS.auto_fetch_minutes)
                 .id_salt("auto-fetch")
@@ -3802,7 +3799,7 @@ fn git(
             );
             let options = WhitespaceMode::ALL.map(|m| (m, m.label()));
             Select::new(&mut s.diff.whitespace, &options)
-                .width(SELECT_WIDTH)
+                .fit_to_options()
                 .name("Whitespace")
                 .recommended(DEFAULTS.diff.whitespace)
                 .id_salt("whitespace")
@@ -4054,7 +4051,7 @@ fn repo_tab(ui: &mut Ui, s: &mut Settings, path: &Path) {
     let mut chosen = current;
     row(ui, "Icon", "Shown in the tab, before its name.", |ui| {
         Select::new(&mut chosen, &options)
-            .width(SELECT_WIDTH)
+            .fit_to_options()
             .name("Tab icon")
             .id_salt("repo-tab-icon")
             .show(ui);
@@ -4459,7 +4456,7 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
             selected |= Select::new(&mut chosen.context, &options)
                 .recommended(DEFAULTS.diff.context)
                 .report_reselection()
-                .width(SELECT_WIDTH)
+                .fit_to_options()
                 .name("Context lines")
                 .id_salt("repo-context")
                 .show(ui)
@@ -5056,7 +5053,7 @@ fn launcher_row(
         (Some(_), Some(choice)) => format!("{} (Recommended)", choice.name),
         _ => "Recommended".to_owned(),
     };
-    // The system's own choice is listed once, as the default: not again as an installed app.
+    // The system's own choice is listed once, as the recommendation: not again as an installed app.
     let is_default = |app: &crate::system_apps::App| is_system_choice(system, app);
     let current = match launch_choice(value, custom.contains(&kind), &installed) {
         LaunchChoice::App(i) if installed.get(i).is_some_and(|a| is_default(a)) => {
@@ -5076,7 +5073,7 @@ fn launcher_row(
     let options: Vec<(LaunchChoice, &str)> = labels.iter().map(|(c, l)| (*c, l.as_str())).collect();
     let mut chosen = current;
     // An environment variable behind the system's choice, under the help (the control column is
-    // narrow); the select already says the choice is the default.
+    // narrow); the select already marks the choice Recommended.
     let origin = (current == LaunchChoice::System)
         .then_some(system)
         .flatten()
@@ -5093,7 +5090,7 @@ fn launcher_row(
     };
     row_layout(ui, title, None, help, &help_text, "", |ui| {
         Select::new(&mut chosen, &options)
-            .width(FIELD_WIDTH)
+            .width(select_width(ui, options.iter().map(|(_, l)| *l)).min(FIELD_WIDTH))
             .name(title)
             .id_salt(("launcher", title))
             .show(ui);
@@ -5544,7 +5541,7 @@ fn privacy(
             let before = s.log_level;
             let options = crate::logging::LogLevel::ALL.map(|l| (l, l.label()));
             Select::new(&mut s.log_level, &options)
-                .width(SELECT_WIDTH)
+                .fit_to_options()
                 .name("Log detail")
                 .id_salt("log-level")
                 .show(ui);
