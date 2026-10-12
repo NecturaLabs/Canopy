@@ -855,7 +855,7 @@ content changes, using the theme's metadata size and subdued text colour.
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings
 rows: Name and Email, each with a text field and, as its help text, what Git uses now and where it
-comes from ("In use now: Ada (global: ~/.gitconfig)"); a Committer row only when the committer
+comes from ("From your global git config"); a Committer row only when the committer
 differs; a "Save to" choice between this repository and all repositories (only with a repository
 open); Save identity, which stays disabled until both fields have text; and Clear…, which asks first
 in a `danger` confirmation. A `warning` line with the warning icon sits above the rows when Git
@@ -883,11 +883,13 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
 ### Git configuration editing
 
 The Git page edits the main global Git file; This repository edits its common local Git file.
-Rows use the existing Select/TextField and row layout, with where a value is set below the help.
-An unset row's select reads "Value (Recommended)", or "Value (Git's built-in)" where Canopy leaves
-the choice to Git. Enumerated values have one option each; unsupported configured values
-remain visible as text. Recommendations are badges, never a reason to lock a control. Unset and
-Inherit remove the direct override, leaving includes and higher-priority scopes intact. The
+Rows use the existing Select/TextField and row layout, with where a value is set below the help,
+named by scope ("this repository", "your global git config") and by path only for an included
+file. An unset row's select reads "Value (Recommended)", or just the value Git uses where Canopy
+leaves the choice to Git. Enumerated values have one option each; unsupported configured values
+remain visible as text. Recommendations are badges, never a reason to lock a control. A global
+value is changed, never cleared; a repository's own value has the reset button, which removes the
+override and leaves includes and higher-priority scopes intact. The
 first-branch field requires Save and validates before writing. Writes temporarily disable the
 editor, then reread facts and show success or Git's error. Use recommended confirms its global
 scope and preserves signing, hooks, identity and line endings.
@@ -899,11 +901,12 @@ replaces the left navigation below 720 points. Below 620 points of content width
 label and help sit above its controls. Shortcut descriptions and keycaps stack when they cannot
 fit together. Zoom shows a percentage preview while dragging and applies
 on release, so the control stays under the pointer; typing a percentage applies on Enter or
-when the field loses focus. A row's label column is always half the width, so controls of different
-rows line up on the right however short their help text is.
+when the field loses focus. A row's label column takes the room its control and reset button leave,
+at least half the row and at most 640 points; controls of every row line up on the right.
 
-Every row has help of one or two plain sentences that names settings by their labels, never by
-git keys or flags. A longer explanation sits in a help mark (`HelpMark`, a faint "?" at `icon_md`
+Every row has help of one plain sentence that fits on one line at the usual window size (a test
+renders every page and fails on a wrapped one), and names settings by their labels, never by git
+keys or flags. A longer explanation sits in a help mark (`HelpMark`, a faint "?" at `icon_md`
 right after the title, `XS` apart) whose tooltip shows on hover and on keyboard focus at every
 Tooltips level; screen readers hear it as the mark's description. Settings → Keyboard shows one key column of the cheatsheet's
 keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo

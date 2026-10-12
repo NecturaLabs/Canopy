@@ -170,7 +170,7 @@ pub fn explain(s: &Situation<'_>, now: i64) -> Option<Explanation> {
         // Download profile pictures may be on: the title names what is off, not the pictures.
         return Some(Explanation {
             title: "GitHub and GitLab API is off",
-            detail: "Profile pictures come from it; Pull and merge requests in Settings → Integrations turns it on.".to_owned(),
+            detail: "Turn on Pull and merge requests in Settings → Integrations.".to_owned(),
             fix: Some(Fix::Integrations),
         });
     }
