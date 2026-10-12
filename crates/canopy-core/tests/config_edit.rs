@@ -181,7 +181,7 @@ fn recommendations_replace_old_global_choices_leave_sensitive_values_and_allow_l
     .expect("local choice");
     config::apply_recommended(dir.path()).expect("apply recommendations");
     for setting in Setting::ALL {
-        if let Some(expected) = setting.recommendation() {
+        if let Some(expected) = setting.recommended_write() {
             let out = cli::run(dir.path(), &["config", "--global", "--get", setting.key()])
                 .expect("recommended value");
             assert_eq!(out.trim(), expected, "{}", setting.key());

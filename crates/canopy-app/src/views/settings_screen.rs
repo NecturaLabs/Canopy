@@ -1265,7 +1265,9 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
 /// What a Git setting row says under its title; the recommended option is marked in its list.
 fn git_setting_help(setting: Setting) -> &'static str {
     match setting {
-        Setting::Autocrlf => "Keep the line-ending convention your projects require.",
+        Setting::Autocrlf => {
+            "LF on commit stores text files with LF endings; CRLF on checkout also restores CRLF in the working tree."
+        }
         Setting::PullFastForward => {
             "With fast-forward only, Canopy asks Rebase or Merge when branches diverged."
         }
@@ -1277,11 +1279,26 @@ fn git_setting_help(setting: Setting) -> &'static str {
             "Matching pushes all matching branches; Nothing requires an explicit destination."
         }
         Setting::SubmoduleRecurse => "Checkout, pull and switch also update submodules.",
-        Setting::CommitSigning | Setting::SigningFormat => {
-            "Git uses your existing signing key and program."
-        }
+        Setting::CommitSigning => "Git uses your existing signing key and program.",
+        Setting::SigningFormat => "SSH signs with an SSH key; OpenPGP and X.509 need GnuPG.",
         _ => "",
     }
+}
+
+/// What an unset git setting shows: its recommendation, or git's built-in value for line endings
+/// and signing, which Canopy leaves to git.
+fn unset_value(setting: Setting, recommended: &str) -> String {
+    let builtin = match setting {
+        Setting::Autocrlf | Setting::CommitSigning => "false",
+        Setting::SigningFormat => "openpgp",
+        _ => recommended,
+    };
+    let source = if builtin == recommended {
+        "Recommended"
+    } else {
+        "Git's built-in"
+    };
+    format!("{} · {source}", git_value_label(setting, builtin))
 }
 
 /// [`row`] with a note under its help about what git's own configuration says.
@@ -1376,7 +1393,7 @@ fn revert<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, default: &T, name: &
     let side = crate::ui::kit::button::icon_button_side(Size::Sm);
     let button = IconButton::new(
         icon::ARROW_COUNTER_CLOCKWISE,
-        format!("Reset {name} to its default"),
+        format!("Reset {name} to recommended"),
     )
     .size(Size::Sm)
     .id_salt(("revert", name));
@@ -2565,7 +2582,7 @@ fn theme_card(
     let card = card
         .width(width)
         .label(if id == DEFAULTS.theme {
-            format!("{} theme (default)", id.name())
+            format!("{} theme (recommended)", id.name())
         } else {
             format!("{} theme", id.name())
         })
@@ -2606,8 +2623,8 @@ fn theme_card(
                 caption.right_center(),
                 Align2::RIGHT_CENTER,
                 match (id == DEFAULTS.theme, tp.dark) {
-                    (true, true) => "Default · Dark",
-                    (true, false) => "Default · Light",
+                    (true, true) => "Recommended · Dark",
+                    (true, false) => "Recommended · Light",
                     (false, true) => "Dark",
                     (false, false) => "Light",
                 },
@@ -2789,8 +2806,8 @@ fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
 const FIELD_WIDTH: f32 = 280.0;
 /// The width of a select in a settings row.
 const SELECT_WIDTH: f32 = 220.0;
-/// The Git editor's selects, wide enough for "Rebase preserving merges" and "Unset (Canopy's default)".
-const GIT_SELECT_WIDTH: f32 = 240.0;
+/// The Git editor's selects, wide enough for "Fast-forward only · Recommended".
+const GIT_SELECT_WIDTH: f32 = 280.0;
 /// Room for the Save button and its gap beside the first-branch field, which together are as
 /// wide as a select, so every Unset button sits in one column.
 const BRANCH_SAVE_WIDTH: f32 = 64.0;
@@ -3085,24 +3102,16 @@ fn git_config_editor(
                         .zip(&labels)
                         .map(|(value, label)| (Some((*value).to_owned()), label.as_str()))
                         .collect();
-                    let mut select = Select::new(&mut selected, &options)
+                    let select = Select::new(&mut selected, &options)
                         .width(GIT_SELECT_WIDTH)
                         .name(setting.label())
                         .report_reselection()
                         .placeholder(invalid.or(value).map_or_else(
-                            || {
-                                if recommended.is_some() {
-                                    "Unset (Canopy's default)".to_owned()
-                                } else {
-                                    "Unset".to_owned()
-                                }
-                            },
+                            || unset_value(setting, recommended),
                             |value| format!("Configured: {}", value.value),
                         ))
-                        .id_salt(("git-setting", setting, scope == Scope::Global));
-                    if let Some(recommended) = recommended {
-                        select = select.recommended(Some(recommended.to_owned()));
-                    }
+                        .id_salt(("git-setting", setting, scope == Scope::Global))
+                        .recommended(Some(recommended.to_owned()));
                     if select.show(ui).changed() {
                         actions.push(Action::SaveGitConfig {
                             repo: repo.map(Path::to_path_buf),
@@ -3120,7 +3129,7 @@ fn git_config_editor(
                         .any(|value| value.key.eq_ignore_ascii_case(setting.key()))
                 });
                 // Only a value this file sets can be removed; without one the select already
-                // says Unset.
+                // shows what applies.
                 if direct
                     && Button::new(if scope == Scope::Local {
                         "Inherit"
@@ -3173,6 +3182,11 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         (Setting::PullFastForward, "only") => "Fast-forward only",
         (Setting::PullFastForward, "true") => "Allow fast-forward",
         (Setting::PullFastForward, "false") => "Always merge",
+        (Setting::Autocrlf, "input") => "LF on commit",
+        (Setting::Autocrlf, "true") => "CRLF on checkout",
+        (Setting::SigningFormat, "openpgp") => "OpenPGP",
+        (Setting::SigningFormat, "ssh") => "SSH",
+        (Setting::SigningFormat, "x509") => "X.509",
         (_, "true") => "On",
         (_, "false") => "Off",
         _ => value,
@@ -5030,9 +5044,9 @@ fn launcher_row(
         .map(|a| a.installed(kind).collect())
         .unwrap_or_default();
     let system_label = match (apps, system) {
-        (None, _) => "Default (looking…)".to_owned(),
-        (Some(_), Some(choice)) => format!("Default · {}", choice.name),
-        (Some(_), None) => "Default".to_owned(),
+        (None, _) => "Recommended (looking…)".to_owned(),
+        (Some(_), Some(choice)) => format!("Recommended · {}", choice.name),
+        (Some(_), None) => "Recommended".to_owned(),
     };
     // The system's own choice is listed once, as the default: not again as an installed app.
     let is_default = |app: &crate::system_apps::App| is_system_choice(system, app);
@@ -5806,15 +5820,17 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Reset all settings",
-        "Restores every preference to its default, which turns pull and merge requests, profile pictures and update checks back on. Tokens, trusted folders, repositories and your consent stay.",
+        "Restores every preference to its recommended value, which turns pull and merge requests, profile pictures and update checks back on. Tokens, trusted folders, repositories and your consent stay.",
         |ui| {
             if confirm_button(ui, "reset-all-settings", "Reset all", "Reset every setting") {
                 match crate::settings_file::reset(s) {
                     Ok(fresh) => {
                         *s = fresh;
                         actions.push(Action::SettingsReplaced);
-                        screen.file_status =
-                            Some((false, "Every setting is back to its default.".to_owned()));
+                        screen.file_status = Some((
+                            false,
+                            "Every setting is back to its recommended value.".to_owned(),
+                        ));
                     }
                     Err(e) => screen.file_status = Some((true, e)),
                 }
@@ -5976,10 +5992,10 @@ pub(crate) fn against_recommendation(
         "pushes",
     );
     // The pull recommendation is the one the editor marks and Use recommended writes.
-    let pull_recommended = Setting::PullFastForward
-        .recommendation_for(facts.git)
-        .map(|value| lowercase_label(&git_value_label(Setting::PullFastForward, value)))
-        .unwrap_or_default();
+    let pull_recommended = lowercase_label(&git_value_label(
+        Setting::PullFastForward,
+        Setting::PullFastForward.recommendation_for(facts.git),
+    ));
     let mut lines: Vec<String> = [
         (
             "Pull",
@@ -6055,7 +6071,8 @@ pub(crate) fn against_recommendation(
         (Setting::InitialBranch, facts.initial_branch.as_ref()),
         (Setting::SubmoduleRecurse, facts.submodule_recurse.as_ref()),
     ] {
-        if let (Some(value), Some(recommended)) = (value, setting.recommendation_for(facts.git))
+        let recommended = setting.recommendation_for(facts.git);
+        if let Some(value) = value
             && value.value != recommended
         {
             lines.push(format!(
@@ -6505,7 +6522,7 @@ mod tests {
                 let Some(name) = node
                     .label()
                     .and_then(|l| l.strip_prefix("Reset "))
-                    .and_then(|l| l.strip_suffix(" to its default"))
+                    .and_then(|l| l.strip_suffix(" to recommended"))
                 else {
                     continue;
                 };
@@ -7979,12 +7996,9 @@ mod tests {
     fn the_pull_recommendation_is_one_choice_everywhere() {
         use canopy_core::PullStrategy;
         let git = Some((2, 55));
-        // The editor marks nothing on pull.rebase and fast-forward only on pull.ff.
-        assert_eq!(Setting::PullRebase.recommendation_for(git), None);
-        assert_eq!(
-            Setting::PullFastForward.recommendation_for(git),
-            Some("only")
-        );
+        // The editor marks Don't rebase on pull.rebase and fast-forward only on pull.ff.
+        assert_eq!(Setting::PullRebase.recommendation_for(git), "false");
+        assert_eq!(Setting::PullFastForward.recommendation_for(git), "only");
         assert_eq!(
             git_value_label(Setting::PullFastForward, "only"),
             DEFAULTS.pull_mode.label()
@@ -8326,7 +8340,7 @@ mod tests {
         assert!(
             nodes
                 .iter()
-                .any(|n| n.label.as_deref() == Some("Midnight theme (default)")),
+                .any(|n| n.label.as_deref() == Some("Midnight theme (recommended)")),
             "Midnight is identified as the default even when Daylight is selected"
         );
         assert!(
