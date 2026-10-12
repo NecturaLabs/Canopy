@@ -858,9 +858,25 @@ impl Filter {
     }
 }
 
-/// Lower-case words of a query.
+/// Words that join a query's terms ("pull and merge") and would match nearly every row.
+const CONNECTIVES: &[&str] = &[
+    "a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "is", "of", "on", "or", "the",
+    "to", "with",
+];
+
+/// Lower-case words of a query, without its connective words unless it has nothing else.
 fn search_words(query: &str) -> Vec<String> {
-    query.split_whitespace().map(str::to_lowercase).collect()
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let meaningful: Vec<String> = words
+        .iter()
+        .filter(|w| !CONNECTIVES.contains(&w.as_str()))
+        .cloned()
+        .collect();
+    if meaningful.is_empty() {
+        words
+    } else {
+        meaningful
+    }
 }
 
 /// Whether every word occurs in one of `texts` (case-insensitive).
@@ -7617,6 +7633,25 @@ mod tests {
         );
         let mut blank = SettingsScreen::searching("   ");
         assert!(!blank.dismiss_search(), "spaces are not a search");
+    }
+
+    /// #195: connective words neither match on their own nor get marked; a query made only of
+    /// them is still searched as typed.
+    #[test]
+    fn a_search_skips_connective_words() {
+        assert_eq!(search_words("Pull AND merge"), ["pull", "merge"]);
+        assert_eq!(
+            search_words("the  for to of or"),
+            ["the", "for", "to", "of", "or"]
+        );
+        let mut settings = Settings::default();
+        let found = |query: &str, settings: &mut Settings| {
+            draw_screen(SettingsScreen::searching(query), settings).search
+        };
+        assert_eq!(
+            found("pull and merge", &mut settings).total(),
+            found("pull merge", &mut settings).total()
+        );
     }
 
     #[test]
