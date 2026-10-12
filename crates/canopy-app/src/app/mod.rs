@@ -1059,6 +1059,7 @@ impl eframe::App for CanopyApp {
                         sidebar::show(ui, tab, &mut actions);
                     });
             }
+            tab.iso_dates = self.settings.iso_dates;
             content_pane(ui, true, |ui| match tab.view {
                 View::History => {
                     let handle = history::show(ui, tab, &self.settings, &mut actions);

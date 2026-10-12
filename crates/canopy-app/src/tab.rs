@@ -1017,6 +1017,9 @@ pub struct RepoTab {
     /// Hint at a commit message that is too wide (from the settings; set each frame the
     /// Changes view is drawn).
     pub check_message: bool,
+    /// Settings' calendar date format for absolute dates drawn from the tab (blame); set each
+    /// frame.
+    pub iso_dates: bool,
     pub filter: String,
     pub filtered: Option<Vec<usize>>,
     pub filter_for: String,
@@ -1170,6 +1173,7 @@ impl RepoTab {
             split_diff: false,
             highlight_diff: true,
             check_message: true,
+            iso_dates: false,
             filter: String::new(),
             filtered: None,
             filter_for: String::new(),
