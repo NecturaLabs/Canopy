@@ -465,9 +465,11 @@ in the density's metrics:
   design spec's Commit / Commit and push `SplitButton`, and Amend last commit is a plain
   `Checkbox` with no indeterminate state. Both kit components exist; the composer does not use
   them yet.
-- Conflict cards: the two "Keep this version" buttons are the card's main choices (Secondary);
-  "Both: current first", "Both: incoming first", "Ancestor" and "Edit" are Ghost until chosen. A
-  chosen option shows a check. The resolver footer's "Save resolved file" is the one Primary.
+- Conflict cards: each side is headed "Current (branch)" or "Incoming (branch)". Accept current
+  and Accept incoming are the card's main choices (Secondary); "Accept both (current first)",
+  "Accept both (incoming first)", "Accept ancestor" and "Edit" are Ghost until chosen. A chosen
+  option shows a check. The resolver footer holds only its buttons; "Save resolved file" is the
+  one Primary.
 - Without a GitHub or GitLab remote, Requests offers Publish… (no remote at all) or Add remote…
   (remotes elsewhere) under its empty-state illustration.
 - A clean working tree uses one kit `EmptyState` across the main pane, with the clean
