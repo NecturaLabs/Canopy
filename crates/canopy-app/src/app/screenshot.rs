@@ -337,6 +337,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "init",
     "new-branch",
     "new-worktree",
+    "new-worktree-error",
     "rename",
     "add-submodule",
     "git-missing",
@@ -477,6 +478,14 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         "init" => Dialog::new_repository("~/src/tidepool".into()),
         "new-branch" => Dialog::new_branch_at(Start::Head),
         "new-worktree" => Dialog::new_worktree(),
+        "new-worktree-error" => Dialog::NewWorktree {
+            create: false,
+            name: String::new(),
+            existing: "feature/auth".into(),
+            folder: "~/src/fx-auth".into(),
+            pending: false,
+            error: Some("fatal: '/home/you/src/fx-auth' already exists".into()),
+        },
         "rename" => Dialog::Rename {
             old: "feature/search".into(),
             new: "feature/search-v2".into(),

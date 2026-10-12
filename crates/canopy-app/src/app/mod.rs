@@ -102,6 +102,7 @@ pub const OVERLAYS: &[&str] = &[
     "init",
     "new-branch",
     "new-worktree",
+    "new-worktree-error",
     "rename",
     "add-submodule",
     "git-missing",
