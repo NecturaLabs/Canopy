@@ -20,6 +20,8 @@ use crate::http::shorten;
 
 /// How long the CLI may take in all, `auth status` and `auth token` together, before it is killed.
 const CLI_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bytes read from a pipe at a time.
+const DRAIN_CHUNK: usize = 4096;
 /// How long the output is read for after the CLI has exited.
 const DRAIN_GRACE: Duration = Duration::from_millis(500);
 /// How often a running CLI is polled.
@@ -423,7 +425,7 @@ impl Drain {
         std::thread::spawn(move || {
             if let Some(pipe) = pipe {
                 let mut pipe = pipe.take(MAX_OUTPUT);
-                let mut chunk = [0_u8; 4096];
+                let mut chunk = [0_u8; DRAIN_CHUNK];
                 while let Ok(n @ 1..) = pipe.read(&mut chunk) {
                     shared
                         .lock()
