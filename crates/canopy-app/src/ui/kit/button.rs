@@ -958,6 +958,7 @@ impl Widget for IconButton {
 pub struct HelpMark {
     about: String,
     text: String,
+    notice: Option<bool>,
 }
 
 impl HelpMark {
@@ -966,7 +967,15 @@ impl HelpMark {
         Self {
             about: about.into(),
             text: text.into(),
+            notice: None,
         }
+    }
+
+    /// A remark about the current state instead of an explanation: an info mark, or a warning
+    /// mark in the warning colour, announced as "Note on {about}" or "Warning on {about}".
+    pub fn notice(mut self, warn: bool) -> Self {
+        self.notice = Some(warn);
+        self
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
@@ -986,15 +995,29 @@ impl HelpMark {
                     Color32::TRANSPARENT,
                 );
             }
+            let (glyph, color) = match self.notice {
+                None => (icon::QUESTION, p.text_faint),
+                Some(false) => (icon::INFO, p.text_faint),
+                Some(true) => (icon::WARNING, p.warning),
+            };
+            let hover = if self.notice == Some(true) {
+                color
+            } else {
+                p.text
+            };
             painter.text(
                 rect.center(),
                 Align2::CENTER_CENTER,
-                icon::QUESTION,
+                glyph,
                 theme::icon_font(side, false),
-                p.text_faint.lerp_to_gamma(p.text, st.hover.max(st.focus)),
+                color.lerp_to_gamma(hover, st.hover.max(st.focus)),
             );
         }
-        let name = format!("About {}", self.about);
+        let name = match self.notice {
+            None => format!("About {}", self.about),
+            Some(false) => format!("Note on {}", self.about),
+            Some(true) => format!("Warning on {}", self.about),
+        };
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, &name));
         let description = self.text.clone();
         ctx.accesskit_node_builder(response.id, |n| n.set_description(description));

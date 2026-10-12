@@ -1334,11 +1334,8 @@ fn row_with_note(
         if !help.is_empty() {
             help_label(ui, help);
         }
-        if let Some(note) = note {
-            note.show(ui);
-        }
     };
-    row_layout(ui, title, None, help, &help_text, "", control);
+    noted_row_layout(ui, title, None, help, &help_text, "", note, control);
     row_end(ui);
 }
 
@@ -1462,13 +1459,8 @@ fn default_row(
     note: Option<&Note>,
     control: impl FnOnce(&mut Ui),
 ) {
-    let help_text = |ui: &mut Ui| {
-        help_label(ui, help);
-        if let Some(note) = note {
-            note.show(ui);
-        }
-    };
-    row_layout(ui, title, None, help, &help_text, "", control);
+    let help_text = |ui: &mut Ui| help_label(ui, help);
+    noted_row_layout(ui, title, None, help, &help_text, "", note, control);
     row_end(ui);
 }
 
@@ -1482,56 +1474,6 @@ struct Note {
 
 /// How a note opens when git's own configuration decides a choice.
 const DECIDES: &str = "Your git configuration decides";
-
-impl Note {
-    /// Whether this note says git's configuration decides the choice.
-    fn decided(&self) -> bool {
-        self.text.starts_with(DECIDES)
-    }
-
-    /// The note, with a button that stops following the git configuration when it decides.
-    fn show(&self, ui: &mut Ui) {
-        self.show_text(ui);
-        if self.decided()
-            && Button::new("Stop following my git config")
-                .ghost()
-                .size(Size::Sm)
-                .id_salt(("stop-following", &self.text))
-                .show(ui)
-                .clicked()
-        {
-            ui.data_mut(|d| d.insert_temp(stop_following_id(), true));
-            ui.ctx().request_repaint();
-        }
-    }
-
-    fn show_text(&self, ui: &mut Ui) {
-        let p = palette(ui.ctx());
-        let m = theme::metrics();
-        let (glyph, color) = if self.warn {
-            (icon::WARNING, p.warning)
-        } else {
-            (icon::INFO, p.text_faint)
-        };
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = theme::XS;
-            ui.label(RichText::new(glyph).size(m.meta_size).color(color));
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&self.text)
-                        .size(m.meta_size)
-                        .color(if self.warn { p.text_dim } else { p.text_faint }),
-                )
-                .wrap(),
-            );
-        });
-    }
-}
-
-/// Set by a note's button; [`git`] turns Follow my git config off on the next frame.
-fn stop_following_id() -> egui::Id {
-    egui::Id::new("settings-stop-following-git-config")
-}
 
 /// What a choice's control shows: the value the git configuration sets while it decides, else
 /// Canopy's own.
@@ -1896,6 +1838,24 @@ fn row_layout(
     detail: &str,
     control: impl FnOnce(&mut Ui),
 ) {
+    noted_row_layout(ui, title, tag, text, help, detail, None, control);
+}
+
+/// [`row_layout`] with a remark about the row's current state as a mark after its title.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "row_layout's parts plus the note"
+)]
+fn noted_row_layout(
+    ui: &mut Ui,
+    title: &str,
+    tag: Option<&str>,
+    text: &str,
+    help: &dyn Fn(&mut Ui),
+    detail: &str,
+    note: Option<&Note>,
+    control: impl FnOnce(&mut Ui),
+) {
     if !reveal(ui, title, &[text, detail]) {
         return;
     }
@@ -1921,6 +1881,9 @@ fn row_layout(
                 ui.label(shown);
                 if !detail.is_empty() {
                     HelpMark::new(title, detail).show(ui);
+                }
+                if let Some(note) = note {
+                    HelpMark::new(title, &note.text).notice(note.warn).show(ui);
                 }
                 if let Some(tag) = tag {
                     ui.add_space(theme::XS);
@@ -2745,26 +2708,27 @@ fn source_label_in(source: Option<&Source>, home: &Path) -> String {
         Some(Source::Config { scope, .. }) if scope == "command" => "the git command line".into(),
         Some(Source::Config { scope, origin }) => {
             let file = origin.strip_prefix("file:").unwrap_or(origin);
-            // The usual files are named by what they cover; their paths only make the line wrap.
-            // An included file is named by its path, since nothing else finds it.
+            // The usual files are named by what they cover, then by path; an included file by its
+            // path alone.
             let usual = Path::new(file).file_name().is_some_and(|name| {
                 ["config", "config.worktree", ".gitconfig", "gitconfig"]
                     .iter()
                     .any(|usual| name == *usual)
             });
-            match scope.as_str() {
-                "local" if usual => return "this repository".into(),
-                "worktree" if usual => return "this worktree".into(),
-                "global" if usual => return "your global git config".into(),
-                "system" if usual => return "the system git config".into(),
-                _ => {}
-            }
             // An unknown home directory is an empty path, which every path starts with.
-            Path::new(file)
+            let path = Path::new(file)
                 .strip_prefix(home)
                 .ok()
                 .filter(|_| !home.as_os_str().is_empty())
-                .map_or_else(|| file.to_owned(), |rest| format!("~/{}", rest.display()))
+                .map_or_else(|| file.to_owned(), |rest| format!("~/{}", rest.display()));
+            let covers = match scope.as_str() {
+                "local" if usual => "this repository",
+                "worktree" if usual => "this worktree",
+                "global" if usual => "your global git config",
+                "system" if usual => "the system git config",
+                _ => return path,
+            };
+            format!("{covers} ({path})")
         }
         Some(Source::Guessed) => "guessed by Git from this computer".into(),
         None => "not set".into(),
@@ -2774,32 +2738,19 @@ fn source_label_in(source: Option<&Source>, home: &Path) -> String {
 /// Where Git takes one part of an identity from, cut in the middle to the column with the whole
 /// of it in a tooltip. The field above shows a configured or guessed value already; one from the
 /// environment is named here, since no field holds it.
-fn in_use(ui: &mut Ui, field: &Field) {
-    let p = palette(ui.ctx());
-    let size = theme::metrics().small_size;
+fn in_use(field: &Field) -> Option<Note> {
     if field.value.is_empty() {
-        ui.label(RichText::new("Not set.").size(size).color(p.text_dim));
-        return;
+        return None;
     }
     let from = source_label(field.source.as_ref());
-    let source = if matches!(field.source, Some(Source::Environment(_))) {
-        format!("In use: {}, from {from}", field.value)
-    } else {
-        format!("From {from}")
-    };
-    let shown = elide_middle(
-        ui,
-        &source,
-        &FontId::proportional(size),
-        ui.available_width(),
-    );
-    let cut = shown != source;
-    let resp = ui.add(egui::Label::new(
-        RichText::new(shown).size(size).color(p.text_faint),
-    ));
-    if cut {
-        resp.kit_tooltip(source).show();
-    }
+    Some(Note {
+        text: if matches!(field.source, Some(Source::Environment(_))) {
+            format!("In use: {}, from {from}.", field.value)
+        } else {
+            format!("From {from}.")
+        },
+        warn: false,
+    })
 }
 
 /// `text` cut in its middle with an ellipsis until it fits in `max_width`.
@@ -2902,14 +2853,7 @@ fn identity_group(
     if !Filter::searching(ui.ctx()) {
         identity_status(ui, identity, error);
     }
-    let current = |pick: fn(&Identity) -> &Field, help: &'static str| {
-        move |ui: &mut Ui| {
-            help_label(ui, help);
-            if let Some(field) = identity.map(pick) {
-                in_use(ui, field);
-            }
-        }
-    };
+    let current = |pick: fn(&Identity) -> &Field| identity.map(pick).and_then(in_use);
     // What git would use while the field is empty (a guess from the user and host names, or a
     // value nobody can save here) shows as its placeholder, never as a value to save.
     let unchosen = |pick: fn(&Identity) -> &Field| {
@@ -2918,13 +2862,14 @@ fn identity_group(
             .filter(|f| !f.explicit() && !f.value.is_empty())
             .map_or_else(String::new, |f| format!("{} (guessed by git)", f.value))
     };
-    row_layout(
+    noted_row_layout(
         ui,
         "Name",
         None,
         "",
-        &current(|i| &i.author.name, NAME_HELP),
+        &|ui: &mut Ui| help_label(ui, NAME_HELP),
         "",
+        current(|i| &i.author.name).as_ref(),
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.identity_name)
@@ -2937,13 +2882,14 @@ fn identity_group(
         },
     );
     row_end(ui);
-    row_layout(
+    noted_row_layout(
         ui,
         "Email",
         None,
         "",
-        &current(|i| &i.author.email, EMAIL_HELP),
+        &|ui: &mut Ui| help_label(ui, EMAIL_HELP),
         "",
+        current(|i| &i.author.email).as_ref(),
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.identity_email)
@@ -3247,12 +3193,6 @@ fn git(
         actions,
     );
     group_gap(ui, theme::LG);
-    if ui
-        .data_mut(|d| d.remove_temp::<bool>(stop_following_id()))
-        .unwrap_or(false)
-    {
-        s.follow_git_config = false;
-    }
     let facts = screen.facts.global(ui.ctx()).cloned();
     let f = facts.as_deref();
     let follow = s.follow_git_config;
@@ -4140,27 +4080,14 @@ fn repo_remotes(
             None
         };
         let changed = typed != remote.url;
-        let help = format!(
-            "Where {} fetches from and pushes to. {}",
-            remote.name,
-            if changed { "Not saved yet." } else { "" }
-        );
+        let help = format!("Where {} fetches from and pushes to.", remote.name);
         let mut save = false;
         row_layout(
             ui,
             &remote.name,
             None,
             "remote url origin upstream set-url",
-            &|ui: &mut Ui| {
-                help_label(ui, help.trim_end());
-                if let Some(problem) = problem.filter(|_| changed) {
-                    Note {
-                        text: problem.to_owned(),
-                        warn: true,
-                    }
-                    .show(ui);
-                }
-            },
+            &|ui: &mut Ui| help_label(ui, &help),
             "",
             |ui| {
                 // Right to left: Save, then the field, together as wide as the other fields.
@@ -4177,6 +4104,7 @@ fn repo_remotes(
                     TextField::new(draft)
                         .width(width)
                         .name(format!("URL of {}", remote.name))
+                        .error(problem.filter(|_| changed))
                         .id_salt(("remote-url", &remote.name))
                         .show(ui)
                 });
@@ -4237,10 +4165,10 @@ fn facts_error(ui: &mut Ui, facts: Option<&GitFacts>) {
         .and_then(|f| f.error.as_deref())
         .filter(|_| !Filter::searching(ui.ctx()))
     {
-        Note {
-            text: format!("Could not read your git configuration: {e}"),
-            warn: true,
-        }
+        Callout::new(
+            Tone::Warning,
+            format!("Could not read your git configuration: {e}"),
+        )
         .show(ui);
         ui.add_space(theme::SM);
     }
@@ -4254,14 +4182,8 @@ fn repo_row(
     note: Option<&Note>,
     control: impl FnOnce(&mut Ui),
 ) {
-    let help_text = |ui: &mut Ui| {
-        help_label(ui, help);
-        if let Some(note) = note {
-            // A repository follows through its own switch, not the global one.
-            note.show_text(ui);
-        }
-    };
-    row_layout(ui, title, None, help, &help_text, "", control);
+    let help_text = |ui: &mut Ui| help_label(ui, help);
+    noted_row_layout(ui, title, None, help, &help_text, "", note, control);
     row_end(ui);
 }
 
@@ -4338,18 +4260,18 @@ fn program_label(program: &str) -> String {
 }
 
 fn signing_look(facts: &GitFacts) -> SigningLook {
+    // Where signing is turned on or off, as a remark beside the title.
+    let setting = facts.gpg_sign.as_ref().map(|v| Note {
+        text: format!("{}.", upper_first(&config_phrase(v))),
+        warn: false,
+    });
     if !facts.signs_commits() {
-        let state = facts
-            .gpg_sign
-            .as_ref()
-            .map_or_else(String::new, |v| format!(" ({})", config_phrase(v)));
         return SigningLook {
             badge: "Not signing",
             tone: Tone::Neutral,
-            help: format!(
-                "Commits are not signed here{state}. To sign, turn on Sign commits under Git configuration."
-            ),
-            note: None,
+            help: "Commits are not signed here. To sign, turn on Sign commits under Git configuration."
+                .to_owned(),
+            note: setting,
         };
     }
     let Some(signing) = &facts.signing else {
@@ -4377,48 +4299,33 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
             }
         },
     );
-    let setting = facts
-        .gpg_sign
-        .as_ref()
-        .map_or_else(String::new, |v| format!(" ({})", config_phrase(v)));
     let help = format!(
-        "Commits are signed as {} with {key}, by {program}{setting}.",
+        "Commits are signed as {} with {key}, by {program}.",
         signing.format_label()
     );
-    let program_key = match signing.format.as_str() {
-        "ssh" => "gpg.ssh.program",
-        "x509" => "gpg.x509.program",
-        _ => "gpg.openpgp.program",
-    };
-    let note = signing.problem.map(|problem| Note {
+    let problem = signing.problem.map(|problem| Note {
         text: match problem {
             SigningProblem::ProgramMissing => format!(
-                "{program} is not installed or not on the PATH, so every commit will fail. Install it, or set {program_key} to another program in your git configuration."
+                "{program} is not installed or not on the PATH, so every commit will fail. Install it, or set another signing program in your git configuration."
             ),
-            SigningProblem::KeyNotSet => "SSH signing needs a key and user.signingkey is not set, so every commit will fail. Set user.signingkey to your public key file in your git configuration.".to_owned(),
+            SigningProblem::KeyNotSet => "SSH signing needs a signing key and none is set, so every commit will fail. Set your public key file as the signing key in your git configuration.".to_owned(),
             SigningProblem::KeyFileMissing => {
                 let file = signing.key.as_deref().filter(|key| *key != "an SSH key")
-                    .unwrap_or("named by user.signingkey");
-                format!("The key file {file} does not exist, so every commit will fail. Correct user.signingkey in your git configuration.")
+                    .unwrap_or("of the signing key");
+                format!("The key file {file} does not exist, so every commit will fail. Correct the signing key in your git configuration.")
             },
             SigningProblem::UnknownFormat => format!(
-                "gpg.format = \"{}\" is not a format git knows (openpgp, ssh or x509), so every commit will fail. Correct it in your git configuration.",
+                "\"{}\" is not a signing format git knows (OpenPGP, SSH or X.509), so every commit will fail. Choose one under Signing format.",
                 signing.format
             ),
         },
         warn: true,
     });
+    let failing = problem.is_some();
+    let note = problem.or(setting);
     SigningLook {
-        badge: if note.is_some() {
-            "Will fail"
-        } else {
-            "Signing"
-        },
-        tone: if note.is_some() {
-            Tone::Danger
-        } else {
-            Tone::Success
-        },
+        badge: if failing { "Will fail" } else { "Signing" },
+        tone: if failing { Tone::Danger } else { Tone::Success },
         help,
         note,
     }
@@ -4721,14 +4628,7 @@ fn repo_identity(
         identity_status(ui, identity, view.error);
     }
     let has_own = identity.is_some_and(|i| local(&i.author.name) || local(&i.author.email));
-    let current = |pick: fn(&Identity) -> &Field, help: &'static str| {
-        move |ui: &mut Ui| {
-            help_label(ui, help);
-            if let Some(field) = identity.map(pick) {
-                in_use(ui, field);
-            }
-        }
-    };
+    let current = |pick: fn(&Identity) -> &Field| identity.map(pick).and_then(in_use);
     // What the repository inherits shows in an empty field, so the field is never blank.
     let inherited = |pick: fn(&Identity) -> &Field| {
         identity
@@ -4742,13 +4642,14 @@ fn repo_identity(
     let name_tag = identity
         .filter(|i| local(&i.author.name))
         .map(|_| "Overridden");
-    row_layout(
+    noted_row_layout(
         ui,
         "Name",
         name_tag,
         "identity user.name author",
-        &current(|i| &i.author.name, NAME_HELP),
+        &|ui: &mut Ui| help_label(ui, NAME_HELP),
         "",
+        current(|i| &i.author.name).as_ref(),
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.local_name)
@@ -4764,13 +4665,14 @@ fn repo_identity(
     let email_tag = identity
         .filter(|i| local(&i.author.email))
         .map(|_| "Overridden");
-    row_layout(
+    noted_row_layout(
         ui,
         "Email",
         email_tag,
         "identity user.email author",
-        &current(|i| &i.author.email, EMAIL_HELP),
+        &|ui: &mut Ui| help_label(ui, EMAIL_HELP),
         "",
+        current(|i| &i.author.email).as_ref(),
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.local_email)
@@ -5365,41 +5267,6 @@ fn accounts<'f>(
 
 /// The status line under "Download profile pictures": why the open repository's authors show
 /// initials, and the way to Accounts when a token would fix it.
-fn picture_note(ui: &mut Ui, note: &PictureNote, open_accounts: &std::cell::Cell<bool>) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
-    ui.add_space(theme::XS);
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = theme::XS;
-        ui.label(
-            RichText::new(icon::INFO)
-                .size(m.meta_size)
-                .color(p.text_dim),
-        );
-        ui.label(
-            RichText::new(&note.title)
-                .size(m.meta_size)
-                .color(p.text_dim),
-        );
-    });
-    ui.add(
-        egui::Label::new(
-            RichText::new(&note.detail)
-                .size(m.meta_size)
-                .color(p.text_faint),
-        )
-        .wrap(),
-    );
-    if note.open_accounts
-        && LinkButton::new("Open Accounts")
-            .text_size(m.meta_size)
-            .show(ui)
-            .clicked()
-    {
-        open_accounts.set(true);
-    }
-}
-
 /// What the user agreed to: the Terms and the Privacy Policy accepted, and the crash report
 /// answer, with the way to change it. Reading a document here accepts nothing.
 fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
@@ -5509,20 +5376,19 @@ fn privacy(
     row_end(ui);
     heading(ui, "Profile pictures");
     let help = "Shows GitHub or GitLab account pictures next to authors.";
-    let open_accounts = std::cell::Cell::new(false);
-    let help_text = |ui: &mut Ui| {
-        help_label(ui, help);
-        if let Some(note) = pictures {
-            picture_note(ui, note, &open_accounts);
-        }
-    };
-    row_layout(
+    let mut open_accounts = false;
+    let note = pictures.map(|why| Note {
+        text: format!("{}. {}", why.title, why.detail),
+        warn: false,
+    });
+    noted_row_layout(
         ui,
         "Download profile pictures",
         None,
         help,
-        &help_text,
+        &|ui: &mut Ui| help_label(ui, help),
         "Sends commit IDs to GitHub or author emails to GitLab. Pictures, and authors without one, are remembered for 12 hours, and a failed refresh keeps the previous picture. Off shows initials and needs Pull and merge requests on to turn back on.",
+        note.as_ref(),
         |ui| {
             revert(
                 ui,
@@ -5531,6 +5397,16 @@ fn privacy(
                 "Download profile pictures",
             );
             switch(ui, &mut s.download_avatars, "Download profile pictures");
+            // Right to left: the way to fix it sits before the switch.
+            if pictures.is_some_and(|why| why.open_accounts)
+                && Button::new("Open Accounts")
+                    .ghost()
+                    .size(Size::Sm)
+                    .show(ui)
+                    .clicked()
+            {
+                open_accounts = true;
+            }
         },
     );
     row_end(ui);
@@ -5579,7 +5455,7 @@ fn privacy(
         },
     );
     row_end(ui);
-    open_accounts.get()
+    open_accounts
 }
 
 /// The trusted folders, each with a button that stops trusting it.
@@ -5778,10 +5654,14 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     if let Some((failed, message)) = &screen.file_status
         && !Filter::searching(ui.ctx())
     {
-        Note {
-            text: message.clone(),
-            warn: *failed,
-        }
+        Callout::new(
+            if *failed {
+                Tone::Warning
+            } else {
+                Tone::Success
+            },
+            message.as_str(),
+        )
         .show(ui);
         ui.add_space(theme::SM);
     }
@@ -5911,58 +5791,62 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
                             warn: true,
                         });
                 let keys = b.keys();
-                let help_text = |ui: &mut Ui| {
-                    if let Some(note) = &note {
-                        note.show(ui);
-                    }
-                };
-                row_layout(ui, b.description, None, &keys, &help_text, "", |ui| {
-                    if !keymap::is_remappable(b) {
-                        Keycap::new(keys.clone()).show(ui);
-                        return;
-                    }
-                    // Right to left: Change is rightmost.
-                    if waiting {
-                        if Button::new("Cancel")
-                            .ghost()
-                            .id_salt(("keys-cancel", &id))
+                noted_row_layout(
+                    ui,
+                    b.description,
+                    None,
+                    &keys,
+                    &|_| {},
+                    "",
+                    note.as_ref(),
+                    |ui| {
+                        if !keymap::is_remappable(b) {
+                            Keycap::new(keys.clone()).show(ui);
+                            return;
+                        }
+                        // Right to left: Change is rightmost.
+                        if waiting {
+                            if Button::new("Cancel")
+                                .ghost()
+                                .id_salt(("keys-cancel", &id))
+                                .show(ui)
+                                .clicked()
+                            {
+                                keymap::cancel_capture();
+                                screen.rebinding = None;
+                            }
+                            ui.label(
+                                RichText::new("Press the new key")
+                                    .size(theme::metrics().meta_size)
+                                    .color(p.accent),
+                            );
+                            return;
+                        }
+                        if Button::new("Change")
+                            .icon(icon::KEYBOARD)
+                            .id_salt(("keys-change", &id))
                             .show(ui)
                             .clicked()
                         {
-                            keymap::cancel_capture();
-                            screen.rebinding = None;
+                            keymap::start_capture(ui.ctx());
+                            screen.rebinding = Some(id.clone());
+                            screen.key_note = None;
                         }
-                        ui.label(
-                            RichText::new("Press the new key")
-                                .size(theme::metrics().meta_size)
-                                .color(p.accent),
-                        );
-                        return;
-                    }
-                    if Button::new("Change")
-                        .icon(icon::KEYBOARD)
-                        .id_salt(("keys-change", &id))
-                        .show(ui)
-                        .clicked()
-                    {
-                        keymap::start_capture(ui.ctx());
-                        screen.rebinding = Some(id.clone());
-                        screen.key_note = None;
-                    }
-                    if keymap::is_customised(b)
-                        && Button::new("Reset")
-                            .ghost()
-                            .id_salt(("keys-reset", &id))
-                            .show(ui)
-                            .clicked()
-                    {
-                        s.keybindings.remove(&id);
-                        screen.key_note = None;
-                    }
-                    for key in keys.rsplit("  ·  ") {
-                        Keycap::new(key.to_owned()).show(ui);
-                    }
-                });
+                        if keymap::is_customised(b)
+                            && Button::new("Reset")
+                                .ghost()
+                                .id_salt(("keys-reset", &id))
+                                .show(ui)
+                                .clicked()
+                        {
+                            s.keybindings.remove(&id);
+                            screen.key_note = None;
+                        }
+                        for key in keys.rsplit("  ·  ") {
+                            Keycap::new(key.to_owned()).show(ui);
+                        }
+                    },
+                );
                 row_end(ui);
             }
         });
@@ -6116,35 +6000,6 @@ mod tests {
             ("Token saved".into(), true)
         );
         assert!(!account_status(ForgeKind::GitHub, None, false, false).1);
-    }
-
-    /// A choice the git configuration decides offers to stop following it; a plain note, and
-    /// the notes of a repository's rows, do not.
-    #[test]
-    fn a_decided_note_offers_to_stop_following_the_git_config() {
-        use crate::ui::kit::testkit;
-        let ctx = testkit::ctx();
-        let decided = Note {
-            text: format!("{DECIDES}: pull.rebase = true (global)."),
-            warn: false,
-        };
-        let plain = Note {
-            text: "Matches your git configuration: pull.rebase = true (global).".to_owned(),
-            warn: false,
-        };
-        let label = "Stop following my git config";
-        assert!(testkit::find(&testkit::spoken(&ctx, |ui| plain.show(ui)), label).is_none());
-        assert!(testkit::find(&testkit::spoken(&ctx, |ui| decided.show_text(ui)), label).is_none());
-        let nodes = testkit::spoken(&ctx, |ui| decided.show(ui));
-        let at = testkit::find(&nodes, label)
-            .and_then(|n| n.bounds)
-            .expect("the button is offered")
-            .center();
-        testkit::click(&ctx, at, |ui| decided.show(ui));
-        assert_eq!(
-            ctx.data_mut(|d| d.remove_temp::<bool>(stop_following_id())),
-            Some(true)
-        );
     }
 
     #[test]
@@ -7071,7 +6926,7 @@ mod tests {
         assert_eq!(
             followed.text,
             "Your git configuration decides: Rebase when pulling set to rebase in your global \
-             git config, so pulls use rebase."
+             git config (/home/me/.gitconfig), so pulls use rebase."
         );
         assert!(!pull_note(&facts, own(PullMode::Rebase)).unwrap().warn);
         let overridden = pull_note(&facts, own(PullMode::Merge)).unwrap();
@@ -7079,7 +6934,7 @@ mod tests {
         assert_eq!(
             overridden.text,
             "Canopy's pulls use this choice instead of your git configuration: Rebase when \
-             pulling set to rebase in your global git config."
+             pulling set to rebase in your global git config (/home/me/.gitconfig)."
         );
     }
 
@@ -7485,12 +7340,13 @@ mod tests {
             gpg_sign: Some(fact("commit.gpgsign", "false")),
             ..GitFacts::default()
         };
+        let note = signing_look(&explicit).note.expect("where it is set");
+        assert!(!note.warn);
         assert!(
-            signing_look(&explicit)
-                .help
-                .contains("Sign commits set to off in your global git config"),
+            note.text
+                .starts_with("Sign commits set to off in your global git config"),
             "{}",
-            signing_look(&explicit).help
+            note.text
         );
 
         let on = signing_look(&signing("openpgp", Some("3AA5C34371567BD2"), None));
@@ -7498,7 +7354,10 @@ mod tests {
         for part in ["OpenPGP", "key 3AA5C34371567BD2", "by gpg"] {
             assert!(on.help.contains(part), "{part}: {}", on.help);
         }
-        assert_eq!(on.note, None);
+        assert!(
+            on.note.is_some_and(|note| !note.warn),
+            "where it is turned on"
+        );
 
         let ssh = signing_look(&signing("ssh", Some("id.pub"), None));
         assert!(
@@ -7525,14 +7384,20 @@ mod tests {
         assert!(note.warn);
         assert!(
             note.text.contains("ssh-keygen is not installed")
-                && note.text.contains("gpg.ssh.program"),
+                && note.text.contains("another signing program"),
             "{}",
             note.text
         );
         for (problem, part) in [
-            (SigningProblem::KeyNotSet, "user.signingkey is not set"),
+            (
+                SigningProblem::KeyNotSet,
+                "needs a signing key and none is set",
+            ),
             (SigningProblem::KeyFileMissing, "id.pub does not exist"),
-            (SigningProblem::UnknownFormat, "is not a format git knows"),
+            (
+                SigningProblem::UnknownFormat,
+                "is not a signing format git knows",
+            ),
         ] {
             let look = signing_look(&signing("ssh", Some("id.pub"), Some(problem)));
             let text = look.note.expect("a warning").text;
@@ -7789,20 +7654,20 @@ mod tests {
             }),
             "the git command line"
         );
-        assert_eq!(label(&local_source()), "this repository");
+        assert_eq!(label(&local_source()), "this repository (.git/config)");
         assert_eq!(
             label(&Source::Config {
                 scope: "global".into(),
-                origin: "file:/etc/elsewhere/gitconfig".into(),
+                origin: "file:/home/ada/.gitconfig".into(),
             }),
-            "your global git config"
+            "your global git config (~/.gitconfig)"
         );
         assert_eq!(
             label(&Source::Config {
                 scope: "system".into(),
                 origin: "file:/etc/gitconfig".into(),
             }),
-            "the system git config"
+            "the system git config (/etc/gitconfig)"
         );
         assert_eq!(
             label(&Source::Config {
@@ -8131,6 +7996,36 @@ mod tests {
         for setting in Setting::ALL {
             assert!(!page.contains(setting.key()), "{} in {page}", setting.key());
         }
+    }
+
+    /// A remark about a row's state is a mark beside its title with the remark as its
+    /// description, never another line under the help; a problem is a warning mark.
+    #[test]
+    fn a_rows_note_is_a_mark_beside_its_title() {
+        let facts = GitFacts {
+            values: vec![fact("fetch.prune", "false")],
+            invalid: vec![fact("push.followTags", "maybe")],
+            ..GitFacts::default()
+        };
+        let nodes = git_page(facts, true);
+        let note = crate::ui::kit::testkit::find(&nodes, "Note on Prune remote branches")
+            .expect("a note mark");
+        assert!(
+            note.description
+                .as_deref()
+                .is_some_and(|d| d.starts_with("Set in your global git config")),
+            "{note:?}"
+        );
+        assert!(
+            crate::ui::kit::testkit::find(&nodes, "Warning on Push annotated tags").is_some(),
+            "a value git refuses is a warning"
+        );
+        assert!(
+            !nodes
+                .iter()
+                .any(|n| n.value.as_deref().is_some_and(|v| v.starts_with("Set in"))),
+            "the note is not drawn as text"
+        );
     }
 
     /// Where a value is set reads as the signing row says it, never as git's raw `file:` origin.
@@ -8547,7 +8442,9 @@ mod tests {
     #[test]
     fn help_fits_on_one_line() {
         let mut wrapped = Vec::new();
-        for section in Section::ALL {
+        // With a repository open, so This repository is drawn too.
+        let repo = Some(Path::new("/work/canopy"));
+        for section in Section::ALL.into_iter().chain([Section::Repository]) {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
             ctx.enable_accesskit();
@@ -8558,6 +8455,11 @@ mod tests {
             let mut screen = SettingsScreen::at(section);
             screen.facts.global.asked = true;
             screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
+            // No git runs: the repository's configuration reads as empty, and stays read.
+            screen.facts.repo.asked = true;
+            screen.facts.repo.path = repo.map(Path::to_path_buf);
+            screen.facts.repo.facts = Some(Arc::new(GitFacts::default()));
+            screen.facts.repo.read_at = Some(Instant::now());
             let mut last = None;
             // Rows measure their controls on the first frames.
             for time in 1..=4 {
@@ -8577,7 +8479,7 @@ mod tests {
                                 tabs: &[],
                                 update: &UpdateState::Idle,
                                 identity: IdentityView {
-                                    repo: None,
+                                    repo,
                                     identity: None,
                                     error: None,
                                 },

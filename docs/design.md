@@ -854,8 +854,8 @@ content changes, using the theme's metadata size and subdued text colour.
 ### Git identity
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings
-rows: Name and Email, each with a text field and, as its help text, what Git uses now and where it
-comes from ("From your global git config"); a Committer row only when the committer
+rows: Name and Email, each with a text field and a note mark saying where Git takes the value from
+("From your global git config (~/.gitconfig)."); a Committer row only when the committer
 differs; a "Save to" choice between this repository and all repositories (only with a repository
 open); Save identity, which stays disabled until both fields have text; and Clear…, which asks first
 in a `danger` confirmation. A `warning` line with the warning icon sits above the rows when Git
@@ -883,9 +883,9 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
 ### Git configuration editing
 
 The Git page edits the main global Git file; This repository edits its common local Git file.
-Rows use the existing Select/TextField and row layout, with where a value is set below the help,
-named by scope ("this repository", "your global git config") and by path only for an included
-file. An unset row's select reads "Value (Recommended)", or just the value Git uses where Canopy
+Rows use the existing Select/TextField and row layout, with where a value is set in a note mark,
+named by scope and path ("your global git config (~/.gitconfig)"), or by path alone for an
+included file. An unset row's select reads "Value (Recommended)", or just the value Git uses where Canopy
 leaves the choice to Git. Enumerated values have one option each; unsupported configured values
 remain visible as text. Recommendations are badges, never a reason to lock a control. A global
 value is changed, never cleared; a repository's own value has the reset button, which removes the
@@ -908,7 +908,11 @@ Every row has help of one plain sentence that fits on one line at the usual wind
 renders every page and fails on a wrapped one), and names settings by their labels, never by git
 keys or flags. A longer explanation sits in a help mark (`HelpMark`, a faint "?" at `icon_md`
 right after the title, `XS` apart) whose tooltip shows on hover and on keyboard focus at every
-Tooltips level; screen readers hear it as the mark's description. Settings → Keyboard shows one key column of the cheatsheet's
+Tooltips level; screen readers hear it as the mark's description. A remark about the row's current
+state (where git sets the value, why profile pictures are missing, a signing problem) is a second
+mark beside it, `HelpMark::notice`: an info glyph in `text_faint`, or a warning glyph in `warning`
+for a problem, announced as "Note on …" or "Warning on …"; it never adds a line under the help, and
+an action it suggests is a ghost button among the row's controls. Settings → Keyboard shows one key column of the cheatsheet's
 keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo
 and a tick; hover is a neutral hairline. Cards fill the row in whole columns and reflow with the
 width, using a 180-point minimum so the theme name and Recommended/Dark/Light caption stay apart. Text-field placeholders are italic and faint, and fields in a section share one width.
