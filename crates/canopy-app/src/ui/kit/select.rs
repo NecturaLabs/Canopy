@@ -56,7 +56,8 @@ pub struct Select<'a, T: PartialEq + Clone> {
     value: &'a mut T,
     recommended: Option<T>,
     report_reselection: bool,
-    options: &'a [(T, &'a str)],
+    /// In the order listed: the recommended value first.
+    options: std::borrow::Cow<'a, [(T, &'a str)]>,
     label: Option<String>,
     name: Option<String>,
     placeholder: String,
@@ -80,7 +81,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             value,
             recommended: None,
             report_reselection: false,
-            options,
+            options: std::borrow::Cow::Borrowed(options),
             label: None,
             name: None,
             placeholder: String::new(),
@@ -98,8 +99,14 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             force: None,
         }
     }
-    /// Marks this value with a Recommended badge in the list and an accessible description.
+    /// Marks this value with a Recommended badge in the list and an accessible description, and
+    /// lists it first.
     pub fn recommended(mut self, value: T) -> Self {
+        if let Some(at) = self.options.iter().position(|(v, _)| *v == value)
+            && at > 0
+        {
+            self.options.to_mut()[..=at].rotate_right(1);
+        }
         self.recommended = Some(value);
         self
     }
@@ -567,7 +574,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             } else {
                 popup.open_memory(None)
             };
-            let options = self.options;
+            let options = &self.options;
             let list_name = self
                 .label
                 .clone()
@@ -992,6 +999,24 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_recommended_value_is_listed_first() {
+        let options = [(0, "Off"), (1, "Daily"), (2, "Weekly")];
+        let mut value = 0;
+        let order = |select: Select<'_, i32>| -> Vec<i32> {
+            select.options.iter().map(|(v, _)| *v).collect()
+        };
+        assert_eq!(
+            order(Select::new(&mut value, &options).recommended(2)),
+            [2, 0, 1]
+        );
+        assert_eq!(
+            order(Select::new(&mut value, &options).recommended(0)),
+            [0, 1, 2]
+        );
+        assert_eq!(order(Select::new(&mut value, &options)), [0, 1, 2]);
+    }
+
     use super::super::testkit::{self, frame, key, spoken};
     use super::*;
 

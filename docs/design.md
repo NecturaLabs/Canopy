@@ -535,8 +535,8 @@ opening with the mouse as well as from the keyboard, and the highlighted option 
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
 
-A select can mark one option with the kit's Recommended badge; its accessible description
-announces the recommendation without repeating the option name. The list reserves room for the
+A select can mark one option with the kit's Recommended badge, and then lists it first; its
+accessible description announces the recommendation without repeating the option name. The list reserves room for the
 badge and check, truncating only the painted label while keeping its full accessible name.
 
 Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
