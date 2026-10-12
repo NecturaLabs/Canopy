@@ -126,13 +126,13 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Syntax highlighting in diffs | Done | Yes | Yes | ? |
 | Image diff | Planned | Yes | Yes | ? |
 | Ignore whitespace, context lines setting | Done | Yes | Yes | Yes |
-| Commit composer with summary counter (Enter in the summary moves to the description; Ctrl+Enter commits and leaves the boxes); follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
+| Commit composer with Subject and Body fields and a subject counter (Enter in the subject moves to the body; Ctrl+Enter commits and leaves the boxes); follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
 | Unsent commit message kept when its tab closes, until the repository opens again (same session) | Done | ? | ? | ? |
 | Amend | Done | Yes | Yes | Yes |
 | Amending a commit its upstream already has asks first: it rewrites published history and the next push needs force-with-lease | Done | Yes | ? | ? |
 | The commit template (`commit.template`) fills an empty message field once per tab in trusted folders, including after trusting an open tab; a draft or an amend keeps its text | Unreleased | Yes | ? | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
-| Commit message checks: a summary or description line longer than 72 characters is reported under the fields (Settings → Git → Commits → Check commit messages, on by default); long URLs, indented and quoted lines are left alone, and a hint never blocks the commit or changes the draft | Unreleased | ? | Yes | ? |
+| Commit message checks: a subject or body line longer than 72 characters is reported under the fields (Settings → Git → Commits → Check commit messages, on by default); long URLs, indented and quoted lines are left alone, and a hint never blocks the commit or changes the draft | Unreleased | ? | Yes | ? |
 
 Unstaged diffs refuse actual symbolic links when `core.symlinks=false`, because libgit2 would
 otherwise read their targets as regular files. Git's ordinary-file link emulation still works.

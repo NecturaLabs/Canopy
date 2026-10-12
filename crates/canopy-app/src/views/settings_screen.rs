@@ -3698,7 +3698,7 @@ fn git(
     row(
         ui,
         "Check commit messages",
-        "Hints under the commit fields when the summary or a description line is longer than 72 characters, which most tools cut off or wrap. A hint never stops a commit or changes what you wrote.",
+        "Hints under the commit fields when the subject or a body line is longer than 72 characters, which most tools cut off or wrap. A hint never stops a commit or changes what you wrote.",
         |ui| {
             revert(
                 ui,
