@@ -730,6 +730,15 @@ pub struct Requests {
     pub quiet_refresh: bool,
     /// The timer that refreshes the list while the view stays open.
     pub refresh: RefreshTimer,
+    /// The host holds requests after the pages loaded.
+    pub more: bool,
+    /// How many pages of the list are loaded (the first, then one per "Load more").
+    pub pages: usize,
+    /// A page after the first is on its way.
+    pub loading_more: bool,
+    /// The rows of the pages after the first, as they arrived; a reload of the first page keeps
+    /// them, a reload the user asked for drops them.
+    tail: Vec<RequestSummary>,
 }
 
 impl Default for Requests {
@@ -755,11 +764,38 @@ impl Default for Requests {
             loaded_at: None,
             quiet_refresh: false,
             refresh: RefreshTimer::default(),
+            more: false,
+            pages: 1,
+            loading_more: false,
+            tail: Vec::new(),
         }
     }
 }
 
 impl Requests {
+    /// `head`, the first page, followed by the later pages' rows it does not repeat.
+    fn with_tail(&self, mut head: Vec<RequestSummary>) -> Vec<RequestSummary> {
+        let tail = self
+            .tail
+            .iter()
+            .filter(|t| !head.iter().any(|h| h.number == t.number))
+            .cloned()
+            .collect::<Vec<_>>();
+        head.extend(tail);
+        head
+    }
+
+    /// Puts a later page's rows into the tail: a row already there is replaced (the page came
+    /// again with its checks and reviews), the rest are added.
+    fn add_page(&mut self, rows: Vec<RequestSummary>) {
+        for row in rows {
+            match self.tail.iter_mut().find(|t| t.number == row.number) {
+                Some(existing) => *existing = row,
+                None => self.tail.push(row),
+            }
+        }
+    }
+
     /// The details of `number` in `forge` loaded less than [`REQUEST_DETAILS_CACHE_TTL`] ago.
     fn cached_details(&self, forge: &Forge, number: u64) -> Option<Arc<RequestDetails>> {
         self.details_cache
@@ -1448,6 +1484,10 @@ impl RepoTab {
             self.requests.details_cache.clear();
             self.requests.quiet_refresh = false;
             self.requests.loading = true;
+            self.requests.tail.clear();
+            self.requests.pages = 1;
+            self.requests.more = false;
+            self.requests.loading_more = false;
             self.host_job(HostJob::List(self.requests.filter));
             // Refreshing the rows must refresh the open request's body and action state too.
             // Otherwise a manual refresh leaves its details stale until another selection.
@@ -1458,6 +1498,19 @@ impl RepoTab {
                 self.request_details(n);
             }
         }
+    }
+
+    /// Asks for the next page of the list. Nothing happens while one is on its way, when the host
+    /// has no more, or without a hosting thread.
+    pub fn load_more_requests(&mut self) {
+        if self.host.is_none() || !self.requests.more || self.requests.loading_more {
+            return;
+        }
+        self.requests.loading_more = true;
+        self.host_job(HostJob::ListMore(
+            self.requests.filter,
+            self.requests.pages + 1,
+        ));
     }
 
     /// Loads the request list again without a spinner, keeping the list, the selection and the
@@ -2593,6 +2646,30 @@ impl RepoTab {
         }
     }
 
+    /// Rebuilds the list from its first page and the later pages, leaving the selection where it is.
+    fn show_pages(&mut self, ctx: &egui::Context) {
+        let Some(Ok(list)) = &self.requests.list else {
+            return;
+        };
+        let loaded: HashSet<u64> = self.requests.tail.iter().map(|r| r.number).collect();
+        let mut all: Vec<RequestSummary> = list
+            .iter()
+            .filter(|r| !loaded.contains(&r.number))
+            .cloned()
+            .collect();
+        all.extend(self.requests.tail.iter().cloned());
+        let all: Arc<[RequestSummary]> = Arc::from(all);
+        let standing = |r: &RequestSummary| row_standing(ctx, self, r);
+        let order: Vec<u64> = self
+            .request_view
+            .visible(&all, standing)
+            .into_iter()
+            .map(|i| all[i].number)
+            .collect();
+        self.requests.list = Some(Ok(all));
+        self.requests.shown = Some(order);
+    }
+
     fn poll_host(&mut self, notices: &mut Vec<Notice>) {
         let Some(host) = &self.host else { return };
         let kind = host.forge.kind;
@@ -2610,8 +2687,47 @@ impl RepoTab {
                     self.requests.refresh.held_until =
                         Some(Instant::now() + rate_limit_hold(reset, now));
                 }
+                HostEvent::More { filter, more } => {
+                    if filter == self.requests.filter && self.requests.pages <= 1 {
+                        self.requests.more = more;
+                    }
+                }
+                HostEvent::Page {
+                    filter,
+                    page,
+                    result,
+                } => {
+                    self.note_token(&result);
+                    if filter == self.requests.filter {
+                        match result {
+                            Ok((rows, more)) => {
+                                if page == self.requests.pages + 1 && self.requests.loading_more {
+                                    self.requests.pages = page;
+                                    self.requests.more = more;
+                                }
+                                if page <= self.requests.pages {
+                                    self.requests.loading_more = false;
+                                    self.requests.add_page(rows);
+                                    self.show_pages(&ctx);
+                                }
+                            }
+                            Err(e) => {
+                                self.requests.loading_more = false;
+                                notices.push(Notice {
+                                    ok: false,
+                                    title: format!(
+                                        "Could not load more {}s",
+                                        forge.kind.request_noun()
+                                    ),
+                                    body: e,
+                                });
+                            }
+                        }
+                    }
+                }
                 HostEvent::List(filter, result) => {
                     self.note_token(&result);
+                    let result = result.map(|head| self.requests.with_tail(head));
                     let kept_through_failure = self.requests.quiet_refresh
                         && result.is_err()
                         && matches!(self.requests.list, Some(Ok(_)));
@@ -5212,6 +5328,74 @@ mod tests {
         ))?;
         tab.poll(&[]);
         assert!(matches!(tab.requests.list, Some(Err(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn later_pages_join_the_list_and_a_reload_starts_over() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::hosting::HostEvent;
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            return Err("no host".into());
+        };
+        let (host, host_events, jobs) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        drop(host_jobs);
+        let numbers = |tab: &RepoTab| -> Vec<u64> {
+            match &tab.requests.list {
+                Some(Ok(list)) => list.iter().map(|r| r.number).collect(),
+                _ => Vec::new(),
+            }
+        };
+        tab.load_requests();
+        host_events.send(HostEvent::More {
+            filter: StateFilter::Open,
+            more: true,
+        })?;
+        host_events.send(HostEvent::List(
+            StateFilter::Open,
+            Ok(vec![listed(3, 30), listed(2, 20)]),
+        ))?;
+        tab.poll(&[]);
+        assert!(tab.requests.more);
+        // The next page asks the host once, whatever the number of clicks.
+        tab.load_more_requests();
+        tab.load_more_requests();
+        let asked = jobs
+            .try_iter()
+            .filter(|j| matches!(j, HostJob::ListMore(StateFilter::Open, 2)))
+            .count();
+        assert_eq!(asked, 1);
+        host_events.send(HostEvent::Page {
+            filter: StateFilter::Open,
+            page: 2,
+            result: Ok((vec![listed(1, 10)], false)),
+        })?;
+        tab.poll(&[]);
+        assert_eq!(numbers(&tab), [3, 2, 1]);
+        assert!(!tab.requests.more && !tab.requests.loading_more);
+        // The page again with its checks replaces its row instead of adding one.
+        host_events.send(HostEvent::Page {
+            filter: StateFilter::Open,
+            page: 2,
+            result: Ok((vec![listed(1, 11)], false)),
+        })?;
+        // A timed refresh of the first page keeps the later pages.
+        host_events.send(HostEvent::List(
+            StateFilter::Open,
+            Ok(vec![listed(4, 40), listed(3, 30)]),
+        ))?;
+        tab.poll(&[]);
+        assert_eq!(numbers(&tab), [4, 3, 1]);
+        // A reload the user asked for starts from the first page again.
+        tab.load_requests();
+        assert!(!tab.requests.more && tab.requests.pages == 1);
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(vec![listed(4, 40)])))?;
+        tab.poll(&[]);
+        assert_eq!(numbers(&tab), [4]);
         Ok(())
     }
 

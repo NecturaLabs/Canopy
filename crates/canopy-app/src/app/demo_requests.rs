@@ -29,7 +29,7 @@ use crate::tab::RepoTab;
 static CHOSEN: OnceLock<Scenario> = OnceLock::new();
 
 /// What `--demo-requests` accepts, for `--help` and the error message.
-pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, list-overflow, filtered, no-match, \
+pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, list-overflow, list-more, filtered, no-match, \
 <number>, busy, loading, details-loading, details-error, error, no-token or empty; prefix gitlab: for \
 merge requests";
 
@@ -42,6 +42,8 @@ enum Scene {
     Unchecked,
     /// An open list longer than any window, to see the scroll bar beside the rows.
     Overflow,
+    /// The open list with more pages on the host: the note and the Load more button after it.
+    More,
     /// The open list with a filter and a sort chosen: ready requests, A to Z by title.
     Filtered,
     /// The open list with a text filter that matches nothing.
@@ -102,6 +104,7 @@ impl Scenario {
             "list-closed" => Scene::List(StateFilter::Closed),
             "list-unchecked" => Scene::Unchecked,
             "list-overflow" => Scene::Overflow,
+            "list-more" => Scene::More,
             "filtered" => Scene::Filtered,
             "no-match" => Scene::NoMatch,
             "busy" => Scene::Busy,
@@ -214,6 +217,10 @@ impl Scenario {
                 requests.list = Some(Ok(rows.into()));
             }
             Scene::Overflow => requests.list = Some(Ok(overflow(kind, now))),
+            Scene::More => {
+                requests.list = list(StateFilter::Open);
+                requests.more = true;
+            }
             Scene::Filtered | Scene::NoMatch => {
                 requests.list = list(StateFilter::Open);
                 match self.scene {
@@ -953,6 +960,7 @@ mod tests {
             "list-closed",
             "list-unchecked",
             "list-overflow",
+            "list-more",
             "filtered",
             "no-match",
             "428",
