@@ -13,11 +13,12 @@
 //! reads as a field on the pane, the chrome, a card or a dialog alike. Deeper adds the `Field`
 //! material's inner shadow along the top (a recess). Text stops at the well's inner edge, clear of the trailing slot.
 //!
-//! **The edge** is one even hairline at rest, the quietest mix of `edge` and `control_border`
-//! that still stands 3:1 (4.5:1 in strict themes) from every surface and well, so a field is
-//! identifiable without a heavy outline. Hover takes it to `control_border`, focus to `focus` with
-//! the halo, an error to `danger_base`. Disabled fields use the theme's disabled tokens; read-only
-//! ones have no well and a quieter edge, so neither looks like a field waiting for input.
+//! **The edge** is one even hairline at rest, as quiet as the edges of the buttons and selects
+//! beside it: the quietest mix of `edge` and `control_border` that still traces the well on every
+//! surface (`QUIET_EDGE_MIN`); high contrast keeps an input outline of 4.5:1. Hover takes it to
+//! `control_border`, focus to `focus` with the halo, an error to `danger_base`. Disabled fields use
+//! the theme's disabled tokens; read-only ones have no well and the theme's plain edge, so neither
+//! looks like a field waiting for input.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -52,8 +53,9 @@ const FOCUS_LINE: f32 = 2.0;
 /// much more while hovered.
 const WELL_ALPHA: u8 = 16;
 const HOVER_ALPHA: u8 = 6;
-/// The quiet sides of the resting edge: `edge` this far towards `control_border`.
-const SIDE_MIX: f32 = 0.35;
+/// The resting edge outside high contrast: as quiet as the other controls' edges, just enough to
+/// trace the well on every surface. High contrast keeps the input-outline target.
+const QUIET_EDGE_MIN: f64 = 1.5;
 /// Text areas: the column guide shows once a line comes this close to it.
 const GUIDE_REACH: f32 = theme::XL;
 /// The summary counter turns `warning` past 50 characters and `danger` past 72.
@@ -85,7 +87,7 @@ pub(crate) struct FieldLook {
     /// The well at rest and hovered: translucent, laid over the surface under the field.
     pub wash: Color32,
     pub hover_wash: Color32,
-    /// The resting edge: quiet sides, and the bottom edge that identifies the field.
+    /// The read-only edge, and the resting edge of a field waiting for input.
     pub side: Color32,
     pub base: Color32,
 }
@@ -120,6 +122,7 @@ pub(crate) fn look(p: &'static Palette, style: Style) -> FieldLook {
     let s = p.surfaces(style);
     let grounds = grounds(p, style);
     let (text_min, dim_min, faint_min, rim_min) = targets(p);
+    let rim_min = if p.strict { rim_min } else { QUIET_EDGE_MIN };
     let reads_over = |wash: Color32| {
         grounds.iter().all(|g| {
             let c = theme::over(wash, *g);
@@ -161,11 +164,7 @@ pub(crate) fn look(p: &'static Palette, style: Style) -> FieldLook {
                 .all(|g| theme::contrast(*e, *g) >= rim_min)
         })
         .unwrap_or(p.control_border);
-    let side = if p.strict {
-        base
-    } else {
-        theme::mix(s.edge, p.control_border, SIDE_MIX)
-    };
+    let side = if p.strict { base } else { s.edge };
     let l = FieldLook {
         wash,
         hover_wash,
@@ -245,35 +244,6 @@ pub(crate) fn paint_box(
     }
 }
 
-/// Which side of a stacked pair of fields a field is: the pair reads as one box, so the corners
-/// at the seam are square and the next field overlaps this one's edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Join {
-    /// The upper field: its bottom corners are square.
-    Above,
-    /// The lower field: its top corners are square.
-    Below,
-}
-
-impl Join {
-    fn radius(self, round: u8) -> CornerRadius {
-        match self {
-            Self::Above => CornerRadius {
-                nw: round,
-                ne: round,
-                sw: 0,
-                se: 0,
-            },
-            Self::Below => CornerRadius {
-                nw: 0,
-                ne: 0,
-                sw: round,
-                se: round,
-            },
-        }
-    }
-}
-
 /// Everything the fields share.
 #[derive(Debug)]
 struct Core<'t> {
@@ -298,7 +268,6 @@ struct Core<'t> {
     guide: Option<usize>,
     shortcut: Option<Command>,
     borderless: bool,
-    joined: Option<Join>,
     /// A − and + pair at the trailing end, with their names and whether each can step.
     stepper: Option<Stepper>,
     id_salt: Option<Id>,
@@ -348,7 +317,6 @@ impl<'t> Core<'t> {
             guide: None,
             shortcut: None,
             borderless: false,
-            joined: None,
             stepper: None,
             id_salt: None,
             id: None,
@@ -463,9 +431,7 @@ impl<'t> Core<'t> {
             _ => self.size.height(),
         };
         let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-        let radius = self
-            .joined
-            .map_or_else(|| CornerRadius::same(m.radius), |j| j.radius(m.radius));
+        let radius = CornerRadius::same(m.radius);
         // The well goes here, under the text, once hover is known.
         let painter = if enabled {
             ui.painter().clone()
@@ -1171,14 +1137,9 @@ impl<'t> TextField<'t> {
         self.core.size = size;
         self
     }
-    /// A right-aligned character count: `warning` past 50, `danger` past 72 (commit summary).
+    /// A right-aligned character count: `warning` past 50, `danger` past 72 (commit subject).
     pub fn counter(mut self, counter: bool) -> Self {
         self.core.counter = counter;
-        self
-    }
-    /// One half of a stacked pair that reads as a single box.
-    pub fn joined(mut self, join: Join) -> Self {
-        self.core.joined = Some(join);
         self
     }
     pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
@@ -1270,12 +1231,7 @@ impl<'t> TextArea<'t> {
         self.core.kind = Kind::Area { rows };
         self
     }
-    /// One half of a stacked pair that reads as a single box.
-    pub fn joined(mut self, join: Join) -> Self {
-        self.core.joined = Some(join);
-        self
-    }
-    /// A dotted guide at this column (72 for commit descriptions).
+    /// A dotted guide at this column (72 for commit bodies).
     pub fn guide(mut self, column: usize) -> Self {
         self.core.guide = Some(column);
         self
@@ -1817,13 +1773,13 @@ pub(crate) fn gallery(ui: &mut Ui) {
         .show_forced(ui, ForceState::FOCUS);
     gallery_caption(
         ui,
-        "Summary counter at 50 and 73 characters (text stops clear of it); description, idle",
+        "Subject counter at 50 and 73 characters (text stops clear of it); body, idle",
     );
     cols(ui, &mut |ui, i| {
         let text = if i == 0 { 50 } else { 73 };
         TextField::new(&mut "x".repeat(text))
             .counter(true)
-            .name("Summary")
+            .name("Subject")
             .id_salt(("g-sum", i))
             .show(ui);
     });
@@ -1835,16 +1791,13 @@ pub(crate) fn gallery(ui: &mut Ui) {
             TextArea::new(v)
                 .rows(3..=12)
                 .guide(72)
-                .placeholder("Description")
-                .name("Description")
+                .placeholder("Body")
+                .name("Body")
                 .id_salt("g-area")
                 .show(ui);
         },
     );
-    gallery_caption(
-        ui,
-        "Description with a line past column 72: the guide shows",
-    );
+    gallery_caption(ui, "Body with a line past column 72: the guide shows");
     TextArea::new(
         &mut "Retry with backoff: the mobile clients drop the first request after a resume, so the \
               fetch now waits and tries again."
@@ -1852,7 +1805,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     )
     .rows(3..=12)
     .guide(72)
-    .name("Description, long")
+    .name("Body, long")
     .id_salt("g-area-long")
     .show(ui);
     gallery_caption(ui, "Code area with line numbers (live), focused");
@@ -1895,14 +1848,6 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_joined_pair_has_square_corners_at_its_seam() {
-        let above = Join::Above.radius(6);
-        assert_eq!((above.nw, above.ne, above.sw, above.se), (6, 6, 0, 0));
-        let below = Join::Below.radius(6);
-        assert_eq!((below.nw, below.ne, below.sw, below.se), (0, 0, 6, 6));
-    }
-
     use egui::accesskit::Role;
 
     use super::super::testkit::{self, find, frame, key, key_with, spoken};
@@ -1935,9 +1880,8 @@ mod tests {
 
     /// O10: a field is a well a step off every surface it can sit on, every text colour reads
     /// on it there (the placeholder is `text_faint`: 4.5:1, 5.5:1 strict), and its resting edge
-    /// is quiet on the sides with a bottom edge that stands 3:1 (4.5:1 strict) from every
-    /// surface and the well at rest, so the field is identifiable. In every theme, at high
-    /// contrast too.
+    /// traces the well on every surface without the weight of an input outline; high contrast
+    /// keeps the outline (4.5:1). In every theme.
     #[test]
     fn a_field_is_a_readable_well_with_a_quiet_accessible_edge_in_every_theme() {
         for (id, high) in theme::ThemeId::ALL
@@ -1946,6 +1890,7 @@ mod tests {
         {
             let p = id.shown_palette(high);
             let (text_min, dim_min, faint_min, rim_min) = targets(p);
+            let rim_min = if p.strict { rim_min } else { QUIET_EDGE_MIN };
             for style in Style::ALL {
                 let l = look(p, style);
                 for (i, ground) in grounds(p, style).into_iter().enumerate() {
@@ -1967,7 +1912,7 @@ mod tests {
                     for against in [ground, well] {
                         assert!(
                             theme::contrast(l.base, against) >= rim_min,
-                            "{at}: the bottom edge identifies the field"
+                            "{at}: the edge traces the field"
                         );
                     }
                     if p.dark {
@@ -1984,12 +1929,10 @@ mod tests {
                             "{at}: the plate is never darker than its surface"
                         );
                     }
-                    if !p.strict {
-                        assert!(
-                            theme::contrast(l.side, ground) < theme::contrast(l.base, ground),
-                            "{at}: the sides are quieter than the bottom edge"
-                        );
-                    }
+                    assert!(
+                        theme::contrast(l.side, ground) <= theme::contrast(l.base, ground) + 0.01,
+                        "{at}: a read-only edge is no louder than a field waiting for input"
+                    );
                     assert!(
                         theme::contrast(l.base, ground)
                             <= theme::contrast(p.control_border, ground) + 0.01,
