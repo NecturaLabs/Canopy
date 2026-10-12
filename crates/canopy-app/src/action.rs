@@ -46,6 +46,11 @@ pub enum Action {
         from: Option<Oid>,
         path: String,
     },
+    /// Search the history for commits that added or removed this text (the dialog stays open).
+    SearchChanges {
+        query: String,
+        regex: bool,
+    },
     /// A commit of a file's history, opened in History with the file's diff there.
     ShowFileVersion(canopy_core::FileHistoryEntry),
     /// Show who last changed each line of the selected file, in place of its diff.

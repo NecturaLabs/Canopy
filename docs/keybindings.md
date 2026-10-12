@@ -127,6 +127,7 @@ Only when no text field has focus.
 | Keys | Action |
 |---|---|
 | Shift+T | Tag the selected commit |
+| Shift+F | Search the history for changed text |
 | Y | Copy the selected commit's SHA |
 | O | Open the commit (or request) on GitHub or GitLab |
 

@@ -54,6 +54,7 @@ pub enum Command {
     Last,
     MergeDialog,
     Tag,
+    SearchChanges,
     FocusCommit,
     ToggleStage,
     StageAll,
@@ -440,6 +441,12 @@ pub const BINDINGS: &[Binding] = &[
         C::Tag,
         &[shifted(Key::T)],
         "Tag the selected commit",
+    ),
+    b(
+        S::History,
+        C::SearchChanges,
+        &[shifted(Key::F)],
+        "Search the history for changed text",
     ),
     b(
         S::History,

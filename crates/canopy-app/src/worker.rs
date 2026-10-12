@@ -363,6 +363,13 @@ pub enum Job {
         from: Option<Oid>,
         path: String,
     },
+    /// The commits whose changes added or removed text (the pickaxe); the serial ties the reply to
+    /// the newest search.
+    SearchChanges {
+        serial: u64,
+        query: String,
+        regex: bool,
+    },
     /// Full snapshot with up to this many commits (0 keeps the current limit).
     Refresh(usize),
     /// The user's Retry after a download failed: forget the failure and read again, downloading.
@@ -467,6 +474,10 @@ pub enum Event {
     FileHistory {
         serial: u64,
         result: Result<Arc<canopy_core::FileHistory>, String>,
+    },
+    ChangeSearch {
+        serial: u64,
+        result: Result<Arc<canopy_core::ChangeSearch>, String>,
     },
     Ignore {
         serial: u64,
@@ -807,6 +818,7 @@ impl Job {
             Self::PullConfig => "pull-config",
             Self::Insights(_) => "repository insights",
             Self::FileHistory { .. } => "file-history",
+            Self::SearchChanges { .. } => "search-changes",
             Self::Tools => "tools",
             Self::PushTarget => "push-target",
             Self::Options(_) => "options",
@@ -1105,6 +1117,20 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         result: result.map(Arc::new).map_err(|e| e.to_string()),
                     });
                 }
+                Job::SearchChanges {
+                    serial,
+                    query,
+                    regex,
+                } => {
+                    let result = repo.search_changes(None, &query, regex, CHANGE_SEARCH_LIMIT);
+                    if let Err(error) = &result {
+                        tracing::warn!(%error, "change search failed");
+                    }
+                    emit(Event::ChangeSearch {
+                        serial,
+                        result: result.map(Arc::new).map_err(|e| e.to_string()),
+                    });
+                }
                 Job::Tools => emit(Event::ToolsMissing(repo.missing_tools())),
                 Job::PushTarget => {
                     emit(Event::PushTarget(
@@ -1293,6 +1319,7 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
     let mut signature_seen = false;
     let mut ignore_seen = false;
     let mut file_history_seen = false;
+    let mut change_search_seen = false;
     let mut blame_seen = false;
     let mut diff_sources = Vec::new();
     for (i, job) in jobs.iter().enumerate().rev() {
@@ -1300,6 +1327,9 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
             Job::Ignore { .. } => keep[i] = !std::mem::replace(&mut ignore_seen, true),
             Job::FileHistory { .. } => {
                 keep[i] = !std::mem::replace(&mut file_history_seen, true);
+            }
+            Job::SearchChanges { .. } => {
+                keep[i] = !std::mem::replace(&mut change_search_seen, true);
             }
             Job::Details(_) => keep[i] = !std::mem::replace(&mut details_seen, true),
             Job::Signature(_) => keep[i] = !std::mem::replace(&mut signature_seen, true),
@@ -1354,6 +1384,9 @@ fn trusted_now(repo: &Repo) -> bool {
 
 /// The most commits of one file's history a read returns; the dialog says when there are more.
 const FILE_HISTORY_LIMIT: usize = 500;
+
+/// The most commits one change search lists.
+const CHANGE_SEARCH_LIMIT: usize = 300;
 
 /// Why a download did not run in a repository outside every trusted folder.
 pub(crate) const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a trusted folder. \

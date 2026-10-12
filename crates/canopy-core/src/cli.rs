@@ -229,6 +229,12 @@ pub fn loggable(args: &[&str]) -> Vec<String> {
         } else if a.starts_with("-m") && a.len() >= MIN_ATTACHED_MESSAGE_ARG && !a.starts_with("--")
         {
             out.push("-m<redacted>".to_owned());
+        } else if let Some(flag) = ["-S", "-G"]
+            .into_iter()
+            .find(|f| a.starts_with(f) && a.len() > f.len())
+        {
+            // A history search for text that may be a secret.
+            out.push(format!("{flag}<redacted>"));
         } else {
             out.push(redact_url(a));
         }
@@ -806,6 +812,12 @@ mod tests {
             ["-c", "<redacted>", "fetch"]
         );
         assert_eq!(loggable(&["tag", "-mhello"]), ["tag", "-m<redacted>"]);
+        // The text of a history search is never logged; a bare -S (sign) has nothing to hide.
+        assert_eq!(
+            loggable(&["log", "-Ssecret-token", "-G(pass)=x", "--"]),
+            ["log", "-S<redacted>", "-G<redacted>", "--"]
+        );
+        assert_eq!(loggable(&["commit", "-S"]), ["commit", "-S"]);
         assert_eq!(redact_url("ssh://git@host/x"), "ssh://<redacted>@host/x");
         assert_eq!(redact_url("https://host/a@b"), "https://host/a@b");
         assert_eq!(redact_url("no url"), "no url");
