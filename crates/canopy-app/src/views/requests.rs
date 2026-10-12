@@ -1821,22 +1821,34 @@ struct CredentialProblem {
 /// nothing was refused, whatever the host answered (a GitLab that wants a sign-in answers 401).
 fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
     if tab.requests.token == Some(None) {
+        const NO_TOKEN: &str = "Without one Canopy can only read this request. Approving, merging and commenting need a token.";
+        // A CLI that is installed but cannot be used says why, before anything else.
+        let text = tab
+            .requests
+            .cli
+            .as_ref()
+            .and_then(|cli| cli.problem.as_deref())
+            .map_or_else(|| NO_TOKEN.to_owned(), |why| format!("{why} {NO_TOKEN}"));
         Some(CredentialProblem {
             title: "No token",
-            text: "Without one Canopy can only read this request. Approving, merging and commenting need a token.".into(),
+            text,
             fix: "Add a token…",
         })
     } else if tab.requests.token_rejected {
         Some(CredentialProblem {
             title: "The host refused the token",
             // Which one, so the fix goes to the right place.
-            text: format!(
-                "The token {} is expired, revoked or lacks the scope this needs. Replace it to approve, merge or comment.",
-                tab.requests
-                    .token
-                    .flatten()
-                    .map_or("Canopy sends", |source| source.label()),
-            ),
+            text: match tab.requests.token.flatten() {
+                Some(source @ crate::hosting::TokenSource::Cli(kind)) => format!(
+                    "The token {} is expired, revoked or lacks the scope this needs. Sign in to the {} CLI again, or add a token, to approve, merge or comment.",
+                    source.label(),
+                    kind.name(),
+                ),
+                source => format!(
+                    "The token {} is expired, revoked or lacks the scope this needs. Replace it to approve, merge or comment.",
+                    source.map_or("Canopy sends", |source| source.label()),
+                ),
+            },
             fix: "Replace the token…",
         })
     } else {
@@ -2566,6 +2578,8 @@ mod tests {
     #[test]
     fn no_credential_line_while_the_token_works() {
         for source in [
+            crate::hosting::TokenSource::Cli(ForgeKind::GitHub),
+            crate::hosting::TokenSource::Cli(ForgeKind::GitLab),
             crate::hosting::TokenSource::Saved,
             crate::hosting::TokenSource::Environment,
             crate::hosting::TokenSource::GitCredentials,
@@ -2591,6 +2605,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// #136: a CLI that is installed but cannot be used says why where the missing token is
+    /// reported; a CLI that is not installed adds nothing.
+    #[test]
+    fn a_cli_that_could_not_be_used_is_named_in_the_no_token_warning() {
+        let mut tab = test_tab();
+        tab.requests.token = Some(None);
+        let plain = credential_problem(&tab).unwrap().text;
+        tab.requests.cli = Some(crate::hosting::CliReport {
+            user: None,
+            problem: Some("The GitHub CLI (gh) is not signed in to github.com.".into()),
+        });
+        let text = credential_problem(&tab).unwrap().text;
+        assert!(
+            text.starts_with("The GitHub CLI (gh) is not signed in"),
+            "{text}"
+        );
+        assert!(text.ends_with(&plain), "{text}");
     }
 
     /// #142: a missing or refused token shows as a warning with its fix, and the fix opens

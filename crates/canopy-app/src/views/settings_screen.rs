@@ -5123,10 +5123,11 @@ fn accounts<'f>(
                     ui.label(RichText::new(&host).font(theme::heading(m.subtitle_size)).color(p.text));
                     let saved = tokens.get_for(&forge).is_some();
                     let env = canopy_hosting::token_from_env_for(kind, &forge.host, &settings.gitlab_host_list()).is_some();
-                    let (status, color) = if saved {
-                        (format!("{}  Token saved", icon::CHECK_CIRCLE), p.success)
-                    } else if env {
+                    // The environment comes before the saved token (ADR 0013).
+                    let (status, color) = if env {
                         (format!("{}  Using the {} environment variable", icon::CHECK_CIRCLE, if kind == ForgeKind::GitHub { "GH_TOKEN" } else { "GITLAB_TOKEN" }), p.success)
+                    } else if saved {
+                        (format!("{}  Token saved", icon::CHECK_CIRCLE), p.success)
                     } else {
                         (format!("{}  No saved token (the git credential helper is tried)", icon::KEY), p.text_faint)
                     };

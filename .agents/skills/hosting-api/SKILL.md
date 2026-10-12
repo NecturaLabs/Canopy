@@ -90,8 +90,8 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
   add one. A change that keeps a request alive after the setting is turned off is a defect:
   the thread's `Client` carries the worker's switch (`Client::with_switch`), which every request
   checks right before it is sent.
-- Tokens come from `hosting::resolve_token` (saved in `tokens.json`, then the host-matched
-  environment variable, then git's credential helper); the requests view shows an "Add a token…"
+- Tokens come from `hosting::resolve_token` (the `gh`/`glab` CLI's sign-in, held in memory only, then the host-matched
+  environment variable, then the token saved in `tokens.json`, then git's credential helper; ADR 0013); the requests view shows an "Add a token…"
   prompt when the server refuses without one. Do not read tokens anywhere else, and do not hand
   one to any code outside the hosting thread.
 - Destructive or hard-to-undo actions (merge, close) confirm first, like any other
