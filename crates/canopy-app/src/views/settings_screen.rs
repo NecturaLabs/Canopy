@@ -4556,7 +4556,13 @@ fn hosting_account(
         return;
     };
     let host = forge.authority();
-    let noun = forge.kind.request_noun();
+    let plural = format!("{}s", forge.kind.request_noun());
+    let sentence = {
+        let mut chars = plural.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(chars).collect()
+        })
+    };
     let limited = tab
         .requests
         .refresh
@@ -4570,26 +4576,26 @@ fn hosting_account(
     );
     let (text, color, action) = match status {
         HostingStatus::Off => (
-            format!("{noun} are off: Canopy does not contact {host}."),
+            format!("{sentence} are off: Canopy does not contact {host}."),
             p.text_faint,
             Some(("Open Integrations", Section::Integrations)),
         ),
         HostingStatus::Rejected(source) => (
             format!(
-                "{host} refused the credential{}, so {noun} cannot load.",
+                "{host} refused the credential{}, so {plural} cannot load.",
                 source.map_or(String::new(), |s| format!(" ({})", s.label())),
             ),
             p.danger,
             Some(("Open Accounts", Section::Accounts)),
         ),
         HostingStatus::RateLimited => (
-            format!("{host} is limiting requests; {noun} refresh again when the limit lifts."),
+            format!("{host} is limiting requests; {plural} refresh again when the limit lifts."),
             p.warning,
             Some(("Open Accounts", Section::Accounts)),
         ),
         HostingStatus::Working(source) => (
             format!(
-                "{noun} load from {host} using the credential {}.",
+                "{sentence} load from {host} using the credential {}.",
                 source.label()
             ),
             p.success,
@@ -4603,7 +4609,7 @@ fn hosting_account(
             Some(("Add a token", Section::Accounts)),
         ),
         HostingStatus::Unknown => (
-            format!("{noun} have not been requested from {host} yet."),
+            format!("{sentence} have not been requested from {host} yet."),
             p.text_faint,
             Some(("Open Accounts", Section::Accounts)),
         ),
@@ -8395,7 +8401,9 @@ mod tests {
         assert!(working.contains("Open Accounts"), "{working}");
         let rejected = hosting_words(true, Some(Some(Saved)), true);
         assert!(
-            rejected.contains("github.com refused the credential (saved in Canopy)"),
+            rejected.contains(
+                "github.com refused the credential (saved in Canopy), so pull requests cannot load."
+            ),
             "{rejected}"
         );
         let bare = hosting_words(true, Some(None), false);
@@ -8403,7 +8411,7 @@ mod tests {
         assert!(bare.contains("Add a token"), "{bare}");
         let off = hosting_words(false, Some(Some(Saved)), false);
         assert!(
-            off.contains("are off: Canopy does not contact github.com"),
+            off.contains("Pull requests are off: Canopy does not contact github.com."),
             "{off}"
         );
         assert!(off.contains("Open Integrations"), "{off}");
