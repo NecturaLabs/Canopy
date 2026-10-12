@@ -138,7 +138,7 @@ else
   python3 - "$workspace" "$size" "$native_dir/run.sh" <<'PYTHON'
 import json, shlex, subprocess, sys
 workspace, size, runner = sys.argv[1:]
-command = f"[workspace {workspace} silent; float; size {size.replace('x', ' ')}; center; renderunfocused] " + shlex.join(["bash", runner])
+command = f"[workspace {workspace} silent; float; size {size.replace('x', ' ')}; center; render_unfocused] " + shlex.join(["bash", runner])
 subprocess.run(["hyprctl", "eval", "hl.exec_cmd(" + json.dumps(command, ensure_ascii=False) + ")"], check=True, stdout=subprocess.DEVNULL)
 PYTHON
   for ((i=0; i<650; i++)); do
