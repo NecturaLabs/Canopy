@@ -364,10 +364,7 @@ fn hide_emails(text: &str) -> String {
         if at < last {
             continue;
         }
-        let start = text[..at]
-            .rfind(|c: char| !local_char(c))
-            .map_or(0, |i| i + 1)
-            .max(last);
+        let start = text[..at].trim_end_matches(local_char).len().max(last);
         let domain = &text[at + 1..];
         let domain = &domain[..domain
             .find(|c: char| !domain_char(c))
@@ -638,6 +635,7 @@ mod tests {
                 "author Ada <<email>> failed",
             ),
             ("ada@example.com: denied", "<email>: denied"),
+            ("→ada@example.com", "→<email>"),
         ];
         for (text, scrubbed) in cases {
             assert_eq!(scrub_text(text, ""), scrubbed, "{text}");
