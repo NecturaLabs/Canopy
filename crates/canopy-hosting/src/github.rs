@@ -10,7 +10,7 @@ use crate::client::{PER_PAGE, optional, unix};
 use crate::error::{Error, Result, map_head_conflict};
 use crate::http::{Http, Method, encode};
 use crate::model::{
-    Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
+    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
 };
 use crate::preview::description_preview;
@@ -212,27 +212,43 @@ pub(crate) fn viewer(http: &Http) -> Result<String> {
     Ok(user.login)
 }
 
+fn state_name(filter: StateFilter) -> &'static str {
+    match filter {
+        StateFilter::Open => "open",
+        StateFilter::Closed => "closed",
+        StateFilter::All => "all",
+    }
+}
+
+/// One page (1-based) of `per_page` pull requests, most recently updated first.
+fn page_of(
+    http: &Http,
+    repo: &str,
+    filter: StateFilter,
+    per_page: usize,
+    page: usize,
+) -> Result<Vec<RequestSummary>> {
+    let state = state_name(filter);
+    let path = format!(
+        "{repo}/pulls?state={state}&sort=updated&direction=desc&per_page={per_page}&page={page}"
+    );
+    let pulls: Vec<Pull> = http.json(Method::Get, &path, None)?;
+    Ok(pulls.iter().map(Pull::summary).collect())
+}
+
 pub(crate) fn list(
     http: &Http,
     repo: &str,
     filter: StateFilter,
     limit: usize,
 ) -> Result<Vec<RequestSummary>> {
-    let state = match filter {
-        StateFilter::Open => "open",
-        StateFilter::Closed => "closed",
-        StateFilter::All => "all",
-    };
     let per_page = limit.clamp(1, PER_PAGE);
     let mut out = Vec::new();
     let mut page = 1;
     while out.len() < limit {
-        let path = format!(
-            "{repo}/pulls?state={state}&sort=updated&direction=desc&per_page={per_page}&page={page}"
-        );
-        let pulls: Vec<Pull> = http.json(Method::Get, &path, None)?;
-        let n = pulls.len();
-        out.extend(pulls.iter().map(Pull::summary));
+        let rows = page_of(http, repo, filter, per_page, page)?;
+        let n = rows.len();
+        out.extend(rows);
         if n < per_page {
             break;
         }
@@ -240,6 +256,18 @@ pub(crate) fn list(
     }
     out.truncate(limit);
     Ok(out)
+}
+
+/// Page `page` (1-based) of [`PER_PAGE`] pull requests, and whether a full page means more follow.
+pub(crate) fn list_page(
+    http: &Http,
+    repo: &str,
+    filter: StateFilter,
+    page: usize,
+) -> Result<ListPage> {
+    let rows = page_of(http, repo, filter, PER_PAGE, page)?;
+    let more = rows.len() == PER_PAGE;
+    Ok(ListPage { rows, more })
 }
 
 /// What [`rollup`] reads for each pull request.

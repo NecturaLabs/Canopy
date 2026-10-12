@@ -2367,3 +2367,67 @@ fn tokens_in_server_words_never_reach_an_error_or_the_log() {
         }
     }
 }
+
+#[test]
+fn a_list_page_is_one_request_and_says_whether_more_follow() {
+    let server = Server::start();
+    let full: Vec<Value> = (1..=100)
+        .map(|n| gh_pull(n, "open", false, "2024-01-05T00:00:00Z"))
+        .collect();
+    let short: Vec<Value> = (101..=105)
+        .map(|n| gh_pull(n, "open", false, "2024-01-04T00:00:00Z"))
+        .collect();
+    let base = "/repos/octo/hello/pulls?state=open&sort=updated&direction=desc&per_page=100";
+    server.route(
+        "GET",
+        &format!("{base}&page=1"),
+        200,
+        &Value::Array(full).to_string(),
+    );
+    server.route(
+        "GET",
+        &format!("{base}&page=2"),
+        200,
+        &Value::Array(short).to_string(),
+    );
+    let client = github(&server, None);
+    let first = client.list_page(StateFilter::Open, 1).expect("page 1");
+    assert_eq!((first.rows.len(), first.more), (100, true));
+    assert_eq!(server.requests().len(), 1);
+    let second = client.list_page(StateFilter::Open, 2).expect("page 2");
+    assert_eq!((second.rows.len(), second.more), (5, false));
+    assert_eq!(second.rows[0].number, 101);
+    assert_eq!(server.requests().len(), 2, "page 1 was not fetched again");
+}
+
+#[test]
+fn a_closed_gitlab_page_interleaves_closed_and_merged_by_update_time() {
+    let server = Server::start();
+    let page = |state: &str| {
+        format!(
+            "{GL}/merge_requests?state={state}&order_by=updated_at&sort=desc&per_page=100&page=2"
+        )
+    };
+    server.route(
+        "GET",
+        &page("closed"),
+        200,
+        &json!([gl_mr(1, "closed", "2024-01-03T00:00:00Z")]).to_string(),
+    );
+    server.route(
+        "GET",
+        &page("merged"),
+        200,
+        &json!([
+            gl_mr(2, "merged", "2024-01-05T00:00:00Z"),
+            gl_mr(3, "merged", "2024-01-01T00:00:00Z")
+        ])
+        .to_string(),
+    );
+    let got = gitlab(&server, None)
+        .list_page(StateFilter::Closed, 2)
+        .expect("page 2");
+    let order: Vec<u64> = got.rows.iter().map(|r| r.number).collect();
+    assert_eq!(order, [2, 1, 3]);
+    assert!(!got.more, "neither state filled its page");
+}

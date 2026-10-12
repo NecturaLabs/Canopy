@@ -8,7 +8,9 @@ use canopy_core::forge::{Forge, ForgeKind};
 
 use crate::error::Result;
 use crate::http::{Http, redact_userinfo};
-use crate::model::{MergeMethod, NewRequest, RequestDetails, RequestSummary, StateFilter};
+use crate::model::{
+    ListPage, MergeMethod, NewRequest, RequestDetails, RequestSummary, StateFilter,
+};
 use crate::{github, gitlab};
 
 /// Largest page both providers serve.
@@ -170,6 +172,17 @@ impl Client {
         match self.kind {
             ForgeKind::GitHub => github::list(&self.http, &self.project, filter, limit),
             ForgeKind::GitLab => gitlab::list(&self.http, &self.project, filter, limit),
+        }
+    }
+
+    /// Page `page` (1-based, [`PER_PAGE`] requests) of the requests matching `filter`, most
+    /// recently updated first, and whether the host has more after it. Each call is one more
+    /// request (two for GitLab's closed list); earlier pages are never fetched again.
+    pub fn list_page(&self, filter: StateFilter, page: usize) -> Result<ListPage> {
+        let page = page.max(1);
+        match self.kind {
+            ForgeKind::GitHub => github::list_page(&self.http, &self.project, filter, page),
+            ForgeKind::GitLab => gitlab::list_page(&self.http, &self.project, filter, page),
         }
     }
 
