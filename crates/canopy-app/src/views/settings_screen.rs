@@ -44,7 +44,7 @@ use crate::ui::kit::row::{ListRow, Roving, RowKind};
 use crate::ui::kit::select::{self, Select};
 use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, column_label};
 use crate::ui::kit::toggle::Switch;
-use crate::ui::kit::{Button, IconButton, Size, Tone};
+use crate::ui::kit::{Button, HelpMark, IconButton, Size, Tone};
 use crate::ui::motion::{self, MotionPref};
 use crate::ui::theme::{
     self, Curve, Density, Elevation, Fill, GlassBlocked, NodeShape, Palette, Style, Surfaces,
@@ -888,7 +888,9 @@ fn synonyms(title: &str) -> &'static str {
         "Name" | "Email" | "Apply identity" | "Save to" | "Committer" => {
             "identity user author git config user.name user.email"
         }
-        "Pull strategy" => "pull rebase merge fast-forward ff only",
+        "Pull strategy" | "Fast-forward when pulling" => {
+            "pull strategy rebase merge fast-forward ff only pull.ff"
+        }
         "Follow my git config" => "pull rebase pull.rebase pull.ff configuration follow default",
         "Prune on fetch" => "prune stale remote branches delete",
         "Update submodules" => "submodule recurse pull checkout clone recursive",
@@ -1251,33 +1253,72 @@ fn search_field(ui: &mut Ui, screen: &mut SettingsScreen) {
     }
 }
 
-/// The widest an explanation runs: a comfortable line length, however wide the column.
-const READING_WIDTH: f32 = 560.0;
+/// What the identity rows say under their titles.
+const NAME_HELP: &str = "The author name recorded in your commits.";
+const EMAIL_HELP: &str = "Recorded in your commits; GitHub and GitLab link it to your account.";
 
 /// A preference and its controls. Compact columns stack the controls below the help.
 fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
-    row_more(ui, title, help, "", control);
+    row_explained(ui, title, help, "", control);
+}
+
+/// [`row`] with a longer explanation behind a help mark after its title.
+fn row_explained(
+    ui: &mut Ui,
+    title: &str,
+    help: &str,
+    detail: &str,
+    control: impl FnOnce(&mut Ui),
+) {
+    row_more(ui, title, help, detail, control);
     row_end(ui);
 }
 
 /// What a Git setting row says under its title; the recommended option is marked in its list.
 fn git_setting_help(setting: Setting) -> &'static str {
     match setting {
-        Setting::Autocrlf => "Keep the line-ending convention your projects require.",
-        Setting::CommitSigning => {
-            "Git uses your existing signing key and program; choose explicitly."
+        Setting::PullRebase => {
+            "Replays your commits on top of the incoming ones instead of merging."
         }
         Setting::PullFastForward => {
-            "Pull strategy: when branches diverge, choose Rebase or Merge for that pull."
+            "With fast-forward only, Canopy asks Rebase or Merge when branches diverged."
         }
-        Setting::FetchPruneTags => "Turning this on can delete local tags that were never pushed.",
-        Setting::PullAutostash => "Overrides rebase and merge autostash for pulls.",
-        Setting::PushDefault => {
-            "Matching pushes all matching branches; Nothing requires an explicit destination."
+        Setting::PullAutostash => "Stashes local changes before a pull and restores them after.",
+        Setting::FetchPrune => "Removes remote branches that were deleted on the remote.",
+        Setting::FetchPruneTags => {
+            "Deletes local tags the remote doesn't have, even unpushed ones."
         }
-        Setting::SubmoduleRecurse => "Git also updates configured submodules.",
-        Setting::SigningFormat => "Git uses your existing signing key and program.",
-        _ => "",
+        Setting::RebaseAutostash => {
+            "Stashes local changes before a rebase and restores them after."
+        }
+        Setting::MergeAutostash => "Stashes local changes before a merge and restores them after.",
+        Setting::PushFollowTags => "Pushes the annotated tags on the commits being pushed.",
+        Setting::SubmoduleRecurse => "Checkout, pull and switch also update submodules.",
+        Setting::PushDefault => "Simple pushes to the upstream branch only when the names match.",
+        Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
+        Setting::InitialBranch => "The branch a new repository starts on.",
+        Setting::CommitCleanup => {
+            "Whitespace trims spaces and blank lines; Strip also removes lines starting with #."
+        }
+        Setting::Autocrlf => "Converts CRLF to LF on commit; CRLF on checkout converts back.",
+        Setting::CommitSigning => "Signs every commit with your configured key.",
+        Setting::SigningFormat => "SSH signs with an SSH key; OpenPGP and X.509 need GnuPG.",
+    }
+}
+
+/// What an unset git setting shows: the value that applies, which is its recommendation except for
+/// line endings and signing, which Canopy leaves to git's built-in value.
+fn unset_value(setting: Setting, recommended: &str) -> String {
+    let builtin = match setting {
+        Setting::Autocrlf | Setting::CommitSigning => "false",
+        Setting::SigningFormat => "openpgp",
+        _ => recommended,
+    };
+    let label = git_value_label(setting, builtin);
+    if builtin == recommended {
+        format!("{label} (Recommended)")
+    } else {
+        label
     }
 }
 
@@ -1293,11 +1334,8 @@ fn row_with_note(
         if !help.is_empty() {
             help_label(ui, help);
         }
-        if let Some(note) = note {
-            note.show(ui);
-        }
     };
-    row_layout(ui, title, None, help, &help_text, "", control);
+    noted_row_layout(ui, title, None, help, &help_text, "", note, control);
     row_end(ui);
 }
 
@@ -1373,7 +1411,7 @@ fn revert<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, default: &T, name: &
     let side = crate::ui::kit::button::icon_button_side(Size::Sm);
     let button = IconButton::new(
         icon::ARROW_COUNTER_CLOCKWISE,
-        format!("Reset {name} to its default"),
+        format!("Reset {name} to recommended"),
     )
     .size(Size::Sm)
     .id_salt(("revert", name));
@@ -1410,13 +1448,10 @@ fn revert<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, default: &T, name: &
     clicked
 }
 
-/// The tag on a global setting that each repository can override.
-const DEFAULT_TAG: &str = "Default for repositories";
 const OVERRIDDEN_TIP: &str = "This repository has its own value.";
-const TAG_TIP: &str =
-    "Each repository follows this unless it chooses otherwise in Settings → This repository.";
 
-/// [`row`] for a setting that is the default for repositories: tagged as such.
+/// [`row`] for a setting that is the default for repositories (each can override it in This
+/// repository, which tags its overrides).
 fn default_row(
     ui: &mut Ui,
     title: &str,
@@ -1424,21 +1459,8 @@ fn default_row(
     note: Option<&Note>,
     control: impl FnOnce(&mut Ui),
 ) {
-    let help_text = |ui: &mut Ui| {
-        help_label(ui, help);
-        if let Some(note) = note {
-            note.show(ui);
-        }
-    };
-    row_layout(
-        ui,
-        title,
-        Some(DEFAULT_TAG),
-        &format!("{help} {DEFAULT_TAG}"),
-        &help_text,
-        "",
-        control,
-    );
+    let help_text = |ui: &mut Ui| help_label(ui, help);
+    noted_row_layout(ui, title, None, help, &help_text, "", note, control);
     row_end(ui);
 }
 
@@ -1453,82 +1475,34 @@ struct Note {
 /// How a note opens when git's own configuration decides a choice.
 const DECIDES: &str = "Your git configuration decides";
 
-impl Note {
-    /// Whether this note says git's configuration decides the choice.
-    fn decided(&self) -> bool {
-        self.text.starts_with(DECIDES)
-    }
-
-    /// The note, with a button that stops following the git configuration when it decides.
-    fn show(&self, ui: &mut Ui) {
-        self.show_text(ui);
-        if self.decided()
-            && Button::new("Stop following my git config")
-                .ghost()
-                .size(Size::Sm)
-                .id_salt(("stop-following", &self.text))
-                .show(ui)
-                .clicked()
-        {
-            ui.data_mut(|d| d.insert_temp(stop_following_id(), true));
-            ui.ctx().request_repaint();
-        }
-    }
-
-    fn show_text(&self, ui: &mut Ui) {
-        let p = palette(ui.ctx());
-        let m = theme::metrics();
-        let (glyph, color) = if self.warn {
-            (icon::WARNING, p.warning)
-        } else {
-            (icon::INFO, p.text_faint)
-        };
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = theme::XS;
-            ui.label(RichText::new(glyph).size(m.meta_size).color(color));
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&self.text)
-                        .size(m.meta_size)
-                        .color(if self.warn { p.text_dim } else { p.text_faint }),
-                )
-                .wrap(),
-            );
-        });
-    }
-}
-
-/// Set by a note's button; [`git`] turns Follow my git config off on the next frame.
-fn stop_following_id() -> egui::Id {
-    egui::Id::new("settings-stop-following-git-config")
-}
-
-/// What a choice's control shows: the value the git configuration sets while it decides, else
-/// Canopy's own.
-fn shown<T>(decides: bool, configured: Option<T>, own: T) -> T {
-    configured.filter(|_| decides).unwrap_or(own)
-}
-
-/// The mode the Pull strategy select shows: what pulls use while the git configuration decides,
-/// else Canopy's own choice.
-fn pull_mode_shown(
-    configured: Option<canopy_core::PullStrategy>,
-    decides: bool,
-    own: PullMode,
-) -> PullMode {
-    configured
-        .filter(|_| decides)
-        .and_then(|c| PullMode::ALL.into_iter().find(|m| m.strategy() == c))
-        .unwrap_or(own)
-}
-
 /// `key = value (where it is set)`, for a note.
 fn config_phrase(v: &ConfigValue) -> String {
+    let source = source_label(Some(&v.source()));
+    let setting = |key: &str| {
+        Setting::ALL
+            .into_iter()
+            .find(|s| s.key().eq_ignore_ascii_case(key))
+    };
+    // A remote's own fetch value, or a branch's own pull value, names the remote or branch.
+    let (setting, owner) = match v.key.split_once('.') {
+        Some(("remote", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
+            (setting(&format!("fetch.{var}")), Some(name))
+        }),
+        Some(("branch", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
+            (setting(&format!("pull.{var}")), Some(name))
+        }),
+        _ => (setting(&v.key), None),
+    };
+    let Some(setting) = setting else {
+        return format!("{} in {source}", v.value);
+    };
+    let label = owner.map_or_else(
+        || setting.label().to_owned(),
+        |owner| format!("{} for {owner}", setting.label()),
+    );
     format!(
-        "{} = {} ({})",
-        v.key,
-        v.value,
-        source_label(Some(&v.source()))
+        "{label} set to {} in {source}",
+        lowercase_label(&git_value_label(setting, &v.value))
     )
 }
 
@@ -1565,15 +1539,7 @@ fn pull_phrase(config: &canopy_core::PullConfig) -> Option<String> {
 fn pull_note(facts: &GitFacts, choice: PullChoice) -> Option<Note> {
     let config = facts.pull.as_ref()?;
     let ours = choice.mode.strategy();
-    let Some((configured, described)) = config.strategy.zip(pull_phrase(config)) else {
-        return choice.follow_config.then(|| Note {
-            text: format!(
-                "Your git configuration sets no pull strategy, so pulls use {}.",
-                lowercase_label(ours.label())
-            ),
-            warn: false,
-        });
-    };
+    let (configured, described) = config.strategy.zip(pull_phrase(config))?;
     Some(if choice.follow_config {
         Note {
             text: format!(
@@ -1590,9 +1556,7 @@ fn pull_note(facts: &GitFacts, choice: PullChoice) -> Option<Note> {
     } else {
         Note {
             text: format!(
-                "Canopy passes {}, so your git configuration's {described} does not apply to \
-                 pulls from Canopy.",
-                ours.git_args().join(" ")
+                "Canopy's pulls use this choice instead of your git configuration: {described}."
             ),
             warn: true,
         }
@@ -1604,6 +1568,14 @@ fn lowercase_label(label: &str) -> String {
     let mut chars = label.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_lowercase().chain(chars).collect()
+    })
+}
+
+/// A phrase as a sentence's start: "rebase when pulling …" -> "Rebase when pulling …".
+fn upper_first(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
     })
 }
 
@@ -1641,7 +1613,6 @@ fn prune_note(facts: &GitFacts, prune: bool, follow: bool) -> Option<Note> {
         &set,
         follow,
         |v| v.as_bool().unwrap_or(false) == prune,
-        if prune { "--prune" } else { "--no-prune" },
         "fetches",
     )
 }
@@ -1659,11 +1630,6 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
         &set,
         follow,
         |v| v.as_bool().unwrap_or(false) == prune_tags,
-        if prune_tags {
-            "--prune-tags"
-        } else {
-            "--no-prune-tags"
-        },
         "fetches",
     )
 }
@@ -1676,11 +1642,6 @@ fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Not
         &values,
         follow,
         |v| v.as_bool() == Some(autostash),
-        if autostash {
-            "--autostash"
-        } else {
-            "--no-autostash"
-        },
         "pulls and rebases",
     )?;
     if let (true, [only]) = (follow, values.as_slice()) {
@@ -1696,7 +1657,7 @@ fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Not
 
 /// What git's configuration says about one of Canopy's choices, set in `values`:
 /// - while Canopy follows it (`follow`), that it decides;
-/// - otherwise, that it matches Canopy's choice (`ours`), or that Canopy passes `passes`, so it
+/// - otherwise, that it matches Canopy's choice (`ours`), or that Canopy's own choice applies to its
 ///   does not apply to Canopy's `what`.
 ///
 /// `None` when the configuration sets nothing.
@@ -1704,7 +1665,6 @@ fn config_note(
     values: &[&ConfigValue],
     follow: bool,
     ours: impl Fn(&ConfigValue) -> bool,
-    passes: &str,
     what: &str,
 ) -> Option<Note> {
     if values.is_empty() {
@@ -1728,10 +1688,8 @@ fn config_note(
     } else {
         Note {
             text: format!(
-                "Canopy passes {passes}, so your git configuration's {} {} not apply to {what} \
-                 from Canopy.",
+                "Canopy's {what} use this choice instead of your git configuration: {}.",
                 phrases(&differ),
-                if differ.len() == 1 { "does" } else { "do" }
             ),
             warn: true,
         }
@@ -1829,8 +1787,8 @@ fn help_label(ui: &mut Ui, text: &str) {
     ui.add(egui::Label::new(job).wrap());
 }
 
-/// A row whose `help` is one sentence. A longer `detail` sits behind a "More" link and, once
-/// opened, runs beneath the row at reading width. The caller ends the row with [`row_end`].
+/// A row whose `help` is one or two sentences. A longer `detail` shows as the tooltip of a help
+/// mark after the title. The caller ends the row with [`row_end`].
 fn row_more(ui: &mut Ui, title: &str, help: &str, detail: &str, control: impl FnOnce(&mut Ui)) {
     let help_text = |ui: &mut Ui| {
         if !help.is_empty() {
@@ -1847,6 +1805,9 @@ fn last_row_shown(ui: &Ui) -> bool {
     f.words.is_empty() || f.shown
 }
 
+/// The widest a row's title and help may run beside its control, about 90 characters.
+const HELP_MAX_WIDTH: f32 = 640.0;
+
 /// [`row_more`] with the help drawn by `help`; `text` is what a search finds it by besides its
 /// title and detail. While searching, a row that does not match is not drawn at all.
 fn row_layout(
@@ -1858,6 +1819,24 @@ fn row_layout(
     detail: &str,
     control: impl FnOnce(&mut Ui),
 ) {
+    noted_row_layout(ui, title, tag, text, help, detail, None, control);
+}
+
+/// [`row_layout`] with a remark about the row's current state as a mark after its title.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "row_layout's parts plus the note"
+)]
+fn noted_row_layout(
+    ui: &mut Ui,
+    title: &str,
+    tag: Option<&str>,
+    text: &str,
+    help: &dyn Fn(&mut Ui),
+    detail: &str,
+    note: Option<&Note>,
+    control: impl FnOnce(&mut Ui),
+) {
     if !reveal(ui, title, &[text, detail]) {
         return;
     }
@@ -1865,15 +1844,9 @@ fn row_layout(
     let m = theme::metrics();
     let words = Filter::get(ui.ctx()).words;
     let width = ui.available_width();
-    let more_id = ui.make_persistent_id(("settings-more", title));
-    let mut open = !detail.is_empty()
-        && ui
-            .ctx()
-            .data(|d| d.get_temp::<bool>(more_id))
-            .unwrap_or(false);
-    let label = |ui: &mut Ui, open: &mut bool| {
+    let label = |ui: &mut Ui| {
         ui.spacing_mut().item_spacing.y = theme::XS;
-        let title = marked(
+        let shown = marked(
             title,
             &words,
             &FontId::new(m.body_size, theme::semibold()),
@@ -1881,37 +1854,32 @@ fn row_layout(
             p.accent,
             p.accent_tint(),
         );
-        match tag {
-            Some(tag) => {
-                let line = Layout::left_to_right(Align::Center).with_main_wrap(true);
-                ui.with_layout(line, |ui| {
-                    ui.spacing_mut().item_spacing.x = theme::SM;
-                    ui.label(title);
-                    let (tip, tone) = if tag == DEFAULT_TAG {
-                        (TAG_TIP, Tone::Neutral)
-                    } else {
-                        (OVERRIDDEN_TIP, Tone::Accent)
-                    };
-                    Badge::new(tag).tone(tone).tooltip(tip).show(ui);
-                });
-            }
-            None => {
-                ui.label(title);
-            }
-        }
+        ui.scope(|ui| {
+            // As tall as the title, not as a control.
+            ui.spacing_mut().interact_size.y = 0.0;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = theme::XS;
+                ui.label(shown);
+                if !detail.is_empty() {
+                    HelpMark::new(title, detail).show(ui);
+                }
+                if let Some(note) = note {
+                    HelpMark::new(title, &note.text).notice(note.warn).show(ui);
+                }
+                if let Some(tag) = tag {
+                    ui.add_space(theme::XS);
+                    Badge::new(tag)
+                        .tone(Tone::Accent)
+                        .tooltip(OVERRIDDEN_TIP)
+                        .show(ui);
+                }
+            });
+        });
         help(ui);
-        if !detail.is_empty()
-            && LinkButton::new(if *open { "Less" } else { "More" })
-                .text_size(m.meta_size)
-                .show(ui)
-                .clicked()
-        {
-            *open = !*open;
-        }
     };
     ui.push_id(title, |ui| {
         if width < 620.0 {
-            label(ui, &mut open);
+            label(ui);
             ui.add_space(theme::XS);
             ui.allocate_ui_with_layout(
                 vec2(width, 0.0),
@@ -1922,37 +1890,52 @@ fn row_layout(
                 },
             );
         } else {
+            // The text takes the room the control left last frame, so help stays on one line
+            // where it can; at least half the row, at most a readable measure.
+            let key = ui.id().with("control-width");
+            let control_width: f32 = ui.data(|d| d.get_temp(key)).unwrap_or(width * 0.5);
+            // Room for the reset button, which sits left of the control while it shows.
+            let reset =
+                crate::ui::kit::button::icon_button_side(Size::Sm) + ui.spacing().item_spacing.x;
+            let text_width = (width - control_width - reset - theme::XL)
+                .clamp(width * 0.5, HELP_MAX_WIDTH.max(width * 0.5));
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(
-                    vec2(width * 0.50, 0.0),
+                    vec2(text_width, 0.0),
                     Layout::top_down(Align::Min),
                     |ui| {
                         // Without this the column is only as wide as its text, and the controls
                         // of rows with short help text sit at different distances from the edge.
-                        ui.set_min_width(width * 0.50);
-                        label(ui, &mut open);
+                        ui.set_min_width(text_width);
+                        label(ui);
                     },
                 );
                 ui.allocate_ui_with_layout(
-                    vec2(width * 0.50 - 2.0 * theme::SM, 0.0),
+                    vec2(width - text_width - 2.0 * theme::SM, 0.0),
                     Layout::right_to_left(Align::Center).with_main_wrap(true),
                     |ui| {
                         // Keeps controls clear of the scroll bar.
                         ui.add_space(theme::SM);
                         run_control(ui, control);
+                        // A wrapped control measures only its widest line: give it half the row
+                        // again, so the next frame measures it on one line.
+                        let wrapped = ui
+                            .data(|d| d.get_temp::<ControlRoom>(ui.id().with("control-room")))
+                            .is_some_and(|room| room.wrapped);
+                        let used = if wrapped {
+                            width * 0.5
+                        } else {
+                            ui.min_rect().width()
+                        };
+                        if (used - control_width).abs() > 0.5 {
+                            ui.data_mut(|d| d.insert_temp(key, used));
+                            ui.ctx().request_repaint();
+                        }
                     },
                 );
             });
         }
-        if open {
-            ui.add_space(theme::XS);
-            ui.scope(|ui| {
-                ui.set_max_width((width - 2.0 * theme::SM).min(READING_WIDTH));
-                help_label(ui, detail);
-            });
-        }
     });
-    ui.ctx().data_mut(|d| d.insert_temp(more_id, open));
 }
 
 /// An uppercase group label over a few rows. While searching it waits until a row under it
@@ -2085,23 +2068,18 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
             egui::Label::new(RichText::new(text).font(font.clone()).color(p.text_dim)),
         );
     };
-    row(
-        ui,
-        "Based on",
-        "The theme your colours start from: its backgrounds, text, lines and shapes.",
-        |ui| {
-            revert(ui, &mut c.light, &defaults.light, "Based on");
-            let options = [(false, "Midnight"), (true, "Daylight")];
-            Segmented::new(&mut c.light, &options)
-                .label("Based on")
-                .show(ui);
-        },
-    );
+    row(ui, "Based on", "The theme your colours build on.", |ui| {
+        revert(ui, &mut c.light, &defaults.light, "Based on");
+        let options = [(false, "Midnight"), (true, "Daylight")];
+        Segmented::new(&mut c.light, &options)
+            .label("Based on")
+            .show(ui);
+    });
     let accents = custom_theme::HUES.map(|(hue, name)| (hue, c.accent_sample(hue), name));
     row(
         ui,
         "Accent",
-        "Buttons, links, focus rings and the selection.",
+        "The colour of buttons, links and selections.",
         |ui| {
             revert(ui, &mut c.accent_hue, &defaults.accent_hue, "Accent");
             Swatches::new(&mut c.accent_hue, &accents)
@@ -2124,31 +2102,26 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
                 .show(ui);
         },
     );
-    row(
-        ui,
-        "Accent intensity",
-        "How vivid the accent is, against the base theme's.",
-        |ui| {
-            revert(
-                ui,
-                &mut c.accent_intensity,
-                &defaults.accent_intensity,
-                "Accent intensity",
-            );
-            value(ui, format!("{}%", c.accent_intensity));
-            Slider::new(&mut c.accent_intensity, CustomTheme::ACCENT_INTENSITY)
-                .label("Accent intensity")
-                .value_text(|v| format!("{v}%"))
-                .width(ZOOM_RAIL_WIDTH)
-                .id_salt("custom-accent-intensity")
-                .show(ui);
-        },
-    );
+    row(ui, "Accent intensity", "How vivid the accent is.", |ui| {
+        revert(
+            ui,
+            &mut c.accent_intensity,
+            &defaults.accent_intensity,
+            "Accent intensity",
+        );
+        value(ui, format!("{}%", c.accent_intensity));
+        Slider::new(&mut c.accent_intensity, CustomTheme::ACCENT_INTENSITY)
+            .label("Accent intensity")
+            .value_text(|v| format!("{v}%"))
+            .width(ZOOM_RAIL_WIDTH)
+            .id_salt("custom-accent-intensity")
+            .show(ui);
+    });
     let tints = custom_theme::HUES.map(|(hue, name)| (hue, CustomTheme::tint_sample(hue), name));
     row(
         ui,
         "Tint",
-        "A colour for backgrounds, lines and text. Text and lines keep their contrast.",
+        "Colours backgrounds, lines and text without losing contrast.",
         |ui| {
             revert(ui, &mut c.tint_hue, &defaults.tint_hue, "Tint");
             Swatches::new(&mut c.tint_hue, &tints)
@@ -2169,7 +2142,7 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
     row(
         ui,
         "Tint strength",
-        "0% keeps the base theme's neutral backgrounds.",
+        "How strongly the tint shows. 0% keeps neutral backgrounds.",
         |ui| {
             revert(ui, &mut c.tint, &defaults.tint, "Tint strength");
             value(ui, format!("{}%", c.tint));
@@ -2204,7 +2177,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     row(
         ui,
         "Style",
-        "Standard: flat, two-tone chrome. Deeper: floating panes, gradient controls and layered shadows.",
+        "Standard is flat. Deeper adds floating panes, gradients and shadows.",
         |ui| {
             revert(ui, &mut s.style, &DEFAULTS.style, "Style");
             let options = Style::ALL.map(|v| (v, v.label()));
@@ -2213,10 +2186,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
                 .show(ui);
         },
     );
-    row(
+    row_explained(
         ui,
         "High contrast",
-        "The chosen theme with stronger text, lines and focus rings, outlines instead of shadows and no translucency, for low vision and glare.",
+        "Stronger text, lines and focus rings, with outlines instead of shadows.",
+        "For low vision and bright light. It also turns off translucency.",
         |ui| {
             revert(
                 ui,
@@ -2243,7 +2217,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Translucent surfaces",
         match blocked {
             Some(why) => why.reason(),
-            None => "Blur what is behind menus, dialogs, toasts and the palette.",
+            None => "Blurs what is behind menus, dialogs and notifications.",
         },
         |ui| {
             revert(
@@ -2263,10 +2237,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             );
         },
     );
-    row(
+    row_explained(
         ui,
         "Density",
-        "Dense fits about a quarter more history: 24-point rows, a single-row toolbar and smaller text.",
+        "Dense fits about a quarter more history with smaller rows and text.",
+        "Dense uses 24-point rows, a single-row toolbar and smaller text.",
         |ui| {
             revert(ui, &mut s.density, &DEFAULTS.density, "Density");
             let options = Density::ALL.map(|v| (v, v.label()));
@@ -2290,7 +2265,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     row(
         ui,
         "Graph lines",
-        "How the history graph joins a branch to the lane it leaves or merges into.",
+        "The shape of the lines joining branches in the history graph.",
         |ui| {
             revert(ui, &mut s.graph_curve, &DEFAULTS.graph_curve, "Graph lines");
             let options = Curve::ALL.map(|v| (v, v.label()));
@@ -2302,7 +2277,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     let system = match motion::system() {
         Some(true) => "Your system asks for reduced motion.",
         Some(false) => "Your system asks for full motion.",
-        None => "Your system did not say whether to reduce motion.",
+        None => "Your system sets no preference, so Match system means full motion.",
     };
     row(ui, "Motion", system, |ui| {
         revert(ui, &mut s.motion, &DEFAULTS.motion, "Motion");
@@ -2342,10 +2317,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             .show(ui);
         },
     );
-    row(
+    row_explained(
         ui,
         "Commit date format",
-        "Calendar dates in History and commit details, including older relative dates. Exact timestamp tooltips always include the author's UTC offset.",
+        "How calendar dates appear in History and commit details.",
+        "Older commits shown with relative dates use it too. Exact-time tooltips always include the author's UTC offset.",
         |ui| {
             revert(
                 ui,
@@ -2383,10 +2359,11 @@ fn tooltips(ui: &mut Ui, s: &mut Settings) {
     use crate::ui::kit::overlay::{TooltipDelay, TooltipLevel};
     group_gap(ui, theme::LG);
     heading(ui, "Tooltips");
-    row(
+    row_explained(
         ui,
         "Show tooltips",
-        "Helpful: only what the screen does not show — an icon's name, why something is unavailable, cut-off text, shortcuts, full dates and addresses. All: also descriptions of labelled controls and how to use them. Off: none, except why something is unavailable.",
+        "Helpful explains only what the screen doesn't show. All also describes every control.",
+        "Helpful shows an icon's name, why something is unavailable, cut-off text, shortcuts, full dates and addresses. Off still says why something is unavailable.",
         |ui| {
             revert(ui, &mut s.tooltips, &DEFAULTS.tooltips, "Show tooltips");
             let options = TooltipLevel::ALL.map(|v| (v, v.label()));
@@ -2399,7 +2376,7 @@ fn tooltips(ui: &mut Ui, s: &mut Settings) {
     row(
         ui,
         "Tooltip delay",
-        "How long the pointer rests on something before its tooltip shows.",
+        "How long to hover before a tooltip appears.",
         |ui| {
             revert(
                 ui,
@@ -2422,7 +2399,7 @@ fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
     row(
         ui,
         "Notification cards",
-        "Cards in the bottom-right corner when something happens. The bell in the status bar lists every notification, whatever is chosen here.",
+        "Pop-up cards for new events. The bell in the status bar always lists every notification.",
         |ui| {
             revert(
                 ui,
@@ -2575,7 +2552,7 @@ fn theme_card(
     let card = card
         .width(width)
         .label(if id == DEFAULTS.theme {
-            format!("{} theme (default)", id.name())
+            format!("{} theme (recommended)", id.name())
         } else {
             format!("{} theme", id.name())
         })
@@ -2615,11 +2592,12 @@ fn theme_card(
             ui.painter().text(
                 caption.right_center(),
                 Align2::RIGHT_CENTER,
-                match (id == DEFAULTS.theme, tp.dark) {
-                    (true, true) => "Default · Dark",
-                    (true, false) => "Default · Light",
-                    (false, true) => "Dark",
-                    (false, false) => "Light",
+                if id == DEFAULTS.theme {
+                    "Recommended"
+                } else if tp.dark {
+                    "Dark"
+                } else {
+                    "Light"
                 },
                 FontId::proportional(m.small_size),
                 p.text_faint,
@@ -2711,59 +2689,49 @@ fn source_label_in(source: Option<&Source>, home: &Path) -> String {
         Some(Source::Config { scope, .. }) if scope == "command" => "the git command line".into(),
         Some(Source::Config { scope, origin }) => {
             let file = origin.strip_prefix("file:").unwrap_or(origin);
+            // The usual files are named by what they cover, then by path; an included file by its
+            // path alone.
+            let usual = Path::new(file).file_name().is_some_and(|name| {
+                ["config", "config.worktree", ".gitconfig", "gitconfig"]
+                    .iter()
+                    .any(|usual| name == *usual)
+            });
             // An unknown home directory is an empty path, which every path starts with.
-            let file = Path::new(file)
+            let path = Path::new(file)
                 .strip_prefix(home)
                 .ok()
                 .filter(|_| !home.as_os_str().is_empty())
                 .map_or_else(|| file.to_owned(), |rest| format!("~/{}", rest.display()));
-            let scope = match scope.as_str() {
-                "local" => "this repository",
-                "worktree" => "this worktree",
-                other => other,
+            let covers = match scope.as_str() {
+                "local" if usual => "this repository",
+                "worktree" if usual => "this worktree",
+                "global" if usual => "your global git config",
+                "system" if usual => "the system git config",
+                _ => return path,
             };
-            if scope.is_empty() {
-                file
-            } else {
-                format!("{scope}: {file}")
-            }
+            format!("{covers} ({path})")
         }
         Some(Source::Guessed) => "guessed by Git from this computer".into(),
         None => "not set".into(),
     }
 }
 
-/// What Git would use now for one part of an identity, and why: the value, then where it is
-/// set, cut in the middle to the column with the whole of it in a tooltip.
-fn in_use(ui: &mut Ui, field: &Field) {
-    let p = palette(ui.ctx());
-    let size = theme::metrics().small_size;
+/// Where Git takes one part of an identity from, cut in the middle to the column with the whole
+/// of it in a tooltip. The field above shows a configured or guessed value already; one from the
+/// environment is named here, since no field holds it.
+fn in_use(field: &Field) -> Option<Note> {
     if field.value.is_empty() {
-        ui.label(RichText::new("Not set.").size(size).color(p.text_dim));
-        return;
+        return None;
     }
-    ui.add(
-        egui::Label::new(
-            RichText::new(format!("In use now: {}", field.value))
-                .size(size)
-                .color(p.text_dim),
-        )
-        .truncate(),
-    );
-    let source = format!("From {}", source_label(field.source.as_ref()));
-    let shown = elide_middle(
-        ui,
-        &source,
-        &FontId::proportional(size),
-        ui.available_width(),
-    );
-    let cut = shown != source;
-    let resp = ui.add(egui::Label::new(
-        RichText::new(shown).size(size).color(p.text_faint),
-    ));
-    if cut {
-        resp.kit_tooltip(source).show();
-    }
+    let from = source_label(field.source.as_ref());
+    Some(Note {
+        text: if matches!(field.source, Some(Source::Environment(_))) {
+            format!("In use: {}, from {from}.", field.value)
+        } else {
+            format!("From {from}.")
+        },
+        warn: false,
+    })
 }
 
 /// `text` cut in its middle with an ellipsis until it fits in `max_width`.
@@ -2799,22 +2767,19 @@ fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
 
 /// The width of a text field in a settings row.
 const FIELD_WIDTH: f32 = 280.0;
-/// The width of a select in a settings row.
-const SELECT_WIDTH: f32 = 220.0;
-/// The Git editor's selects, wide enough for "Rebase preserving merges" and "Unset (Canopy's default)".
-const GIT_SELECT_WIDTH: f32 = 240.0;
-/// Room for the Save button and its gap beside the first-branch field, which together are as
-/// wide as a select, so every Unset button sits in one column.
-const BRANCH_SAVE_WIDTH: f32 = 64.0;
+/// The narrowest a settings select gets, so a short one is still an easy target.
+const SELECT_MIN_WIDTH: f32 = 120.0;
+/// The first-branch field: room for a branch name such as "main" or "develop".
+const BRANCH_FIELD_WIDTH: f32 = 160.0;
 
-/// A select's width in a settings row: [`SELECT_WIDTH`], so a column of rows lines up, or wider
-/// when its longest option needs it (`kit::select::fit_width`).
+/// A select's width in a settings row: as wide as its longest option needs
+/// (`kit::select::fit_width`), as desktop pop-up buttons size to their content.
 fn select_width<'l>(ui: &Ui, labels: impl IntoIterator<Item = &'l str>) -> f32 {
-    SELECT_WIDTH.max(select::fit_width(ui, labels))
+    SELECT_MIN_WIDTH.max(select::fit_width(ui, labels))
 }
 
 /// The width of the commits-per-page field, its steppers included.
-const COUNT_FIELD_WIDTH: f32 = 160.0;
+const COUNT_FIELD_WIDTH: f32 = 120.0;
 
 /// What is wrong with the identity, or that it is still being read.
 fn identity_status(ui: &mut Ui, identity: Option<&Identity>, error: Option<&str>) {
@@ -2869,13 +2834,7 @@ fn identity_group(
     if !Filter::searching(ui.ctx()) {
         identity_status(ui, identity, error);
     }
-    let current = |pick: fn(&Identity) -> &Field| {
-        move |ui: &mut Ui| {
-            if let Some(field) = identity.map(pick) {
-                in_use(ui, field);
-            }
-        }
-    };
+    let current = |pick: fn(&Identity) -> &Field| identity.map(pick).and_then(in_use);
     // What git would use while the field is empty (a guess from the user and host names, or a
     // value nobody can save here) shows as its placeholder, never as a value to save.
     let unchosen = |pick: fn(&Identity) -> &Field| {
@@ -2884,13 +2843,14 @@ fn identity_group(
             .filter(|f| !f.explicit() && !f.value.is_empty())
             .map_or_else(String::new, |f| format!("{} (guessed by git)", f.value))
     };
-    row_layout(
+    noted_row_layout(
         ui,
         "Name",
         None,
         "",
-        &current(|i| &i.author.name),
+        &|ui: &mut Ui| help_label(ui, NAME_HELP),
         "",
+        current(|i| &i.author.name).as_ref(),
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.identity_name)
@@ -2903,13 +2863,14 @@ fn identity_group(
         },
     );
     row_end(ui);
-    row_layout(
+    noted_row_layout(
         ui,
         "Email",
         None,
         "",
-        &current(|i| &i.author.email),
+        &|ui: &mut Ui| help_label(ui, EMAIL_HELP),
         "",
+        current(|i| &i.author.email).as_ref(),
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.identity_email)
@@ -2939,7 +2900,7 @@ fn identity_group(
         row(
             ui,
             "Save to",
-            "This repository writes its own .git/config; all repositories write your global Git configuration.",
+            "Whether the identity applies to all repositories or only this one.",
             |ui| {
                 Segmented::new(
                     &mut screen.identity_scope,
@@ -2958,7 +2919,7 @@ fn identity_group(
     row(
         ui,
         "Apply identity",
-        "Applies to future commits only; existing commits keep their authors. Environment variables or git author settings may override it.",
+        "Existing commits keep their authors.",
         |ui| {
             // Right to left: the primary action is rightmost.
             if Button::new("Save identity")
@@ -3013,11 +2974,12 @@ fn git_config_editor(
         help_label(
             ui,
             if scope == Scope::Global {
-                "Changes affect Git in every application. Included files stay intact; Unset removes only the value in your main global file."
+                "Changes apply to Git everywhere, not only in Canopy."
             } else {
-                "Changes affect this repository in every application, including its linked worktrees. Inherit removes the local override. Worktree and command settings can still take precedence."
+                "Changes apply to this repository everywhere, not only in Canopy."
             },
         );
+        ui.add_space(theme::SM);
     }
     // A read error stays editable: saving a valid value is how the user repairs it.
     let ready = facts.is_some() && !screen.git_config_pending;
@@ -3034,21 +2996,22 @@ fn git_config_editor(
                 .find(|value| value.key.eq_ignore_ascii_case(setting.key()))
         });
         let note = match (invalid, value) {
-            (Some(raw), _) => Note {
-                text: format!("{}. Git does not accept this value.", config_phrase(raw)),
+            (Some(raw), _) => Some(Note {
+                text: format!(
+                    "Git does not accept {} in {}.",
+                    raw.value,
+                    source_label(Some(&raw.source()))
+                ),
                 warn: true,
-            },
-            (None, Some(value)) => Note {
-                text: format!("{}.", config_phrase(value)),
+            }),
+            (None, Some(value)) => Some(Note {
+                text: format!("Set in {}.", source_label(Some(&value.source()))),
                 warn: false,
-            },
-            (None, None) => Note {
-                text: format!("{} is unset.", setting.key()),
-                warn: false,
-            },
+            }),
+            (None, None) => None,
         };
         let help = git_setting_help(setting);
-        row_with_note(ui, setting.label(), help, Some(&note), |ui| {
+        row_with_note(ui, setting.label(), help, note.as_ref(), |ui| {
             ui.add_enabled_ui(ready, |ui| {
                 let mut selected = value.map(|value| value.value.clone());
                 if setting == Setting::InitialBranch {
@@ -3062,9 +3025,12 @@ fn git_config_editor(
                     let mut text = draft.map_or_else(|| saved.clone(), |draft| draft.text);
                     let problem = initial_branch_problem(&text);
                     TextField::new(&mut text)
-                        .width(GIT_SELECT_WIDTH - BRANCH_SAVE_WIDTH)
+                        .width(BRANCH_FIELD_WIDTH)
                         .name(setting.label())
-                        .placeholder("Unset")
+                        .placeholder(format!(
+                            "{} (Recommended)",
+                            setting.recommendation_for(facts.and_then(|facts| facts.git))
+                        ))
                         .error(problem)
                         .id_salt("git-first-branch")
                         .show(ui);
@@ -3096,24 +3062,16 @@ fn git_config_editor(
                         .zip(&labels)
                         .map(|(value, label)| (Some((*value).to_owned()), label.as_str()))
                         .collect();
-                    let mut select = Select::new(&mut selected, &options)
-                        .width(GIT_SELECT_WIDTH)
+                    let select = Select::new(&mut selected, &options)
+                        .fit_to_options()
                         .name(setting.label())
                         .report_reselection()
                         .placeholder(invalid.or(value).map_or_else(
-                            || {
-                                if recommended.is_some() {
-                                    "Unset (Canopy's default)".to_owned()
-                                } else {
-                                    "Unset".to_owned()
-                                }
-                            },
-                            |value| format!("Configured: {}", value.value),
+                            || unset_value(setting, recommended),
+                            |value| git_value_label(setting, &value.value),
                         ))
-                        .id_salt(("git-setting", setting, scope == Scope::Global));
-                    if let Some(recommended) = recommended {
-                        select = select.recommended(Some(recommended.to_owned()));
-                    }
+                        .id_salt(("git-setting", setting, scope == Scope::Global))
+                        .recommended(Some(recommended.to_owned()));
                     if select.show(ui).changed() {
                         actions.push(Action::SaveGitConfig {
                             repo: repo.map(Path::to_path_buf),
@@ -3130,15 +3088,18 @@ fn git_config_editor(
                         .iter()
                         .any(|value| value.key.eq_ignore_ascii_case(setting.key()))
                 });
-                if Button::new(if scope == Scope::Local {
-                    "Inherit"
-                } else {
-                    "Unset"
-                })
-                .enabled(direct)
-                .id_salt(("unset-git", setting, scope == Scope::Global))
-                .show(ui)
-                .clicked()
+                // A repository's own value can go back to the global one; a global value is
+                // changed by choosing another, never cleared.
+                if direct
+                    && scope == Scope::Local
+                    && IconButton::new(
+                        icon::ARROW_COUNTER_CLOCKWISE,
+                        format!("Reset {} to the global value", setting.label()),
+                    )
+                    .size(Size::Sm)
+                    .id_salt(("unset-git", setting))
+                    .show(ui)
+                    .clicked()
                 {
                     actions.push(Action::SaveGitConfig {
                         repo: repo.map(Path::to_path_buf),
@@ -3159,7 +3120,7 @@ fn git_config_editor(
         row_with_note(
             ui,
             "Hooks path",
-            "Git runs your configured hooks for user-requested operations.",
+            "Git runs the hooks in this folder for the operations you start.",
             Some(&note),
             |_| {},
         );
@@ -3182,9 +3143,17 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         (Setting::PullFastForward, "only") => "Fast-forward only",
         (Setting::PullFastForward, "true") => "Allow fast-forward",
         (Setting::PullFastForward, "false") => "Always merge",
+        (Setting::Autocrlf, "input") => "LF on commit",
+        (Setting::Autocrlf, "true") => "CRLF on checkout",
+        (Setting::SigningFormat, "openpgp") => "OpenPGP",
+        (Setting::SigningFormat, "ssh") => "SSH",
+        (Setting::SigningFormat, "x509") => "X.509",
         (_, "true") => "On",
         (_, "false") => "Off",
-        _ => value,
+        // Branch names and the diff3 styles are names, not words.
+        (Setting::InitialBranch, _) => value,
+        (Setting::ConflictStyle, _) if value.contains("diff3") => value,
+        _ => return upper_first(value),
     }
     .to_owned()
 }
@@ -3205,23 +3174,16 @@ fn git(
         actions,
     );
     group_gap(ui, theme::LG);
-    if ui
-        .data_mut(|d| d.remove_temp::<bool>(stop_following_id()))
-        .unwrap_or(false)
-    {
-        s.follow_git_config = false;
-    }
     let facts = screen.facts.global(ui.ctx()).cloned();
     let f = facts.as_deref();
     let follow = s.follow_git_config;
     // While Canopy follows the git configuration, a choice it sets is not Canopy's to make.
-    let decided = |set: bool| follow && set;
     heading(ui, "Your git configuration");
     facts_error(ui, f);
     row(
         ui,
         "Follow my git config",
-        "Where your git configuration sets one of the choices below, it decides, and each choice here applies only where it sets none.",
+        "Where your git configuration sets one of these choices, it wins over Canopy's.",
         |ui| {
             revert(
                 ui,
@@ -3235,7 +3197,7 @@ fn git(
     row(
         ui,
         "Recommended settings",
-        "Save the recommended pull, fetch, push, conflict and message choices to your global Git configuration. Pull is set to fast-forward only, and pull.rebase to false so it cannot override that. Repository overrides stay. Signing, hooks, identity and line endings stay as you chose them.",
+        "Writes the recommended values to your global git config. Signing and line endings stay.",
         |ui| {
             ui.add_enabled_ui(!screen.git_config_pending && f.is_some(), |ui| {
                 if confirm_button(
@@ -3259,255 +3221,138 @@ fn git(
         default_row(
             ui,
             "Pull strategy",
-            "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward. When branches diverge, Canopy asks how to combine them.",
+            "How a pull combines the remote's commits with yours.",
             f.and_then(|f| pull_note(f, s.pull_default())).as_ref(),
             |ui| {
-                let configured = f.and_then(|f| f.pull.as_ref()).and_then(|p| p.strategy);
-                let decides = decided(configured.is_some());
-                // While the git configuration decides, the select shows what pulls will use.
-                let mut shown = pull_mode_shown(configured, decides, s.pull_mode);
-                ui.add_enabled_ui(!decides, |ui| {
-                    revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
-                    let options = PullMode::ALL.map(|m| (m, m.label()));
-                    let target = if decides {
-                        &mut shown
-                    } else {
-                        &mut s.pull_mode
-                    };
-                    Select::new(target, &options)
-                        .width(select_width(ui, options.iter().map(|(_, l)| *l)))
-                        .name("Pull strategy")
-                        .recommended(DEFAULTS.pull_mode)
-                        .id_salt("pull-strategy")
-                        .show(ui);
-                });
+                revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
+                let options = PullMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.pull_mode, &options)
+                    .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                    .name("Pull strategy")
+                    .recommended(DEFAULTS.pull_mode)
+                    .id_salt("pull-strategy")
+                    .show(ui);
             },
         );
-        let prune_set = f.is_some_and(|f| {
-            !fetch_values(f, f.fetch_prune.as_ref(), &f.remote_prune, "prune").is_empty()
-        });
         default_row(
             ui,
             "Prune on fetch",
-            "Remove remote-tracking branches that were deleted on the remote.",
+            "Removes remote branches that were deleted on the remote.",
             f.and_then(|f| prune_note(f, s.prune_on_fetch, follow))
                 .as_ref(),
             |ui| {
-                let mut effective_prune_on_fetch = shown(
-                    decided(prune_set),
-                    f.and_then(|f| f.fetch_prune.as_ref())
-                        .and_then(ConfigValue::as_bool),
-                    s.prune_on_fetch,
+                revert(
+                    ui,
+                    &mut s.prune_on_fetch,
+                    &DEFAULTS.prune_on_fetch,
+                    "Prune on fetch",
                 );
-                ui.add_enabled_ui(!decided(prune_set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.prune_on_fetch,
-                        &DEFAULTS.prune_on_fetch,
-                        "Prune on fetch",
-                    );
-                    switch(
-                        ui,
-                        if decided(prune_set) {
-                            &mut effective_prune_on_fetch
-                        } else {
-                            &mut s.prune_on_fetch
-                        },
-                        "Prune on fetch",
-                    );
-                });
+                switch(ui, &mut s.prune_on_fetch, "Prune on fetch");
             },
         );
         row_with_note(
             ui,
             "Prune tags too",
-            "A pruning fetch also deletes local tags the remote does not have, including tags you never pushed (--prune-tags).",
+            "Also deletes local tags the remote doesn't have, even ones you never pushed.",
             f.and_then(|f| prune_tags_note(f, s.prune_tags, follow))
                 .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| !f.prune_tags.is_empty());
-                let mut effective_prune_tags = shown(
-                    decided(set),
-                    f.and_then(|f| f.prune_tags.first())
-                        .and_then(ConfigValue::as_bool),
-                    s.prune_tags,
+                revert(
+                    ui,
+                    &mut s.prune_tags,
+                    &DEFAULTS.prune_tags,
+                    "Prune tags too",
                 );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.prune_tags,
-                        &DEFAULTS.prune_tags,
-                        "Prune tags too",
-                    );
-                    switch(
-                        ui,
-                        if decided(set) {
-                            &mut effective_prune_tags
-                        } else {
-                            &mut s.prune_tags
-                        },
-                        "Prune tags too",
-                    );
-                });
+                switch(ui, &mut s.prune_tags, "Prune tags too");
             },
         );
         row_with_note(
             ui,
             "Autostash",
-            "Pull and rebase even with uncommitted changes: git puts them aside first and back afterwards (--autostash).",
+            "Sets uncommitted changes aside before a pull or rebase and restores them after.",
             f.and_then(|f| autostash_note(f, s.autostash, follow))
                 .as_ref(),
             |ui| {
-                // Each key decides only its own kind of operation: rebases or merges.
-                let set = f.is_some_and(|f| f.autostash.len() == 2);
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(ui, &mut s.autostash, &DEFAULTS.autostash, "Autostash");
-                    switch(ui, &mut s.autostash, "Autostash");
-                });
+                revert(ui, &mut s.autostash, &DEFAULTS.autostash, "Autostash");
+                switch(ui, &mut s.autostash, "Autostash");
             },
         );
         row_with_note(
             ui,
             "Push tags with their commits",
-            "A push also sends the annotated tags on the commits it pushes (--follow-tags), so a release tag is never left behind.",
+            "Pushes the annotated tags on the commits you push.",
             f.and_then(|f| {
                 config_note(
                     &f.follow_tags.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.as_bool() == Some(s.follow_tags),
-                    if s.follow_tags {
-                        "--follow-tags"
-                    } else {
-                        "--no-follow-tags"
-                    },
                     "pushes",
                 )
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.follow_tags.is_some());
-                let mut effective_follow_tags = shown(
-                    decided(set),
-                    f.and_then(|f| f.follow_tags.as_ref())
-                        .and_then(ConfigValue::as_bool),
-                    s.follow_tags,
+                revert(
+                    ui,
+                    &mut s.follow_tags,
+                    &DEFAULTS.follow_tags,
+                    "Push tags with their commits",
                 );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.follow_tags,
-                        &DEFAULTS.follow_tags,
-                        "Push tags with their commits",
-                    );
-                    switch(
-                        ui,
-                        if decided(set) {
-                            &mut effective_follow_tags
-                        } else {
-                            &mut s.follow_tags
-                        },
-                        "Push tags with their commits",
-                    );
-                });
+                switch(ui, &mut s.follow_tags, "Push tags with their commits");
             },
         );
         row_with_note(
             ui,
             "Update submodules",
-            "After a pull or a checkout, and in a new clone, submodules follow the commits the repository records (git submodule update --init --recursive).",
+            "Pulls, checkouts and new clones also update submodules.",
             f.and_then(|f| {
                 config_note(
                     &f.submodule_recurse.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.as_bool() == Some(s.recurse_submodules),
-                    if s.recurse_submodules {
-                        "--recurse-submodules"
-                    } else {
-                        "--no-recurse-submodules"
-                    },
                     "pulls and checkouts",
                 )
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.submodule_recurse.is_some());
-                let mut effective_recurse_submodules = shown(
-                    decided(set),
-                    f.and_then(|f| f.submodule_recurse.as_ref())
-                        .and_then(ConfigValue::as_bool),
-                    s.recurse_submodules,
+                revert(
+                    ui,
+                    &mut s.recurse_submodules,
+                    &DEFAULTS.recurse_submodules,
+                    "Update submodules",
                 );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.recurse_submodules,
-                        &DEFAULTS.recurse_submodules,
-                        "Update submodules",
-                    );
-                    switch(
-                        ui,
-                        if decided(set) {
-                            &mut effective_recurse_submodules
-                        } else {
-                            &mut s.recurse_submodules
-                        },
-                        "Update submodules",
-                    );
-                });
+                switch(ui, &mut s.recurse_submodules, "Update submodules");
             },
         );
         row_with_note(
             ui,
             "Push to",
-            "Where Push sends a branch that already has an upstream (push.default). Its upstream, when the names match, avoids sending a branch to another by surprise.",
+            "Where Push sends a branch that has an upstream.",
             f.and_then(|f| {
                 let ours = s.push_default.push_default().value();
                 config_note(
                     &f.push_default.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.value.trim().eq_ignore_ascii_case(ours),
-                    &format!("push.default={ours}"),
                     "pushes",
                 )
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.push_default.is_some());
-                let mut effective_push_default = shown(
-                    decided(set),
-                    f.and_then(|f| f.push_default.as_ref()).and_then(|v| {
-                        PushMode::ALL.into_iter().find(|m| {
-                            m.push_default()
-                                .value()
-                                .eq_ignore_ascii_case(v.value.trim())
-                        })
-                    }),
-                    s.push_default,
-                );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(ui, &mut s.push_default, &DEFAULTS.push_default, "Push to");
-                    let options = PushMode::ALL.map(|m| (m, m.label()));
-                    Select::new(
-                        if decided(set) {
-                            &mut effective_push_default
-                        } else {
-                            &mut s.push_default
-                        },
-                        &options,
-                    )
+                revert(ui, &mut s.push_default, &DEFAULTS.push_default, "Push to");
+                let options = PushMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.push_default, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Push to")
                     .recommended(DEFAULTS.push_default)
                     .id_salt("push-default")
                     .show(ui);
-                });
             },
         );
     }
     default_row(
         ui,
         "Fetch in the background",
-        "Fetches every remote of open repositories while Canopy is idle, and, with a hosting token, refreshes the open request list on the same interval (every minute when this is off).",
+        "Fetches the remotes of open repositories while Canopy is idle.",
         None,
         |ui| {
             revert(
@@ -3522,7 +3367,7 @@ fn git(
             let current = fetch_interval_label(s.auto_fetch_minutes);
             Select::new(&mut s.auto_fetch_minutes, &options)
                 .placeholder(current)
-                .width(SELECT_WIDTH)
+                .fit_to_options()
                 .name("Fetch in the background")
                 .recommended(DEFAULTS.auto_fetch_minutes)
                 .id_salt("auto-fetch")
@@ -3533,7 +3378,7 @@ fn git(
     row(
         ui,
         "Stale cleanup after (days)",
-        "Clean up stale… previews worktrees and branches whose last commit is older than this period. Removal always asks first.",
+        "Clean up stale… lists worktrees and branches idle this long, and asks before removing any.",
         |ui| {
             revert(
                 ui,
@@ -3549,138 +3394,81 @@ fn git(
         row_with_note(
             ui,
             "Conflict style",
-            "How a conflicted file shows the two sides. With the original text too you can tell what each side changed; trimmed leaves out the lines both sides agree on (zdiff3, or diff3 before git 2.35).",
+            "How conflicted files show both sides. Showing the original too makes each side's change clear.",
             f.and_then(|f| {
                 let ours = s.conflict_style.style();
                 config_note(
                     &f.conflict_style.iter().collect::<Vec<_>>(),
                     follow,
                     |v| canopy_core::ConflictStyle::from_value(&v.value) == Some(ours),
-                    // The style git reads when Canopy passes it: zdiff3 needs git 2.35.
-                    &format!("merge.conflictStyle={}", ours.value(f.git)),
                     "merges, rebases, cherry-picks, reverts and stashes",
                 )
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.conflict_style.is_some());
-                let mut effective_conflict_style = shown(
-                    decided(set),
-                    f.and_then(|f| f.conflict_style.as_ref()).and_then(|v| {
-                        ConflictMode::ALL.into_iter().find(|m| {
-                            canopy_core::ConflictStyle::from_value(&v.value) == Some(m.style())
-                        })
-                    }),
-                    s.conflict_style,
+                revert(
+                    ui,
+                    &mut s.conflict_style,
+                    &DEFAULTS.conflict_style,
+                    "Conflict style",
                 );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.conflict_style,
-                        &DEFAULTS.conflict_style,
-                        "Conflict style",
-                    );
-                    let options = ConflictMode::ALL.map(|m| (m, m.label()));
-                    Select::new(
-                        if decided(set) {
-                            &mut effective_conflict_style
-                        } else {
-                            &mut s.conflict_style
-                        },
-                        &options,
-                    )
+                let options = ConflictMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.conflict_style, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Conflict style")
                     .recommended(DEFAULTS.conflict_style)
                     .id_salt("conflict-style")
                     .show(ui);
-                });
             },
         );
         heading(ui, "Commits");
         row_with_note(
             ui,
             "Message cleanup",
-            "What a commit removes from its message (commit.cleanup). Spaces and blank lines only keeps lines starting with #, including Markdown headings and issue numbers.",
+            "What git removes from commit messages. Spaces and blank lines only keeps lines starting with #.",
             f.and_then(|f| {
                 let ours = s.cleanup.cleanup().value();
                 config_note(
                     &f.cleanup.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.value.trim().eq_ignore_ascii_case(ours),
-                    &format!("--cleanup={ours}"),
                     "commits",
                 )
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.cleanup.is_some());
-                let mut effective_cleanup = shown(
-                    decided(set),
-                    f.and_then(|f| f.cleanup.as_ref()).and_then(|v| {
-                        CleanupMode::ALL
-                            .into_iter()
-                            .find(|m| m.cleanup().value().eq_ignore_ascii_case(v.value.trim()))
-                    }),
-                    s.cleanup,
-                );
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(ui, &mut s.cleanup, &DEFAULTS.cleanup, "Message cleanup");
-                    let options = CleanupMode::ALL.map(|m| (m, m.label()));
-                    Select::new(
-                        if decided(set) {
-                            &mut effective_cleanup
-                        } else {
-                            &mut s.cleanup
-                        },
-                        &options,
-                    )
+                revert(ui, &mut s.cleanup, &DEFAULTS.cleanup, "Message cleanup");
+                let options = CleanupMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.cleanup, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Message cleanup")
                     .recommended(DEFAULTS.cleanup)
                     .id_salt("commit-cleanup")
                     .show(ui);
-                });
             },
         );
         row_with_note(
             ui,
             "First branch of a new repository",
-            "The branch a repository created in Canopy starts on (git init --initial-branch).",
+            "The branch a repository created in Canopy starts on.",
             f.and_then(|f| {
                 let ours = s.initial_branch().to_owned();
                 config_note(
                     &f.initial_branch.iter().collect::<Vec<_>>(),
                     follow,
                     |v| v.value.trim() == ours,
-                    &format!("--initial-branch={ours}"),
                     "new repositories",
                 )
             })
             .as_ref(),
             |ui| {
-                let set = f.is_some_and(|f| f.initial_branch.is_some());
-                let mut effective_initial_branch = f
-                    .and_then(|f| f.initial_branch.as_ref())
-                    .map(|v| v.value.clone())
-                    .filter(|_| decided(set))
-                    .unwrap_or_else(|| s.initial_branch.clone());
-                ui.add_enabled_ui(!decided(set), |ui| {
-                    revert(
-                        ui,
-                        &mut s.initial_branch,
-                        &DEFAULTS.initial_branch,
-                        "First branch of a new repository",
-                    );
-                    initial_branch_field(
-                        ui,
-                        if decided(set) {
-                            &mut effective_initial_branch
-                        } else {
-                            &mut s.initial_branch
-                        },
-                    );
-                });
+                revert(
+                    ui,
+                    &mut s.initial_branch,
+                    &DEFAULTS.initial_branch,
+                    "First branch of a new repository",
+                );
+                initial_branch_field(ui, &mut s.initial_branch);
             },
         );
     }
@@ -3688,17 +3476,18 @@ fn git(
     default_row(
         ui,
         "Add Signed-off-by",
-        "Appends a Signed-off-by trailer (git commit --signoff), as DCO projects require.",
+        "Adds a Signed-off-by line to commits, as DCO projects require.",
         None,
         |ui| {
             revert(ui, &mut s.signoff, &DEFAULTS.signoff, "Add Signed-off-by");
             switch(ui, &mut s.signoff, "Add Signed-off-by");
         },
     );
-    row(
+    row_explained(
         ui,
         "Check commit messages",
-        "Hints under the commit fields when the subject or a body line is longer than 72 characters, which most tools cut off or wrap. A hint never stops a commit or changes what you wrote.",
+        "Warns when the subject or a body line is longer than 72 characters. It never blocks a commit.",
+        "Most tools cut off or wrap longer lines. A hint never changes what you wrote.",
         |ui| {
             revert(
                 ui,
@@ -3724,19 +3513,24 @@ fn git(
         },
     );
     heading(ui, "Diffs");
-    row(ui, "Layout", "", |ui| {
-        revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
-        Segmented::new(
-            &mut s.split_diff,
-            &[(false, "Unified"), (true, "Side by side")],
-        )
-        .label("Diff layout")
-        .show(ui);
-    });
+    row(
+        ui,
+        "Layout",
+        "Old and new lines in one column, or in two.",
+        |ui| {
+            revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
+            Segmented::new(
+                &mut s.split_diff,
+                &[(false, "Unified"), (true, "Side by side")],
+            )
+            .label("Diff layout")
+            .show(ui);
+        },
+    );
     row(
         ui,
         "Syntax highlighting",
-        "Colours code in diffs by language (Rust, TypeScript, Python, Markdown and about 200 more).",
+        "Colours code in diffs by language.",
         |ui| {
             revert(
                 ui,
@@ -3750,7 +3544,7 @@ fn git(
     default_row(
         ui,
         "Context lines",
-        "Unchanged lines shown around each change. A repository can also change it from its diff header.",
+        "Unchanged lines shown around each change.",
         None,
         |ui| {
             revert(
@@ -3778,7 +3572,7 @@ fn git(
     default_row(
         ui,
         "Whitespace",
-        "Ignoring whitespace turns off hunk staging, since such a diff cannot be applied.",
+        "Ignoring whitespace hides space-only changes but turns off hunk staging.",
         None,
         |ui| {
             revert(
@@ -3789,7 +3583,7 @@ fn git(
             );
             let options = WhitespaceMode::ALL.map(|m| (m, m.label()));
             Select::new(&mut s.diff.whitespace, &options)
-                .width(SELECT_WIDTH)
+                .fit_to_options()
                 .name("Whitespace")
                 .recommended(DEFAULTS.diff.whitespace)
                 .id_salt("whitespace")
@@ -3856,7 +3650,7 @@ fn repository(
     repo_row(
         ui,
         "Follow my git config for pulls",
-        "Pull with the strategy this repository's git configuration sets, when it sets one.",
+        "Pulls use this repository's git configuration when it sets a strategy.",
         facts.as_ref().and_then(|f| pull_note(f, pull)).as_ref(),
         |ui| {
             override_select(
@@ -3870,48 +3664,61 @@ fn repository(
             );
         },
     );
-    repo_row(
-        ui,
-        "Pull strategy",
-        "How a pull brings in the remote's commits; while it follows the git configuration, only where that sets none. When branches diverge, Canopy asks how to combine them.",
-        None,
-        |ui| {
-            override_select(
-                ui,
-                "repo-pull",
-                "Pull strategy",
-                &mut own.pull_mode,
-                s.pull_mode,
-                DEFAULTS.pull_mode,
-                &PullMode::ALL.map(|m| (m, m.label().to_owned())),
-            );
-        },
-    );
+    // While the git configuration decides a choice, Canopy's own is not offered: the
+    // configuration's row below is where it changes, as on the Git page.
+    let configured_pull = facts
+        .as_ref()
+        .and_then(|f| f.pull.as_ref())
+        .is_some_and(|p| p.strategy.is_some());
+    if !(pull.follow_config && configured_pull) {
+        repo_row(
+            ui,
+            "Pull strategy",
+            "How a pull combines the remote's commits with yours.",
+            None,
+            |ui| {
+                override_select(
+                    ui,
+                    "repo-pull",
+                    "Pull strategy",
+                    &mut own.pull_mode,
+                    s.pull_mode,
+                    DEFAULTS.pull_mode,
+                    &PullMode::ALL.map(|m| (m, m.label().to_owned())),
+                );
+            },
+        );
+    }
     let prune = own.prune_on_fetch.unwrap_or(s.prune_on_fetch);
-    repo_row(
-        ui,
-        "Prune on fetch",
-        "Remove remote-tracking branches that were deleted on the remote.",
-        facts
-            .as_ref()
-            .and_then(|f| prune_note(f, prune, s.follow_git_config))
-            .as_ref(),
-        |ui| {
-            override_select(
-                ui,
-                "repo-prune",
-                "Prune on fetch",
-                &mut own.prune_on_fetch,
-                s.prune_on_fetch,
-                DEFAULTS.prune_on_fetch,
-                &on_off(),
-            );
-        },
-    );
+    let configured_prune = facts.as_ref().is_some_and(|f| {
+        !fetch_values(f, f.fetch_prune.as_ref(), &f.remote_prune, "prune").is_empty()
+    });
+    if !(s.follow_git_config && configured_prune) {
+        repo_row(
+            ui,
+            "Prune on fetch",
+            "Removes remote branches that were deleted on the remote.",
+            facts
+                .as_ref()
+                .and_then(|f| prune_note(f, prune, s.follow_git_config))
+                .as_ref(),
+            |ui| {
+                override_select(
+                    ui,
+                    "repo-prune",
+                    "Prune on fetch",
+                    &mut own.prune_on_fetch,
+                    s.prune_on_fetch,
+                    DEFAULTS.prune_on_fetch,
+                    &on_off(),
+                );
+            },
+        );
+    }
     repo_row(
         ui,
         "Fetch in the background",
-        "Fetches this repository's remotes while Canopy is idle, and, with a hosting token, refreshes its request list on the same interval (every minute when this is off).",
+        "Fetches this repository's remotes and requests while Canopy is idle.",
         None,
         |ui| {
             override_select(
@@ -3928,7 +3735,7 @@ fn repository(
     repo_row(
         ui,
         "Remote protocol",
-        "Used for remote URLs Canopy builds from owner/repository when you add a remote or publish.",
+        "The protocol for remote URLs Canopy builds when you add a remote or publish.",
         None,
         |ui| {
             override_select(
@@ -3946,7 +3753,7 @@ fn repository(
     repo_row(
         ui,
         "Add Signed-off-by",
-        "Appends a Signed-off-by trailer (git commit --signoff), as DCO projects require.",
+        "Adds a Signed-off-by line to commits, as DCO projects require.",
         None,
         |ui| {
             override_select(
@@ -4009,21 +3816,16 @@ fn repo_tab(ui: &mut Ui, s: &mut Settings, path: &Path) {
         .and_then(|r| r.display_name.clone())
         .unwrap_or_default();
     let mut name = saved.clone();
-    row(
-        ui,
-        "Name",
-        "What its tab calls this repository. Empty uses the folder's name.",
-        |ui| {
-            fixed_width(ui, FIELD_WIDTH, |ui| {
-                TextField::new(&mut name)
-                    .placeholder(folder.clone())
-                    .width(FIELD_WIDTH)
-                    .name("Tab name")
-                    .id_salt("repo-tab-name")
-                    .show(ui)
-            });
-        },
-    );
+    row(ui, "Name", "What its tab calls this repository.", |ui| {
+        fixed_width(ui, FIELD_WIDTH, |ui| {
+            TextField::new(&mut name)
+                .placeholder(folder.clone())
+                .width(FIELD_WIDTH)
+                .name("Tab name")
+                .id_salt("repo-tab-name")
+                .show(ui)
+        });
+    });
     if name != saved {
         let name: String = name.chars().take(crate::settings::MAX_TAB_NAME).collect();
         s.repo_mut(path).display_name = (!name.trim().is_empty()).then_some(name);
@@ -4041,7 +3843,7 @@ fn repo_tab(ui: &mut Ui, s: &mut Settings, path: &Path) {
     let mut chosen = current;
     row(ui, "Icon", "Shown in the tab, before its name.", |ui| {
         Select::new(&mut chosen, &options)
-            .width(SELECT_WIDTH)
+            .fit_to_options()
             .name("Tab icon")
             .id_salt("repo-tab-icon")
             .show(ui);
@@ -4112,27 +3914,14 @@ fn repo_remotes(
             None
         };
         let changed = typed != remote.url;
-        let help = format!(
-            "Where {} fetches from and pushes to. {}",
-            remote.name,
-            if changed { "Not saved yet." } else { "" }
-        );
+        let help = format!("Where {} fetches from and pushes to.", remote.name);
         let mut save = false;
         row_layout(
             ui,
             &remote.name,
             None,
             "remote url origin upstream set-url",
-            &|ui: &mut Ui| {
-                help_label(ui, help.trim_end());
-                if let Some(problem) = problem.filter(|_| changed) {
-                    Note {
-                        text: problem.to_owned(),
-                        warn: true,
-                    }
-                    .show(ui);
-                }
-            },
+            &|ui: &mut Ui| help_label(ui, &help),
             "",
             |ui| {
                 // Right to left: Save, then the field, together as wide as the other fields.
@@ -4149,6 +3938,7 @@ fn repo_remotes(
                     TextField::new(draft)
                         .width(width)
                         .name(format!("URL of {}", remote.name))
+                        .error(problem.filter(|_| changed))
                         .id_salt(("remote-url", &remote.name))
                         .show(ui)
                 });
@@ -4199,10 +3989,7 @@ fn repo_header(ui: &mut Ui, path: &Path, look: &RepoLook) {
         });
     });
     ui.add_space(theme::SM);
-    help_label(
-        ui,
-        "These settings apply to this repository only. Values follow Settings → Git and Integrations unless marked Overridden. Reset a choice to follow those defaults again.",
-    );
+    help_label(ui, "Settings here apply to this repository only.");
     ui.add_space(theme::LG);
 }
 
@@ -4212,10 +3999,10 @@ fn facts_error(ui: &mut Ui, facts: Option<&GitFacts>) {
         .and_then(|f| f.error.as_deref())
         .filter(|_| !Filter::searching(ui.ctx()))
     {
-        Note {
-            text: format!("Could not read your git configuration: {e}"),
-            warn: true,
-        }
+        Callout::new(
+            Tone::Warning,
+            format!("Could not read your git configuration: {e}"),
+        )
         .show(ui);
         ui.add_space(theme::SM);
     }
@@ -4229,14 +4016,8 @@ fn repo_row(
     note: Option<&Note>,
     control: impl FnOnce(&mut Ui),
 ) {
-    let help_text = |ui: &mut Ui| {
-        help_label(ui, help);
-        if let Some(note) = note {
-            // A repository follows through its own switch, not the global one.
-            note.show_text(ui);
-        }
-    };
-    row_layout(ui, title, None, help, &help_text, "", control);
+    let help_text = |ui: &mut Ui| help_label(ui, help);
+    noted_row_layout(ui, title, None, help, &help_text, "", note, control);
     row_end(ui);
 }
 
@@ -4313,26 +4094,25 @@ fn program_label(program: &str) -> String {
 }
 
 fn signing_look(facts: &GitFacts) -> SigningLook {
-    const APPLIES: &str = "Canopy commits with git, so this applies.";
+    // Where signing is turned on or off, as a remark beside the title.
+    let setting = facts.gpg_sign.as_ref().map(|v| Note {
+        text: format!("{}.", upper_first(&config_phrase(v))),
+        warn: false,
+    });
     if !facts.signs_commits() {
-        let state = facts
-            .gpg_sign
-            .as_ref()
-            .map_or_else(|| "commit.gpgsign is not set".to_owned(), config_phrase);
         return SigningLook {
             badge: "Not signing",
             tone: Tone::Neutral,
-            help: format!(
-                "Commits are not signed here ({state}). {APPLIES} To sign, turn commit.gpgsign on in your git configuration."
-            ),
-            note: None,
+            help: "Commits are not signed here. To sign, turn on Sign commits under Git configuration."
+                .to_owned(),
+            note: setting,
         };
     }
     let Some(signing) = &facts.signing else {
         return SigningLook {
             badge: "Signing",
             tone: Tone::Success,
-            help: format!("Git signs commits here. {APPLIES}"),
+            help: "Git signs commits here.".to_owned(),
             note: None,
         };
     };
@@ -4353,48 +4133,33 @@ fn signing_look(facts: &GitFacts) -> SigningLook {
             }
         },
     );
-    let setting = facts
-        .gpg_sign
-        .as_ref()
-        .map_or_else(String::new, |v| format!(" ({})", config_phrase(v)));
     let help = format!(
-        "Commits are signed as {} with {key}, by {program}{setting}. {APPLIES} Commit details show whether each signature verifies.",
+        "Commits are signed as {} with {key}, by {program}.",
         signing.format_label()
     );
-    let program_key = match signing.format.as_str() {
-        "ssh" => "gpg.ssh.program",
-        "x509" => "gpg.x509.program",
-        _ => "gpg.openpgp.program",
-    };
-    let note = signing.problem.map(|problem| Note {
+    let problem = signing.problem.map(|problem| Note {
         text: match problem {
             SigningProblem::ProgramMissing => format!(
-                "{program} is not installed or not on the PATH, so every commit will fail. Install it, or set {program_key} to another program in your git configuration."
+                "{program} is not installed or not on the PATH, so every commit will fail. Install it, or set another signing program in your git configuration."
             ),
-            SigningProblem::KeyNotSet => "SSH signing needs a key and user.signingkey is not set, so every commit will fail. Set user.signingkey to your public key file in your git configuration.".to_owned(),
+            SigningProblem::KeyNotSet => "SSH signing needs a signing key and none is set, so every commit will fail. Set your public key file as the signing key in your git configuration.".to_owned(),
             SigningProblem::KeyFileMissing => {
                 let file = signing.key.as_deref().filter(|key| *key != "an SSH key")
-                    .unwrap_or("named by user.signingkey");
-                format!("The key file {file} does not exist, so every commit will fail. Correct user.signingkey in your git configuration.")
+                    .unwrap_or("of the signing key");
+                format!("The key file {file} does not exist, so every commit will fail. Correct the signing key in your git configuration.")
             },
             SigningProblem::UnknownFormat => format!(
-                "gpg.format = \"{}\" is not a format git knows (openpgp, ssh or x509), so every commit will fail. Correct it in your git configuration.",
+                "\"{}\" is not a signing format git knows (OpenPGP, SSH or X.509), so every commit will fail. Choose one under Signing format.",
                 signing.format
             ),
         },
         warn: true,
     });
+    let failing = problem.is_some();
+    let note = problem.or(setting);
     SigningLook {
-        badge: if note.is_some() {
-            "Will fail"
-        } else {
-            "Signing"
-        },
-        tone: if note.is_some() {
-            Tone::Danger
-        } else {
-            Tone::Success
-        },
+        badge: if failing { "Will fail" } else { "Signing" },
+        tone: if failing { Tone::Danger } else { Tone::Success },
         help,
         note,
     }
@@ -4434,7 +4199,7 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
     repo_row(
         ui,
         "Context lines",
-        "Unchanged lines shown around each change. Context and whitespace follow the defaults together; selecting either pins both. The diff header changes them too.",
+        "Unchanged lines shown around each change in this repository.",
         None,
         |ui| {
             let labels = (0..=25)
@@ -4447,7 +4212,7 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
             selected |= Select::new(&mut chosen.context, &options)
                 .recommended(DEFAULTS.diff.context)
                 .report_reselection()
-                .width(SELECT_WIDTH)
+                .fit_to_options()
                 .name("Context lines")
                 .id_salt("repo-context")
                 .show(ui)
@@ -4457,7 +4222,7 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
     repo_row(
         ui,
         "Whitespace",
-        "Ignoring whitespace turns off hunk staging, since such a diff cannot be applied.",
+        "Ignoring whitespace hides space-only changes but turns off hunk staging.",
         None,
         |ui| {
             let options = WhitespaceMode::ALL.map(|w| (w, w.label()));
@@ -4476,7 +4241,7 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
         repo_row(
             ui,
             "Diff defaults",
-            "Reset context lines and whitespace together to follow Settings → Git.",
+            "Returns context lines and whitespace to the values in Settings → Git.",
             None,
             |ui| {
                 if IconButton::new(icon::ARROW_COUNTER_CLOCKWISE, "Use default diff options")
@@ -4697,13 +4462,7 @@ fn repo_identity(
         identity_status(ui, identity, view.error);
     }
     let has_own = identity.is_some_and(|i| local(&i.author.name) || local(&i.author.email));
-    let current = |pick: fn(&Identity) -> &Field| {
-        move |ui: &mut Ui| {
-            if let Some(field) = identity.map(pick) {
-                in_use(ui, field);
-            }
-        }
-    };
+    let current = |pick: fn(&Identity) -> &Field| identity.map(pick).and_then(in_use);
     // What the repository inherits shows in an empty field, so the field is never blank.
     let inherited = |pick: fn(&Identity) -> &Field| {
         identity
@@ -4717,13 +4476,14 @@ fn repo_identity(
     let name_tag = identity
         .filter(|i| local(&i.author.name))
         .map(|_| "Overridden");
-    row_layout(
+    noted_row_layout(
         ui,
         "Name",
         name_tag,
         "identity user.name author",
-        &current(|i| &i.author.name),
+        &|ui: &mut Ui| help_label(ui, NAME_HELP),
         "",
+        current(|i| &i.author.name).as_ref(),
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.local_name)
@@ -4739,13 +4499,14 @@ fn repo_identity(
     let email_tag = identity
         .filter(|i| local(&i.author.email))
         .map(|_| "Overridden");
-    row_layout(
+    noted_row_layout(
         ui,
         "Email",
         email_tag,
         "identity user.email author",
-        &current(|i| &i.author.email),
+        &|ui: &mut Ui| help_label(ui, EMAIL_HELP),
         "",
+        current(|i| &i.author.email).as_ref(),
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.local_email)
@@ -4762,7 +4523,7 @@ fn repo_identity(
     row(
         ui,
         "Apply identity",
-        "Saves the name and email to this repository's .git/config, where they win over your global identity for future commits here.",
+        "Saves the name and email for this repository only.",
         |ui| {
             if Button::new("Save to this repository")
                 .primary()
@@ -4855,43 +4616,33 @@ fn integrations(
     clone_parent: &str,
 ) {
     heading(ui, "Cloning");
-    row(
-        ui,
-        "Default clone folder",
-        "Where the clone dialog puts new repositories. Empty uses ~/src when it exists, else your home folder.",
-        |ui| {
-            let right = ui.cursor().max.x;
-            if let Some(dir) = picker.show(
-                ui,
-                "default-clone-folder",
-                &crate::settings::expand_home(&s.clone_dir),
-            ) {
-                s.clone_dir = dir.display().to_string();
-            }
-            // The button and the field together are as wide as the other fields, so every
-            // field starts at the same edge.
-            let button = right - ui.cursor().max.x;
-            let default = clone_parent.to_owned();
-            let width = (FIELD_WIDTH - button).max(80.0);
-            fixed_width(ui, width, |ui| {
-                TextField::new(&mut s.clone_dir)
-                    .placeholder(default)
-                    .width(width)
-                    .name("Default clone folder")
-                    .id_salt("clone-dir")
-                    .show(ui)
-            });
-            if s.clone_dir.trim().is_empty() {
-                Badge::new("Default")
-                    .tooltip("Canopy's default: ~/src when it exists, else your home folder.")
-                    .show(ui);
-            }
-        },
-    );
+    row(ui, "Default clone folder", "Where new clones go.", |ui| {
+        let right = ui.cursor().max.x;
+        if let Some(dir) = picker.show(
+            ui,
+            "default-clone-folder",
+            &crate::settings::expand_home(&s.clone_dir),
+        ) {
+            s.clone_dir = dir.display().to_string();
+        }
+        // The button and the field together are as wide as the other fields, so every
+        // field starts at the same edge.
+        let button = right - ui.cursor().max.x;
+        let default = clone_parent.to_owned();
+        let width = (FIELD_WIDTH - button).max(80.0);
+        fixed_width(ui, width, |ui| {
+            TextField::new(&mut s.clone_dir)
+                .placeholder(default)
+                .width(width)
+                .name("Default clone folder")
+                .id_salt("clone-dir")
+                .show(ui)
+        });
+    });
     default_row(
         ui,
         "Clone protocol",
-        "Used for URLs Canopy builds from owner/repository when you clone, add a remote or publish. SSH needs a key added to your account.",
+        "For the URLs Canopy builds. SSH needs a key on your account.",
         None,
         |ui| {
             revert(
@@ -4912,7 +4663,7 @@ fn integrations(
     row(
         ui,
         "Self-hosted GitLab",
-        "Hosts to treat as GitLab, comma-separated. Hosts whose name starts with \"gitlab\" are recognised anyway.",
+        "Other hosts to treat as GitLab, separated by commas.",
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut s.gitlab_hosts)
@@ -4924,10 +4675,11 @@ fn integrations(
             });
         },
     );
-    row(
+    row_explained(
         ui,
         "Pull and merge requests",
-        "Load, review and act on pull/merge requests through the GitHub and GitLab APIs. Requests load when you open a repository hosted there. Off keeps Canopy offline apart from git itself.",
+        "Loads pull and merge requests through the GitHub and GitLab APIs. Off keeps Canopy offline apart from git.",
+        "Requests load when you open a repository hosted on GitHub or GitLab.",
         |ui| {
             revert(
                 ui,
@@ -5044,11 +4796,10 @@ fn launcher_row(
         .map(|a| a.installed(kind).collect())
         .unwrap_or_default();
     let system_label = match (apps, system) {
-        (None, _) => "Default (looking…)".to_owned(),
-        (Some(_), Some(choice)) => format!("Default · {}", choice.name),
-        (Some(_), None) => "Default".to_owned(),
+        (Some(_), Some(choice)) => format!("{} (Recommended)", choice.name),
+        _ => "Recommended".to_owned(),
     };
-    // The system's own choice is listed once, as the default: not again as an installed app.
+    // The system's own choice is listed once, as the recommendation: not again as an installed app.
     let is_default = |app: &crate::system_apps::App| is_system_choice(system, app);
     let current = match launch_choice(value, custom.contains(&kind), &installed) {
         LaunchChoice::App(i) if installed.get(i).is_some_and(|a| is_default(a)) => {
@@ -5067,10 +4818,12 @@ fn launcher_row(
     labels.push((LaunchChoice::Custom, "Custom command…".to_owned()));
     let options: Vec<(LaunchChoice, &str)> = labels.iter().map(|(c, l)| (*c, l.as_str())).collect();
     let mut chosen = current;
-    // Where the system's choice comes from, under the help (the control column is narrow).
+    // An environment variable behind the system's choice, under the help (the control column is
+    // narrow); the select already marks the choice Recommended.
     let origin = (current == LaunchChoice::System)
         .then_some(system)
-        .flatten();
+        .flatten()
+        .filter(|c| matches!(c.origin, crate::system_apps::Origin::Env(_)));
     let help_text = |ui: &mut Ui| {
         help_label(ui, help);
         if let Some(choice) = origin {
@@ -5083,7 +4836,7 @@ fn launcher_row(
     };
     row_layout(ui, title, None, help, &help_text, "", |ui| {
         Select::new(&mut chosen, &options)
-            .width(FIELD_WIDTH)
+            .width(select_width(ui, options.iter().map(|(_, l)| *l)).min(FIELD_WIDTH))
             .name(title)
             .id_salt(("launcher", title))
             .show(ui);
@@ -5171,7 +4924,8 @@ fn accounts<'f>(
     sources: &HashMap<String, hosting::TokenSource>,
     actions: &mut Vec<Action>,
 ) -> bool {
-    const ABOUT: &str = "Canopy uses a personal access token to list and act on pull/merge requests. Tokens are sent only to the host they belong to. Without one, Canopy falls back to GH_TOKEN / GITLAB_TOKEN and then to your git credential helper.";
+    const ABOUT: &str =
+        "Tokens let Canopy list and act on pull and merge requests, and go only to their own host.";
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let mut changed = false;
@@ -5188,7 +4942,7 @@ fn accounts<'f>(
     if !settings.hosting_api {
         ui.add_space(theme::SM);
         Callout::new(
-            Tone::Warning,
+            Tone::Neutral,
             "Pull and merge requests are turned off in Integrations.",
         )
         .icon(icon::INFO)
@@ -5347,41 +5101,6 @@ fn accounts<'f>(
 
 /// The status line under "Download profile pictures": why the open repository's authors show
 /// initials, and the way to Accounts when a token would fix it.
-fn picture_note(ui: &mut Ui, note: &PictureNote, open_accounts: &std::cell::Cell<bool>) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
-    ui.add_space(theme::XS);
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = theme::XS;
-        ui.label(
-            RichText::new(icon::INFO)
-                .size(m.meta_size)
-                .color(p.text_dim),
-        );
-        ui.label(
-            RichText::new(&note.title)
-                .size(m.meta_size)
-                .color(p.text_dim),
-        );
-    });
-    ui.add(
-        egui::Label::new(
-            RichText::new(&note.detail)
-                .size(m.meta_size)
-                .color(p.text_faint),
-        )
-        .wrap(),
-    );
-    if note.open_accounts
-        && LinkButton::new("Open Accounts")
-            .text_size(m.meta_size)
-            .show(ui)
-            .clicked()
-    {
-        open_accounts.set(true);
-    }
-}
-
 /// What the user agreed to: the Terms and the Privacy Policy accepted, and the crash report
 /// answer, with the way to change it. Reading a document here accepts nothing.
 fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
@@ -5432,17 +5151,10 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
     if crate::crash_reports::available() {
         let before = s.crash_reports;
         let mut on = s.crash_reports == Some(true);
-        let answer = match s.crash_reports {
-            None => "You have not answered yet, so nothing is sent.",
-            Some(_) => "",
-        };
         row_more(
             ui,
             "Send crash reports",
-            format!(
-                "When Canopy crashes, send the error and a stack trace to NecturaLabs. {answer}"
-            )
-            .trim_end(),
+            "When Canopy crashes, send the error and a stack trace to NecturaLabs.",
             "Also sent: the Canopy version, your operating system and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
             |ui| {
                 switch(ui, &mut on, "Send crash reports");
@@ -5478,7 +5190,7 @@ fn privacy(
         ui,
         "Trusted folders",
         "Canopy downloads a partial clone's missing files on its own only inside these folders.",
-        "In a partial clone, opening a commit or a diff downloads the files the clone left on the server. git then follows the repository's own configuration, which can run programs and contact servers, so Canopy does this on its own only for repositories inside these folders. Trust a folder only if everything in it comes from you or from people you trust. Elsewhere you see what is already on disk, with a Trust… button in the status bar.",
+        "Opening a commit or diff in a partial clone downloads the missing files, and git then follows the repository's configuration, which can run programs and contact servers. Trust a folder only if everything in it comes from you or people you trust; elsewhere, Trust… in the status bar asks first.",
         |ui| {
             if let Some(dir) = picker.show_labelled(
                 ui,
@@ -5497,21 +5209,20 @@ fn privacy(
     }
     row_end(ui);
     heading(ui, "Profile pictures");
-    let help = "Fetch GitHub or GitLab account pictures for visible authors.";
-    let open_accounts = std::cell::Cell::new(false);
-    let help_text = |ui: &mut Ui| {
-        help_label(ui, help);
-        if let Some(note) = pictures {
-            picture_note(ui, note, &open_accounts);
-        }
-    };
-    row_layout(
+    let help = "Shows GitHub or GitLab account pictures next to authors.";
+    let mut open_accounts = false;
+    let note = pictures.map(|why| Note {
+        text: format!("{}. {}", why.title, why.detail),
+        warn: false,
+    });
+    noted_row_layout(
         ui,
         "Download profile pictures",
         None,
         help,
-        &help_text,
-        "Sends commit IDs to GitHub or author emails to GitLab. Pictures, and authors without one, are remembered for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
+        &|ui: &mut Ui| help_label(ui, help),
+        "Sends commit IDs to GitHub or author emails to GitLab. Pictures, and authors without one, are remembered for 12 hours, and a failed refresh keeps the previous picture. Off shows initials and needs Pull and merge requests on to turn back on.",
+        note.as_ref(),
         |ui| {
             revert(
                 ui,
@@ -5520,6 +5231,16 @@ fn privacy(
                 "Download profile pictures",
             );
             switch(ui, &mut s.download_avatars, "Download profile pictures");
+            // Right to left: the way to fix it sits before the switch.
+            if pictures.is_some_and(|why| why.open_accounts)
+                && Button::new("Open Accounts")
+                    .ghost()
+                    .size(Size::Sm)
+                    .show(ui)
+                    .clicked()
+            {
+                open_accounts = true;
+            }
         },
     );
     row_end(ui);
@@ -5527,14 +5248,14 @@ fn privacy(
     row_more(
         ui,
         "Log detail",
-        "Normal records operations, warnings and errors. Detailed adds every git command and API call with its timing.",
+        "Detailed also records every git command and API call with its timing.",
         "Turn Detailed on while you reproduce a problem. The CANOPY_LOG environment variable overrides this.",
         |ui| {
             revert(ui, &mut s.log_level, &DEFAULTS.log_level, "Log detail");
             let before = s.log_level;
             let options = crate::logging::LogLevel::ALL.map(|l| (l, l.label()));
             Select::new(&mut s.log_level, &options)
-                .width(SELECT_WIDTH)
+                .fit_to_options()
                 .name("Log detail")
                 .id_salt("log-level")
                 .show(ui);
@@ -5568,7 +5289,7 @@ fn privacy(
         },
     );
     row_end(ui);
-    open_accounts.get()
+    open_accounts
 }
 
 /// The trusted folders, each with a button that stops trusting it.
@@ -5622,10 +5343,11 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     }
     group_gap(ui, theme::XL);
     heading(ui, "Preferences");
-    row(
+    row_explained(
         ui,
         "Check for updates",
-        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
+        "Once a day, Canopy checks GitHub for a newer build.",
+        "Canopy reads a small public file on GitHub, which sees your IP address and build number. Nothing downloads until you choose Update.",
         |ui| {
             revert(
                 ui,
@@ -5766,18 +5488,23 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     if let Some((failed, message)) = &screen.file_status
         && !Filter::searching(ui.ctx())
     {
-        Note {
-            text: message.clone(),
-            warn: *failed,
-        }
+        Callout::new(
+            if *failed {
+                Tone::Warning
+            } else {
+                Tone::Success
+            },
+            message.as_str(),
+        )
         .show(ui);
         ui.add_space(theme::SM);
     }
     heading(ui, "Settings file");
-    row(
+    row_explained(
         ui,
         "Export settings",
-        "Saves your preferences to a file you choose, to keep or to use on another computer. Tokens, trusted folders, your answers to the Terms, the Privacy Policy and crash reports, the editor, terminal and file manager, GitLab hosts, the clone folder and per-repository settings are never in it.",
+        "Saves your preferences to a file, without tokens or consent.",
+        "Left out: tokens, consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Export…" })
                 .icon(icon::EXPORT)
@@ -5797,10 +5524,11 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
             }
         },
     );
-    row(
+    row_explained(
         ui,
         "Import settings",
-        "Takes the preferences from a settings file. Anything the file does not name stays as it is; a file that is not Canopy's changes nothing. A file never chooses the programs Canopy runs or the GitLab hosts trusted with a token, and never turns a network feature on.",
+        "Loads preferences from a settings file.",
+        "What the file leaves out stays as it is. A file never chooses the programs Canopy runs or the hosts a token goes to, and never turns a network feature on.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Import…" })
                 .icon(icon::DOWNLOAD_SIMPLE)
@@ -5818,15 +5546,17 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Reset all settings",
-        "Every preference back to its default, which turns pull and merge requests, profile pictures and update checks back on. Tokens, trusted folders, recent repositories and your answers to the Terms, the Privacy Policy and crash reports stay.",
+        "Restores every preference to its recommended value. Tokens, trusted folders, repositories and consent stay.",
         |ui| {
             if confirm_button(ui, "reset-all-settings", "Reset all", "Reset every setting") {
                 match crate::settings_file::reset(s) {
                     Ok(fresh) => {
                         *s = fresh;
                         actions.push(Action::SettingsReplaced);
-                        screen.file_status =
-                            Some((false, "Every setting is back to its default.".to_owned()));
+                        screen.file_status = Some((
+                            false,
+                            "Every setting is back to its recommended value.".to_owned(),
+                        ));
                     }
                     Err(e) => screen.file_status = Some((true, e)),
                 }
@@ -5895,58 +5625,62 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
                             warn: true,
                         });
                 let keys = b.keys();
-                let help_text = |ui: &mut Ui| {
-                    if let Some(note) = &note {
-                        note.show(ui);
-                    }
-                };
-                row_layout(ui, b.description, None, &keys, &help_text, "", |ui| {
-                    if !keymap::is_remappable(b) {
-                        Keycap::new(keys.clone()).show(ui);
-                        return;
-                    }
-                    // Right to left: Change is rightmost.
-                    if waiting {
-                        if Button::new("Cancel")
-                            .ghost()
-                            .id_salt(("keys-cancel", &id))
+                noted_row_layout(
+                    ui,
+                    b.description,
+                    None,
+                    &keys,
+                    &|_| {},
+                    "",
+                    note.as_ref(),
+                    |ui| {
+                        if !keymap::is_remappable(b) {
+                            Keycap::new(keys.clone()).show(ui);
+                            return;
+                        }
+                        // Right to left: Change is rightmost.
+                        if waiting {
+                            if Button::new("Cancel")
+                                .ghost()
+                                .id_salt(("keys-cancel", &id))
+                                .show(ui)
+                                .clicked()
+                            {
+                                keymap::cancel_capture();
+                                screen.rebinding = None;
+                            }
+                            ui.label(
+                                RichText::new("Press the new key")
+                                    .size(theme::metrics().meta_size)
+                                    .color(p.accent),
+                            );
+                            return;
+                        }
+                        if Button::new("Change")
+                            .icon(icon::KEYBOARD)
+                            .id_salt(("keys-change", &id))
                             .show(ui)
                             .clicked()
                         {
-                            keymap::cancel_capture();
-                            screen.rebinding = None;
+                            keymap::start_capture(ui.ctx());
+                            screen.rebinding = Some(id.clone());
+                            screen.key_note = None;
                         }
-                        ui.label(
-                            RichText::new("Press the new key")
-                                .size(theme::metrics().meta_size)
-                                .color(p.accent),
-                        );
-                        return;
-                    }
-                    if Button::new("Change")
-                        .icon(icon::KEYBOARD)
-                        .id_salt(("keys-change", &id))
-                        .show(ui)
-                        .clicked()
-                    {
-                        keymap::start_capture(ui.ctx());
-                        screen.rebinding = Some(id.clone());
-                        screen.key_note = None;
-                    }
-                    if keymap::is_customised(b)
-                        && Button::new("Reset")
-                            .ghost()
-                            .id_salt(("keys-reset", &id))
-                            .show(ui)
-                            .clicked()
-                    {
-                        s.keybindings.remove(&id);
-                        screen.key_note = None;
-                    }
-                    for key in keys.rsplit("  ·  ") {
-                        Keycap::new(key.to_owned()).show(ui);
-                    }
-                });
+                        if keymap::is_customised(b)
+                            && Button::new("Reset")
+                                .ghost()
+                                .id_salt(("keys-reset", &id))
+                                .show(ui)
+                                .clicked()
+                        {
+                            s.keybindings.remove(&id);
+                            screen.key_note = None;
+                        }
+                        for key in keys.rsplit("  ·  ") {
+                            Keycap::new(key.to_owned()).show(ui);
+                        }
+                    },
+                );
                 row_end(ui);
             }
         });
@@ -5984,14 +5718,13 @@ pub(crate) fn against_recommendation(
         &facts.follow_tags.iter().collect::<Vec<_>>(),
         follow,
         |v| v.as_bool() == Some(settings.follow_tags),
-        "--follow-tags",
         "pushes",
     );
     // The pull recommendation is the one the editor marks and Use recommended writes.
-    let pull_recommended = Setting::PullFastForward
-        .recommendation_for(facts.git)
-        .map(|value| lowercase_label(&git_value_label(Setting::PullFastForward, value)))
-        .unwrap_or_default();
+    let pull_recommended = lowercase_label(&git_value_label(
+        Setting::PullFastForward,
+        Setting::PullFastForward.recommendation_for(facts.git),
+    ));
     let mut lines: Vec<String> = [
         (
             "Pull",
@@ -6050,7 +5783,8 @@ pub(crate) fn against_recommendation(
         note.map(|n| {
             let text = n.text.trim_start_matches(DECIDES).trim_start_matches(": ");
             format!(
-                "{name}: {text} Recommended: {}.",
+                "{} Recommended: {}.",
+                upper_first(text),
                 match name {
                     "Pull" => pull_recommended.as_str(),
                     "Prune tags" => "off",
@@ -6067,13 +5801,13 @@ pub(crate) fn against_recommendation(
         (Setting::InitialBranch, facts.initial_branch.as_ref()),
         (Setting::SubmoduleRecurse, facts.submodule_recurse.as_ref()),
     ] {
-        if let (Some(value), Some(recommended)) = (value, setting.recommendation_for(facts.git))
+        let recommended = setting.recommendation_for(facts.git);
+        if let Some(value) = value
             && value.value != recommended
         {
             lines.push(format!(
-                "{}: {}. Recommended: {}.",
-                setting.label(),
-                config_phrase(value),
+                "{}. Recommended: {}.",
+                upper_first(&config_phrase(value)),
                 git_value_label(setting, recommended)
             ));
         }
@@ -6100,44 +5834,6 @@ mod tests {
             ("Token saved".into(), true)
         );
         assert!(!account_status(ForgeKind::GitHub, None, false, false).1);
-    }
-
-    /// A choice the git configuration decides offers to stop following it; a plain note, and
-    /// the notes of a repository's rows, do not.
-    #[test]
-    fn a_decided_note_offers_to_stop_following_the_git_config() {
-        use crate::ui::kit::testkit;
-        let ctx = testkit::ctx();
-        let decided = Note {
-            text: format!("{DECIDES}: pull.rebase = true (global)."),
-            warn: false,
-        };
-        let plain = Note {
-            text: "Matches your git configuration: pull.rebase = true (global).".to_owned(),
-            warn: false,
-        };
-        let label = "Stop following my git config";
-        assert!(testkit::find(&testkit::spoken(&ctx, |ui| plain.show(ui)), label).is_none());
-        assert!(testkit::find(&testkit::spoken(&ctx, |ui| decided.show_text(ui)), label).is_none());
-        let nodes = testkit::spoken(&ctx, |ui| decided.show(ui));
-        let at = testkit::find(&nodes, label)
-            .and_then(|n| n.bounds)
-            .expect("the button is offered")
-            .center();
-        testkit::click(&ctx, at, |ui| decided.show(ui));
-        assert_eq!(
-            ctx.data_mut(|d| d.remove_temp::<bool>(stop_following_id())),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn the_pull_select_shows_what_pulls_use_while_git_decides() {
-        use canopy_core::PullStrategy;
-        let shown = |c, decides| pull_mode_shown(c, decides, PullMode::Merge);
-        assert_eq!(shown(Some(PullStrategy::Rebase), true), PullMode::Rebase);
-        assert_eq!(shown(Some(PullStrategy::Rebase), false), PullMode::Merge);
-        assert_eq!(shown(None, true), PullMode::Merge);
     }
 
     /// Every preview theme needs an outlined selection marker; merely changing the
@@ -6517,7 +6213,7 @@ mod tests {
                 let Some(name) = node
                     .label()
                     .and_then(|l| l.strip_prefix("Reset "))
-                    .and_then(|l| l.strip_suffix(" to its default"))
+                    .and_then(|l| l.strip_suffix(" to recommended"))
                 else {
                     continue;
                 };
@@ -7032,11 +6728,10 @@ mod tests {
         let mut facts = GitFacts::default();
         assert_eq!(pull_note(&facts, follow), None, "not read");
         facts.pull = Some(PullConfig::default());
-        let nothing = pull_note(&facts, follow).unwrap();
-        assert!(!nothing.warn);
-        assert!(
-            nothing.text.contains("sets no pull strategy"),
-            "{nothing:?}"
+        assert_eq!(
+            pull_note(&facts, follow),
+            None,
+            "nothing to say when nothing is set"
         );
         assert_eq!(pull_note(&facts, own(PullMode::Rebase)), None);
 
@@ -7055,16 +6750,16 @@ mod tests {
         assert!(!followed.warn);
         assert_eq!(
             followed.text,
-            "Your git configuration decides: pull.rebase = true (global: \
-             /home/me/.gitconfig), so pulls use rebase."
+            "Your git configuration decides: Rebase when pulling set to rebase in your global \
+             git config (/home/me/.gitconfig), so pulls use rebase."
         );
         assert!(!pull_note(&facts, own(PullMode::Rebase)).unwrap().warn);
         let overridden = pull_note(&facts, own(PullMode::Merge)).unwrap();
         assert!(overridden.warn);
         assert_eq!(
             overridden.text,
-            "Canopy passes --no-rebase --ff, so your git configuration's pull.rebase = true \
-             (global: /home/me/.gitconfig) does not apply to pulls from Canopy."
+            "Canopy's pulls use this choice instead of your git configuration: Rebase when \
+             pulling set to rebase in your global git config (/home/me/.gitconfig)."
         );
     }
 
@@ -7370,7 +7065,7 @@ mod tests {
         assert!(
             recommended
                 .text
-                .starts_with("Your git configuration decides: fetch.prune = true")
+                .starts_with("Your git configuration decides: Prune remote branches set to on")
                 && !recommended.text.contains("Recommended"),
             "{}",
             recommended.text
@@ -7380,7 +7075,7 @@ mod tests {
         let tags = prune_tags_note(&facts, false, true).expect("a note");
         assert!(!tags.warn);
         assert!(
-            tags.text.contains("fetch.pruneTags = true") && !tags.text.contains("Recommended:"),
+            tags.text.contains("Prune local tags set to on") && !tags.text.contains("Recommended:"),
             "{}",
             tags.text
         );
@@ -7388,7 +7083,9 @@ mod tests {
         let replaced = prune_tags_note(&facts, false, false).expect("a note");
         assert!(replaced.warn);
         assert!(
-            replaced.text.starts_with("Canopy passes --no-prune-tags"),
+            replaced
+                .text
+                .starts_with("Canopy's fetches use this choice"),
             "{}",
             replaced.text
         );
@@ -7422,7 +7119,8 @@ mod tests {
         let off = prune_note(&facts, false, false).unwrap();
         assert!(off.warn);
         assert!(
-            off.text.starts_with("Canopy passes --no-prune"),
+            off.text.starts_with("Canopy's fetches use this choice")
+                && off.text.contains("set to on"),
             "{}",
             off.text
         );
@@ -7431,7 +7129,7 @@ mod tests {
         assert!(!prune_note(&facts, false, false).unwrap().warn);
         let on = prune_note(&facts, true, false).unwrap();
         assert!(on.warn);
-        assert!(on.text.starts_with("Canopy passes --prune"), "{}", on.text);
+        assert!(on.text.contains("set to off"), "{}", on.text);
     }
 
     fn signing(format: &str, key: Option<&str>, problem: Option<SigningProblem>) -> GitFacts {
@@ -7457,7 +7155,7 @@ mod tests {
         let off = signing_look(&GitFacts::default());
         assert_eq!((off.badge, off.tone), ("Not signing", Tone::Neutral));
         assert!(
-            off.help.contains("commit.gpgsign is not set"),
+            off.help.starts_with("Commits are not signed here. "),
             "{}",
             off.help
         );
@@ -7467,12 +7165,13 @@ mod tests {
             gpg_sign: Some(fact("commit.gpgsign", "false")),
             ..GitFacts::default()
         };
+        let note = signing_look(&explicit).note.expect("where it is set");
+        assert!(!note.warn);
         assert!(
-            signing_look(&explicit)
-                .help
-                .contains("commit.gpgsign = false"),
+            note.text
+                .starts_with("Sign commits set to off in your global git config"),
             "{}",
-            signing_look(&explicit).help
+            note.text
         );
 
         let on = signing_look(&signing("openpgp", Some("3AA5C34371567BD2"), None));
@@ -7480,7 +7179,10 @@ mod tests {
         for part in ["OpenPGP", "key 3AA5C34371567BD2", "by gpg"] {
             assert!(on.help.contains(part), "{part}: {}", on.help);
         }
-        assert_eq!(on.note, None);
+        assert!(
+            on.note.is_some_and(|note| !note.warn),
+            "where it is turned on"
+        );
 
         let ssh = signing_look(&signing("ssh", Some("id.pub"), None));
         assert!(
@@ -7507,14 +7209,20 @@ mod tests {
         assert!(note.warn);
         assert!(
             note.text.contains("ssh-keygen is not installed")
-                && note.text.contains("gpg.ssh.program"),
+                && note.text.contains("another signing program"),
             "{}",
             note.text
         );
         for (problem, part) in [
-            (SigningProblem::KeyNotSet, "user.signingkey is not set"),
+            (
+                SigningProblem::KeyNotSet,
+                "needs a signing key and none is set",
+            ),
             (SigningProblem::KeyFileMissing, "id.pub does not exist"),
-            (SigningProblem::UnknownFormat, "is not a format git knows"),
+            (
+                SigningProblem::UnknownFormat,
+                "is not a signing format git knows",
+            ),
         ] {
             let look = signing_look(&signing("ssh", Some("id.pub"), Some(problem)));
             let text = look.note.expect("a warning").text;
@@ -7538,11 +7246,16 @@ mod tests {
         let off = prune_note(&facts, false, false).expect("a note");
         assert!(off.warn);
         assert!(
-            off.text.contains("remote.origin.prune = true"),
+            off.text
+                .contains("Prune remote branches for origin set to on"),
             "{}",
             off.text
         );
-        assert!(off.text.contains(" does not apply"), "{}", off.text);
+        assert!(
+            off.text.contains("instead of your git configuration"),
+            "{}",
+            off.text
+        );
         assert!(!prune_note(&facts, true, false).expect("a note").warn);
 
         // Every remote sets its own, so fetch.prune decides nothing and is not named.
@@ -7555,21 +7268,29 @@ mod tests {
         facts.remotes.push(remote("mirror"));
         let on = prune_note(&facts, true, false).expect("a note");
         assert!(on.warn);
-        assert!(on.text.contains("fetch.prune = false"), "{}", on.text);
-        assert!(!on.text.contains("remote.origin.prune"), "{}", on.text);
+        assert!(
+            on.text.contains("Prune remote branches set to off"),
+            "{}",
+            on.text
+        );
+        assert!(!on.text.contains("for origin"), "{}", on.text);
         let off = prune_note(&facts, false, false).expect("a note");
         assert!(off.warn);
         assert!(
-            off.text.contains("remote.origin.prune = true") && !off.text.contains("fetch.prune"),
+            off.text
+                .contains("Prune remote branches for origin set to on")
+                && !off.text.contains("set to off"),
             "{}",
             off.text
         );
         facts.remote_prune.push(fact("remote.mirror.prune", "true"));
         let off = prune_note(&facts, false, false).expect("a note");
         assert!(
-            off.text.contains("remote.origin.prune = true (")
-                && off.text.contains(" and remote.mirror.prune = true (")
-                && off.text.contains(" do not apply"),
+            off.text
+                .contains("Prune remote branches for origin set to on in ")
+                && off
+                    .text
+                    .contains(" and Prune remote branches for mirror set to on in "),
             "{}",
             off.text
         );
@@ -7758,20 +7479,27 @@ mod tests {
             }),
             "the git command line"
         );
-        assert_eq!(label(&local_source()), "this repository: .git/config");
+        assert_eq!(label(&local_source()), "this repository (.git/config)");
         assert_eq!(
             label(&Source::Config {
                 scope: "global".into(),
                 origin: "file:/home/ada/.gitconfig".into(),
             }),
-            "global: ~/.gitconfig"
+            "your global git config (~/.gitconfig)"
         );
         assert_eq!(
             label(&Source::Config {
-                scope: "global".into(),
-                origin: "file:/etc/elsewhere/gitconfig".into(),
+                scope: "system".into(),
+                origin: "file:/etc/gitconfig".into(),
             }),
-            "global: /etc/elsewhere/gitconfig"
+            "the system git config (/etc/gitconfig)"
+        );
+        assert_eq!(
+            label(&Source::Config {
+                scope: String::new(),
+                origin: "file:/home/ada/.config/git/work".into(),
+            }),
+            "~/.config/git/work"
         );
         assert_eq!(label(&Source::Guessed), "guessed by Git from this computer");
         assert_eq!(source_label_in(None, home), "not set");
@@ -7803,18 +7531,6 @@ mod tests {
 
     #[test]
     fn an_unknown_home_directory_is_never_shown_as_a_tilde() {
-        let source = Source::Config {
-            scope: "global".into(),
-            origin: "file:/etc/gitconfig".into(),
-        };
-        assert_eq!(
-            source_label_in(Some(&source), Path::new("")),
-            "global: /etc/gitconfig"
-        );
-    }
-
-    #[test]
-    fn a_source_without_a_scope_name_is_just_its_file() {
         let source = Source::Config {
             scope: String::new(),
             origin: "file:/etc/gitconfig".into(),
@@ -7948,7 +7664,7 @@ mod tests {
             nodes
                 .iter()
                 .filter_map(|node| node.value.as_deref())
-                .any(|text| text.contains("global: /home/me/.gitconfig")),
+                .any(|text| text.contains("your global git config")),
             "the source is available: {nodes:?}"
         );
     }
@@ -7978,6 +7694,10 @@ mod tests {
     fn git_setting_help_does_not_type_the_recommendation() {
         for setting in Setting::ALL {
             assert!(
+                !git_setting_help(setting).is_empty(),
+                "{setting:?} has no help"
+            );
+            assert!(
                 !git_setting_help(setting).contains("Recommended"),
                 "{setting:?}: the list marks the recommended option"
             );
@@ -7991,12 +7711,9 @@ mod tests {
     fn the_pull_recommendation_is_one_choice_everywhere() {
         use canopy_core::PullStrategy;
         let git = Some((2, 55));
-        // The editor marks nothing on pull.rebase and fast-forward only on pull.ff.
-        assert_eq!(Setting::PullRebase.recommendation_for(git), None);
-        assert_eq!(
-            Setting::PullFastForward.recommendation_for(git),
-            Some("only")
-        );
+        // The editor marks Don't rebase on pull.rebase and fast-forward only on pull.ff.
+        assert_eq!(Setting::PullRebase.recommendation_for(git), "false");
+        assert_eq!(Setting::PullFastForward.recommendation_for(git), "only");
         assert_eq!(
             git_value_label(Setting::PullFastForward, "only"),
             DEFAULTS.pull_mode.label()
@@ -8016,7 +7733,13 @@ mod tests {
             let facts = GitFacts {
                 pull: Some(canopy_core::PullConfig {
                     strategy: Some(strategy),
-                    sources: Vec::new(),
+                    sources: vec![canopy_core::ConfigSource {
+                        key: "pull.rebase".into(),
+                        value: (strategy == PullStrategy::Rebase).to_string(),
+                        scope: canopy_core::ConfigScope::Global,
+                        origin: "file:/home/me/.gitconfig".into(),
+                        file: None,
+                    }],
                     invalid: Vec::new(),
                 }),
                 git,
@@ -8054,7 +7777,7 @@ mod tests {
             };
             let shown = format!("{:?}", drawn(&ctx, &mut screen));
             assert!(
-                shown.contains("Changes affect"),
+                shown.contains("Changes apply"),
                 "{scope:?}: captions without a search"
             );
             Filter::set(
@@ -8066,7 +7789,7 @@ mod tests {
                 },
             );
             let found = format!("{:?}", drawn(&ctx, &mut screen));
-            assert!(!found.contains("Changes affect"), "{scope:?}: {found}");
+            assert!(!found.contains("Changes apply"), "{scope:?}: {found}");
         }
     }
 
@@ -8081,11 +7804,53 @@ mod tests {
         facts.direct = vec![fact("fetch.prune", "maybe")];
         let nodes = git_page(facts, true);
         let row = format!("{nodes:?}");
-        assert!(
-            row.contains("fetch.prune = maybe") && row.contains("does not accept"),
-            "{row}"
-        );
+        assert!(row.contains("Git does not accept maybe in"), "{row}");
         assert!(!row.contains("fetch.prune is unset"), "{row}");
+    }
+
+    /// Rows name settings by their labels, never by git's keys.
+    #[test]
+    fn the_git_page_never_shows_a_configuration_key() {
+        let facts = GitFacts {
+            direct: vec![fact("pull.rebase", "true"), fact("fetch.prune", "false")],
+            fetch_prune: Some(fact("fetch.prune", "false")),
+            push_default: Some(fact("push.default", "matching")),
+            ..GitFacts::default()
+        };
+        let page = format!("{:?}", git_page(facts, true));
+        for setting in Setting::ALL {
+            assert!(!page.contains(setting.key()), "{} in {page}", setting.key());
+        }
+    }
+
+    /// A remark about a row's state is a mark beside its title with the remark as its
+    /// description, never another line under the help; a problem is a warning mark.
+    #[test]
+    fn a_rows_note_is_a_mark_beside_its_title() {
+        let facts = GitFacts {
+            values: vec![fact("fetch.prune", "false")],
+            invalid: vec![fact("push.followTags", "maybe")],
+            ..GitFacts::default()
+        };
+        let nodes = git_page(facts, true);
+        let note = crate::ui::kit::testkit::find(&nodes, "Note on Prune remote branches")
+            .expect("a note mark");
+        assert!(
+            note.description
+                .as_deref()
+                .is_some_and(|d| d.starts_with("Set in your global git config")),
+            "{note:?}"
+        );
+        assert!(
+            crate::ui::kit::testkit::find(&nodes, "Warning on Push annotated tags").is_some(),
+            "a value git refuses is a warning"
+        );
+        assert!(
+            !nodes
+                .iter()
+                .any(|n| n.value.as_deref().is_some_and(|v| v.starts_with("Set in"))),
+            "the note is not drawn as text"
+        );
     }
 
     /// Where a value is set reads as the signing row says it, never as git's raw `file:` origin.
@@ -8096,13 +7861,14 @@ mod tests {
             ..GitFacts::default()
         };
         let row = format!("{:?}", git_page(facts, true));
-        assert!(row.contains("global: /home/me/.gitconfig"), "{row}");
+        assert!(row.contains("your global git config"), "{row}");
         assert!(!row.contains("file:/home/me/.gitconfig"), "{row}");
     }
 
-    /// Unset removes the value of the file being edited: with nothing there, it has nothing to do.
+    /// A global value is changed, never cleared; a repository's own value can go back to the
+    /// global one, and only where the repository sets one.
     #[test]
-    fn unset_is_disabled_where_the_file_sets_nothing() {
+    fn only_a_repositorys_own_value_goes_back_to_the_global_one() {
         let facts = GitFacts {
             values: vec![
                 fact("fetch.prune", "false"),
@@ -8111,13 +7877,34 @@ mod tests {
             direct: vec![fact("push.followTags", "true")],
             ..GitFacts::default()
         };
-        let nodes = git_page(facts, true);
-        let unset: Vec<_> = nodes
-            .iter()
-            .filter(|n| n.label.as_deref().is_some_and(|l| l.starts_with("Unset")))
-            .collect();
-        assert_eq!(unset.len(), Setting::ALL.len(), "{unset:?}");
-        assert_eq!(unset.iter().filter(|n| !n.disabled).count(), 1, "{unset:?}");
+        let resets = |scope| {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            let mut screen = SettingsScreen::default();
+            crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    git_config_editor(
+                        ui,
+                        &mut screen,
+                        Some(Path::new("fixture")),
+                        scope,
+                        Some(&facts),
+                        &mut Vec::new(),
+                    );
+                });
+            })
+            .into_iter()
+            .filter(|n| {
+                n.label
+                    .as_deref()
+                    .is_some_and(|l| l.ends_with("to the global value"))
+            })
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(resets(Scope::Global).len(), 0);
+        let local = resets(Scope::Local);
+        assert_eq!(local.len(), 1, "{local:?}");
+        assert!(!local[0].disabled, "{local:?}");
     }
 
     /// The system's own program is the Default entry of a launcher's list, and only that.
@@ -8152,16 +7939,18 @@ mod tests {
         };
         let lines = against_recommendation(&facts, &Settings::default(), Path::new("fixture"));
         for key in [
-            "push.default",
-            "merge.conflictStyle",
-            "commit.cleanup",
-            "init.defaultBranch",
-            "submodule.recurse",
-        ] {
+            Setting::PushDefault,
+            Setting::ConflictStyle,
+            Setting::CommitCleanup,
+            Setting::InitialBranch,
+            Setting::SubmoduleRecurse,
+        ]
+        .map(Setting::label)
+        {
             assert!(
                 lines
                     .iter()
-                    .any(|line| line.contains(key) && line.contains("global: /home/me/.gitconfig")),
+                    .any(|line| line.contains(key) && line.contains("your global git config")),
                 "missing {key}: {lines:?}"
             );
         }
@@ -8208,7 +7997,8 @@ mod tests {
         let lines = against_recommendation(&facts, &follow, repo);
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(
-            lines[0].starts_with("Prune: fetch.prune = false") && lines[0].contains("Recommended"),
+            lines[0].starts_with("Prune remote branches set to off")
+                && lines[0].contains("Recommended"),
             "{lines:?}"
         );
         let ours = Settings {
@@ -8338,7 +8128,7 @@ mod tests {
         assert!(
             nodes
                 .iter()
-                .any(|n| n.label.as_deref() == Some("Midnight theme (default)")),
+                .any(|n| n.label.as_deref() == Some("Midnight theme (recommended)")),
             "Midnight is identified as the default even when Daylight is selected"
         );
         assert!(
@@ -8470,5 +8260,161 @@ mod tests {
             "{off}"
         );
         assert!(off.contains("Open Integrations"), "{off}");
+    }
+
+    /// Every row's help reads on one line at the usual window size: a subtitle that wraps is
+    /// too long for its row.
+    #[test]
+    fn help_fits_on_one_line() {
+        let mut wrapped = Vec::new();
+        // With a repository open, so This repository is drawn too.
+        let repo = Some(Path::new("/work/canopy"));
+        for section in Section::ALL.into_iter().chain([Section::Repository]) {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            ctx.enable_accesskit();
+            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+            let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 6000.0));
+            let mut settings = Settings::default();
+            let mut tokens = TokenStore::default();
+            let mut screen = SettingsScreen::at(section);
+            screen.facts.global.asked = true;
+            screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
+            // No git runs: the repository's configuration reads as empty, and stays read.
+            screen.facts.repo.asked = true;
+            screen.facts.repo.path = repo.map(Path::to_path_buf);
+            screen.facts.repo.facts = Some(Arc::new(GitFacts::default()));
+            screen.facts.repo.read_at = Some(Instant::now());
+            let mut last = None;
+            // Rows measure their controls on the first frames.
+            for time in 1..=4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(bounds),
+                        time: Some(f64::from(time)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(
+                            ui.ctx(),
+                            &mut screen,
+                            &mut settings,
+                            &mut tokens,
+                            &SettingsData {
+                                tabs: &[],
+                                update: &UpdateState::Idle,
+                                identity: IdentityView {
+                                    repo,
+                                    identity: None,
+                                    error: None,
+                                },
+                            },
+                            &mut Vec::new(),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                last = output.platform_output.accesskit_update;
+            }
+            // Two lines of help text; a one-line label in a row of controls is a little less.
+            let two_lines = f64::from(
+                1.9 * ctx
+                    .fonts_mut(|f| f.row_height(&FontId::proportional(theme::metrics().meta_size))),
+            );
+            for node in last.expect("accesskit").nodes.iter().map(|(_, n)| n) {
+                let (Some(text), Some(rect)) = (node.value(), node.bounds()) else {
+                    continue;
+                };
+                if node.role() == egui::accesskit::Role::Label && rect.y1 - rect.y0 > two_lines {
+                    wrapped.push(format!("{section:?}: {text}"));
+                }
+            }
+        }
+        assert!(wrapped.is_empty(), "{wrapped:#?}");
+    }
+
+    /// While this repository's git configuration decides its pulls or pruning, Canopy's own
+    /// choice is not offered beside the configuration's row, as on the Git page.
+    #[test]
+    fn a_repository_hides_canopys_choice_while_git_decides_it() {
+        use canopy_core::{ConfigScope, ConfigSource, PullConfig, PullStrategy};
+        let page = |facts: GitFacts| {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            ctx.enable_accesskit();
+            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+            let repo = Some(Path::new("/work/canopy"));
+            let mut settings = Settings::default();
+            let mut tokens = TokenStore::default();
+            let mut screen = SettingsScreen::at(Section::Repository);
+            screen.facts.global.asked = true;
+            screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
+            screen.facts.repo.asked = true;
+            screen.facts.repo.path = repo.map(Path::to_path_buf);
+            screen.facts.repo.facts = Some(Arc::new(facts));
+            screen.facts.repo.read_at = Some(Instant::now());
+            let mut last = None;
+            for time in 1..=3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(1440.0, 6000.0),
+                        )),
+                        time: Some(f64::from(time)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(
+                            ui.ctx(),
+                            &mut screen,
+                            &mut settings,
+                            &mut tokens,
+                            &SettingsData {
+                                tabs: &[],
+                                update: &UpdateState::Idle,
+                                identity: IdentityView {
+                                    repo,
+                                    identity: None,
+                                    error: None,
+                                },
+                            },
+                            &mut Vec::new(),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                last = output.platform_output.accesskit_update;
+            }
+            last.expect("accesskit")
+                .nodes
+                .iter()
+                .filter_map(|(_, n)| n.label().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        let own = page(GitFacts::default());
+        assert!(own.iter().any(|l| l == "Pull strategy"), "{own:?}");
+        assert!(own.iter().any(|l| l == "Prune on fetch"), "{own:?}");
+        let source = |key: &str, value: &str| ConfigSource {
+            key: key.into(),
+            value: value.into(),
+            scope: ConfigScope::Local,
+            origin: "file:/work/canopy/.git/config".into(),
+            file: None,
+        };
+        let decided = page(GitFacts {
+            pull: Some(PullConfig {
+                strategy: Some(PullStrategy::Rebase),
+                sources: vec![source("pull.rebase", "true")],
+                invalid: Vec::new(),
+            }),
+            fetch_prune: Some(fact("fetch.prune", "false")),
+            ..GitFacts::default()
+        });
+        assert!(!decided.iter().any(|l| l == "Pull strategy"), "{decided:?}");
+        assert!(
+            !decided.iter().any(|l| l == "Prune on fetch"),
+            "{decided:?}"
+        );
     }
 }

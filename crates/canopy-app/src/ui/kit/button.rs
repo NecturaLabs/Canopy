@@ -948,6 +948,83 @@ impl Widget for IconButton {
     }
 }
 
+// --------------------------------------------------------------------------------- HelpMark
+
+/// A "?" after a label that explains it at length: hovering or focusing it shows `text` as a
+/// tooltip at every Tooltips level, since that is all it does, and screen readers hear `text` as
+/// its description.
+#[derive(Debug)]
+#[must_use = "call .show(ui)"]
+pub struct HelpMark {
+    about: String,
+    text: String,
+    notice: Option<bool>,
+}
+
+impl HelpMark {
+    /// `about` names what it explains: the mark is announced as "About {about}".
+    pub fn new(about: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            about: about.into(),
+            text: text.into(),
+            notice: None,
+        }
+    }
+
+    /// A remark about the current state instead of an explanation: an info mark, or a warning
+    /// mark in the warning colour, announced as "Note on {about}" or "Warning on {about}".
+    pub fn notice(mut self, warn: bool) -> Self {
+        self.notice = Some(warn);
+        self
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let side = theme::metrics().icon_md;
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(side), Sense::FOCUSABLE);
+        let st = Interact::of(&ctx, &response, true, None);
+        if ui.is_rect_visible(rect) {
+            let painter = super::content_painter(ui);
+            if st.focus > 0.0 {
+                paint::focus_ring(
+                    &painter,
+                    rect,
+                    CornerRadius::from(side / 2.0),
+                    p.focus.gamma_multiply(st.focus),
+                    Color32::TRANSPARENT,
+                );
+            }
+            let (glyph, color) = match self.notice {
+                None => (icon::QUESTION, p.text_faint),
+                Some(false) => (icon::INFO, p.text_faint),
+                Some(true) => (icon::WARNING, p.warning),
+            };
+            let hover = if self.notice == Some(true) {
+                color
+            } else {
+                p.text
+            };
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                glyph,
+                theme::icon_font(side, false),
+                color.lerp_to_gamma(hover, st.hover.max(st.focus)),
+            );
+        }
+        let name = match self.notice {
+            None => format!("About {}", self.about),
+            Some(false) => format!("Note on {}", self.about),
+            Some(true) => format!("Warning on {}", self.about),
+        };
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, &name));
+        let description = self.text.clone();
+        ctx.accesskit_node_builder(response.id, |n| n.set_description(description));
+        response.kit_tooltip(self.text).always().show()
+    }
+}
+
 // --------------------------------------------------------------------------------- ToolButton
 
 /// An action-bar tool: icon over caption (Comfortable) or beside its label (Dense).
@@ -2398,6 +2475,46 @@ mod tests {
     /// F1: at the default Helpful level a toolbar tool with a shortcut shows its tooltip (a
     /// shortcut is what the screen does not show); one without says only what its label does,
     /// so it waits for All.
+    /// A help mark only explains, so its text shows whatever the Tooltips level, on hover and on
+    /// keyboard focus, and a screen reader hears it as the mark's description.
+    #[test]
+    fn a_help_mark_explains_on_hover_and_focus_at_every_level() {
+        use crate::ui::kit::overlay::{TooltipLevel, set_tooltip_level};
+        use crate::ui::kit::testkit;
+        let text = "Older commits use it too.";
+        set_tooltip_level(TooltipLevel::Off);
+        assert_eq!(
+            testkit::painted_after_hover(pos2(8.0, 8.0), text, |ui| {
+                let _ = HelpMark::new("Dates", text).show(ui);
+            }),
+            1,
+            "hovering shows the explanation even with tooltips off"
+        );
+        let ctx = testkit::ctx();
+        let mut painted = 0;
+        for i in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let r = HelpMark::new("Dates", text).show(ui);
+                if i == 0 {
+                    r.request_focus();
+                }
+            });
+            out.textures_delta.clear();
+            painted = out
+                .shapes
+                .iter()
+                .filter(|c| matches!(&c.shape, Shape::Text(t) if t.galley.text() == text))
+                .count();
+        }
+        set_tooltip_level(TooltipLevel::Helpful);
+        assert_eq!(painted, 1, "keyboard focus shows the explanation");
+        let nodes = testkit::spoken(&testkit::ctx(), |ui| {
+            let _ = HelpMark::new("Dates", text).show(ui);
+        });
+        let mark = testkit::find(&nodes, "About Dates").expect("the mark is named");
+        assert_eq!(mark.description.as_deref(), Some(text));
+    }
+
     #[test]
     fn a_tool_with_a_shortcut_shows_its_tooltip_at_the_default_level() {
         use crate::ui::kit::overlay::{TooltipLevel, set_tooltip_level};

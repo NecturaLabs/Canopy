@@ -281,7 +281,7 @@ impl CloneProtocol {
 pub const MAX_TAB_NAME: usize = 60;
 
 /// One repository's own choices. Each is `None` while the repository follows the default in
-/// [`Settings`] (its "Default for repositories" value).
+/// [`Settings`] (the value every repository follows unless it overrides it).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RepoSettings {

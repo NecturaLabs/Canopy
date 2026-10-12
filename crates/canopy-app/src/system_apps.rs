@@ -716,7 +716,7 @@ mod linux {
         if entry.terminal {
             launcher.then(|| {
                 (
-                    format!("{} (in terminal)", entry.name),
+                    format!("{} in terminal", entry.name),
                     format!("xdg-terminal-exec {command}"),
                 )
             })
@@ -1175,7 +1175,7 @@ mod tests {
         assert_eq!(
             found.editor,
             Some(SystemChoice {
-                name: "Neovim (in terminal)".to_owned(),
+                name: "Neovim in terminal".to_owned(),
                 command: Some("xdg-terminal-exec nvim %f".to_owned()),
                 origin: Origin::Desktop,
             })
@@ -1293,7 +1293,7 @@ mod tests {
             names(&found, Kind::Editor),
             [
                 (
-                    "Neovim (in terminal)".to_owned(),
+                    "Neovim in terminal".to_owned(),
                     "xdg-terminal-exec nvim %f".to_owned()
                 ),
                 (

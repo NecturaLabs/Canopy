@@ -285,7 +285,7 @@ unavailable, cut-off text, shortcuts, and details such as full dates, addresses 
 tooltip that only describes a labelled control (a kit button, toggle, field or chip with its name
 on screen and no shortcut) or says how to use something is `Tooltip::extra` and shows only at
 All. Every level, Off included, shows why a control is unavailable, also for kit buttons that
-draw themselves disabled. A truncated label's tooltip shows only when
+draw themselves disabled, and a help mark's explanation (`Tooltip::always`). A truncated label's tooltip shows only when
 the label is actually cut.
 
 A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
@@ -535,9 +535,13 @@ opening with the mouse as well as from the keyboard, and the highlighted option 
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
 
-A select can mark one option with the kit's Recommended badge; its accessible description
-announces the recommendation without repeating the option name. The list reserves room for the
+A select can mark one option with the kit's Recommended badge, and then lists it first; its
+accessible description announces the recommendation without repeating the option name. The list reserves room for the
 badge and check, truncating only the painted label while keeping its full accessible name.
+
+Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
+open and closed; app-launcher selects stop at the 280-pixel text-field width. Number fields are
+120 pixels and the first-branch field 160, so a control is never much wider than what it holds.
 Repository selects show the effective value once. Explicit selection pins even the current value;
 only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
 controls name their setting. Context lines and whitespace are one saved diff preset, with one
@@ -849,8 +853,8 @@ content changes, using the theme's metadata size and subdued text colour.
 ### Git identity
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings
-rows: Name and Email, each with a text field and, as its help text, what Git uses now and where it
-comes from ("In use now: Ada (global: ~/.gitconfig)"); a Committer row only when the committer
+rows: Name and Email, each with a text field and a note mark saying where Git takes the value from
+("From your global git config (~/.gitconfig)."); a Committer row only when the committer
 differs; a "Save to" choice between this repository and all repositories (only with a repository
 open); Save identity, which stays disabled until both fields have text; and Clear…, which asks first
 in a `danger` confirmation. A `warning` line with the warning icon sits above the rows when Git
@@ -878,10 +882,13 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
 ### Git configuration editing
 
 The Git page edits the main global Git file; This repository edits its common local Git file.
-Rows use the existing Select/TextField and row layout, with the configured value, scope and
-source below the help. Enumerated values have one option each; unsupported configured values
-remain visible as text. Recommendations are badges, never a reason to lock a control. Unset and
-Inherit remove the direct override, leaving includes and higher-priority scopes intact. The
+Rows use the existing Select/TextField and row layout, with where a value is set in a note mark,
+named by scope and path ("your global git config (~/.gitconfig)"), or by path alone for an
+included file. An unset row's select reads "Value (Recommended)", or just the value Git uses where Canopy
+leaves the choice to Git. Enumerated values have one option each; unsupported configured values
+remain visible as text. Recommendations are badges, never a reason to lock a control. A global
+value is changed, never cleared; a repository's own value has the reset button, which removes the
+override and leaves includes and higher-priority scopes intact. The
 first-branch field requires Save and validates before writing. Writes temporarily disable the
 editor, then reread facts and show success or Git's error. Use recommended confirms its global
 scope and preserves signing, hooks, identity and line endings.
@@ -893,14 +900,21 @@ replaces the left navigation below 720 points. Below 620 points of content width
 label and help sit above its controls. Shortcut descriptions and keycaps stack when they cannot
 fit together. Zoom shows a percentage preview while dragging and applies
 on release, so the control stays under the pointer; typing a percentage applies on Enter or
-when the field loses focus. A row's label column is always half the width, so controls of different
-rows line up on the right however short their help text is.
+when the field loses focus. A row's label column takes the room its control and reset button leave,
+at least half the row and at most 640 points; controls of every row line up on the right.
 
-A row's help is one sentence; longer explanation sits behind a "More" link and opens beneath the
-row at reading width (560 points). Settings → Keyboard shows one key column of the cheatsheet's
+Every row has help of one plain sentence that fits on one line at the usual window size (a test
+renders every page and fails on a wrapped one), and names settings by their labels, never by git
+keys or flags. A longer explanation sits in a help mark (`HelpMark`, a faint "?" at `icon_md`
+right after the title, `XS` apart) whose tooltip shows on hover and on keyboard focus at every
+Tooltips level; screen readers hear it as the mark's description. A remark about the row's current
+state (where git sets the value, why profile pictures are missing, a signing problem) is a second
+mark beside it, `HelpMark::notice`: an info glyph in `text_faint`, or a warning glyph in `warning`
+for a problem, announced as "Note on …" or "Warning on …"; it never adds a line under the help, and
+an action it suggests is a ghost button among the row's controls. Settings → Keyboard shows one key column of the cheatsheet's
 keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo
 and a tick; hover is a neutral hairline. Cards fill the row in whole columns and reflow with the
-width, using a 180-point minimum so the theme name and default/dark/light caption stay apart. Text-field placeholders are italic and faint, and fields in a section share one width.
+width, using a 180-point minimum so the theme name and Recommended/Dark/Light caption stay apart. Text-field placeholders are italic and faint, and fields in a section share one width.
 Long paths in settings are cut in the middle with the whole path in a tooltip.
 
 Browse opens the native folder chooser on a background thread. The requesting button displays
