@@ -373,6 +373,10 @@ fn paragraph(
                 r.on_hover_cursor(egui::CursorIcon::PointingHand)
             })
             .collect();
+        // A link Tab reaches below the fold is brought into view with its focus ring.
+        if let Some(first) = responses.first().filter(|r| r.gained_focus()) {
+            first.scroll_to_me(None);
+        }
         let lit = responses.iter().any(|r| r.hovered() || r.has_focus());
         let focused = responses.iter().any(Response::has_focus);
         for area in &areas {
@@ -722,6 +726,56 @@ mod tests {
             "{labels:?}"
         );
     }
+
+    /// #21: Tab to a link below the fold scrolls the reader to it, so the focus ring is seen.
+    #[test]
+    fn a_link_focused_below_the_fold_is_scrolled_into_view() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>| {
+            time += 0.1;
+            let mut viewport = Rect::NOTHING;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 300.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let shown = egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            ui.set_width(600.0);
+                            show(ui, Document::Privacy);
+                        });
+                    viewport = shown.inner_rect;
+                },
+            );
+            out.textures_delta.clear();
+            viewport
+        };
+        frame(Vec::new());
+        frame(Vec::new());
+        let mut viewport = Rect::NOTHING;
+        for _ in 0..privacy_links() {
+            frame(testkit::key(egui::Key::Tab));
+            for _ in 0..5 {
+                viewport = frame(Vec::new());
+            }
+        }
+        let focused = ctx
+            .memory(egui::Memory::focused)
+            .and_then(|id| ctx.read_response(id))
+            .expect("the last link has focus");
+        assert!(
+            viewport.contains_rect(focused.rect),
+            "{:?} is outside the visible {viewport:?}",
+            focused.rect
+        );
+    }
+
     /// A link spanning wrapped rows exposes a hit area for every row, not a single
     /// rectangle covering the intervening whitespace or a misplaced preceding row.
     #[test]
