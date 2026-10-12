@@ -18,7 +18,7 @@ use crate::ui::theme::{self, palette};
 /// Column widths: the commit id, the author, the date and the line number.
 const ID_W: f32 = 76.0;
 const AUTHOR_W: f32 = 128.0;
-const DATE_W: f32 = 84.0;
+const DATE_W: f32 = 92.0;
 const NUMBER_W: f32 = 52.0;
 /// Room before the code, after the line number.
 const CODE_GAP: f32 = 12.0;
@@ -62,7 +62,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, sel: &FileSelection, actions: &mut V
                 .compact(true)
                 .show(ui);
         }
-        Some(Ok(blame)) => lines(ui, &read.path, blame, read.longest, actions),
+        Some(Ok(blame)) => lines(ui, &read.path, blame, read.longest, tab.iso_dates, actions),
     }
 }
 
@@ -123,16 +123,15 @@ fn header(ui: &mut Ui, sel: &FileSelection, rev: Option<canopy_core::Oid>) -> bo
     back
 }
 
-/// The date of a commit, as the History table writes it.
-fn date(commit: &BlameCommit) -> String {
-    chrono::DateTime::from_timestamp(commit.time, 0).map_or_else(
-        || "unknown date".into(),
-        |date| date.format("%Y-%m-%d").to_string(),
-    )
+/// The date of a commit in Settings' calendar format (`iso`), as the History table writes it.
+fn date(commit: &BlameCommit, iso: bool) -> String {
+    Some(crate::ui::widgets::absolute_date_format(commit.time, iso))
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| "unknown date".into())
 }
 
 /// What a screen reader says for a line.
-fn spoken(number: usize, commit: &BlameCommit, text: &str) -> String {
+fn spoken(number: usize, commit: &BlameCommit, text: &str, iso: bool) -> String {
     let who = if commit.is_uncommitted() {
         UNCOMMITTED.to_owned()
     } else {
@@ -140,7 +139,7 @@ fn spoken(number: usize, commit: &BlameCommit, text: &str) -> String {
             "{} by {} on {}",
             short_id(commit.oid),
             commit.author,
-            date(commit)
+            date(commit, iso)
         )
     };
     let text = if text.trim().is_empty() {
@@ -151,7 +150,7 @@ fn spoken(number: usize, commit: &BlameCommit, text: &str) -> String {
     format!("Line {number}, {who}: {text}")
 }
 
-fn tooltip(commit: &BlameCommit) -> String {
+fn tooltip(commit: &BlameCommit, iso: bool) -> String {
     if commit.is_uncommitted() {
         return "This line is changed in the working tree and not committed yet.".into();
     }
@@ -160,11 +159,18 @@ fn tooltip(commit: &BlameCommit) -> String {
         commit.summary,
         commit.author,
         commit.email,
-        date(commit)
+        date(commit, iso)
     )
 }
 
-fn lines(ui: &mut Ui, path: &str, blame: &Blame, longest: usize, actions: &mut Vec<Action>) {
+fn lines(
+    ui: &mut Ui,
+    path: &str,
+    blame: &Blame,
+    longest: usize,
+    iso: bool,
+    actions: &mut Vec<Action>,
+) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let row_h = m.diff_line_height;
@@ -207,7 +213,7 @@ fn lines(ui: &mut Ui, path: &str, blame: &Blame, longest: usize, actions: &mut V
                     egui::WidgetInfo::labeled(
                         egui::WidgetType::Button,
                         true,
-                        spoken(i + 1, commit, &line.text),
+                        spoken(i + 1, commit, &line.text, iso),
                     )
                 });
                 if !commit.is_uncommitted() {
@@ -225,7 +231,7 @@ fn lines(ui: &mut Ui, path: &str, blame: &Blame, longest: usize, actions: &mut V
                     egui::CursorIcon::PointingHand
                 });
                 if response.hovered() {
-                    response.kit_tooltip(tooltip(commit)).show();
+                    response.kit_tooltip(tooltip(commit, iso)).show();
                 }
 
                 let painter = ui.painter();
@@ -271,7 +277,7 @@ fn lines(ui: &mut Ui, path: &str, blame: &Blame, longest: usize, actions: &mut V
                         painter.text(
                             pos2(rect.min.x + ID_W + AUTHOR_W, cy),
                             Align2::LEFT_CENTER,
-                            date(commit),
+                            date(commit, iso),
                             small.clone(),
                             p.text_dim,
                         );
@@ -294,4 +300,35 @@ fn lines(ui: &mut Ui, path: &str, blame: &Blame, longest: usize, actions: &mut V
                 );
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #194: blame writes dates in Settings' calendar format, in the column, the hover and what
+    /// a screen reader hears.
+    #[test]
+    fn blame_dates_follow_the_calendar_setting() {
+        let commit = BlameCommit {
+            oid: git2::Oid::from_bytes(&[1; 20]).expect("an id"),
+            author: "Ada".into(),
+            email: "ada@example.com".into(),
+            // 14 August 2026, 12:00 UTC: the 14th or 15th in every time zone.
+            time: 1_786_708_800,
+            summary: "Add metrics".into(),
+        };
+        let iso = date(&commit, true);
+        assert!(
+            iso.len() == 10 && iso.starts_with("2026-08-1") && iso.as_bytes()[4] == b'-',
+            "{iso}"
+        );
+        let written = date(&commit, false);
+        assert!(
+            written.starts_with("Aug 1") && written.ends_with(", 2026"),
+            "{written}"
+        );
+        assert!(tooltip(&commit, false).contains(&written));
+        assert!(spoken(1, &commit, "x", true).contains(&iso));
+    }
 }
