@@ -426,9 +426,10 @@ in the density's metrics:
   one column without the empty line-number column (the layout switch shows disabled on Unified,
   its tooltip saying why), and
   its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
-  A line wider than the pane fades out at the edge. The hint "Click lines to pick part of a hunk"
-  shows on a hunk header only when it fits beside the whole hunk title; otherwise the title shows
-  alone, so the two never overlap.
+  A line wider than the pane fades out at the edge. A hunk header shows its title and actions
+  only; how to pick lines is in the Stage hunk and Unstage hunk tooltips.
+- The diff header names the file with its folder and its +/− count on the left; the diff
+  options, layout switch, Blame and the file's action keep to the right edge.
 - Conflict side previews (no line numbers) drop the indentation their lines share, and a line
   too long for the card is cut back to a word or number boundary before its ellipsis, so a number
   is never cut in two, unless that would lose more than a quarter of what fits. A file both sides
@@ -439,25 +440,27 @@ in the density's metrics:
   State and conflict count precede Continue; unresolved conflicts or active work disable it.
   Abort is separated and confirmed. The merge composer says Conclude merge and starts with
   Git's pending message when no draft exists.
-- Changes list headers: "Stage all" and "Unstage all" are small kit buttons (`Size::Sm`); the
-  Unstaged header adds "Stage selected" immediately to the right of "Stage all" (disabled unless an
-  unstaged file is selected). Ctrl-click toggles and Shift-click extends a selection of several
-  unstaged files from the open one (`RepoTab::marked`, the kit's `Selection` rules); Stage
-  selected, Space and the row menu stage all of them, and any plain selection drops the rest. Narrow columns drop Stage selected's label first, then Stage all's.
-  The diff header has no Stage file button: staging a file is that button, the row's action and
-  Space. Discard
+- Changes list headers: "Stage all" and "Unstage all" are small ghost buttons (`Size::Sm`).
+  Ctrl-click toggles and Shift-click extends a selection of several unstaged files from the open
+  one (`RepoTab::marked`, the kit's `Selection` rules); the Unstaged header then adds "Stage N
+  files" to the right of Stage all (which becomes its icon), and that button, a picked row's
+  Stage button, Space and the row menu stage all of them. Any plain selection drops the rest.
+  Narrow columns show both as icons. The diff header has no Stage file button: one file is
+  staged from its row, its menu or Space. Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
 - The disabled primary button is flat with a hairline outline and faint text in every theme, never
-  the primary fill. When the commit button is disabled for a reason its label does not give, a line
-  above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
-- The commit button never cuts its label in a narrow column (a small window at a large zoom): it
-  drops its keys first (they stay in its tooltip), then the branch, then the file count ("Commit
-  2 files to main", "Commit 2 files", "Commit"); screen readers still hear the whole label.
-- The commit composer follows the file lists while both fit the column, under a hairline, and
-  pins to the bottom with the lists scrolling above it only when they would crowd it (about
-  260 points of composer). Row actions (stage, unstage, mark resolved) show on the selected row
+  the primary fill. When the commit button is disabled for a reason its label does not give, its
+  tooltip and accessible description say so ("Write a subject to commit", "Resolve the conflicts
+  to commit").
+- The commit button shows no keys (Ctrl+Enter is in its tooltip) and never cuts its label in a
+  narrow column (a small window at a large zoom): it drops the branch, then the file count
+  ("Commit 2 files to main", "Commit 2 files", "Commit"); screen readers still hear the whole
+  label.
+- The commit composer has no heading: it is pinned to the bottom of the column under a hairline,
+  as tall as its fields, Amend last commit and the button need, and the lists scroll above it
+  (they keep up to 60% of the column, so the composer's fields scroll in a short one). Row actions (stage, unstage, mark resolved) show on the selected row
   and under the pointer on any row. Changes and commit details draw file rows the same way
   (`commit_detail::file_list_row_with`); a conflicted file's action is a labelled ghost
   "Resolve conflicts…".
