@@ -70,7 +70,11 @@ pub fn shutdown() {
 }
 
 fn init() -> sentry::ClientInitGuard {
-    let home = crate::settings::home_dir().display().to_string();
+    sentry::init(options(crate::settings::home_dir().display().to_string()))
+}
+
+/// What the Sentry client is set up with; `home` is the folder [`prepare_report`] hides.
+fn options(home: String) -> sentry::ClientOptions {
     let mut o = sentry::ClientOptions::default();
     o.dsn = DSN.parse().ok();
     o.release = Some(Cow::Owned(format!("canopy@{}", crate::build_info::NUMBER)));
@@ -96,7 +100,25 @@ fn init() -> sentry::ClientInitGuard {
         Arc::new(integrations::panic::PanicIntegration::new().add_extractor(panic_event)),
         Arc::new(integrations::backtrace::ProcessStacktraceIntegration),
     ];
-    sentry::init(o)
+    o.transport = Some(Arc::new(ReadsAgain));
+    o
+}
+
+/// Sentry's `ureq` transport on Canopy's agent, whose reads survive an interrupted system call;
+/// Sentry's own agent gives up on one, losing the report (#188).
+struct ReadsAgain;
+
+impl sentry::TransportFactory for ReadsAgain {
+    fn create_transport_with_options(
+        &self,
+        options: sentry::TransportOptions,
+    ) -> Arc<dyn sentry::Transport> {
+        Arc::new(
+            sentry::transports::UreqHttpTransportOptions::from(options)
+                .with_agent(canopy_hosting::default_agent())
+                .build(),
+        )
+    }
 }
 
 /// A panic in the AT-SPI thread of `accesskit_unix`: with no accessibility bus on the session
@@ -396,6 +418,17 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
 mod tests {
     use super::*;
     use sentry::protocol::{DeviceContext, User};
+
+    /// #188: reports go through Canopy's own transport, whose reads survive an interrupted
+    /// system call (`canopy_hosting::transport`), not Sentry's default agent.
+    #[test]
+    fn reports_use_the_transport_that_reads_again_after_an_interruption() {
+        let options = options(String::new());
+        assert!(
+            options.transport.is_some(),
+            "Sentry's own agent would be used"
+        );
+    }
 
     #[test]
     fn hides_user_folders() {
