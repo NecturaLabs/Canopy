@@ -409,6 +409,23 @@ impl CanopyApp {
             if let Some(target) = tab.force_push_offer.take() {
                 self.dialogs.open(force_push_dialog(&tab.path, target));
             }
+            if let Some(result) = tab.worktree_result.take() {
+                let shown = self
+                    .dialogs
+                    .finish_worktree(result.as_ref().map_err(String::as_str).copied());
+                if let Err(e) = result
+                    && !shown
+                {
+                    self.toasts.push_for(
+                        ctx,
+                        ToastKind::Error,
+                        Topic::Error,
+                        "Could not add the worktree".to_owned(),
+                        e,
+                        Some(&tab.path),
+                    );
+                }
+            }
             if let Some(name) = tab.force_delete_offer.take() {
                 self.dialogs.open(Dialog::Confirm {
                     title: format!("Force delete branch {name}?"),

@@ -188,6 +188,10 @@ pub enum Dialog {
         existing: String,
         /// The folder; empty means the one beside the repository, named for the branch.
         folder: String,
+        /// `git worktree add` is running for this form.
+        pending: bool,
+        /// Why the last try failed, in git's words.
+        error: Option<String>,
     },
     Rename {
         old: String,
@@ -476,6 +480,8 @@ impl Dialog {
             name: String::new(),
             existing: String::new(),
             folder: String::new(),
+            pending: false,
+            error: None,
         }
     }
 
@@ -828,9 +834,22 @@ pub fn show(
             name,
             existing,
             folder,
+            pending,
+            error,
         } => {
+            let busy = *pending;
             let repo = tab.map(|t| t.path.as_path());
             let op = repo.and_then(|r| worktree_op(r, *create, name, existing, folder));
+            let entered = (*create, name.clone(), existing.clone(), folder.clone());
+            let missing = if *create && name.trim().is_empty() {
+                "Enter a branch name"
+            } else if *create && !valid_ref_name(name.trim()) {
+                "Enter a valid branch name"
+            } else if !*create && existing.is_empty() {
+                "Choose a branch"
+            } else {
+                "Enter a full path for the folder"
+            };
             let from = tab
                 .and_then(|t| t.snap.as_ref())
                 .map_or_else(|| "HEAD".into(), |s| s.head.label());
@@ -843,89 +862,105 @@ pub fn show(
                     "Checks a branch out in a second folder, so two branches can be open at once.",
                 )
                 .body(|ui| {
-                    let kinds = [(true, "New branch"), (false, "Existing branch")];
-                    Segmented::new(create, &kinds)
-                        .label("Branch")
-                        .id_salt("worktree-kind")
-                        .show(ui);
-                    if *create {
-                        let error = (!name.is_empty() && !valid_ref_name(name.trim()))
-                            .then_some("Not a valid branch name");
-                        field_with_error(ui, "Name", name, "feature/something", true, error);
-                        note(
-                            ui,
-                            format!("{}  Starts at {from}", icon::GIT_COMMIT),
-                            p.text_faint,
-                        );
-                    } else {
-                        // A branch another folder has checked out is not offered: git refuses it.
-                        let free: Vec<&str> = tab
-                            .and_then(|t| t.snap.as_ref())
-                            .map(|s| {
-                                s.branches
-                                    .iter()
-                                    .filter(|b| !b.is_head && b.worktree.is_none())
-                                    .map(|b| b.name.as_str())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let options: Vec<(&str, &str)> = free.iter().map(|n| (*n, *n)).collect();
-                        let mut pick = free.iter().copied().find(|n| *n == existing).unwrap_or("");
-                        let mut branch = Select::new(&mut pick, &options)
+                    ui.add_enabled_ui(!busy, |ui| {
+                        let kinds = [(true, "New branch"), (false, "Existing branch")];
+                        Segmented::new(create, &kinds)
                             .label("Branch")
-                            .placeholder("Choose a branch…")
-                            .enabled(!options.is_empty())
-                            .id_salt("worktree-branch");
-                        if options.is_empty() {
-                            branch = branch.helper("Every other branch is checked out already.");
-                        }
-                        branch.show(ui);
-                        if pick != existing.as_str() {
-                            pick.clone_into(existing);
-                        }
-                    }
-                    let suggestion = repo.map(|r| {
-                        let branch = if *create {
-                            name.trim()
+                            .id_salt("worktree-kind")
+                            .show(ui);
+                        if *create {
+                            let error = (!name.is_empty() && !valid_ref_name(name.trim()))
+                                .then_some("Not a valid branch name");
+                            field_with_error(ui, "Name", name, "feature/something", true, error);
+                            note(
+                                ui,
+                                format!("{}  Starts at {from}", icon::GIT_COMMIT),
+                                p.text_faint,
+                            );
                         } else {
-                            existing.as_str()
-                        };
-                        tilde(&worktree_folder(r, branch))
+                            // A branch another folder has checked out is not offered: git refuses it.
+                            let free: Vec<&str> = tab
+                                .and_then(|t| t.snap.as_ref())
+                                .map(|s| {
+                                    s.branches
+                                        .iter()
+                                        .filter(|b| !b.is_head && b.worktree.is_none())
+                                        .map(|b| b.name.as_str())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let options: Vec<(&str, &str)> =
+                                free.iter().map(|n| (*n, *n)).collect();
+                            let mut pick =
+                                free.iter().copied().find(|n| *n == existing).unwrap_or("");
+                            let mut branch = Select::new(&mut pick, &options)
+                                .label("Branch")
+                                .placeholder("Choose a branch…")
+                                .enabled(!options.is_empty())
+                                .id_salt("worktree-branch");
+                            if options.is_empty() {
+                                branch =
+                                    branch.helper("Every other branch is checked out already.");
+                            }
+                            // Only a choice made here changes the branch: one the list does
+                            // not offer yet (the repository is still loading) stays.
+                            if branch.show(ui).changed() {
+                                pick.clone_into(existing);
+                            }
+                        }
+                        let suggestion = repo.map(|r| {
+                            let branch = if *create {
+                                name.trim()
+                            } else {
+                                existing.as_str()
+                            };
+                            tilde(&worktree_folder(r, branch))
+                        });
+                        let typed = folder.trim();
+                        let problem = (!typed.is_empty()
+                            && !crate::settings::expand_home(typed).is_absolute())
+                        .then_some("Enter a full path, such as ~/src/my-project-topic");
+                        let start = repo.and_then(std::path::Path::parent).map_or_else(
+                            || crate::settings::expand_home(&home()),
+                            std::path::Path::to_path_buf,
+                        );
+                        folder_row(
+                            ui,
+                            picker,
+                            "worktree",
+                            folder,
+                            &start,
+                            FolderField {
+                                label: "Folder",
+                                hint: suggestion.as_deref().unwrap_or("~/src/my-project-topic"),
+                                helper: Some("A new or empty folder. Empty uses the one shown."),
+                                error: problem,
+                                focus: false,
+                            },
+                        );
                     });
-                    let typed = folder.trim();
-                    let problem = (!typed.is_empty()
-                        && !crate::settings::expand_home(typed).is_absolute())
-                    .then_some("Enter a full path, such as ~/src/my-project-topic");
-                    let start = repo.and_then(std::path::Path::parent).map_or_else(
-                        || crate::settings::expand_home(&home()),
-                        std::path::Path::to_path_buf,
-                    );
-                    folder_row(
-                        ui,
-                        picker,
-                        "worktree",
-                        folder,
-                        &start,
-                        FolderField {
-                            label: "Folder",
-                            hint: suggestion.as_deref().unwrap_or("~/src/my-project-topic"),
-                            helper: Some("A new or empty folder. Empty uses the one shown."),
-                            error: problem,
-                            focus: false,
-                        },
-                    );
+                    // A changed branch or folder clears what was said about the last try.
+                    if (*create, name.clone(), existing.clone(), folder.clone()) != entered {
+                        *error = None;
+                    }
+                    if let Some(message) = error.as_deref() {
+                        Callout::new(Tone::Danger, message)
+                            .title("Git did not create the worktree")
+                            .show(ui);
+                    }
                 })
                 .footer(|f| {
-                    confirm(
-                        f,
-                        "Create worktree",
-                        op.is_some(),
-                        "Choose a branch and a folder",
-                    );
+                    confirm(f, "Create worktree", op.is_some() && !busy, missing);
+                    f.confirm_loading(busy);
                 })
                 .show(ctx);
-            answer(result, || {
-                op.map_or(Outcome::Keep, |op| Outcome::Run(vec![Action::Op(op)]))
+            answer(result, || match op {
+                Some(op) if !*pending => {
+                    *pending = true;
+                    *error = None;
+                    Outcome::RunKeep(vec![Action::Op(op)])
+                }
+                _ => Outcome::Keep,
             })
         }
         Dialog::Rename { old, new } => {
@@ -2853,6 +2888,40 @@ mod tests {
             ),
             "{old:?}"
         );
+    }
+
+    /// #193: git's refusal keeps the New worktree dialog and what was entered, showing git's
+    /// message; success closes it; with no dialog waiting the caller reports it.
+    #[test]
+    fn a_refused_worktree_keeps_its_dialog_and_says_why() {
+        use super::{Dialog, DialogStack};
+        let waiting = || Dialog::NewWorktree {
+            create: false,
+            name: String::new(),
+            existing: "topic".into(),
+            folder: "/work/busy".into(),
+            pending: true,
+            error: None,
+        };
+        let refusal = "fatal: '/work/busy' already exists";
+        let mut stack = DialogStack::default();
+        stack.open(waiting());
+        assert!(stack.finish_worktree(Err(refusal)));
+        assert!(
+            matches!(
+                stack.current(),
+                Some(Dialog::NewWorktree { existing, folder, pending: false, error: Some(e), .. })
+                    if existing == "topic" && folder == "/work/busy" && e == refusal
+            ),
+            "{:?}",
+            stack.current()
+        );
+        assert!(!stack.finish_worktree(Err(refusal)), "no longer waiting");
+
+        let mut stack = DialogStack::default();
+        stack.open(waiting());
+        assert!(stack.finish_worktree(Ok(())));
+        assert!(stack.current().is_none(), "success closes it");
     }
 
     #[test]

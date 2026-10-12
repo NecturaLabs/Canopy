@@ -528,6 +528,7 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
         }
         OpKind::Push
         | OpKind::Other
+        | OpKind::Worktree
         | OpKind::Squash(_)
         | OpKind::SafeDelete(_)
         | OpKind::Merge
@@ -1053,6 +1054,9 @@ pub struct RepoTab {
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
+    /// How the last `git worktree add` went, for the New worktree dialog (git's words when it
+    /// refused); the app shows a refusal there, or in a toast once the dialog is gone.
+    pub worktree_result: Option<Result<(), String>>,
     /// Where a force push would go, once the repository thread has worked it out: the app asks
     /// before pushing.
     pub force_push_offer: Option<canopy_core::PushTarget>,
@@ -1192,6 +1196,7 @@ impl RepoTab {
             template_loaded: false,
             pull_config_branch: None,
             force_delete_offer: None,
+            worktree_result: None,
             force_push_offer: None,
             pull_decision: None,
             progress: None,
@@ -2555,6 +2560,9 @@ impl RepoTab {
                                 self.worker.send(Job::SquashMessage(target.clone()));
                                 self.view = View::Changes;
                             }
+                            if kind == OpKind::Worktree {
+                                self.worktree_result = Some(Ok(()));
+                            }
                             if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
                                 self.auto_fetch_failure = None;
@@ -2593,6 +2601,7 @@ impl RepoTab {
                             OpKind::SafeDelete(name) if e.contains("not fully merged") => {
                                 self.force_delete_offer = Some(name.clone());
                             }
+                            OpKind::Worktree => self.worktree_result = Some(Err(e)),
                             // An automatic fetch that fails the way it failed last time (the
                             // folder is not trusted, the server is down) says so once.
                             OpKind::Fetch
@@ -4624,6 +4633,31 @@ mod tests {
         // The fetch the user starts always says how it went.
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
+        Ok(())
+    }
+
+    /// #193: git's refusal to add a worktree goes to the dialog that asked (through the app), not
+    /// straight to a toast; a success still says so.
+    #[test]
+    fn a_worktree_refusal_is_kept_for_its_dialog() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let finished = |result: Result<&str, &str>| Event::OpFinished {
+            label: "Adding a worktree for topic".into(),
+            kind: OpKind::Worktree,
+            announce: true,
+            result: result.map(str::to_owned).map_err(str::to_owned),
+        };
+        let refusal = "fatal: '/work/busy' already exists";
+        events.send(finished(Err(refusal)))?;
+        assert!(tab.poll(&[]).is_empty(), "no toast of its own");
+        assert_eq!(tab.worktree_result.take(), Some(Err(refusal.to_owned())));
+        events.send(finished(Ok("Added a worktree")))?;
+        assert_eq!(tab.poll(&[]).len(), 1);
+        assert_eq!(tab.worktree_result, Some(Ok(())));
         Ok(())
     }
 

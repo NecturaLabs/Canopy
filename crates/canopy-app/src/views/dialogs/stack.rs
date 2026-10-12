@@ -124,6 +124,27 @@ impl DialogStack {
         found
     }
 
+    /// Hands the result of `git worktree add` to the New worktree dialog waiting for it: it closes
+    /// on success and shows git's message otherwise, keeping what was entered. Whether such a
+    /// dialog was waiting (else the caller reports a failure itself).
+    pub fn finish_worktree(&mut self, result: Result<(), &str>) -> bool {
+        let mut found = false;
+        self.dialogs.retain_mut(|dialog| {
+            if let Dialog::NewWorktree { pending, error, .. } = dialog
+                && *pending
+            {
+                found = true;
+                *pending = false;
+                if let Err(message) = result {
+                    *error = Some(message.to_owned());
+                }
+                return result.is_err();
+            }
+            true
+        });
+        found
+    }
+
     /// Hands the opener's answer for `path` to the open (or, when `create`, new-repository)
     /// dialog that asked for it: it closes once the repository opened, and shows why otherwise.
     /// Whether such a dialog was waiting (else the caller reports the failure itself).
