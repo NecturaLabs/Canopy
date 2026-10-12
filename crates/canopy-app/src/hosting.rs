@@ -192,11 +192,21 @@ pub struct CliReport {
 }
 
 /// A token and where it came from, with what the CLI reported on the way.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Resolved {
     pub token: Option<(String, TokenSource)>,
     /// `None` when the CLI is not installed.
     pub cli: Option<CliReport>,
+}
+
+impl std::fmt::Debug for Resolved {
+    // The source only: a token must never reach a log line.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Resolved")
+            .field("token", &self.token.as_ref().map(|(_, source)| source))
+            .field("cli", &self.cli)
+            .finish()
+    }
 }
 
 /// Finds a token for `forge` (blocking: runs the provider's CLI and may run the git credential
@@ -922,6 +932,14 @@ mod tests {
         let shown = format!("{store:?}");
         assert!(shown.contains("github.com"));
         assert!(!shown.contains("ghp_secretvalue"));
+
+        let resolved = Resolved {
+            token: Some(("ghp_secretvalue".into(), TokenSource::Saved)),
+            cli: None,
+        };
+        let shown = format!("{resolved:?} {resolved:#?}");
+        assert!(shown.contains("Saved"), "{shown}");
+        assert!(!shown.contains("ghp_secretvalue"), "{shown}");
     }
 
     fn gitlab(host: &str, port: Option<u16>) -> Forge {
