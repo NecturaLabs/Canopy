@@ -245,7 +245,16 @@ only: the pages already loaded are not fetched again, the selection and the scro
 filters and sorting cover everything loaded, and each new page gets its checks and reviews like the
 first. GitLab's Closed tab reads the closed and the merged requests page by page, so a page may
 carry up to twice as many rows. A reload drops the extra pages; the timed refresh keeps them.
-Searching and filtering on the host, over requests that are not loaded, is not done.
+
+When the host holds more than the first page, the field's text, the draft choice, the author and
+the newest or oldest sort go to the host after a short pause in typing, so they reach requests that
+are not loaded (GitHub: its search, which needs a token; GitLab: the list's own search, author and
+draft parameters). The text matches titles and descriptions of the first eight words, not authors
+or numbers, and GitHub's search holds at most 1,000 results. The checks and review filters and the
+number, title and author sorts the host cannot do, so they cover the rows loaded: the line under the
+field says "found" instead of "shown", and the note under the last row says the host holds more.
+The list stays on screen while a search is on its way, and a result that comes after the text
+changed again is dropped. Without a token (GitHub) everything stays on the loaded rows.
 
 The list starts at 45% of the pane (320 to 560 points) and follows the window until its width is
 dragged or set with the arrow keys; it can be dragged to 60% of the pane or 800 points, and

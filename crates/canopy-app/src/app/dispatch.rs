@@ -406,6 +406,7 @@ impl CanopyApp {
                     for tab in &mut self.tabs {
                         if tab.sidebar_key() == Some(repo.as_path()) {
                             tab.request_view = view.clone();
+                            tab.request_view_changed();
                         }
                     }
                     // The default needs no entry, so repositories left alone do not pile up.

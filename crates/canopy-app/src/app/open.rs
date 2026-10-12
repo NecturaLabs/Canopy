@@ -1016,7 +1016,10 @@ mod tests {
         let (host, events, _) = HostWorker::detached(other);
         app.tabs[0].host = Some(host);
         events
-            .send(HostEvent::List(StateFilter::Open, Ok(vec![summary()])))
+            .send(HostEvent::List(
+                StateFilter::Open.into(),
+                Ok(vec![summary()]),
+            ))
             .expect("list");
         app.tabs[0].poll(&[]);
         assert_eq!(app.tabs[0].requests.comment, "");
@@ -1025,7 +1028,10 @@ mod tests {
         let (host, events, _) = HostWorker::detached(forge);
         app.tabs[0].host = Some(host);
         events
-            .send(HostEvent::List(StateFilter::Open, Ok(vec![summary()])))
+            .send(HostEvent::List(
+                StateFilter::Open.into(),
+                Ok(vec![summary()]),
+            ))
             .expect("list");
         app.tabs[0].poll(&[]);
         assert_eq!(app.tabs[0].requests.comment, "Unsent review text");

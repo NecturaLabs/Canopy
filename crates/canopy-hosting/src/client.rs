@@ -22,6 +22,15 @@ pub const SEARCH_WORDS: usize = 8;
 /// The longest word of a search, in characters; longer words are cut.
 const SEARCH_WORD_LEN: usize = 64;
 
+/// Whether `name` can be a GitHub login or GitLab username (letters, digits and `-_.[]`), so it
+/// is safe to send as an author.
+pub fn is_login(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '[' | ']'))
+}
+
 /// The words of `text` to search for: at most [`SEARCH_WORDS`], each cut to [`SEARCH_WORD_LEN`]
 /// characters, without the characters search syntax gives a meaning (quotes, colons,
 /// backslashes), so every word is plain text.

@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::client::{PER_PAGE, optional, search_words, unix};
+use crate::client::{PER_PAGE, is_login, optional, search_words, unix};
 use crate::error::{Error, Result, map_head_conflict};
 use crate::http::{Http, Method, encode};
 use crate::model::{
@@ -367,12 +367,7 @@ fn search_string(repo: &str, filter: StateFilter, query: &RequestQuery) -> Strin
         Some(false) => q.push_str(" draft:false"),
         None => {}
     }
-    if let Some(author) = &query.author
-        && !author.is_empty()
-        && author
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '[' | ']'))
-    {
+    if let Some(author) = query.author.as_deref().filter(|a| is_login(a)) {
         let _ = write!(q, " author:{author}");
     }
     let words = search_words(&query.text);

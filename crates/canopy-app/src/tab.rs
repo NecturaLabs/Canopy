@@ -5,13 +5,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use canopy_core::forge::Forge;
+use canopy_core::forge::{Forge, ForgeKind};
 use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, PullConfig, RepoSnapshot};
-use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
+use canopy_hosting::{MergeMethod, RequestDetails, RequestQuery, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
 use crate::hosting::CliReport;
-use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource, rate_limit_pause};
+use crate::hosting::{
+    HostAction, HostEvent, HostJob, HostWorker, ListKey, TokenSource, rate_limit_pause,
+};
 use crate::request_view::RequestView;
 use crate::settings::{DiffPrefs, PullChoice};
 use crate::views::requests::row_standing;
@@ -564,6 +566,10 @@ pub struct Finished {
 /// How old the request list may be when its view opens before it is loaded again.
 const REQUESTS_STALE_AFTER: Duration = Duration::from_secs(60);
 
+/// How long the filter field must rest before its text is put to the host as a search: a key
+/// per call would spend the host's search quota (GitHub: 30 a minute) on half-typed words.
+const REQUEST_SEARCH_DELAY: Duration = Duration::from_millis(400);
+
 /// How often the open Requests view refreshes its list while automatic fetching is off.
 pub const REQUESTS_REFRESH_EVERY: Duration = Duration::from_secs(60);
 
@@ -743,6 +749,16 @@ pub struct Requests {
     /// The rows of the pages after the first, as they arrived; a reload of the first page keeps
     /// them, a reload the user asked for drops them.
     tail: Vec<RequestSummary>,
+    /// What the host was asked to search for in the list on screen (or on its way): nothing
+    /// until the plain list proved longer than what is loaded.
+    pub query: RequestQuery,
+    /// The state whose plain list the host holds more of than a page, so filters and sorts must
+    /// be put to the host to reach every request.
+    truncated: Option<StateFilter>,
+    /// Where the next page of a search starts (GitHub pages a search by cursor).
+    cursor: Option<String>,
+    /// When the search for the view's text and filters is sent, once the typing has paused.
+    search_due: Option<Instant>,
 }
 
 impl Default for Requests {
@@ -773,6 +789,10 @@ impl Default for Requests {
             pages: 1,
             loading_more: false,
             tail: Vec::new(),
+            query: RequestQuery::default(),
+            truncated: None,
+            cursor: None,
+            search_due: None,
         }
     }
 }
@@ -1498,6 +1518,63 @@ impl RepoTab {
         self.host_job(HostJob::Details(number, self.requests.details_generation));
     }
 
+    /// The list on screen: its state tab and what the host was asked to search for. A reply for
+    /// another key is out of date.
+    fn list_key(&self) -> ListKey {
+        ListKey {
+            state: self.requests.filter,
+            query: self.requests.query.clone(),
+        }
+    }
+
+    /// Whether the host can search this repository's requests: GitLab always, GitHub with a token.
+    fn can_search(&self) -> bool {
+        self.host
+            .as_ref()
+            .is_some_and(|h| h.forge.kind == ForgeKind::GitLab)
+            || matches!(self.requests.token, Some(Some(_)))
+    }
+
+    /// What the host should be asked for, given the view: nothing while everything the host holds
+    /// is loaded (the loaded rows are filtered and sorted here), the view's text, draft choice,
+    /// author and order once the host holds more.
+    fn wanted_query(&self) -> RequestQuery {
+        if self.requests.truncated == Some(self.requests.filter) && self.can_search() {
+            self.request_view.host_query()
+        } else {
+            RequestQuery::default()
+        }
+    }
+
+    /// The request view changed (or what the host can do about it did): plans a search for it
+    /// once the typing has paused. The rows on screen stay until the answer comes.
+    pub fn request_view_changed(&mut self) {
+        let due = (self.host.is_some() && self.wanted_query() != self.requests.query)
+            .then(|| Instant::now() + REQUEST_SEARCH_DELAY);
+        self.requests.search_due = due;
+    }
+
+    /// Sends the planned search when its time has come; returns how long until it does.
+    pub fn run_search_if_due(&mut self) -> Option<Duration> {
+        let due = self.requests.search_due?;
+        let now = Instant::now();
+        if let Some(wait) = due.checked_duration_since(now) {
+            return Some(wait);
+        }
+        if self.requests.loading {
+            // The list on its way answers first; the search follows it.
+            return Some(REQUEST_SEARCH_DELAY);
+        }
+        self.load_requests();
+        None
+    }
+
+    /// The view the loaded rows are put through: what the host's answer already covers is left
+    /// out.
+    pub fn local_request_view(&self) -> RequestView {
+        self.request_view.remaining(&self.requests.query)
+    }
+
     /// Reloads the request list.
     pub fn load_requests(&mut self) {
         if self.host.is_some() {
@@ -1509,8 +1586,11 @@ impl RepoTab {
             self.requests.tail.clear();
             self.requests.pages = 1;
             self.requests.more = false;
+            self.requests.cursor = None;
             self.requests.loading_more = false;
-            self.host_job(HostJob::List(self.requests.filter));
+            self.requests.search_due = None;
+            self.requests.query = self.wanted_query();
+            self.host_job(HostJob::List(self.list_key()));
             // Refreshing the rows must refresh the open request's body and action state too.
             // Otherwise a manual refresh leaves its details stale until another selection.
             if let Some(n) = self.requests.selected
@@ -1530,8 +1610,9 @@ impl RepoTab {
         }
         self.requests.loading_more = true;
         self.host_job(HostJob::ListMore(
-            self.requests.filter,
+            self.list_key(),
             self.requests.pages + 1,
+            self.requests.cursor.clone(),
         ));
     }
 
@@ -1548,7 +1629,7 @@ impl RepoTab {
         self.requests.refresh.in_flight = true;
         // The list is being revalidated, so what was cached before it may disagree with its rows.
         self.requests.details_cache.clear();
-        self.host_job(HostJob::List(self.requests.filter));
+        self.host_job(HostJob::List(self.list_key()));
         if let Some(n) = self.requests.selected
             && self.requests.details.is_some()
         {
@@ -2689,7 +2770,7 @@ impl RepoTab {
         let all: Arc<[RequestSummary]> = Arc::from(all);
         let standing = |r: &RequestSummary| row_standing(ctx, self, r);
         let order: Vec<u64> = self
-            .request_view
+            .local_request_view()
             .visible(&all, standing)
             .into_iter()
             .map(|i| all[i].number)
@@ -2709,30 +2790,41 @@ impl RepoTab {
                 HostEvent::Avatar { oid, email, result } => {
                     self.avatars.finish(&ctx, oid, email, result);
                 }
-                HostEvent::Token(t) => self.requests.token = Some(t),
+                HostEvent::Token(t) => {
+                    self.requests.token = Some(t);
+                    self.request_view_changed();
+                }
                 HostEvent::Cli(report) => self.requests.cli = report,
                 HostEvent::RateLimited { reset } => {
                     let now = chrono::Utc::now().timestamp();
                     self.requests.refresh.held_until =
                         Some(Instant::now() + rate_limit_hold(reset, now));
                 }
-                HostEvent::More { filter, more } => {
-                    if filter == self.requests.filter && self.requests.pages <= 1 {
+                HostEvent::More { key, more, cursor } => {
+                    if key == self.list_key() && self.requests.pages <= 1 {
                         self.requests.more = more;
+                        self.requests.cursor = cursor;
+                        if key.query.is_empty() {
+                            self.requests.truncated = more.then_some(key.state);
+                            // The host holds more than this: the view's filters belong to it.
+                            self.request_view_changed();
+                        }
                     }
                 }
                 HostEvent::Page {
-                    filter,
+                    key,
                     page,
                     result,
+                    cursor,
                 } => {
                     self.note_token(&result);
-                    if filter == self.requests.filter {
+                    if key == self.list_key() {
                         match result {
                             Ok((rows, more)) => {
                                 if page == self.requests.pages + 1 && self.requests.loading_more {
                                     self.requests.pages = page;
                                     self.requests.more = more;
+                                    self.requests.cursor = cursor;
                                     // Only the page that was asked for ends the wait: the same
                                     // page again with its checks must not enable a second click
                                     // while the next page is on its way.
@@ -2757,13 +2849,14 @@ impl RepoTab {
                         }
                     }
                 }
-                HostEvent::List(filter, result) => {
+                HostEvent::List(key, result) => {
+                    let current = key == self.list_key();
                     self.note_token(&result);
                     let result = result.map(|head| self.requests.with_tail(head));
                     let kept_through_failure = self.requests.quiet_refresh
                         && result.is_err()
                         && matches!(self.requests.list, Some(Ok(_)));
-                    if kept_through_failure && filter == self.requests.filter {
+                    if kept_through_failure && current {
                         // A quiet refresh failed (a network blip, a rate limit): the list on
                         // screen is still the best there is. The next sync tries again.
                         tracing::debug!("a quiet request refresh failed; keeping the list");
@@ -2772,7 +2865,7 @@ impl RepoTab {
                         timer.in_flight = false;
                         timer.failures = timer.failures.saturating_add(1);
                         timer.failed_at = Some(Instant::now());
-                    } else if filter == self.requests.filter {
+                    } else if current {
                         self.requests.loading = false;
                         self.requests.loaded_at = Some(Instant::now());
                         self.requests.refresh.in_flight = false;
@@ -2785,7 +2878,7 @@ impl RepoTab {
                         // arrow keys walk it from now, and the first of it opens.
                         let order: Option<Vec<u64>> = result.as_ref().ok().map(|l| {
                             let standing = |r: &RequestSummary| row_standing(&ctx, self, r);
-                            let visible = self.request_view.visible(l, standing);
+                            let visible = self.local_request_view().visible(l, standing);
                             visible.into_iter().map(|i| l[i].number).collect()
                         });
                         let first = order.as_ref().and_then(|o| o.first().copied());
@@ -5058,7 +5151,6 @@ mod tests {
         crossbeam_channel::Sender<Event>,
         crossbeam_channel::Receiver<HostJob>,
     ) {
-        use canopy_core::forge::ForgeKind;
         let (worker, events, _jobs) = Worker::detached();
         let mut tab =
             RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
@@ -5103,7 +5195,7 @@ mod tests {
             let jobs = jobs_of(&host_jobs);
             assert!(
                 jobs.iter()
-                    .any(|j| matches!(j, HostJob::List(StateFilter::Open))),
+                    .any(|j| matches!(j, HostJob::List(k) if k.state == StateFilter::Open)),
                 "{kind:?} asked for the list again: {jobs:?}"
             );
             assert!(
@@ -5212,7 +5304,13 @@ mod tests {
         assert!(
             matches!(
                 jobs.as_slice(),
-                [HostJob::List(StateFilter::Open), HostJob::Details(7, _)]
+                [
+                    HostJob::List(ListKey {
+                        state: StateFilter::Open,
+                        ..
+                    }),
+                    HostJob::Details(7, _)
+                ]
             ),
             "both the list and selected request need fresh host data: {jobs:?}"
         );
@@ -5244,7 +5342,7 @@ mod tests {
         ))?;
         // An old filter's list result must not alter the current request selection.
         host_events.send(HostEvent::List(
-            StateFilter::Closed,
+            StateFilter::Closed.into(),
             Err("obsolete filter failure".into()),
         ))?;
         tab.poll(&[]);
@@ -5346,7 +5444,10 @@ mod tests {
         });
         tab.requests.details = Some(Ok(Arc::clone(&details)));
         tab.refresh_requests_quietly();
-        host_events.send(HostEvent::List(StateFilter::Open, Err("offline".into())))?;
+        host_events.send(HostEvent::List(
+            StateFilter::Open.into(),
+            Err("offline".into()),
+        ))?;
         host_events.send(HostEvent::Details(
             7,
             tab.requests.details_generation,
@@ -5382,7 +5483,7 @@ mod tests {
         tab.poll(&[]);
         drop(host_jobs);
         host_events.send(HostEvent::List(
-            StateFilter::Open,
+            StateFilter::Open.into(),
             Err("could not reach github.com".into()),
         ))?;
         tab.poll(&[]);
@@ -5393,7 +5494,7 @@ mod tests {
         // A reload the user asked for shows its failure.
         tab.load_requests();
         host_events.send(HostEvent::List(
-            StateFilter::Open,
+            StateFilter::Open.into(),
             Err("could not reach github.com".into()),
         ))?;
         tab.poll(&[]);
@@ -5422,11 +5523,12 @@ mod tests {
         };
         tab.load_requests();
         host_events.send(HostEvent::More {
-            filter: StateFilter::Open,
+            key: StateFilter::Open.into(),
             more: true,
+            cursor: None,
         })?;
         host_events.send(HostEvent::List(
-            StateFilter::Open,
+            StateFilter::Open.into(),
             Ok(vec![listed(3, 30), listed(2, 20)]),
         ))?;
         tab.poll(&[]);
@@ -5436,26 +5538,28 @@ mod tests {
         tab.load_more_requests();
         let asked = jobs
             .try_iter()
-            .filter(|j| matches!(j, HostJob::ListMore(StateFilter::Open, 2)))
+            .filter(|j| matches!(j, HostJob::ListMore(k, 2, _) if k.state == StateFilter::Open))
             .count();
         assert_eq!(asked, 1);
         host_events.send(HostEvent::Page {
-            filter: StateFilter::Open,
+            key: StateFilter::Open.into(),
             page: 2,
             result: Ok((vec![listed(1, 10)], false)),
+            cursor: None,
         })?;
         tab.poll(&[]);
         assert_eq!(numbers(&tab), [3, 2, 1]);
         assert!(!tab.requests.more && !tab.requests.loading_more);
         // The page again with its checks replaces its row instead of adding one.
         host_events.send(HostEvent::Page {
-            filter: StateFilter::Open,
+            key: StateFilter::Open.into(),
             page: 2,
             result: Ok((vec![listed(1, 11)], false)),
+            cursor: None,
         })?;
         // A timed refresh of the first page keeps the later pages.
         host_events.send(HostEvent::List(
-            StateFilter::Open,
+            StateFilter::Open.into(),
             Ok(vec![listed(4, 40), listed(3, 30)]),
         ))?;
         tab.poll(&[]);
@@ -5463,9 +5567,142 @@ mod tests {
         // A reload the user asked for starts from the first page again.
         tab.load_requests();
         assert!(!tab.requests.more && tab.requests.pages == 1);
-        host_events.send(HostEvent::List(StateFilter::Open, Ok(vec![listed(4, 40)])))?;
+        host_events.send(HostEvent::List(
+            StateFilter::Open.into(),
+            Ok(vec![listed(4, 40)]),
+        ))?;
         tab.poll(&[]);
         assert_eq!(numbers(&tab), [4]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_search_goes_to_the_host_once_the_list_is_longer_than_a_page()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            return Err("no host".into());
+        };
+        let (host, host_events, jobs) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        drop(host_jobs);
+        let queries = |jobs: &crossbeam_channel::Receiver<HostJob>| -> Vec<RequestQuery> {
+            jobs.try_iter()
+                .filter_map(|j| match j {
+                    HostJob::List(key) => Some(key.query),
+                    _ => None,
+                })
+                .collect()
+        };
+        tab.requests.token = Some(Some(TokenSource::Saved));
+        tab.load_requests();
+        host_events.send(HostEvent::More {
+            key: StateFilter::Open.into(),
+            more: true,
+            cursor: None,
+        })?;
+        host_events.send(HostEvent::List(
+            StateFilter::Open.into(),
+            Ok(vec![listed(3, 30), listed(2, 20)]),
+        ))?;
+        tab.poll(&[]);
+        assert!(
+            queries(&jobs).iter().all(RequestQuery::is_empty),
+            "the plain list first"
+        );
+
+        // Typing plans a search; it waits for the typing to pause and keeps the list shown.
+        tab.request_view.text = "needle".into();
+        tab.request_view_changed();
+        assert!(tab.run_search_if_due().is_some(), "not before the pause");
+        assert_eq!(queries(&jobs).len(), 0);
+        tab.requests.search_due = Some(Instant::now());
+        assert_eq!(tab.run_search_if_due(), None);
+        let asked = queries(&jobs);
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].text, "needle");
+        assert!(matches!(tab.requests.list, Some(Ok(_))), "the list stays");
+
+        // An answer for the plain list is out of date now; the search's own is taken.
+        host_events.send(HostEvent::List(
+            StateFilter::Open.into(),
+            Ok(vec![listed(3, 30)]),
+        ))?;
+        tab.poll(&[]);
+        assert!(tab.requests.loading, "the old answer was dropped");
+        let key = ListKey {
+            state: StateFilter::Open,
+            query: asked[0].clone(),
+        };
+        host_events.send(HostEvent::List(key.clone(), Ok(vec![listed(9, 90)])))?;
+        tab.poll(&[]);
+        let shown = tab.requests.shown.clone();
+        assert_eq!(
+            shown,
+            Some(vec![9]),
+            "the host's rows are not filtered again here"
+        );
+        // The search's rows are not the plain list: more of them is not "truncated".
+        host_events.send(HostEvent::More {
+            key,
+            more: false,
+            cursor: None,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.requests.truncated, Some(StateFilter::Open));
+
+        // Clearing the text goes back to the plain list.
+        tab.request_view.text.clear();
+        tab.request_view_changed();
+        tab.requests.search_due = Some(Instant::now());
+        assert_eq!(tab.run_search_if_due(), None);
+        assert_eq!(queries(&jobs), [RequestQuery::default()]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_github_search_without_a_token_stays_on_the_loaded_rows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            return Err("no host".into());
+        };
+        let (host, host_events, jobs) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        drop(host_jobs);
+        tab.requests.token = Some(None);
+        tab.load_requests();
+        host_events.send(HostEvent::More {
+            key: StateFilter::Open.into(),
+            more: true,
+            cursor: None,
+        })?;
+        host_events.send(HostEvent::List(
+            StateFilter::Open.into(),
+            Ok(vec![listed(3, 30), listed(2, 20)]),
+        ))?;
+        tab.poll(&[]);
+        let before = jobs.try_iter().count();
+        tab.request_view.text = "Request 2".into();
+        tab.request_view_changed();
+        assert_eq!(tab.requests.search_due, None, "nothing to ask the host");
+        assert_eq!(
+            jobs.try_iter().count(),
+            0,
+            "{before} jobs before, none after"
+        );
+        tab.requests.search_due = None;
+        assert_eq!(
+            tab.local_request_view().text,
+            "Request 2",
+            "the loaded rows are filtered here"
+        );
         Ok(())
     }
 
@@ -5501,7 +5738,7 @@ mod tests {
         tab.requests.shown = Some(vec![2, 1]);
         tab.requests.selected = None;
 
-        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        host_events.send(HostEvent::List(StateFilter::Open.into(), Ok(Vec::new())))?;
         tab.poll(&[]);
         tab.move_request(1);
         assert_eq!(
@@ -5551,7 +5788,7 @@ mod tests {
         crate::views::requests::remember_signals(&ctx, &tab, &seen);
 
         host_events.send(HostEvent::List(
-            StateFilter::Open,
+            StateFilter::Open.into(),
             Ok(vec![listed(2, 20), listed(1, 10)]),
         ))?;
         tab.poll(&[]);
@@ -5746,7 +5983,7 @@ mod tests {
         assert_eq!(lists_in(&host_jobs), 0, "one refresh in flight at a time");
 
         // The answer restarts the wait from when it arrived.
-        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        host_events.send(HostEvent::List(StateFilter::Open.into(), Ok(Vec::new())))?;
         tab.poll(&[]);
         assert!(!tab.requests.refresh.in_flight);
         let Some(loaded) = tab.requests.loaded_at else {
@@ -5891,7 +6128,7 @@ mod tests {
             );
             tab.requests.refresh.failed_at = Some(Instant::now());
             host_events
-                .send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))
+                .send(HostEvent::List(StateFilter::Open.into(), Ok(Vec::new())))
                 .expect("reload");
             tab.poll(&[]);
             finish(&events, OpKind::Fetch, Ok(String::new()));
@@ -5927,7 +6164,7 @@ mod tests {
             assert_eq!(lists_in(&host_jobs), 1, "{why}");
             host_events.send(HostEvent::RateLimited { reset })?;
             host_events.send(HostEvent::List(
-                StateFilter::Open,
+                StateFilter::Open.into(),
                 Err("rate limit exceeded".into()),
             ))?;
             tab.poll(&[]);
@@ -6000,7 +6237,7 @@ mod tests {
         let (mut tab, host_events, host_jobs) = timed_tab(start);
         let fail = |tab: &mut RepoTab| -> Result<(), Box<dyn std::error::Error>> {
             host_events.send(HostEvent::List(
-                StateFilter::Open,
+                StateFilter::Open.into(),
                 Err("rate limited".into()),
             ))?;
             tab.poll(&[]);
@@ -6043,7 +6280,7 @@ mod tests {
             None
         );
         assert_eq!(lists_in(&host_jobs), 1);
-        host_events.send(HostEvent::List(StateFilter::Open, Ok(Vec::new())))?;
+        host_events.send(HostEvent::List(StateFilter::Open.into(), Ok(Vec::new())))?;
         tab.poll(&[]);
         assert_eq!(tab.requests.refresh.failures, 0);
         Ok(())
