@@ -24,7 +24,7 @@ use crate::keymap::Command;
 use crate::request_view::{
     self, ChecksChoice, DraftChoice, RequestSort, RequestView, ReviewChoice, Standing,
 };
-use crate::tab::RepoTab;
+use crate::tab::{RepoTab, host_unreachable};
 use crate::ui::art;
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::{LinkButton, icon_button_side};
@@ -584,9 +584,9 @@ fn list(
                         .show(ui);
                 });
         }
-        Some(Err(_)) => {
+        Some(Err(message)) => {
             // The details pane carries the message and the way out; the list only says it is empty.
-            let no_token = tab.requests.token == Some(None);
+            let no_token = tab.requests.token == Some(None) && !host_unreachable(&message);
             EmptyState::new(if no_token {
                 "A token is needed".to_owned()
             } else {
@@ -1315,7 +1315,8 @@ fn unselected(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec
     match &tab.requests.list {
         Some(Err(message)) => {
             // Why, in the host's own words, and the way out; the list beside it only says "none".
-            let no_token = tab.requests.token == Some(None);
+            // A host that cannot be reached is not asked for a token.
+            let no_token = tab.requests.token == Some(None) && !host_unreachable(message);
             let title = if no_token {
                 format!("Connect {} to see {noun}s", kind.name())
             } else {
@@ -2470,6 +2471,46 @@ mod tests {
         );
         assert!(frame.mentions("Not Found"), "{:?}", frame.texts);
         assert!(frame.has("Add a token…"), "{:?}", frame.texts);
+    }
+
+    /// #74: a host that cannot be reached is not a missing token: both panes say the list could
+    /// not load, with git's own cause and Retry first, even when there is no token.
+    #[test]
+    fn an_unreachable_host_is_not_asked_for_a_token() {
+        let mut tab = test_tab();
+        let cause = canopy_hosting::Error::Network(
+            "io: failed to lookup address information: Name or service not known".into(),
+        )
+        .to_string();
+        tab.requests.list = Some(Err(cause));
+        tab.requests.token = Some(None);
+        let details = render(theme::ThemeId::Midnight, SCREEN, |ui| {
+            detail(ui, &mut tab, ForgeKind::GitLab, &mut Vec::new());
+        });
+        assert!(
+            details.mentions("Could not load merge requests"),
+            "{:?}",
+            details.texts
+        );
+        assert!(!details.mentions("Connect GitLab"), "{:?}", details.texts);
+        assert!(details.mentions("Name or service not known"));
+        let order: Vec<&str> = details
+            .texts
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .filter(|t| *t == "Retry" || *t == "Add a token…")
+            .collect();
+        assert_eq!(order.first(), Some(&"Retry"), "{order:?}");
+        let list = render(theme::ThemeId::Midnight, SCREEN, |ui| {
+            list(
+                ui,
+                &mut tab,
+                ForgeKind::GitLab,
+                Color32::TRANSPARENT,
+                &mut Vec::new(),
+            );
+        });
+        assert!(!list.mentions("A token is needed"), "{:?}", list.texts);
     }
 
     /// F2: the merge method's full name fits its trigger.

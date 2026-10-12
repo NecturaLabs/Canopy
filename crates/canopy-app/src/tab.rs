@@ -51,6 +51,12 @@ fn credential_refused(message: &str) -> bool {
     message.starts_with("The server refused the request (check the access token")
 }
 
+/// Whether `message`, a hosting error's text, is the server not being reached
+/// (`canopy_hosting::Error::Network`): no token would change that.
+pub(crate) fn host_unreachable(message: &str) -> bool {
+    message.starts_with("Could not reach the server: ")
+}
+
 /// How the history list and selected commit share the content area.
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryLayout {
