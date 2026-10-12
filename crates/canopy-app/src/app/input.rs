@@ -217,6 +217,16 @@ impl CanopyApp {
                     }));
                 }
             }
+            C::SearchChanges => {
+                if let Some(repo) = self.tabs.get(self.active).map(|t| t.path.clone()) {
+                    actions.push(Action::OpenDialog(Dialog::SearchChanges {
+                        repo,
+                        query: String::new(),
+                        regex: false,
+                        searched: false,
+                    }));
+                }
+            }
             C::CopySha => {
                 if let Some(oid) = self.tabs.get(self.active).and_then(|t| t.selected_commit) {
                     actions.push(Action::Copy(oid.to_string()));

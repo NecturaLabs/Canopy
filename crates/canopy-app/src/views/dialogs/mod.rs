@@ -36,6 +36,7 @@ mod file_history;
 mod ignore;
 mod insights;
 mod reader;
+mod search_changes;
 mod stack;
 mod stale;
 mod start;
@@ -139,6 +140,15 @@ pub enum Dialog {
         path: String,
         /// The commit the history was asked from (`HEAD` when `None`): newer commits are not listed.
         from: Option<Oid>,
+    },
+    /// Commits that added or removed some text; what is shown is the tab's `change_search`.
+    SearchChanges {
+        repo: std::path::PathBuf,
+        query: String,
+        /// The text is a regular expression matched against changed lines.
+        regex: bool,
+        /// A search was started, so the tab's answer (or its wait) is shown.
+        searched: bool,
     },
     Ignore(Box<IgnoreForm>),
     Open {
@@ -499,6 +509,7 @@ pub fn show(
         Dialog::CleanStale(form) => return stale::show(ctx, salt, form, tab),
         Dialog::Insights { .. } => return insights::show(ctx, dialog, tab),
         Dialog::FileHistory { .. } => return file_history::show(ctx, dialog, tab),
+        Dialog::SearchChanges { .. } => return search_changes::show(ctx, dialog, tab),
         Dialog::Ignore(form) => return ignore::show(ctx, salt, form, tab),
         Dialog::Identity {
             name,

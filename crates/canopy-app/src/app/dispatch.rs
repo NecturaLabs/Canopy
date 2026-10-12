@@ -78,6 +78,11 @@ impl CanopyApp {
                         self.dialogs.open(Dialog::FileHistory { repo, path, from });
                     }
                 }
+                Action::SearchChanges { query, regex } => {
+                    if let Some(tab) = self.tab() {
+                        tab.search_changes(query, regex);
+                    }
+                }
                 Action::ShowFileVersion(entry) => {
                     if let Some(tab) = self.tab() {
                         tab.show_file_version(&entry);

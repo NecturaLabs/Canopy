@@ -896,6 +896,9 @@ pub struct RepoTab {
     pub stale_serial: u64,
     pub stale_result: Option<Result<Arc<[canopy_core::StaleCandidate]>, String>>,
     file_history_serial: u64,
+    change_search_serial: u64,
+    /// The newest [`Self::search_changes`] answer, `None` while it is on its way or before a search.
+    pub change_search: Option<Result<Arc<canopy_core::ChangeSearch>, String>>,
     /// The newest [`Self::read_file_history`] answer, `None` while it is on its way.
     pub file_history: Option<Result<Arc<canopy_core::FileHistory>, String>>,
     insights_serial: u64,
@@ -1078,6 +1081,8 @@ impl RepoTab {
         Self {
             path,
             file_history_serial: 0,
+            change_search_serial: 0,
+            change_search: None,
             file_history: None,
             insights_serial: 0,
             insights: None,
@@ -1210,6 +1215,18 @@ impl RepoTab {
             serial: self.file_history_serial,
             from,
             path,
+        });
+    }
+
+    /// Searches the history for commits that added or removed `query` (or, with `regex`, changed
+    /// lines matching it); the answer replaces [`Self::change_search`].
+    pub fn search_changes(&mut self, query: String, regex: bool) {
+        self.change_search_serial = self.change_search_serial.wrapping_add(1);
+        self.change_search = None;
+        self.worker.send(Job::SearchChanges {
+            serial: self.change_search_serial,
+            query,
+            regex,
         });
     }
 
@@ -2336,6 +2353,12 @@ impl RepoTab {
                         });
                     }
                     self.file_history = Some(result);
+                }
+                Event::ChangeSearch { serial, result } => {
+                    if serial != self.change_search_serial {
+                        continue;
+                    }
+                    self.change_search = Some(result);
                 }
                 Event::Blame { serial, result } => {
                     if serial != self.blame_serial {
@@ -4747,6 +4770,44 @@ mod tests {
         })?;
         assert_eq!(tab.poll(&[]).len(), 0);
         assert!(matches!(tab.insights, Some(Ok(ref result)) if Arc::ptr_eq(result, &data)));
+        Ok(())
+    }
+
+    #[test]
+    fn a_change_search_ignores_superseded_replies_and_keeps_its_error_for_the_dialog()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.search_changes("old".into(), false);
+        let Job::SearchChanges { serial: old, .. } = jobs.recv()? else {
+            panic!("search job");
+        };
+        tab.search_changes("(new".into(), true);
+        let Job::SearchChanges {
+            serial: current,
+            query,
+            regex,
+        } = jobs.recv()?
+        else {
+            panic!("search job");
+        };
+        assert_eq!((query.as_str(), regex), ("(new", true));
+        events.send(Event::ChangeSearch {
+            serial: old,
+            result: Err("old search".into()),
+        })?;
+        tab.poll(&[]);
+        assert!(tab.change_search.is_none());
+        events.send(Event::ChangeSearch {
+            serial: current,
+            result: Err("fatal: unmatched parenthesis".into()),
+        })?;
+        // The dialog shows the error beside the field: no toast as well.
+        assert!(tab.poll(&[]).is_empty());
+        assert!(matches!(tab.change_search, Some(Err(_))));
+        tab.search_changes("again".into(), false);
+        assert!(tab.change_search.is_none());
         Ok(())
     }
 

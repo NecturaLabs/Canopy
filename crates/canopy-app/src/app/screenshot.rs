@@ -222,6 +222,29 @@ impl CanopyApp {
         if shot.started == 0.0 {
             shot.started = now;
         }
+        if let Some(Dialog::SearchChanges {
+            repo,
+            query,
+            searched,
+            ..
+        }) = self.dialogs.current_mut()
+            && let Some(tab) = self.tabs.get_mut(self.active)
+            && repo.as_os_str().is_empty()
+            && tab.snap.is_some()
+        {
+            repo.clone_from(&tab.path);
+            // Text the showcase fixture's history changes more than once.
+            "tokio".clone_into(query);
+            *searched = true;
+            tab.search_changes(query.clone(), false);
+        }
+        let search_ready = !self
+            .dialogs
+            .any(|d| matches!(d, Dialog::SearchChanges { .. }))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.change_search.is_some());
         let insights_ready = !self.dialogs.any(|d| matches!(d, Dialog::Insights { .. }))
             || self
                 .tabs
@@ -241,6 +264,7 @@ impl CanopyApp {
                 .is_some_and(|t| t.stale_result.is_some());
         let ready = insights_ready
             && file_history_ready
+            && search_ready
             && stale_ready
             && demo_shown
             && self.pending_opens == 0
@@ -362,6 +386,15 @@ impl CanopyApp {
                 path: String::new(),
                 // A placeholder: the selected commit replaces it once the tab has one.
                 from: (name == "file-history-commit").then_some(canopy_core::Oid::ZERO_SHA1),
+            });
+            return;
+        }
+        if name == "search-changes" {
+            self.dialogs.open(Dialog::SearchChanges {
+                repo: PathBuf::new(),
+                query: String::new(),
+                regex: false,
+                searched: false,
             });
             return;
         }
