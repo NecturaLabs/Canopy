@@ -8,8 +8,8 @@
 
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_hosting::{
-    CheckState, Client, Error, MergeMethod, NewRequest, RequestState, ReviewDecision, Rollup,
-    StateFilter,
+    CheckState, Client, Error, MergeMethod, NewRequest, RequestQuery, RequestState, ReviewDecision,
+    Rollup, SearchOrder, StateFilter,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -2430,4 +2430,197 @@ fn a_closed_gitlab_page_interleaves_closed_and_merged_by_update_time() {
     let order: Vec<u64> = got.rows.iter().map(|r| r.number).collect();
     assert_eq!(order, [2, 1, 3]);
     assert!(!got.more, "neither state filled its page");
+}
+
+fn gh_search_node(number: u64, state: &str) -> Value {
+    json!({
+        "number": number,
+        "title": format!("Found {number}"),
+        "isDraft": number == 2,
+        "state": state,
+        "createdAt": "2024-01-01T00:00:00Z",
+        "updatedAt": "2024-01-02T00:00:00Z",
+        "url": format!("https://github.com/octo/hello/pull/{number}"),
+        "body": "A **long** description",
+        "headRefName": format!("feature-{number}"),
+        "baseRefName": "main",
+        "isCrossRepository": number == 3,
+        "author": { "login": "ann" },
+        "labels": { "nodes": [{ "name": "bug" }] },
+    })
+}
+
+fn search_variables(server: &Server, index: usize) -> Value {
+    server.requests()[index].json()["variables"].clone()
+}
+
+#[test]
+fn a_github_search_runs_on_the_host_and_pages_by_cursor() {
+    let server = Server::start();
+    server.route(
+        "POST",
+        "/graphql",
+        200,
+        &json!({ "data": { "search": {
+            "pageInfo": { "hasNextPage": true, "endCursor": "CUR1" },
+            "nodes": [gh_search_node(7, "OPEN"), {}, gh_search_node(3, "MERGED")],
+        } } })
+        .to_string(),
+    );
+    let client = github(&server, Some(TOKEN));
+    let query = RequestQuery {
+        text: "needle".into(),
+        author: Some("ann".into()),
+        draft: Some(false),
+        order: SearchOrder::Oldest,
+    };
+    let first = client
+        .search_page(StateFilter::Open, &query, 1, None)
+        .expect("page 1");
+    let numbers: Vec<u64> = first.rows.iter().map(|r| r.number).collect();
+    assert_eq!(numbers, [7, 3], "the empty node of another kind is skipped");
+    assert_eq!(first.rows[1].state, RequestState::Merged);
+    assert!(first.rows[1].from_fork);
+    assert_eq!(first.rows[0].source_branch, "feature-7");
+    assert_eq!(first.rows[0].description, "A long description");
+    assert_eq!((first.more, first.cursor.as_deref()), (true, Some("CUR1")));
+    let variables = search_variables(&server, 0);
+    assert_eq!(
+        variables["q"],
+        "repo:octo/hello is:pr is:open draft:false author:ann \"needle\" in:title,body \
+         sort:created-asc"
+    );
+    assert_eq!(variables["after"], Value::Null);
+
+    client
+        .search_page(StateFilter::Open, &query, 2, first.cursor.as_deref())
+        .expect("page 2");
+    assert_eq!(search_variables(&server, 1)["after"], "CUR1");
+
+    let before = server.requests().len();
+    assert!(
+        client
+            .search_page(StateFilter::Open, &query, 3, None)
+            .is_err(),
+        "a later page cannot start without the cursor of the one before"
+    );
+    assert_eq!(server.requests().len(), before, "nothing was sent");
+}
+
+#[test]
+fn a_github_search_word_stays_plain_text() {
+    let server = Server::start();
+    server.route(
+        "POST",
+        "/graphql",
+        200,
+        &json!({ "data": { "search": { "pageInfo": {}, "nodes": [] } } }).to_string(),
+    );
+    let query = RequestQuery {
+        text: "fix \"x\" repo:other/secret is:issue -label:wip \\\" a\u{7}b".into(),
+        author: Some("ann org:evil".into()),
+        ..RequestQuery::default()
+    };
+    let page = github(&server, Some(TOKEN))
+        .search_page(StateFilter::All, &query, 1, None)
+        .expect("page");
+    assert!(!page.more && page.cursor.is_none());
+    let q = search_variables(&server, 0)["q"]
+        .as_str()
+        .expect("string")
+        .to_owned();
+    assert_eq!(
+        q,
+        "repo:octo/hello is:pr \"fix\" \"x\" \"repoother/secret\" \"isissue\" \"-labelwip\" \"ab\" \
+         in:title,body sort:updated-desc",
+        "an author that is not a login is dropped, every word is quoted without its colon"
+    );
+}
+
+#[test]
+fn a_github_search_sends_at_most_eight_words() {
+    let server = Server::start();
+    server.route(
+        "POST",
+        "/graphql",
+        200,
+        &json!({ "data": { "search": { "nodes": [] } } }).to_string(),
+    );
+    let query = RequestQuery {
+        text: "a b c d e f g h i j".into(),
+        ..RequestQuery::default()
+    };
+    github(&server, Some(TOKEN))
+        .search_page(StateFilter::Closed, &query, 1, None)
+        .expect("page");
+    let q = search_variables(&server, 0)["q"]
+        .as_str()
+        .expect("q")
+        .to_owned();
+    assert_eq!(q.matches('"').count(), 2 * canopy_hosting::SEARCH_WORDS);
+    assert!(q.contains("is:closed") && !q.contains("\"i\""));
+}
+
+#[test]
+fn an_empty_query_is_the_plain_list_and_search_needs_a_token_on_github_only() {
+    let server = Server::start();
+    server.route(
+        "GET",
+        "/repos/octo/hello/pulls?state=open&sort=updated&direction=desc&per_page=100&page=1",
+        200,
+        &json!([gh_pull(1, "open", false, "2024-01-05T00:00:00Z")]).to_string(),
+    );
+    let client = github(&server, None);
+    assert!(!client.can_search());
+    assert!(github(&server, Some(TOKEN)).can_search());
+    assert!(gitlab(&server, None).can_search());
+    let page = client
+        .search_page(StateFilter::Open, &RequestQuery::default(), 1, None)
+        .expect("page");
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(server.requests()[0].method, "GET");
+}
+
+#[test]
+fn a_gitlab_search_uses_the_list_parameters_and_interleaves_closed_and_merged() {
+    let server = Server::start();
+    let target = |state: &str| {
+        format!(
+            "{GL}/merge_requests?state={state}&order_by=created_at&sort=asc&per_page=100&page=1\
+             &search=two%20words&in=title,description&author_username=bob&wip=no"
+        )
+    };
+    let mr = |iid, state, created: &str| {
+        let mut v = gl_mr(iid, state, "2024-03-01T00:00:00Z");
+        v["created_at"] = json!(created);
+        v
+    };
+    server.route(
+        "GET",
+        &target("closed"),
+        200,
+        &json!([mr(1, "closed", "2024-01-03T00:00:00Z")]).to_string(),
+    );
+    server.route(
+        "GET",
+        &target("merged"),
+        200,
+        &json!([
+            mr(2, "merged", "2024-01-01T00:00:00Z"),
+            mr(3, "merged", "2024-01-09T00:00:00Z")
+        ])
+        .to_string(),
+    );
+    let query = RequestQuery {
+        text: "two  words".into(),
+        author: Some("bob".into()),
+        draft: Some(false),
+        order: SearchOrder::Oldest,
+    };
+    let page = gitlab(&server, None)
+        .search_page(StateFilter::Closed, &query, 1, None)
+        .expect("page");
+    let order: Vec<u64> = page.rows.iter().map(|r| r.number).collect();
+    assert_eq!(order, [2, 1, 3]);
+    assert!(!page.more && page.cursor.is_none());
 }

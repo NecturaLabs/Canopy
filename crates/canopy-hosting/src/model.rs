@@ -105,6 +105,43 @@ pub struct ListPage {
     pub rows: Vec<RequestSummary>,
     /// The page was full, so the host may hold more after it.
     pub more: bool,
+    /// Where a search continues after this page (GitHub's GraphQL search pages by cursor, not by
+    /// number); `None` for a list, for GitLab and on the last page.
+    pub cursor: Option<String>,
+}
+
+/// The order the host sorts a search in. The other orders of the list (number, title, author) the
+/// host cannot give, so the list applies them to what is loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchOrder {
+    /// The most recently updated first.
+    #[default]
+    Updated,
+    /// The most recently opened first.
+    Newest,
+    /// The longest open first.
+    Oldest,
+}
+
+/// What the host can filter and sort itself, so a search reaches requests that are not loaded.
+/// The default asks for nothing: the plain list.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RequestQuery {
+    /// Words that must all appear in the title or description (the host decides how it matches;
+    /// every word is sent as plain text, never as a qualifier).
+    pub text: String,
+    /// An author's login (GitHub) or username (GitLab).
+    pub author: Option<String>,
+    /// `Some(true)`: drafts only; `Some(false)`: everything but drafts.
+    pub draft: Option<bool>,
+    pub order: SearchOrder,
+}
+
+impl RequestQuery {
+    /// Whether the query asks for nothing the plain list does not (so no search is needed).
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// One row of a request list.

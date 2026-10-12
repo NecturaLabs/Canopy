@@ -6,12 +6,12 @@ use std::fmt::Write as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::client::{PER_PAGE, optional, unix};
+use crate::client::{PER_PAGE, optional, search_words, unix};
 use crate::error::{Error, Result, map_head_conflict};
 use crate::http::{Http, Method, encode};
 use crate::model::{
-    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestState,
-    RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
+    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
+    RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
 };
 use crate::preview::description_preview;
 
@@ -267,7 +267,164 @@ pub(crate) fn list_page(
 ) -> Result<ListPage> {
     let rows = page_of(http, repo, filter, PER_PAGE, page)?;
     let more = rows.len() == PER_PAGE;
-    Ok(ListPage { rows, more })
+    Ok(ListPage {
+        rows,
+        more,
+        cursor: None,
+    })
+}
+
+/// The search a page of pull requests comes from: the fields of a row, as a pull request's own
+/// listing has them.
+const SEARCH_QUERY: &str = "query($q: String!, $first: Int!, $after: String) { \
+     search(query: $q, type: ISSUE, first: $first, after: $after) { \
+     pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title isDraft state \
+     createdAt updatedAt url body headRefName baseRefName isCrossRepository \
+     author { login } labels(first: 20) { nodes { name } } } } } }";
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SearchData {
+    search: SearchResult,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct SearchResult {
+    page_info: PageInfo,
+    /// Other kinds of result (an issue) come as empty objects.
+    nodes: Vec<Option<SearchPull>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct PageInfo {
+    has_next_page: bool,
+    end_cursor: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct SearchPull {
+    number: u64,
+    title: String,
+    is_draft: bool,
+    /// `OPEN`, `CLOSED` or `MERGED`.
+    state: String,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    url: String,
+    body: Option<String>,
+    head_ref_name: String,
+    base_ref_name: String,
+    is_cross_repository: bool,
+    author: Option<User>,
+    labels: LabelNodes,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct LabelNodes {
+    nodes: Vec<Label>,
+}
+
+impl SearchPull {
+    fn summary(&self) -> Option<RequestSummary> {
+        (self.number != 0).then(|| RequestSummary {
+            number: self.number,
+            title: self.title.clone(),
+            author: login(self.author.as_ref()),
+            state: match self.state.as_str() {
+                "MERGED" => RequestState::Merged,
+                "CLOSED" => RequestState::Closed,
+                _ => RequestState::Open,
+            },
+            draft: self.is_draft,
+            source_branch: self.head_ref_name.clone(),
+            target_branch: self.base_ref_name.clone(),
+            from_fork: self.is_cross_repository,
+            created_at: unix(self.created_at.as_deref()),
+            updated_at: unix(self.updated_at.as_deref()),
+            web_url: self.url.clone(),
+            labels: self.labels.nodes.iter().map(|l| l.name.clone()).collect(),
+            description: description_preview(self.body.as_deref().unwrap_or_default()),
+            rollup: None,
+        })
+    }
+}
+
+/// GitHub's search string for `query` in `repo` (`owner/name`): every word quoted, so it is text
+/// and not a qualifier; the author, which can only be a login, as a qualifier.
+fn search_string(repo: &str, filter: StateFilter, query: &RequestQuery) -> String {
+    let mut q = format!("repo:{repo} is:pr");
+    match filter {
+        StateFilter::Open => q.push_str(" is:open"),
+        StateFilter::Closed => q.push_str(" is:closed"),
+        StateFilter::All => {}
+    }
+    match query.draft {
+        Some(true) => q.push_str(" draft:true"),
+        Some(false) => q.push_str(" draft:false"),
+        None => {}
+    }
+    if let Some(author) = &query.author
+        && !author.is_empty()
+        && author
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '[' | ']'))
+    {
+        let _ = write!(q, " author:{author}");
+    }
+    let words = search_words(&query.text);
+    for word in &words {
+        let _ = write!(q, " \"{word}\"");
+    }
+    if !words.is_empty() {
+        q.push_str(" in:title,body");
+    }
+    q.push_str(match query.order {
+        SearchOrder::Updated => " sort:updated-desc",
+        SearchOrder::Newest => " sort:created-desc",
+        SearchOrder::Oldest => " sort:created-asc",
+    });
+    q
+}
+
+/// A page of the pull requests of `repo` (`owner/name`) matching `query`, by GitHub's search
+/// (GraphQL; the REST search lacks the branches). `cursor` continues the page before; a later page
+/// without one has nothing to continue from and fails. Search holds at most 1000 results.
+pub(crate) fn search_page(
+    http: &Http,
+    path: &str,
+    filter: StateFilter,
+    query: &RequestQuery,
+    page: usize,
+    cursor: Option<&str>,
+) -> Result<ListPage> {
+    if page > 1 && cursor.is_none() {
+        return Err(Error::Parse(
+            "a search page needs the cursor of the page before".into(),
+        ));
+    }
+    let variables = json!({
+        "q": search_string(path, filter, query),
+        "first": PER_PAGE,
+        "after": cursor,
+    });
+    let data: SearchData = http.graphql(SEARCH_QUERY, &variables)?;
+    let result = data.search;
+    let rows = result
+        .nodes
+        .iter()
+        .flatten()
+        .filter_map(SearchPull::summary)
+        .collect();
+    let more = result.page_info.has_next_page;
+    Ok(ListPage {
+        rows,
+        more,
+        cursor: result.page_info.end_cursor.filter(|_| more),
+    })
 }
 
 /// What [`rollup`] reads for each pull request.

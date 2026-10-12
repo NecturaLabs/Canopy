@@ -41,12 +41,13 @@ mod transport;
 pub mod updates;
 
 pub use cli_token::{CliError, CliLogin, login_from_cli};
-pub use client::Client;
+pub use client::{Client, SEARCH_WORDS};
 pub use error::{Error, Result};
 pub use http::{is_loopback_base, plain_text, set_build};
 pub use model::{
-    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestState,
-    RequestSummary, Review, ReviewDecision, Rollup, StateFilter, checkout_ref,
+    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
+    RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
+    checkout_ref,
 };
 pub use preview::{PREVIEW_CHARS, description_preview};
 pub use token::{TOKEN_PREFIXES, token_from_env_for, token_from_git_credentials};
