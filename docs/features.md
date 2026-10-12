@@ -289,6 +289,7 @@ A response with the wrong JSON shape reports its failure location without quotin
 | Compact layouts and 80–160% interface zoom | Done | ? | ? | ? |
 | Shared raised controls, larger input targets and visible keyboard focus | Done | ? | ? | ? |
 | Keyboard-only use: one Tab stop per list with the arrows inside, Shift+F10 context menus, modal palette, cheatsheet and dialogs that give focus back | Done | ? | ? | ? |
+| A right-click on a commit or file row selects it before its menu opens (several marked files stay marked) | Done | Yes | ? | ? |
 | Native folder chooser without blocking the app | Done | ? | ? | ? |
 | Configurable keybindings: Settings → Keyboard changes any row's key (a key another row uses is refused, naming it), resets one or all, and keeps them in settings export and import | Done | ? | ? | ? |
 | Dark and light themes (Midnight and Daylight) | Done | Yes | Yes | ? |

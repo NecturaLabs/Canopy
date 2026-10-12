@@ -850,6 +850,9 @@ fn list(
                 action,
             )
         });
+        // Several files are selected and this is one of them: the menu stages them all.
+        let group = Some(tab.stage_targets())
+            .filter(|t| which == List::Unstaged && t.len() > 1 && t.contains(&f.path));
         let toggle = || {
             if which == List::Staged {
                 Op::Unstage(vec![f.path.clone()])
@@ -867,6 +870,14 @@ fn list(
             } else {
                 actions.push(Action::Op(toggle()));
             }
+        } else if resp.secondary_clicked() && group.is_none() {
+            // A right-click selects the file its menu acts on, unless it is one of several selected.
+            tab.marked.clear();
+            tab.select_file(FileSelection {
+                source,
+                entry: f.clone(),
+                conflicted,
+            });
         } else if resp.clicked() {
             let modifiers = ui.input(|i| i.modifiers);
             if which == List::Unstaged && (modifiers.command || modifiers.shift) {
@@ -882,9 +893,6 @@ fn list(
             }
         }
         let entry = f.clone();
-        // Several files are selected and this is one of them: the menu stages them all.
-        let group = Some(tab.stage_targets())
-            .filter(|t| which == List::Unstaged && t.len() > 1 && t.contains(&f.path));
         menu::context(&resp, |m| {
             let first = match &group {
                 Some(group) => m.item(glyph, format!("Stage {} files", group.len())),
