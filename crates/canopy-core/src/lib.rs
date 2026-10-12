@@ -35,6 +35,7 @@ pub mod paths;
 mod pull;
 mod pull_preview;
 pub mod repo;
+mod search_changes;
 pub mod signature;
 mod stale;
 pub mod status;
@@ -52,6 +53,7 @@ pub use file_history::{FileHistory, FileHistoryEntry};
 pub use flow::{FlowConfig, FlowFinish, FlowKind};
 pub use forge::{AuthorPage, Forge, ForgeKind};
 pub use git2::Oid;
+pub use search_changes::{ChangeHit, ChangeSearch};
 // `Segment` at the crate root is the conflict-file segment; the graph's is `GraphSegment`.
 pub use graph::{GraphRow, LineEnd, Segment as GraphSegment};
 pub use ignore::{
