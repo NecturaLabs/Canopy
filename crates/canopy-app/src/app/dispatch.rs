@@ -4,6 +4,26 @@ use super::*;
 use crate::action::Remember;
 use crate::system_apps::Kind;
 
+/// The question before amending a commit its upstream already has: the amend rewrites published
+/// history, so the branch ends up diverged and its next push must be forced.
+fn amend_pushed_dialog(tab: &RepoTab, op: Op) -> Option<Dialog> {
+    let snap = tab.snap.as_ref()?;
+    let branch = snap.branches.iter().find(|b| b.is_head)?;
+    let upstream = branch.upstream.as_deref().filter(|_| branch.ahead == 0)?;
+    Some(Dialog::Confirm {
+        title: format!("Amend {}, already on {upstream}?", branch.name),
+        body: format!(
+            "{upstream} has this commit. Amending rewrites it, so {} and {upstream} diverge and \
+             the next push must be a force push (--force-with-lease).",
+            branch.name
+        ),
+        confirm: "Amend commit".into(),
+        danger: true,
+        repo: tab.path.clone(),
+        op,
+    })
+}
+
 impl CanopyApp {
     pub(super) fn apply(&mut self, ctx: &egui::Context, actions: Vec<Action>) {
         for action in actions {
@@ -318,11 +338,19 @@ impl CanopyApp {
                             message.push_str(t.commit_body.trim());
                         }
                         if !message.is_empty() {
-                            t.op(Op::Commit {
+                            let op = Op::Commit {
                                 message,
                                 amend: t.amend,
                                 signoff,
-                            });
+                            };
+                            match t
+                                .amend
+                                .then(|| amend_pushed_dialog(t, op.clone()))
+                                .flatten()
+                            {
+                                Some(dialog) => self.dialogs.open(dialog),
+                                None => t.op(op),
+                            }
                         }
                     }
                 }
@@ -844,6 +872,45 @@ mod tests {
             (&*expect.branch, &*expect.remote, &*expect.dest),
             ("feature/dark-mode", "origin", "feature/dark-mode")
         );
+    }
+
+    /// #172: amending the commit the upstream already has asks first; an unpushed one does not.
+    #[test]
+    fn amending_a_pushed_commit_asks_first() {
+        let ctx = egui::Context::default();
+        let branch = |ahead| canopy_core::BranchInfo {
+            name: "main".into(),
+            target: None,
+            is_head: true,
+            upstream: Some("origin/main".into()),
+            ahead,
+            behind: 0,
+            worktree: None,
+        };
+        for (ahead, asks) in [(0, true), (1, false)] {
+            let mut app = test_app();
+            let mut tab = test_tab(canopy_core::RepoSnapshot {
+                branches: vec![branch(ahead)],
+                ..Default::default()
+            });
+            tab.amend = true;
+            tab.commit_summary = "Reword".into();
+            app.tabs.push(tab);
+            app.apply(&ctx, vec![Action::Commit]);
+            match app.dialogs.current() {
+                Some(Dialog::Confirm {
+                    title,
+                    body,
+                    op: Op::Commit { amend: true, .. },
+                    ..
+                }) => {
+                    assert!(asks, "an unpushed commit is amended without a question");
+                    assert_eq!(title, "Amend main, already on origin/main?");
+                    assert!(body.contains("force push"), "{body}");
+                }
+                other => assert!(!asks, "no confirmation: {other:?}"),
+            }
+        }
     }
 
     #[test]
