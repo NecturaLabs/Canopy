@@ -104,7 +104,7 @@ pub fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
     if url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost") {
         config = config.proxy(None);
     }
-    let agent = ureq::Agent::new_with_config(config.build());
+    let agent = crate::transport::agent(config.build());
     let mut response = agent
         .get(url)
         .header("Accept", "application/json")
@@ -225,7 +225,7 @@ fn get(
     if is_loopback_url(url) {
         config = config.proxy(None);
     }
-    let agent = ureq::Agent::new_with_config(config.build());
+    let agent = crate::transport::agent(config.build());
     let mut current = url.to_owned();
     for _ in 0..=MAX_REDIRECTS {
         if !current.starts_with("https://") && !is_loopback_url(&current) {

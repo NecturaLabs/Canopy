@@ -64,7 +64,7 @@ impl Avatar {
         if self.loopback {
             config = config.proxy(None);
         }
-        let agent = ureq::Agent::new_with_config(config.build());
+        let agent = crate::transport::agent(config.build());
         let mut response = agent
             .get(&self.url)
             .header("Accept", "image/png, image/jpeg")

@@ -135,7 +135,7 @@ impl Http {
             // A local server (tests, a developer's stub) never goes through a proxy.
             config = config.proxy(None);
         }
-        let agent = Agent::new_with_config(config.build());
+        let agent = crate::transport::agent(config.build());
         let token = token.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
         Self {
             agent,
