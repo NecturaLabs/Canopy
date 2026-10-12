@@ -32,10 +32,10 @@ const KEEP: usize = 3;
 
 fn choice_label(c: &Choice) -> &'static str {
     match c {
-        Choice::Ours => "Current version",
-        Choice::Theirs => "Incoming version",
-        Choice::OursThenTheirs => "Current, then incoming",
-        Choice::TheirsThenOurs => "Incoming, then current",
+        Choice::Ours => "Current",
+        Choice::Theirs => "Incoming",
+        Choice::OursThenTheirs => "Both (current first)",
+        Choice::TheirsThenOurs => "Both (incoming first)",
         Choice::Base => "Ancestor",
         Choice::Custom(_) => "Edited",
     }
@@ -49,9 +49,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .snap
         .as_ref()
         .is_some_and(|snap| snap.state == canopy_core::RepoState::Rebase);
+    let current = tab.snap.as_ref().and_then(|snap| snap.head.branch.clone());
     let Some(r) = tab.resolver.as_mut() else {
         return;
     };
+    r.current = current;
     let abs = tab.path.join(&r.path);
     header(ui, r, &abs, actions);
     if rebasing {
@@ -293,9 +295,7 @@ fn side_name(side: Side) -> &'static str {
 }
 
 fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
-    let m = theme::metrics();
     let Some(Ok(file)) = &r.file else { return };
     let n = file.conflicts();
     let done = r.resolved();
@@ -305,25 +305,6 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
             let top = ui.max_rect().top() - 10.0;
             paint::seam_h(ui.painter(), ui.max_rect().expand2(vec2(14.0, 0.0)).x_range(), top + 0.5, s.border);
             ui.vertical(|ui| {
-                use crate::keymap::{Command, hint};
-                let keys = format!(
-                    "{}  {} {} previous/next · {} current · {} incoming · {} both · {} undo",
-                    icon::KEYBOARD,
-                    hint(Command::PrevConflict),
-                    hint(Command::NextConflict),
-                    hint(Command::TakeOurs),
-                    hint(Command::TakeTheirs),
-                    hint(Command::TakeBoth),
-                    hint(Command::ClearChoice),
-                );
-                commit_detail::without_icons(ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate()))
-                    .kit_tooltip("Press ? for every shortcut").extra(true).show();
-                ui.label(RichText::new(if done == n {
-                    "Every conflict has a choice."
-                } else {
-                    "Choose a version for each conflict."
-                }).size(m.small_size).color(p.text_dim));
-                ui.add_space(theme::XS);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SM;
                     let all = done == n;
@@ -889,7 +870,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 ui.spacing_mut().item_spacing.x = theme::MD;
                 for (title, label, lines, color, side, command) in [
                     (
-                        "Current version",
+                        "Current",
                         &region.ours_label,
                         &region.ours,
                         p.accent,
@@ -897,7 +878,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                         crate::keymap::Command::TakeOurs,
                     ),
                     (
-                        "Incoming version",
+                        "Incoming",
                         &region.theirs_label,
                         &region.theirs,
                         p.accent2,
@@ -907,32 +888,30 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 ] {
                     ui.vertical(|ui| {
                         ui.set_width(w);
-                        ui.label(small(
-                            if label.is_empty() || label == "HEAD" {
-                                title.to_owned()
-                            } else {
-                                format!("Version from {label}")
-                            },
-                            color,
-                        ));
-                        ui.label(small(
-                            format!(
-                                "Git: {} · {label}",
-                                if side == Choice::Ours {
-                                    "ours"
+                        let name = if label == "HEAD" && side == Choice::Ours {
+                            r.current.as_deref().unwrap_or_default()
+                        } else {
+                            label.as_str()
+                        };
+                        ui.label(
+                            small(
+                                if name.is_empty() {
+                                    title.to_owned()
                                 } else {
-                                    "theirs"
-                                }
-                            ),
-                            p.text_faint,
-                        ));
+                                    format!("{title} ({name})")
+                                },
+                                color,
+                            )
+                            .strong(),
+                        );
                         InsetBox::new().show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            code_lines(ui, lines, p.text, title);
+                            code_lines(ui, lines, p.text, &format!("{title} version"));
                         });
                         let on = choice.as_ref() == Some(&side);
-                        if choice_button("Keep this version", on, false, ("keep", title))
-                            .tooltip("Keep this version")
+                        let accept = format!("Accept {}", title.to_lowercase());
+                        if choice_button(&accept, on, false, ("keep", title))
+                            .tooltip(accept.clone())
                             .shortcut(command)
                             .show_shortcut(true)
                             .show(ui)
@@ -947,7 +926,11 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 && let Some(base) = &region.base
             {
                 ui.label(small(
-                    format!("Ancestor · {}", region.base_label),
+                    if region.base_label.is_empty() {
+                        "Ancestor".to_owned()
+                    } else {
+                        format!("Ancestor ({})", region.base_label)
+                    },
                     p.text_dim,
                 ));
                 InsetBox::new().show(ui, |ui| {
@@ -960,11 +943,11 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = theme::SM;
                 let mut options = vec![
-                    (Choice::OursThenTheirs, "Both: current first"),
-                    (Choice::TheirsThenOurs, "Both: incoming first"),
+                    (Choice::OursThenTheirs, "Accept both (current first)"),
+                    (Choice::TheirsThenOurs, "Accept both (incoming first)"),
                 ];
                 if region.base.is_some() {
-                    options.push((Choice::Base, "Ancestor"));
+                    options.push((Choice::Base, "Accept ancestor"));
                 }
                 for (c, label) in options {
                     let on = choice.as_ref() == Some(&c);

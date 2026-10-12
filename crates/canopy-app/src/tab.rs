@@ -166,6 +166,8 @@ pub struct Resolver {
     pub show_base: bool,
     /// Measured heights of the resolver's blocks, so off-screen ones are skipped.
     pub layout: crate::views::resolve::Layout,
+    /// What the current side is called when git labels it only `HEAD`: the checked-out branch.
+    pub current: Option<String>,
 }
 
 impl Resolver {
@@ -181,6 +183,7 @@ impl Resolver {
             expanded: HashSet::new(),
             show_base: false,
             layout: crate::views::resolve::Layout::default(),
+            current: None,
         }
     }
 
