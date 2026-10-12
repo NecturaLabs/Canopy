@@ -693,7 +693,8 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     ))
                     .at_pointer()
                     .show();
-                if response.clicked() {
+                // A right-click selects the commit its menu acts on.
+                if response.clicked() || response.secondary_clicked() {
                     clicked = Some(c.oid);
                 }
                 let oid = c.oid;
@@ -1761,6 +1762,61 @@ mod tests {
         );
         let (_, dropped, _) = step(Vec::new(), &mut tab);
         assert!((dropped - (fitted + 68.0)).abs() < 1.0, "{dropped}");
+    }
+
+    /// #173: a right-click selects the commit whose menu opens.
+    #[test]
+    fn a_right_click_selects_the_commit_under_the_pointer() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        let mut snap = (**tab.snap.as_ref().expect("fixture snapshot")).clone();
+        for (i, c) in snap.commits.iter_mut().enumerate() {
+            c.oid = Oid::from_bytes(&[u8::try_from(i).expect("small index") + 1; 20])
+                .expect("fixture oid");
+        }
+        let first = snap.commits[0].oid;
+        tab.snap = Some(std::sync::Arc::new(snap));
+        tab.selected_commit = Some(first);
+        let size = vec2(1440.0, 900.0);
+        for _ in 0..4 {
+            details_top(&ctx, &mut tab, size);
+        }
+        let at = pos2(300.0, 260.0);
+        for button in [egui::PointerButton::Primary, egui::PointerButton::Secondary] {
+            tab.selected_commit = Some(first);
+            for pressed in [true, false] {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                        events: vec![
+                            egui::Event::PointerMoved(at),
+                            egui::Event::PointerButton {
+                                pos: at,
+                                button,
+                                pressed,
+                                modifiers: egui::Modifiers::default(),
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::new())
+                            .show(ui, |ui| {
+                                show(ui, &mut tab, &Settings::default(), &mut Vec::new());
+                            });
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            assert_ne!(
+                tab.selected_commit,
+                Some(first),
+                "a {button:?} click on a lower row selects it"
+            );
+        }
     }
 
     /// O2: clicking another commit must not show the details pane at another height for the
