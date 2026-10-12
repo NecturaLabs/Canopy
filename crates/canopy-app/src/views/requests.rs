@@ -921,7 +921,21 @@ fn rows(
                                 ui.allocate_space(vec2(width, span.after));
                             }
                             if tab.requests.more {
-                                load_more(ui, tab, items.len(), actions);
+                                // The next page is asked for once the end is half a view away.
+                                let near_end = span.after <= ui.clip_rect().height() * 0.5;
+                                if near_end && wants_more(tab) {
+                                    actions.push(Action::LoadMoreRequests);
+                                }
+                                if !tab.requests.more_failed {
+                                    ui.add_space(theme::SM);
+                                    ui.vertical_centered(|ui| {
+                                        Spinner::new()
+                                            .size(Size::Sm)
+                                            .label(format!("more {}s", kind.request_noun()))
+                                            .show(ui);
+                                    });
+                                    ui.add_space(theme::SM);
+                                }
                             }
                         });
                 })
@@ -939,32 +953,11 @@ fn rows(
     }
 }
 
-/// The end of a list the host holds more of: how much of it is loaded, and the next page on
-/// demand (the pages already loaded are not fetched again).
-fn load_more(ui: &mut Ui, tab: &RepoTab, loaded: usize, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
-    ui.add_space(theme::SM);
-    // Level with the text of the rows above.
-    egui::Frame::new()
-        .inner_margin(Margin::symmetric(crate::ui::points_i8(row::PAD), 0))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(format!("Showing the {loaded} most recently updated"))
-                    .size(m.meta_size)
-                    .color(p.text_faint),
-            );
-            ui.add_space(theme::XS);
-            if Button::new("Load more")
-                .id_salt("request-load-more")
-                .size(Size::Sm)
-                .loading(tab.requests.loading_more)
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::LoadMoreRequests);
-            }
-        });
+/// Whether reaching the end of the list should ask for the next page: not while one is on its
+/// way, and not after a failure (the next load of the first page clears it).
+fn wants_more(tab: &RepoTab) -> bool {
+    let r = &tab.requests;
+    r.more && !r.loading_more && !r.more_failed
 }
 
 /// The row to scroll into view because the selection moved since the last frame (a key or a
@@ -3115,6 +3108,37 @@ mod tests {
         assert!(!list_frame.has("Retry"), "{:?}", list_frame.texts);
         assert!(detail_frame.has("Retry"), "{:?}", detail_frame.texts);
         assert!(detail_frame.mentions("Bad Gateway"));
+    }
+
+    /// #197: the end of a list the host holds more of asks for the next page by itself, with a
+    /// spinner and no button, except while one is on its way or after a failure.
+    #[test]
+    fn the_end_of_the_list_loads_the_next_page_by_itself() {
+        let mut tab = tab_with(vec![request(3, "Request", "sam", "")]);
+        tab.requests.more = true;
+        let end = |tab: &mut RepoTab| {
+            let mut actions = Vec::new();
+            let frame = render(theme::ThemeId::Midnight, SCREEN, |ui| {
+                list(ui, tab, ForgeKind::GitHub, Color32::BLACK, &mut actions);
+            });
+            let asked = actions
+                .iter()
+                .any(|a| matches!(a, Action::LoadMoreRequests));
+            let spinning = frame
+                .nodes
+                .iter()
+                .any(|(name, _)| name == "Loading more pull requests");
+            (asked, spinning)
+        };
+        assert_eq!(end(&mut tab), (true, true));
+        tab.requests.loading_more = true;
+        assert_eq!(end(&mut tab), (false, true));
+        tab.requests.loading_more = false;
+        tab.requests.more_failed = true;
+        assert_eq!(end(&mut tab), (false, false));
+        tab.requests.more_failed = false;
+        tab.requests.more = false;
+        assert_eq!(end(&mut tab), (false, false));
     }
 
     /// F7: the first load shows placeholder rows, not a spinner and a sentence.

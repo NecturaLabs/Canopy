@@ -742,10 +742,14 @@ pub struct Requests {
     pub refresh: RefreshTimer,
     /// The host holds requests after the pages loaded.
     pub more: bool,
-    /// How many pages of the list are loaded (the first, then one per "Load more").
+    /// How many pages of the list are loaded (the first, then one per page the end of the list
+    /// asked for).
     pub pages: usize,
     /// A page after the first is on its way.
     pub loading_more: bool,
+    /// The newest page after the first failed: the end of the list stops asking until the next
+    /// load of the first page.
+    pub more_failed: bool,
     /// The rows of the pages after the first, as they arrived; a reload of the first page keeps
     /// them, a reload the user asked for drops them.
     tail: Vec<RequestSummary>,
@@ -778,6 +782,7 @@ impl Default for Requests {
             more: false,
             pages: 1,
             loading_more: false,
+            more_failed: false,
             tail: Vec::new(),
         }
     }
@@ -1516,6 +1521,7 @@ impl RepoTab {
             self.requests.pages = 1;
             self.requests.more = false;
             self.requests.loading_more = false;
+            self.requests.more_failed = false;
             self.host_job(HostJob::List(self.requests.filter));
             // Refreshing the rows must refresh the open request's body and action state too.
             // Otherwise a manual refresh leaves its details stale until another selection.
@@ -1535,6 +1541,7 @@ impl RepoTab {
             return;
         }
         self.requests.loading_more = true;
+        self.requests.more_failed = false;
         self.host_job(HostJob::ListMore(
             self.requests.filter,
             self.requests.pages + 1,
@@ -2736,7 +2743,9 @@ impl RepoTab {
                     if filter == self.requests.filter {
                         match result {
                             Ok((rows, more)) => {
-                                if page == self.requests.pages + 1 && self.requests.loading_more {
+                                let asked =
+                                    page == self.requests.pages + 1 && self.requests.loading_more;
+                                if asked {
                                     self.requests.pages = page;
                                     self.requests.more = more;
                                     // Only the page that was asked for ends the wait: the same
@@ -2751,6 +2760,7 @@ impl RepoTab {
                             }
                             Err(e) => {
                                 self.requests.loading_more = false;
+                                self.requests.more_failed = true;
                                 notices.push(Notice {
                                     ok: false,
                                     title: format!(
@@ -2783,6 +2793,7 @@ impl RepoTab {
                         self.requests.loaded_at = Some(Instant::now());
                         self.requests.refresh.in_flight = false;
                         if result.is_ok() {
+                            self.requests.more_failed = false;
                             self.requests.refresh.failures = 0;
                             self.requests.refresh.failed_at = None;
                             self.requests.refresh.held_until = None;
@@ -5472,6 +5483,47 @@ mod tests {
         host_events.send(HostEvent::List(StateFilter::Open, Ok(vec![listed(4, 40)])))?;
         tab.poll(&[]);
         assert_eq!(numbers(&tab), [4]);
+        Ok(())
+    }
+
+    /// #197: a failed page stops the end of the list from asking again until the first page
+    /// loads again.
+    #[test]
+    fn a_failed_page_waits_for_the_next_load_of_the_list() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::hosting::HostEvent;
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            return Err("no host".into());
+        };
+        let (host, host_events, _jobs) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        drop(host_jobs);
+        tab.load_requests();
+        host_events.send(HostEvent::More {
+            filter: StateFilter::Open,
+            more: true,
+        })?;
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(vec![listed(3, 30)])))?;
+        tab.poll(&[]);
+
+        tab.load_more_requests();
+        host_events.send(HostEvent::Page {
+            filter: StateFilter::Open,
+            page: 2,
+            result: Err("Bad Gateway".into()),
+        })?;
+        tab.poll(&[]);
+        assert!(tab.requests.more_failed && !tab.requests.loading_more);
+        assert!(tab.requests.more, "the host still holds more");
+
+        // The timed refresh of the first page lets the end of the list ask again.
+        tab.refresh_requests_quietly();
+        host_events.send(HostEvent::List(StateFilter::Open, Ok(vec![listed(3, 30)])))?;
+        tab.poll(&[]);
+        assert!(!tab.requests.more_failed);
         Ok(())
     }
 

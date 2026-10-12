@@ -239,10 +239,12 @@ offers the same. The filters and the sort are kept per repository (its worktrees
 across restarts, and stay out of settings export and import. Up and Down, j and k move through
 the list in the order shown.
 
-The list loads 100 requests at a time. When the host holds more, a note under the last row says
-how many are shown ("Showing the 100 most recently updated") and Load more fetches the next page
-only: the pages already loaded are not fetched again, the selection and the scroll position stay,
-filters and sorting cover everything loaded, and each new page gets its checks and reviews like the
+The list loads 100 requests at a time. When the host holds more, the next page loads by itself
+once the end of the list is half a view away, with a spinner at the end; pages keep loading while
+the filters show none of their rows. A page that fails is a toast, and the end of the list waits
+for the next load of the first page (the timed refresh or a reload) before asking again. Only the next page is fetched: the pages
+already loaded are not fetched again, the selection and the scroll position stay, filters and
+sorting cover everything loaded, and each new page gets its checks and reviews like the
 first. GitLab's Closed tab reads the closed and the merged requests page by page, so a page may
 carry up to twice as many rows. A reload drops the extra pages; the timed refresh keeps them.
 Searching and filtering on the host, over requests that are not loaded, is not done.
