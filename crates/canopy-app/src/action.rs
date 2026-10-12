@@ -185,6 +185,8 @@ pub enum Action {
     },
     /// Run a pull/merge request API action.
     Host(HostJob),
+    /// Load the next page of the pull/merge request list.
+    LoadMoreRequests,
     CheckoutRequest(RequestSummary),
     /// Repository diff options changed: re-render the open diff.
     DiffPrefsChanged,

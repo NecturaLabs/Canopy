@@ -98,6 +98,15 @@ pub enum CheckState {
     Neutral,
 }
 
+/// One page of a request list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListPage {
+    /// The page's requests, most recently updated first.
+    pub rows: Vec<RequestSummary>,
+    /// The page was full, so the host may hold more after it.
+    pub more: bool,
+}
+
 /// One row of a request list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestSummary {

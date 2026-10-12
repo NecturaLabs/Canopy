@@ -227,8 +227,8 @@ review required) without opening it when Canopy has a token for the host; withou
 shows them once the request was opened in the session, and until then a faint question mark says
 they are not loaded (a request with no checks shows nothing).
 
-The list narrows and orders the 100 most recently updated requests, the ones the list holds,
-with no further request: a filter field over number (`154`, `#154`, `!154`; a number matches
+The list narrows and orders the requests it has loaded, the 100 most recently updated and any
+later pages, with no further request: a filter field over number (`154`, `#154`, `!154`; a number matches
 as part of a request's number, so `12` also finds 112), title, author and the start of the
 description (every word must match; Ctrl+F or `/` in the Requests view puts the caret in it), a
 Filters popover for
@@ -238,6 +238,14 @@ the field counts what is shown and clears the filters; a list with nothing left 
 offers the same. The filters and the sort are kept per repository (its worktrees share them),
 across restarts, and stay out of settings export and import. Up and Down, j and k move through
 the list in the order shown.
+
+The list loads 100 requests at a time. When the host holds more, a note under the last row says
+how many are shown ("Showing the 100 most recently updated") and Load more fetches the next page
+only: the pages already loaded are not fetched again, the selection and the scroll position stay,
+filters and sorting cover everything loaded, and each new page gets its checks and reviews like the
+first. GitLab's Closed tab reads the closed and the merged requests page by page, so a page may
+carry up to twice as many rows. A reload drops the extra pages; the timed refresh keeps them.
+Searching and filtering on the host, over requests that are not loaded, is not done.
 
 The list starts at 45% of the pane (320 to 560 points) and follows the window until its width is
 dragged or set with the arrow keys; it can be dragged to 60% of the pane or 800 points, and

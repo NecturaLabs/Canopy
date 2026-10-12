@@ -579,6 +579,11 @@ impl CanopyApp {
                         t.host_action(job);
                     }
                 }
+                Action::LoadMoreRequests => {
+                    if let Some(t) = self.tab() {
+                        t.load_more_requests();
+                    }
+                }
                 Action::CheckoutRequest(r) => self.checkout_request(r),
                 Action::DiffPrefsChanged => {
                     if let Some(t) = self.tabs.get_mut(self.active) {

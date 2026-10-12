@@ -9,7 +9,7 @@ use crate::client::{PER_PAGE, optional, unix};
 use crate::error::{Error, Result, head_changed, map_head_conflict};
 use crate::http::{Http, Method, encode, shorten};
 use crate::model::{
-    Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
+    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
 };
 use crate::preview::description_preview;
@@ -175,6 +175,21 @@ pub(crate) fn viewer(http: &Http) -> Result<String> {
     Ok(user.username)
 }
 
+/// One page (1-based) of `per_page` merge requests in `state`, most recently updated first.
+fn state_page(
+    http: &Http,
+    project: &str,
+    state: &str,
+    per_page: usize,
+    page: usize,
+) -> Result<Vec<RequestSummary>> {
+    let path = format!(
+        "{project}/merge_requests?state={state}&order_by=updated_at&sort=desc&per_page={per_page}&page={page}"
+    );
+    let mrs: Vec<Mr> = http.json(Method::Get, &path, None)?;
+    Ok(mrs.iter().map(Mr::summary).collect())
+}
+
 fn list_state(
     http: &Http,
     project: &str,
@@ -185,12 +200,9 @@ fn list_state(
     let mut out = Vec::new();
     let mut page = 1;
     while out.len() < limit {
-        let path = format!(
-            "{project}/merge_requests?state={state}&order_by=updated_at&sort=desc&per_page={per_page}&page={page}"
-        );
-        let mrs: Vec<Mr> = http.json(Method::Get, &path, None)?;
-        let n = mrs.len();
-        out.extend(mrs.iter().map(Mr::summary));
+        let rows = state_page(http, project, state, per_page, page)?;
+        let n = rows.len();
+        out.extend(rows);
         if n < per_page {
             break;
         }
@@ -218,6 +230,32 @@ pub(crate) fn list(
             Ok(out)
         }
     }
+}
+
+/// Page `page` (1-based) of [`PER_PAGE`] merge requests, and whether a full page means more
+/// follow. "Closed" reads the same page of "closed" and of "merged" and interleaves them by update
+/// time: pages 1 to N together hold at least the newest `N * PER_PAGE` closed requests, and none
+/// twice, though a page may carry up to twice as many rows.
+pub(crate) fn list_page(
+    http: &Http,
+    project: &str,
+    filter: StateFilter,
+    page: usize,
+) -> Result<ListPage> {
+    let states: &[&str] = match filter {
+        StateFilter::Open => &["opened"],
+        StateFilter::All => &["all"],
+        StateFilter::Closed => &["closed", "merged"],
+    };
+    let mut rows = Vec::new();
+    let mut more = false;
+    for state in states {
+        let part = state_page(http, project, state, PER_PAGE, page)?;
+        more |= part.len() == PER_PAGE;
+        rows.extend(part);
+    }
+    rows.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
+    Ok(ListPage { rows, more })
 }
 
 /// What [`rollup`] asks for: each merge request's head pipeline status and whether anyone

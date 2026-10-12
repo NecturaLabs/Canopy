@@ -218,6 +218,8 @@ pub fn token_page(kind: ForgeKind, host: &str) -> String {
 pub enum HostJob {
     Avatar(canopy_core::Oid, String),
     List(StateFilter),
+    /// Page (2 or later) of the list for this filter: the pages already loaded stay as they are.
+    ListMore(StateFilter, usize),
     /// Request number and the tab's monotonically changing details generation.
     Details(u64, u64),
     Create(NewRequest),
@@ -234,6 +236,7 @@ impl HostJob {
         match self {
             Self::Avatar(..) => "Loading an author picture".into(),
             Self::List(_) => format!("Loading {}s", kind.request_noun()),
+            Self::ListMore(..) => format!("Loading more {}s", kind.request_noun()),
             Self::Details(i, _) => format!("Loading {n} #{i}"),
             Self::Create(_) => format!("Creating {}", kind.request_noun()),
             Self::Merge(i, _, _) => format!("Merging {n} #{i}"),
@@ -260,6 +263,18 @@ pub enum HostEvent {
         reset: Option<i64>,
     },
     List(StateFilter, Result<Vec<RequestSummary>, String>),
+    /// Whether the host holds requests beyond the first page; sent just before that list.
+    More {
+        filter: StateFilter,
+        more: bool,
+    },
+    /// A page after the first, and whether the host holds more beyond it. Sent again with the
+    /// page's checks and reviews, which replace its rows.
+    Page {
+        filter: StateFilter,
+        page: usize,
+        result: Result<(Vec<RequestSummary>, bool), String>,
+    },
     Details(u64, u64, Box<Result<RequestDetails, String>>),
     Created(Result<RequestSummary, String>),
     /// An action finished; the list and the request should be reloaded.
@@ -491,6 +506,10 @@ fn log_blocked(host: &str, why: &crate::avatars::Blocked) {
 struct Shown {
     list: u64,
     filter: StateFilter,
+    /// The page the rows are (1 for the first).
+    page: usize,
+    /// Whether the host holds more after this page.
+    more: bool,
     rows: Vec<RequestSummary>,
 }
 
@@ -547,21 +566,33 @@ fn add_rollups(
 ) {
     // Until when (unix seconds) the list goes without checks and reviews after a rate limit.
     let mut paused = 0;
-    while let Ok(mut next) = shown.recv() {
-        // Only the newest list is worth a query.
-        while let Ok(newer) = shown.try_recv() {
-            next = newer;
+    while let Ok(first) = shown.recv() {
+        // Only the newest list is worth a query: pages of an older list are dropped, the pages of
+        // the newest one are all kept.
+        let mut batch = vec![first];
+        while let Ok(more) = shown.try_recv() {
+            batch.push(more);
         }
-        if *last_list(last) != next.list {
-            continue;
-        }
-        let now = chrono::Utc::now().timestamp();
-        if add_rollup(&mut next.rows, client.has_token(), &mut paused, now, |n| {
-            client.rollup(n)
-        }) {
-            let current = last_list(last);
-            if *current == next.list {
-                emit(HostEvent::List(next.filter, Ok(next.rows)));
+        for mut next in batch {
+            if *last_list(last) != next.list {
+                continue;
+            }
+            let now = chrono::Utc::now().timestamp();
+            if add_rollup(&mut next.rows, client.has_token(), &mut paused, now, |n| {
+                client.rollup(n)
+            }) {
+                let current = last_list(last);
+                if *current == next.list {
+                    emit(if next.page <= 1 {
+                        HostEvent::List(next.filter, Ok(next.rows))
+                    } else {
+                        HostEvent::Page {
+                            filter: next.filter,
+                            page: next.page,
+                            result: Ok((next.rows, next.more)),
+                        }
+                    });
+                }
             }
         }
     }
@@ -611,7 +642,7 @@ fn serve_jobs(
             }
             HostJob::List(filter) => {
                 waiting = None;
-                let result = client.list(filter, 100);
+                let result = client.list_page(filter, 1);
                 // Held while the list is sent, so no older list's checks can follow it.
                 let mut sent = last_list(last);
                 *sent += 1;
@@ -619,8 +650,14 @@ fn serve_jobs(
                 // The list shows at once; its checks and reviews follow in a second event for
                 // the same filter, which replaces it (the selection stays). A list the tab no
                 // longer takes was let go with its thread: nothing more is asked.
+                let mut more = false;
                 let delivered = match result {
-                    Ok(rows) => emit(HostEvent::List(filter, Ok(rows.clone()))).then_some(rows),
+                    Ok(page) => {
+                        more = page.more;
+                        let rows = page.rows;
+                        emit(HostEvent::More { filter, more });
+                        emit(HostEvent::List(filter, Ok(rows.clone()))).then_some(rows)
+                    }
                     Err(e) => {
                         if let canopy_hosting::Error::RateLimited { reset } = &e {
                             send(HostEvent::RateLimited { reset: *reset });
@@ -632,7 +669,51 @@ fn serve_jobs(
                 drop(sent);
                 if let Some(rows) = delivered {
                     let due = Instant::now() + ROLLUP_DELAY;
-                    waiting = Some((Shown { list, filter, rows }, due));
+                    let shown = Shown {
+                        list,
+                        filter,
+                        page: 1,
+                        more,
+                        rows,
+                    };
+                    waiting = Some((shown, due));
+                }
+            }
+            HostJob::ListMore(filter, page) => {
+                // The list still counts as the one the tab shows: its checks and these pages'
+                // are asked for in the same lane.
+                let result = client.list_page(filter, page);
+                let list = *last_list(last);
+                let delivered = match result {
+                    Ok(got) => {
+                        let (rows, more) = (got.rows, got.more);
+                        let sent = emit(HostEvent::Page {
+                            filter,
+                            page,
+                            result: Ok((rows.clone(), more)),
+                        });
+                        sent.then_some((rows, more))
+                    }
+                    Err(e) => {
+                        if let canopy_hosting::Error::RateLimited { reset } = &e {
+                            send(HostEvent::RateLimited { reset: *reset });
+                        }
+                        send(HostEvent::Page {
+                            filter,
+                            page,
+                            result: Err(s(e)),
+                        });
+                        None
+                    }
+                };
+                if let Some((rows, more)) = delivered {
+                    let _ = rollups.send(Shown {
+                        list,
+                        filter,
+                        page,
+                        more,
+                        rows,
+                    });
                 }
             }
             HostJob::Details(n, generation) => send(HostEvent::Details(

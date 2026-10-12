@@ -920,6 +920,9 @@ fn rows(
                             if span.after > 0.0 {
                                 ui.allocate_space(vec2(width, span.after));
                             }
+                            if tab.requests.more {
+                                load_more(ui, tab, items.len(), actions);
+                            }
                         });
                 })
         })
@@ -934,6 +937,34 @@ fn rows(
         };
         tab.move_request(delta);
     }
+}
+
+/// The end of a list the host holds more of: how much of it is loaded, and the next page on
+/// demand (the pages already loaded are not fetched again).
+fn load_more(ui: &mut Ui, tab: &RepoTab, loaded: usize, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    ui.add_space(theme::SM);
+    // Level with the text of the rows above.
+    egui::Frame::new()
+        .inner_margin(Margin::symmetric(crate::ui::points_i8(row::PAD), 0))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("Showing the {loaded} most recently updated"))
+                    .size(m.meta_size)
+                    .color(p.text_faint),
+            );
+            ui.add_space(theme::XS);
+            if Button::new("Load more")
+                .id_salt("request-load-more")
+                .size(Size::Sm)
+                .loading(tab.requests.loading_more)
+                .show(ui)
+                .clicked()
+            {
+                actions.push(Action::LoadMoreRequests);
+            }
+        });
 }
 
 /// The row to scroll into view because the selection moved since the last frame (a key or a
