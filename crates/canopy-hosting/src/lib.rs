@@ -50,3 +50,4 @@ pub use model::{
 };
 pub use preview::{PREVIEW_CHARS, description_preview};
 pub use token::{TOKEN_PREFIXES, token_from_env_for, token_from_git_credentials};
+pub use transport::default_agent;
