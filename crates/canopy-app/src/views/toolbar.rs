@@ -309,7 +309,10 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     ui,
                     tab.view,
                     changes,
-                    forge.map(|(_, f)| (f.kind, open_requests)),
+                    forge.map_or_else(
+                        || Err(snap.map_or(0, |s| s.remotes.len())),
+                        |(_, f)| Ok((f.kind, open_requests)),
+                    ),
                     narrow_window || squeezed,
                     actions,
                 );
@@ -600,16 +603,18 @@ fn tool_fade<R>(ui: &Ui, bar: &egui::scroll_area::ScrollAreaOutput<R>, ground: t
 
 /// The History / Changes / Requests switcher (design spec 4.8 ViewTabs): the kit's view tabs with
 /// counts on the strong badge, each view's shortcut in its tooltip, Requests off (saying why)
-/// without a GitHub or GitLab remote, and when `compact` only the active view named.
+/// without a GitHub or GitLab remote (`Err` holds how many remotes the repository has), and when
+/// `compact` only the active view named.
 fn view_tabs(
     ui: &mut Ui,
     view: View,
     changes: usize,
-    requests: Option<(ForgeKind, usize)>,
+    requests: Result<(ForgeKind, usize), usize>,
     compact: bool,
     actions: &mut Vec<Action>,
 ) {
     let (kind, n) = requests.unwrap_or((ForgeKind::GitHub, 0));
+    let reason = requests.err().map(requests_reason);
     let requests_label = match (compact, kind) {
         (true, _) => "Requests",
         (false, ForgeKind::GitHub) => "Pull requests",
@@ -632,12 +637,8 @@ fn view_tabs(
         .badge_room(1)
         .label("View")
         .id_salt(VIEW_TABS)
-        .option_enabled(
-            2,
-            requests.is_some(),
-            Some("Add a GitHub or GitLab remote to view pull or merge requests"),
-        );
-    if requests.is_some() {
+        .option_enabled(2, requests.is_ok(), reason.as_deref());
+    if requests.is_ok() {
         tabs = tabs.badge_room(2);
     }
     for (i, ((_, _, label), command)) in options.iter().zip(commands).enumerate() {
@@ -646,6 +647,16 @@ fn view_tabs(
     if tabs.show(ui).changed() && chosen != view {
         actions.push(Action::SetView(chosen));
     }
+}
+
+/// Why Requests is off in a repository with `remotes` remotes, none of them on GitHub or GitLab.
+fn requests_reason(remotes: usize) -> String {
+    let which = match remotes {
+        0 => "This repository has no remote.",
+        1 => "Its remote is not a GitHub or GitLab address.",
+        _ => "None of its remotes is a GitHub or GitLab address.",
+    };
+    format!("Pull and merge requests need a GitHub or GitLab remote. {which}")
 }
 
 /// The view switcher's id salt.
@@ -925,7 +936,7 @@ mod tests {
                 ui,
                 View::Requests,
                 123,
-                Some((ForgeKind::GitLab, 123)),
+                Ok((ForgeKind::GitLab, 123)),
                 false,
                 &mut Vec::new(),
             );
@@ -950,7 +961,7 @@ mod tests {
                         ui,
                         View::History,
                         changes,
-                        Some((ForgeKind::GitHub, requests)),
+                        Ok((ForgeKind::GitHub, requests)),
                         false,
                         &mut Vec::new(),
                     );
@@ -976,7 +987,7 @@ mod tests {
         let mut nodes = Vec::new();
         for _ in 0..2 {
             nodes = frame(&ctx, Vec::new(), |ui| {
-                view_tabs(ui, View::History, 0, None, false, &mut actions);
+                view_tabs(ui, View::History, 0, Err(0), false, &mut actions);
             })
             .1;
         }
@@ -984,9 +995,37 @@ mod tests {
         assert!(requests.is_disabled(), "Requests is spoken as unavailable");
         let at = node_rect(requests).center();
         let _ = frame(&ctx, click(at), |ui| {
-            view_tabs(ui, View::History, 0, None, false, &mut actions);
+            view_tabs(ui, View::History, 0, Err(0), false, &mut actions);
         });
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// #218: Requests says why it is off, and names what is missing: no remote, or remotes that
+    /// are not GitHub or GitLab.
+    #[test]
+    fn a_disabled_requests_tab_says_what_is_missing() {
+        let ctx = context();
+        for (remotes, says) in [
+            (0, "no remote"),
+            (1, "Its remote"),
+            (3, "None of its remotes"),
+        ] {
+            let mut nodes = Vec::new();
+            for _ in 0..2 {
+                nodes = frame(&ctx, Vec::new(), |ui| {
+                    view_tabs(ui, View::History, 0, Err(remotes), false, &mut Vec::new());
+                })
+                .1;
+            }
+            let why = node(&nodes, Role::RadioButton, "Pull requests")
+                .description()
+                .unwrap_or_default();
+            assert!(
+                why.starts_with("Pull and merge requests need a GitHub or GitLab remote.")
+                    && why.contains(says),
+                "{remotes} remotes: {why}"
+            );
+        }
     }
 
     #[test]
@@ -996,13 +1035,13 @@ mod tests {
         let mut nodes = Vec::new();
         for _ in 0..2 {
             nodes = frame(&ctx, Vec::new(), |ui| {
-                view_tabs(ui, View::History, 4, None, false, &mut actions);
+                view_tabs(ui, View::History, 4, Err(0), false, &mut actions);
             })
             .1;
         }
         let at = node_rect(node(&nodes, Role::RadioButton, "Changes")).center();
         let _ = frame(&ctx, click(at), |ui| {
-            view_tabs(ui, View::History, 4, None, false, &mut actions);
+            view_tabs(ui, View::History, 4, Err(0), false, &mut actions);
         });
         assert!(
             matches!(actions.as_slice(), [Action::SetView(View::Changes)]),
