@@ -2181,10 +2181,16 @@ fn consent(
                     "Accept the Terms of Service and the Privacy Policy to start."
                 })
                 .body(|ui| {
+                    // The crash question follows the first Terms; after an update it may be answered.
+                    let crash = if updated {
+                        "Crash reports are sent only if you agree. Change it in Settings → Privacy."
+                    } else {
+                        "Crash reports are sent only if you agree. Canopy asks next; change it later in Settings → Privacy."
+                    };
                     for (glyph, text) in [
-                        (icon::LOCK_SIMPLE, "Your repositories and tokens are never sent to NecturaLabs. Requests to GitHub and GitLab go straight to them."),
-                        (icon::ARROW_CIRCLE_UP, "At most once a day, Canopy checks GitHub for a new version. You can turn this off."),
-                        (icon::FIRST_AID_KIT, "Crash reports are sent only if you agree. You choose next, and can change it any time."),
+                        (icon::LOCK_SIMPLE, "Canopy never sends your repositories or tokens to NecturaLabs. It talks to GitHub and GitLab directly."),
+                        (icon::ARROW_CIRCLE_UP, "Canopy checks GitHub for a new version at most once a day. Turn it off in Settings → Updates."),
+                        (icon::FIRST_AID_KIT, crash),
                     ] {
                         bullet(ui, glyph, p.accent, text);
                     }
