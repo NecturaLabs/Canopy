@@ -23,6 +23,12 @@ pub(crate) fn agent(config: Config) -> Agent {
     )
 }
 
+/// An agent with `ureq`'s defaults (rustls with its bundled roots, the proxy environment
+/// variables) whose reads survive an interruption, for Sentry's crash-report transport.
+pub fn default_agent() -> Agent {
+    agent(Agent::config_builder().build())
+}
+
 /// `ureq`'s default connector, each transport wrapped in [`Restarting`].
 #[derive(Debug)]
 struct RestartReads(DefaultConnector);

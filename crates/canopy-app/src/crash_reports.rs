@@ -70,7 +70,11 @@ pub fn shutdown() {
 }
 
 fn init() -> sentry::ClientInitGuard {
-    let home = crate::settings::home_dir().display().to_string();
+    sentry::init(options(crate::settings::home_dir().display().to_string()))
+}
+
+/// What the Sentry client is set up with; `home` is the folder [`prepare_report`] hides.
+fn options(home: String) -> sentry::ClientOptions {
     let mut o = sentry::ClientOptions::default();
     o.dsn = DSN.parse().ok();
     o.release = Some(Cow::Owned(format!("canopy@{}", crate::build_info::NUMBER)));
@@ -96,7 +100,25 @@ fn init() -> sentry::ClientInitGuard {
         Arc::new(integrations::panic::PanicIntegration::new().add_extractor(panic_event)),
         Arc::new(integrations::backtrace::ProcessStacktraceIntegration),
     ];
-    sentry::init(o)
+    o.transport = Some(Arc::new(ReadsAgain));
+    o
+}
+
+/// Sentry's `ureq` transport on Canopy's agent, whose reads survive an interrupted system call;
+/// Sentry's own agent gives up on one, losing the report (#188).
+struct ReadsAgain;
+
+impl sentry::TransportFactory for ReadsAgain {
+    fn create_transport_with_options(
+        &self,
+        options: sentry::TransportOptions,
+    ) -> Arc<dyn sentry::Transport> {
+        Arc::new(
+            sentry::transports::UreqHttpTransportOptions::from(options)
+                .with_agent(canopy_hosting::default_agent())
+                .build(),
+        )
+    }
 }
 
 /// A panic in the AT-SPI thread of `accesskit_unix`: with no accessibility bus on the session
@@ -183,15 +205,18 @@ fn panic_event(info: &std::panic::PanicHookInfo<'_>) -> Option<Event<'static>> {
 ///
 /// - credentials in URLs (`https://user:secret@host` becomes `https://<redacted>@host`);
 /// - GitHub and GitLab access tokens (`ghp_…`, `github_pat_…`, `glpat-…` and the like),
-///   `Bearer` and `PRIVATE-TOKEN` values, and Canopy's credential-prompt token, as `<token>`;
+///   and the values after secret labels (`Bearer`, `Basic`, `private_token=`, `GH_TOKEN=`,
+///   `password=` and the like, see [`SECRET_LABELS`]), as `<token>`;
 /// - the user's home folder `home` as `~`, only where it is a whole path component (with
 ///   `home` = `/home/ada`, `/home/adam` is another user's folder, not `~m`);
-/// - the user-name part of other users' home folders as `<user>`, and root's `/root` as `~root`.
+/// - the user-name part of other users' home folders as `<user>`, and root's `/root` as `~root`;
+/// - email addresses as `<email>`.
 pub fn scrub_text(text: &str, home: &str) -> String {
     let out = redact_url_credentials(text);
     let out = redact_tokens(&out);
     let out = replace_home(&out, home);
-    hide_user_folders(&out)
+    let out = hide_user_folders(&out);
+    hide_emails(&out)
 }
 
 /// A character that can continue a file or user name, so a match ending before it is only the
@@ -249,10 +274,21 @@ fn redact_url_credentials(text: &str) -> String {
 }
 
 /// Labels whose value is a secret: the value after them is hidden, the label kept.
-const SECRET_LABELS: [&str; 4] = [
+const SECRET_LABELS: [&str; 13] = [
     "Bearer ",
+    "Basic ",
+    "Authorization: token ",
     "PRIVATE-TOKEN: ",
     "PRIVATE-TOKEN=",
+    "private_token=",
+    "access_token=",
+    // The variables Canopy reads tokens from (`canopy_hosting::token_from_env_for`).
+    "GH_TOKEN=",
+    "GITHUB_TOKEN=",
+    "GITLAB_TOKEN=",
+    "GL_TOKEN=",
+    // Git's credential protocol.
+    "password=",
     // The credential prompt's token (see `askpass`), should an environment dump reach a report.
     "CANOPY_ASKPASS_TOKEN=",
 ];
@@ -288,8 +324,9 @@ fn redact_tokens(text: &str) -> String {
         }
         for label in SECRET_LABELS {
             if let Some(value) = rest.strip_prefix(label) {
+                // A password can hold any character: the value runs to the end of its word.
                 let len = value
-                    .find(|c: char| !(token_char(c) || matches!(c, '.' | '~' | '+' | '/' | '=')))
+                    .find(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '&' | '<' | '>'))
                     .unwrap_or(value.len());
                 if len > 0 {
                     out.push_str(label);
@@ -331,6 +368,45 @@ fn hide_user_folders(text: &str) -> String {
         result.push_str(rest);
         out = result;
     }
+    out
+}
+
+/// Replaces email addresses with `<email>`. Git's own SSH user (`git@host`) is not an address.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from char_indices and ASCII runs, so they fall between characters"
+)]
+fn hide_emails(text: &str) -> String {
+    let local_char =
+        |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-');
+    let domain_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-');
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (at, _) in text.match_indices('@') {
+        if at < last {
+            continue;
+        }
+        let start = text[..at].trim_end_matches(local_char).len().max(last);
+        let domain = &text[at + 1..];
+        let domain = &domain[..domain
+            .find(|c: char| !domain_char(c))
+            .unwrap_or(domain.len())];
+        let domain = domain.trim_end_matches(['.', '-']);
+        let tld = domain.rsplit('.').next().unwrap_or_default();
+        let local = &text[start..at];
+        if local.is_empty()
+            || local == "git"
+            || !domain.contains('.')
+            || tld.len() < 2
+            || !tld.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            continue;
+        }
+        out.push_str(&text[last..start]);
+        out.push_str("<email>");
+        last = at + 1 + domain.len();
+    }
+    out.push_str(&text[last..]);
     out
 }
 
@@ -396,6 +472,17 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
 mod tests {
     use super::*;
     use sentry::protocol::{DeviceContext, User};
+
+    /// #188: reports go through Canopy's own transport, whose reads survive an interrupted
+    /// system call (`canopy_hosting::transport`), not Sentry's default agent.
+    #[test]
+    fn reports_use_the_transport_that_reads_again_after_an_interruption() {
+        let options = options(String::new());
+        assert!(
+            options.transport.is_some(),
+            "Sentry's own agent would be used"
+        );
+    }
 
     #[test]
     fn hides_user_folders() {
@@ -531,6 +618,63 @@ mod tests {
         }
         // Prefixes in ordinary words, or too short to be a token, stay.
         for text in ["a ghp_ prefix", "laughs_x", "myghp_abcdefghijk", "glpat-"] {
+            assert_eq!(scrub_text(text, ""), text);
+        }
+    }
+
+    #[test]
+    fn labelled_secrets_without_a_token_prefix_are_redacted() {
+        let classic = "0123456789abcdef0123456789abcdef01234567";
+        let cases = [
+            (
+                "GET /api/v4/projects?private_token=abc123def456&page=2".to_owned(),
+                "GET /api/v4/projects?private_token=<token>&page=2",
+            ),
+            (
+                "https://api.github.com/user?access_token=abcdef0123456789".to_owned(),
+                "https://api.github.com/user?access_token=<token>",
+            ),
+            (
+                "Authorization: Basic dXNlcjpwYXNz".to_owned(),
+                "Authorization: Basic <token>",
+            ),
+            (
+                format!("Authorization: token {classic}"),
+                "Authorization: token <token>",
+            ),
+            (format!("GITHUB_TOKEN={classic}"), "GITHUB_TOKEN=<token>"),
+            (format!("GH_TOKEN={classic}"), "GH_TOKEN=<token>"),
+            (
+                "GITLAB_TOKEN=x7Yz9AbCdEfGhIjKlMnO".to_owned(),
+                "GITLAB_TOKEN=<token>",
+            ),
+            ("GL_TOKEN=x7Yz9AbCdEfGhIjK".to_owned(), "GL_TOKEN=<token>"),
+            // Git's credential protocol, should its output reach a panic message.
+            (
+                "username=ada\npassword=hun!ter2(x)\n".to_owned(),
+                "username=ada\npassword=<token>\n",
+            ),
+        ];
+        for (text, scrubbed) in cases {
+            assert_eq!(scrub_text(&text, ""), scrubbed, "{text}");
+        }
+    }
+
+    #[test]
+    fn email_addresses_are_hidden() {
+        let cases = [
+            (
+                "author Ada <ada.l+git@example.co.uk> failed",
+                "author Ada <<email>> failed",
+            ),
+            ("ada@example.com: denied", "<email>: denied"),
+            ("→ada@example.com", "→<email>"),
+        ];
+        for (text, scrubbed) in cases {
+            assert_eq!(scrub_text(text, ""), scrubbed, "{text}");
+        }
+        // Git's SSH remotes, crate versions and short handles are not addresses.
+        for text in ["git@github.com:o/r.git", "egui@0.36.1", "a@b", "@ada"] {
             assert_eq!(scrub_text(text, ""), text);
         }
     }

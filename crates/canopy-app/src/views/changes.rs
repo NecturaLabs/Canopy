@@ -12,7 +12,7 @@ use crate::tab::{FileSelection, RepoTab};
 use crate::ui::art;
 use crate::ui::kit::anim::Flip;
 use crate::ui::kit::chip::CountBadge;
-use crate::ui::kit::field::{Join, TextArea, TextField};
+use crate::ui::kit::field::{TextArea, TextField};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{RowKind, SectionHeader, Selection, caps_galley};
 use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
@@ -112,55 +112,13 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
             let w = seam.width;
             paint::seam_line_v(ui.painter(), edge.right() - w * 0.5, edge.y_range(), seam);
             let list_frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 8));
-            // The composer follows the lists while both fit; once the lists would crowd it, it
-            // pins to the bottom and the lists scroll above it.
-            let gap = if snap.status.is_clean() {
-                0.0
-            } else {
-                COMPOSER_GAP
-            };
-            let need = lists_height(&snap.status) + gap + composer_height(ui, tab);
-            let follows = snap.status_unavailable.is_none() && need <= ui.available_height();
-            if follows {
-                egui::CentralPanel::default()
-                    .frame(list_frame)
-                    .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                let mut flip = list_motion(ui, tab);
-                                lists(ui, tab, &snap, actions, &mut flip);
-                                // The composer follows the lists as they change.
-                                flip.item(ui, composer_key(), None, |ui| {
-                                    if !snap.status.is_clean() {
-                                        ui.add_space(COMPOSER_GAP / 2.0);
-                                        let rule = ui.max_rect().x_range();
-                                        paint::seam_h(
-                                            ui.painter(),
-                                            rule,
-                                            ui.cursor().min.y,
-                                            s.border,
-                                        );
-                                        ui.add_space(COMPOSER_GAP / 2.0);
-                                    }
-                                    egui::Frame::new()
-                                        .inner_margin(egui::Margin::symmetric(4, 0))
-                                        .show(ui, |ui| composer(ui, tab, &snap, actions, true));
-                                });
-                                flip.end(ui, |key| listed(&snap.status, key));
-                            });
-                    });
-                return;
-            }
-            // Short windows show a two-row description (`composer_fields`), so the composer
-            // needs less room and the file lists keep it.
-            let cap = if ui.ctx().content_rect().height() < 600.0 {
-                260.0
-            } else {
-                300.0
-            };
-            let (default, min, max) =
-                pinned_composer_sizes(ui.available_height(), lists_height(&snap.status), cap);
+            // The composer is pinned to the bottom of the column, as tall as it needs; the lists
+            // scroll above it.
+            let (default, min, max) = pinned_composer_sizes(
+                ui.available_height(),
+                lists_height(&snap.status),
+                composer_height(ui, tab),
+            );
             egui::Panel::bottom("composer")
                 .default_size(default)
                 .min_size(min)
@@ -170,7 +128,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
                         .fill(s.pane)
                         .inner_margin(egui::Margin::same(12)),
                 )
-                .show(ui, |ui| composer(ui, tab, &snap, actions, false));
+                .show(ui, |ui| composer(ui, tab, &snap, actions));
             egui::CentralPanel::default()
                 .frame(list_frame)
                 .show(ui, |ui| {
@@ -213,13 +171,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
     Some((rect, handle.id))
 }
 
-/// The smallest a pinned composer gets: the commit button, its hint and a little of the fields,
-/// which scroll.
+/// The smallest the composer gets: the commit button and a little of the fields, which scroll.
 const PINNED_COMPOSER_MIN: f32 = 150.0;
-/// The share of the column the file lists keep, at most, when the composer is pinned below them.
+/// The share of the column the file lists keep, at most, above the composer.
 const LISTS_SHARE: f32 = 0.6;
 
-/// The default, smallest and largest height of the composer pinned below the lists, in a column
+/// The default, smallest and largest height of the composer under the lists, in a column
 /// `available` points tall whose lists would take `lists` to show whole: the lists keep what
 /// they need up to [`LISTS_SHARE`] of the column, so every section shows its first files, and
 /// the composer takes the rest up to `cap`, its fields scrolling when it is squeezed.
@@ -230,16 +187,13 @@ fn pinned_composer_sizes(available: f32, lists: f32, cap: f32) -> (f32, f32, f32
     (default, max.min(250.0), max)
 }
 
-/// Gap between the last list and the composer when the composer follows the lists.
-const COMPOSER_GAP: f32 = 28.0;
 /// Gap between two file lists, and the height of an empty list's placeholder line.
 const LIST_GAP: f32 = theme::MD;
 const EMPTY_LIST: f32 = theme::XL;
 /// The clean state’s primary action stays a proper button even with a short label.
 const CTA_MIN_WIDTH: f32 = 120.0;
 
-/// Height of the sections `lists` draws, close enough to decide whether the composer fits
-/// below them. An overestimate only pins the composer; an underestimate scrolls.
+/// Height of the sections `lists` draws, close enough to share the column with the composer.
 fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
     if st.is_clean() {
         return 0.0;
@@ -268,10 +222,10 @@ fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
     h
 }
 
-/// Height of the composer as `composer` lays it out in `follows` mode.
+/// Height of the composer as `composer` lays it out, its fields unscrolled.
 fn composer_height(ui: &Ui, tab: &RepoTab) -> f32 {
     let short = ui.ctx().content_rect().height() < 600.0;
-    let mut h = if short { 224.0 } else { 262.0 };
+    let mut h = if short { 174.0 } else { 190.0 };
     if identity_notice(tab.identity.as_ref(), tab.identity_error.is_some()).is_some() {
         h += 56.0;
     }
@@ -604,8 +558,7 @@ fn list_motion(ui: &Ui, tab: &RepoTab) -> Flip {
 }
 
 /// Keys of the file lists' [`Flip`] items: a section's header and empty line, a file's row in a
-/// section (aliased by its path, so it slides between sections), and the
-/// composer that follows the lists.
+/// section (aliased by its path, so it slides between sections).
 fn header_key(which: List) -> egui::Id {
     egui::Id::new(("changes-header", which as u8))
 }
@@ -618,16 +571,10 @@ fn row_key(which: List, path: &str) -> egui::Id {
 fn path_key(path: &str) -> egui::Id {
     egui::Id::new(("changes-file", path))
 }
-fn composer_key() -> egui::Id {
-    egui::Id::new("changes-composer")
-}
 
 /// Whether the item `key` is still in the lists of `st` (a row out of view is, and is not faded
 /// out). Asked only for rows that were on screen and are not now, when the status changed.
 fn listed(st: &canopy_core::WorkingStatus, key: egui::Id) -> bool {
-    if key == composer_key() {
-        return true;
-    }
     if st.is_clean() {
         return false;
     }
@@ -675,9 +622,6 @@ fn discard_all(files: &[FileEntry]) -> Action {
     }
 }
 
-/// The list header's width from which "Stage selected" keeps its label beside "Stage all".
-const STAGE_SELECTED_LABEL_WIDTH: f32 = 372.0;
-
 fn list(
     ui: &mut Ui,
     tab: &mut RepoTab,
@@ -699,51 +643,46 @@ fn list(
     } else {
         tone
     };
-    // Narrower columns drop the labels, Stage selected first: it sits beside Stage all, and both
-    // keep their tooltips.
-    let width = ui.available_width();
-    let compact = width < 280.0;
-    let labelled_selected = width >= STAGE_SELECTED_LABEL_WIDTH;
-    // What "Stage selected" stages: the unstaged file open in the diff and the ones marked.
+    // Narrower columns drop the labels; the buttons keep their tooltips.
+    let compact = ui.available_width() < 280.0;
+    // Several files picked with Ctrl or Shift: the header offers to stage them together. One
+    // file is staged from its row, its menu or Space.
     let staging = tab.stage_targets();
-    let stage_tip = match staging.len() {
-        0 | 1 => "Stage the selected file".to_owned(),
-        n => format!("Stage the {n} selected files"),
-    };
+    let picked = staging.len() > 1;
     flip.item(ui, header_key(which), None, |ui| {
         list_header(ui, title, files.len(), tone, |ui| match which {
             List::Unstaged if !files.is_empty() => {
-                // The header lays out right to left: Stage selected is added first, so it sits
-                // to the right of Stage all.
-                let selected = if labelled_selected {
-                    Button::new("Stage selected")
-                        .icon(icon::PLUS_CIRCLE)
-                        .size(Size::Sm)
-                        .tooltip(&stage_tip)
-                        .shortcut(Command::ToggleStage)
-                        .id_salt("stage-selected")
-                        .enabled(!staging.is_empty())
-                        .disabled_reason("Select an unstaged file to stage it")
-                        .show(ui)
-                } else {
-                    IconButton::new(icon::PLUS_CIRCLE, &stage_tip)
-                        .size(Size::Sm)
-                        .shortcut(Command::ToggleStage)
-                        .id_salt("stage-selected")
-                        .enabled(!staging.is_empty())
-                        .disabled_reason("Select an unstaged file to stage it")
-                        .show(ui)
-                };
-                if !staging.is_empty() && selected.clicked() {
-                    actions.push(Action::Op(Op::Stage(staging.clone())));
+                // The header lays out right to left: the picked files' button is added first, so
+                // it sits to the right of Stage all.
+                if picked {
+                    let label = format!("Stage {} files", staging.len());
+                    let selected = if compact {
+                        IconButton::new(icon::PLUS_CIRCLE, &label)
+                            .size(Size::Sm)
+                            .shortcut(Command::ToggleStage)
+                            .id_salt("stage-selected")
+                            .show(ui)
+                    } else {
+                        Button::new(&label)
+                            .ghost()
+                            .icon(icon::PLUS_CIRCLE)
+                            .size(Size::Sm)
+                            .shortcut(Command::ToggleStage)
+                            .id_salt("stage-selected")
+                            .show(ui)
+                    };
+                    if selected.clicked() {
+                        actions.push(Action::Op(Op::Stage(staging.clone())));
+                    }
                 }
-                let stage = if compact {
+                let stage = if compact || picked {
                     IconButton::new(icon::PLUS, "Stage all files")
                         .size(Size::Sm)
                         .shortcut(Command::StageAll)
                         .show(ui)
                 } else {
                     Button::new("Stage all")
+                        .ghost()
                         .icon(icon::PLUS)
                         .size(Size::Sm)
                         .tooltip("Stage all files")
@@ -783,6 +722,7 @@ fn list(
                         .show(ui)
                 } else {
                     Button::new("Unstage all")
+                        .ghost()
                         .icon(icon::MINUS)
                         .size(Size::Sm)
                         .tooltip("Unstage all files")
@@ -867,6 +807,8 @@ fn list(
                     entry: f.clone(),
                     conflicted,
                 });
+            } else if let Some(group) = &group {
+                actions.push(Action::Op(Op::Stage(group.clone())));
             } else {
                 actions.push(Action::Op(toggle()));
             }
@@ -1084,15 +1026,13 @@ fn labelled_action_width(ui: &Ui, label: &str) -> f32 {
     text + 2.0 * m.button_pad_x_sm + theme::XS
 }
 
-/// The commit composer. `follows` is true when it sits under the file lists in their scroll
-/// area; otherwise it fills the panel pinned to the bottom of the column, with the fields
-/// scrolling above the commit button.
+/// The commit composer, pinned to the bottom of the column: the fields scroll above the commit
+/// button when the panel is short.
 fn composer(
     ui: &mut Ui,
     tab: &mut RepoTab,
     snap: &canopy_core::RepoSnapshot,
     actions: &mut Vec<Action>,
-    follows: bool,
 ) {
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
@@ -1156,18 +1096,13 @@ fn composer(
             });
             ui.add_space(theme::XS);
         }
-        if let Some(reason) = blocker {
-            ui.label(RichText::new(reason).size(m.small_size).color(p.text_dim));
-            ui.add_space(theme::XS);
-        }
-        let (label, keys) = fitting_label(ui, &labels, ui.available_width());
+        let label = fitting_label(ui, &labels, ui.available_width());
         let mut commit = Button::new(label)
             .primary()
             .icon(icon::CHECK)
             .full_width()
             .enabled(can)
-            .shortcut(Command::Commit)
-            .show_shortcut(keys);
+            .shortcut(Command::Commit);
         if let Some(tip) = &tip {
             commit = commit.tooltip(tip.as_str());
         }
@@ -1184,15 +1119,11 @@ fn composer(
             actions.push(Action::Commit);
         }
     };
-    if follows {
-        composer_fields(ui, tab, actions);
-        footer(ui, actions);
-        return;
-    }
     // The button and the identity warning sit at the bottom; the fields take the rest, so a
     // warning that wraps never pushes the button out of the panel.
     egui::Panel::bottom("commit-footer")
         .frame(egui::Frame::new())
+        .show_separator_line(false)
         .show(ui, |ui| footer(ui, actions));
     egui::ScrollArea::vertical()
         .id_salt("commit-fields")
@@ -1209,10 +1140,9 @@ fn composer(
         });
 }
 
-/// The commit button's label for a column `room` points wide, and whether its keys fit beside
-/// it: the first of `labels` with its keys, else the first label that fits alone (the keys stay
-/// in the tooltip), else the last, so the button never cuts its text at a large zoom.
-fn fitting_label<'a>(ui: &Ui, labels: &'a [String], room: f32) -> (&'a str, bool) {
+/// The commit button's label for a column `room` points wide: the first of `labels` that fits,
+/// else the last, so the button never cuts its text at a large zoom.
+fn fitting_label<'a>(ui: &Ui, labels: &'a [String], room: f32) -> &'a str {
     let m = theme::metrics();
     let width = |text: &str, font: FontId| {
         ui.painter()
@@ -1223,45 +1153,33 @@ fn fitting_label<'a>(ui: &Ui, labels: &'a [String], room: f32) -> (&'a str, bool
     let font = FontId::new(m.body_size, theme::medium());
     let frame =
         2.0 * m.button_pad_x + width(icon::CHECK, FontId::proportional(m.icon_md)) + m.button_gap;
-    let keys = theme::SM + width(&crate::keymap::hint(Command::Commit), font.clone());
-    let fits = |label: &String, extra: f32| frame + width(label, font.clone()) + extra <= room;
-    if let Some(full) = labels.first().filter(|l| fits(l, keys)) {
-        return (full, true);
-    }
-    let label = labels
+    labels
         .iter()
-        .find(|l| fits(l, 0.0))
-        .or_else(|| labels.last());
-    (label.map_or("", String::as_str), false)
+        .find(|l| frame + width(l, font.clone()) <= room)
+        .or_else(|| labels.last())
+        .map_or("", String::as_str)
 }
 
 fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
-    let _ = SectionHeader::new("Commit").first(true).show(ui);
-    ui.add_space(theme::XS);
     let summary = TextField::new(&mut tab.commit_summary)
-        .placeholder("Summary")
-        .name("Commit summary")
-        .joined(Join::Above)
+        .placeholder("Subject")
+        .name("Commit subject")
         .counter(true)
-        .tooltip("Keep the summary under 50 characters; 72 at most.")
+        .tooltip("Keep the subject under 50 characters; 72 at most.")
         .id_salt("commit-summary")
         .show(ui);
     if tab.focus_summary {
         summary.request_focus();
         tab.focus_summary = false;
     }
-    // The description sits under the summary as the second half of one message box: its top edge
-    // is the summary's bottom edge.
-    ui.add_space(-ui.spacing().item_spacing.y);
     let rows = if ui.ctx().content_rect().height() < 600.0 {
         2..=6
     } else {
         3..=12
     };
     let body = TextArea::new(&mut tab.commit_body)
-        .placeholder("Description (optional)")
-        .name("Commit description")
-        .joined(Join::Below)
+        .placeholder("Body")
+        .name("Commit body")
         .rows(rows)
         .guide(72)
         .id_salt("commit-body")
@@ -1330,7 +1248,7 @@ fn commit_blocker(
     } else if running {
         Some("Another operation is still running")
     } else if has_content && summary_empty {
-        Some("Write a summary to commit")
+        Some("Write a subject to commit")
     } else {
         None
     }
@@ -1652,7 +1570,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_and_shift_click_pick_several_unstaged_files_for_stage_selected() {
+    fn ctrl_and_shift_click_pick_several_unstaged_files_to_stage_together() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
@@ -1673,17 +1591,24 @@ mod tests {
                 |(_, r)| pos2(r.min.x + 4.0, r.center().y),
             )
         };
-        let stage_selected = texts
-            .iter()
-            .find(|(t, _)| t == icon::PLUS_CIRCLE || t == "Stage selected")
-            .map(|(_, r)| r.center())
-            .expect("Stage selected");
+        // The header's button for the picked files, painted as its label or, in a narrow column,
+        // its icon.
+        let picked_button = |tab: &mut RepoTab| {
+            painted_texts(&ctx, tab, None)
+                .into_iter()
+                .find(|(t, _)| t == icon::PLUS_CIRCLE || t.ends_with(" files"))
+                .map(|(_, r)| r.center())
+        };
         let staged = |actions: &[Action]| {
             actions.iter().find_map(|a| match a {
                 Action::Op(Op::Stage(paths)) => Some(paths.clone()),
                 _ => None,
             })
         };
+        assert!(
+            picked_button(&mut tab).is_none(),
+            "one file has no header button"
+        );
 
         // a.rs is open; Ctrl-click adds d.rs to the selection.
         click_with(&ctx, &mut tab, row("d.rs"), egui::Modifiers::COMMAND);
@@ -1693,7 +1618,8 @@ mod tests {
             Some("a.rs"),
             "the open diff stays"
         );
-        let actions = click_at(&ctx, &mut tab, stage_selected);
+        let button = picked_button(&mut tab).expect("Stage 2 files");
+        let actions = click_at(&ctx, &mut tab, button);
         assert_eq!(staged(&actions), Some(vec!["a.rs".into(), "d.rs".into()]));
 
         // Ctrl-click again takes it out.
@@ -1702,7 +1628,8 @@ mod tests {
 
         // Shift-click picks the range from the open file.
         click_with(&ctx, &mut tab, row("c.rs"), egui::Modifiers::SHIFT);
-        let actions = click_at(&ctx, &mut tab, stage_selected);
+        let button = picked_button(&mut tab).expect("Stage 3 files");
+        let actions = click_at(&ctx, &mut tab, button);
         assert_eq!(
             staged(&actions),
             Some(vec!["a.rs".into(), "b.rs".into(), "c.rs".into()])
@@ -1711,8 +1638,7 @@ mod tests {
         // A plain click opens one file and drops the others.
         click_at(&ctx, &mut tab, row("b.rs"));
         assert!(tab.marked.is_empty());
-        let actions = click_at(&ctx, &mut tab, stage_selected);
-        assert_eq!(staged(&actions), Some(vec!["b.rs".into()]));
+        assert!(picked_button(&mut tab).is_none());
 
         // ...also when it is the file that is already open.
         click_with(&ctx, &mut tab, row("d.rs"), egui::Modifiers::COMMAND);
@@ -1722,7 +1648,7 @@ mod tests {
     }
 
     #[test]
-    fn stage_selected_sits_right_of_stage_all_and_stages_the_selected_file() {
+    fn a_picked_rows_stage_button_stages_every_picked_file() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
@@ -1733,47 +1659,38 @@ mod tests {
             100,
             crate::settings::DiffPrefs::default(),
         );
-        let mut snap = unstaged_snapshot();
-        snap.status.staged = vec![entry("README.md")];
+        let mut snap = canopy_core::RepoSnapshot::default();
+        snap.status.unstaged = ["a.rs", "b.rs", "c.rs"].map(entry).to_vec();
         tab.snap = Some(std::sync::Arc::new(snap));
         let texts = painted_texts(&ctx, &mut tab, None);
-        let find = |label: &str| texts.iter().find(|(t, _)| t == label).map(|(_, r)| *r);
-        let all = find("Stage all").expect("Stage all");
-        // This column is too narrow for the label, so the button is its icon.
-        let selected = find(icon::PLUS_CIRCLE).expect("Stage selected");
-        assert!(
-            selected.min.x > all.max.x && (selected.center().y - all.center().y).abs() < 4.0,
-            "Stage selected follows Stage all on its row: {selected:?} after {all:?}"
+        let at = |name: &str| {
+            texts
+                .iter()
+                .find(|(t, _)| t == name)
+                .map_or_else(|| panic!("row {name}"), |(_, r)| *r)
+        };
+        let c = at("c.rs");
+        click_with(
+            &ctx,
+            &mut tab,
+            pos2(c.min.x + 4.0, c.center().y),
+            egui::Modifiers::COMMAND,
         );
-        assert!(
-            find("Stage file").is_none(),
-            "the diff header no longer carries Stage file"
-        );
-        let staged = tab
-            .file
-            .clone()
-            .expect("the first unstaged file is selected");
-        let actions = click_at(&ctx, &mut tab, selected.center());
+        // The row's own Stage button, revealed under the pointer at its right end.
+        let hovered = painted_texts(&ctx, &mut tab, Some(c.center()));
+        let plus = hovered
+            .iter()
+            .filter(|(t, r)| t == icon::PLUS && (r.center().y - c.center().y).abs() < 4.0)
+            .map(|(_, r)| r.center())
+            .next()
+            .expect("the row's Stage button");
+        let actions = click_at(&ctx, &mut tab, plus);
         assert!(
             actions.iter().any(|a| matches!(
                 a,
-                Action::Op(Op::Stage(paths)) if paths == std::slice::from_ref(&staged.entry.path)
+                Action::Op(Op::Stage(paths)) if paths == &["a.rs".to_owned(), "c.rs".to_owned()]
             )),
-            "Stage selected stages the selected file: {actions:?}"
-        );
-        // With a staged file selected there is nothing to stage, and the button says so.
-        tab.select_file(FileSelection {
-            source: DiffSource::Staged,
-            entry: entry("README.md"),
-            conflicted: false,
-        });
-        painted_texts(&ctx, &mut tab, None);
-        let actions = click_at(&ctx, &mut tab, selected.center());
-        assert!(
-            !actions
-                .iter()
-                .any(|a| matches!(a, Action::Op(Op::Stage(_)))),
-            "Stage selected is disabled for a staged file: {actions:?}"
+            "{actions:?}"
         );
     }
 
@@ -1850,7 +1767,7 @@ mod tests {
             !update
                 .nodes
                 .iter()
-                .any(|(_, n)| n.label() == Some("Commit summary"))
+                .any(|(_, n)| n.label() == Some("Commit subject"))
         );
         let amend = update
             .nodes
@@ -1889,7 +1806,7 @@ mod tests {
         assert!(
             nodes
                 .iter()
-                .any(|n| n.label.as_deref() == Some("Commit summary"))
+                .any(|n| n.label.as_deref() == Some("Commit subject"))
         );
     }
 
@@ -2053,7 +1970,7 @@ mod tests {
                     },
                     |ui| {
                         egui::CentralPanel::default().show(ui, |ui| {
-                            composer(ui, &mut tab, &snap, &mut Vec::new(), false);
+                            composer(ui, &mut tab, &snap, &mut Vec::new());
                         });
                     },
                 );
@@ -2083,7 +2000,7 @@ mod tests {
     }
 
     #[test]
-    fn the_composer_follows_a_short_list_and_pins_below_a_long_one() {
+    fn the_composer_stays_at_the_bottom_of_the_column() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
@@ -2098,22 +2015,24 @@ mod tests {
             let texts = painted_texts(&ctx, tab, None);
             let (_, at) = texts
                 .iter()
-                .find(|(t, _)| t == "Summary")
+                .find(|(t, _)| t == "Subject")
                 .expect("painted summary hint");
             at.min.y
         };
         tab.snap = Some(std::sync::Arc::new(unstaged_snapshot()));
+        let one = summary_y(&mut tab);
         assert!(
-            summary_y(&mut tab) < 220.0,
-            "one file: the composer sits under it"
+            one > 300.0,
+            "one file: the composer is at the bottom: {one}"
         );
 
         let mut snap = unstaged_snapshot();
         snap.status.unstaged = (0..40).map(|i| entry(&format!("src/f{i}.rs"))).collect();
         tab.snap = Some(std::sync::Arc::new(snap));
+        let forty = summary_y(&mut tab);
         assert!(
-            summary_y(&mut tab) > 300.0,
-            "forty files: the composer pins to the bottom"
+            (forty - one).abs() < 1.0,
+            "forty files: the composer stays put: {forty} against {one}"
         );
     }
 
@@ -2145,7 +2064,7 @@ mod tests {
                 },
                 |ui| {
                     egui::CentralPanel::default().show(ui, |ui| {
-                        composer(ui, &mut tab, &snap, &mut Vec::new(), true);
+                        composer(ui, &mut tab, &snap, &mut Vec::new());
                     });
                 },
             );
@@ -2160,7 +2079,7 @@ mod tests {
         let commit = commit.expect("the Commit button");
         assert!(commit.is_disabled(), "no summary yet: {commit:?}");
         assert_eq!(commit.label(), Some("Commit 1 file to main, unavailable"));
-        assert_eq!(commit.description(), Some("Write a summary to commit"));
+        assert_eq!(commit.description(), Some("Write a subject to commit"));
         assert!(
             !commit.supports_action(egui::accesskit::Action::Click),
             "{commit:?}"
@@ -2179,7 +2098,7 @@ mod tests {
         );
         assert_eq!(
             commit_blocker(false, false, true, true),
-            Some("Write a summary to commit")
+            Some("Write a subject to commit")
         );
         assert_eq!(
             commit_blocker(false, false, false, true),
@@ -2388,7 +2307,7 @@ mod tests {
                 .iter()
                 .find_map(|shape| {
                     if let egui::Shape::Text(text) = &shape.shape
-                        && text.galley.text() == "Summary"
+                        && text.galley.text() == "Subject"
                     {
                         Some(text.visual_bounding_rect().intersect(shape.clip_rect))
                     } else {
@@ -2463,12 +2382,12 @@ mod tests {
         assert!(
             hinted(
                 &texts,
-                &format!("Summary is {} characters", summary.chars().count())
+                &format!("Subject is {} characters", summary.chars().count())
             ),
             "summary hint missing in {texts:?}"
         );
         assert!(
-            hinted(&texts, "Description line 2 is 99 characters"),
+            hinted(&texts, "Body line 2 is 99 characters"),
             "description hint missing in {texts:?}"
         );
         assert_eq!((&tab.commit_summary, &tab.commit_body), (&summary, &body));
@@ -2480,7 +2399,7 @@ mod tests {
             !hinted(&texts, "characters;"),
             "no hints when off: {texts:?}"
         );
-        assert!(!hinted(&texts, "description line"), "{texts:?}");
+        assert!(!hinted(&texts, "body line"), "{texts:?}");
         assert_eq!((&tab.commit_summary, &tab.commit_body), (&summary, &body));
 
         // A message that fits is never hinted.
@@ -2534,11 +2453,10 @@ mod tests {
     }
 
     /// QVIS-5: in a narrow column (a small window at a large zoom) the commit button never
-    /// clips its label or keys: it drops the keys, then the branch, then the count, and the
-    /// screen reader still hears the whole label.
+    /// clips its label: it drops the branch, then the count, and the screen reader still hears
+    /// the whole label.
     #[test]
     fn the_commit_button_fits_its_label_in_a_narrow_column() {
-        let keys = crate::keymap::hint(Command::Commit);
         for width in [180.0, 240.0, 300.0, 420.0] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
@@ -2569,7 +2487,7 @@ mod tests {
                     },
                     |ui| {
                         egui::CentralPanel::default().show(ui, |ui| {
-                            composer(ui, &mut tab, &snap, &mut Vec::new(), true);
+                            composer(ui, &mut tab, &snap, &mut Vec::new());
                         });
                     },
                 );
@@ -2578,10 +2496,7 @@ mod tests {
                     .shapes
                     .iter()
                     .filter_map(|shape| match &shape.shape {
-                        egui::Shape::Text(text)
-                            if text.galley.text().starts_with("Commit")
-                                || text.galley.text() == keys =>
-                        {
+                        egui::Shape::Text(text) if text.galley.text().starts_with("Commit") => {
                             Some((
                                 text.galley.text().to_owned(),
                                 shape.clip_rect,
@@ -2620,7 +2535,6 @@ mod tests {
             );
             if width >= 420.0 {
                 assert_eq!(label.0, "Commit 2 files to feature/dark-mode");
-                assert!(texts.iter().any(|(t, _, _)| *t == keys), "{texts:?}");
             }
         }
     }
@@ -2703,7 +2617,7 @@ mod tests {
     }
 
     /// O1 (owner): staging a file moves its row from Unstaged to Staged by sliding it there, the
-    /// rows below close up smoothly and the composer under the lists follows without a jump;
+    /// rows below close up smoothly and the composer at the bottom of the column stays put;
     /// with reduced motion everything lands at once.
     #[test]
     fn staging_a_file_slides_its_row_to_the_staged_list() {
@@ -2733,7 +2647,7 @@ mod tests {
                 before = timed_texts(&ctx, &mut tab, f64::from(i) * 0.1);
             }
             let (b0, c0) = (painted_at(&before, "b.rs"), painted_at(&before, "c.rs"));
-            let composer0 = painted_at(&before, "Summary");
+            let composer0 = painted_at(&before, "Subject");
             // b.rs is staged: the worker sends the new status.
             snap.status.unstaged = vec![entry("a.rs"), entry("c.rs")];
             snap.status.staged = vec![entry("b.rs")];
@@ -2746,7 +2660,7 @@ mod tests {
                 rest = timed_texts(&ctx, &mut tab, 2.0 + f64::from(i) * 0.1);
             }
             let (b1, c1) = (painted_at(&rest, "b.rs"), painted_at(&rest, "c.rs"));
-            let composer1 = painted_at(&rest, "Summary");
+            let composer1 = painted_at(&rest, "Subject");
             let (b0, b1, c0, c1) = (
                 b0.expect("b.rs before"),
                 b1.expect("b.rs after"),
@@ -2765,7 +2679,7 @@ mod tests {
             assert_eq!(at(&change, "b.rs"), b0, "b.rs starts where it was");
             assert_eq!(at(&change, "c.rs"), c0, "c.rs starts where it was");
             assert_eq!(
-                painted_at(&change, "Summary"),
+                painted_at(&change, "Subject"),
                 composer0,
                 "the composer does not jump"
             );
@@ -2828,7 +2742,7 @@ mod tests {
         }
         assert_eq!(
             composer_focus(&ctx, &mut tab, Vec::new()).as_deref(),
-            Some("Commit summary")
+            Some("Commit subject")
         );
         composer_focus(
             &ctx,
@@ -2837,7 +2751,7 @@ mod tests {
         );
         assert_eq!(
             composer_focus(&ctx, &mut tab, Vec::new()).as_deref(),
-            Some("Commit description")
+            Some("Commit body")
         );
     }
 

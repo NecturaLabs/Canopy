@@ -226,6 +226,7 @@ impl Op {
                 OpKind::Pop
             }
             Self::CreateBranch { .. } => OpKind::Branch,
+            Self::AddWorktree { .. } => OpKind::Worktree,
             Self::AddRemote { .. } => OpKind::Publish,
             _ => OpKind::Other,
         }
@@ -680,6 +681,8 @@ pub enum OpKind {
     Pop,
     Branch,
     Publish,
+    /// `git worktree add`: its result goes back to the New worktree dialog that asked for it.
+    Worktree,
     Other,
 }
 

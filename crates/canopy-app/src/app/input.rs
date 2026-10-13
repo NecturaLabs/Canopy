@@ -34,6 +34,14 @@ impl CanopyApp {
                 // An open menu is the topmost layer: it takes this Escape and closes itself.
                 return (overlay || search_open) && !menu_open;
             }
+            // Zoom works on every screen, so a dialog's text can be enlarged before answering it,
+            // and Ctrl+Q quits as the window's close button does.
+            if matches!(
+                b.command,
+                Command::ZoomIn | Command::ZoomOut | Command::ZoomReset | Command::Quit
+            ) {
+                return true;
+            }
             if modal {
                 return settings_on_top
                     && b.command == Command::Filter
@@ -610,6 +618,53 @@ mod tests {
         output.textures_delta.clear();
         assert!(left, "the table consumed Shift+F10 before the row saw it");
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// #189: zoom works under a modal (the palette, Settings, a dialog) so its text can be
+    /// enlarged, and Ctrl+Q quits as the window's close button does; commands that act on a
+    /// repository stay blocked there.
+    #[test]
+    fn zoom_and_quit_work_under_a_modal_and_repository_commands_do_not() {
+        use crate::ui::kit::testkit::{frame, key_with};
+        use egui::{Key, Modifiers};
+        for settings_open in [false, true] {
+            let ctx = crate::ui::kit::testkit::ctx();
+            let mut app = test_app();
+            app.tabs
+                .push(test_tab(canopy_core::RepoSnapshot::default()));
+            if settings_open {
+                app.settings_screen =
+                    Some(SettingsScreen::at(settings_screen::Section::Appearance));
+            } else {
+                app.palette.open = true;
+            }
+            let mut press = |k: Key, modifiers: Modifiers| {
+                let mut actions = Vec::new();
+                frame(&ctx, key_with(k, modifiers), |ui| {
+                    app.keyboard(ui.ctx(), &mut actions);
+                });
+                actions
+            };
+            press(Key::Equals, Modifiers::COMMAND);
+            press(Key::Equals, Modifiers::COMMAND);
+            let shift = Modifiers::COMMAND | Modifiers::SHIFT;
+            let fetch = press(Key::F, shift);
+            let quit = press(Key::Q, Modifiers::COMMAND);
+            let zoomed = app.settings.zoom;
+            assert!(zoomed > 1.15, "Ctrl+= zoomed in: {zoomed}");
+            assert!(fetch.is_empty(), "Fetch stays blocked: {fetch:?}");
+            assert!(matches!(quit.as_slice(), [Action::Quit]), "{quit:?}");
+            let mut press = |k: Key, modifiers: Modifiers| {
+                frame(&ctx, key_with(k, modifiers), |ui| {
+                    app.keyboard(ui.ctx(), &mut Vec::new());
+                });
+            };
+            press(Key::Num0, Modifiers::COMMAND);
+            assert!(
+                (app.settings.zoom - 1.0).abs() < f32::EPSILON,
+                "Ctrl+0 reset it"
+            );
+        }
     }
 
     /// review-views-1: the find shortcut reaches Settings' search on the welcome screen too.

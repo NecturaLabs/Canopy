@@ -105,39 +105,46 @@ impl Setting {
         }
     }
 
-    /// Recommendations change neither signing nor line endings, which need an explicit choice.
-    /// `pull.rebase` has none: the pull recommendation is `pull.ff = only` (ADR 0012), and a
-    /// diverged pull then asks Rebase (recommended) or Merge. Neither value of `pull.rebase`
-    /// is better than the other, so no list marks one; see [`Self::recommended_write`].
-    pub fn recommendation(self) -> Option<&'static str> {
+    /// The recommended value of every setting. Line endings follow GitHub's guidance (convert on
+    /// Windows, only on commit elsewhere), signing stays off until the user sets up a key, and an
+    /// SSH key signs once it is on. `pull.rebase` is `false`, so `pull.ff = only` takes effect
+    /// (ADR 0012); a diverged pull then asks Rebase (recommended) or Merge.
+    pub fn recommendation(self) -> &'static str {
         self.recommendation_for(cli::version_number())
     }
 
-    /// What Use recommended writes: the recommendation, and for `pull.rebase` the `false` that
-    /// lets `pull.ff = only` take effect (git lets a configured rebase win over it).
+    /// What Use recommended writes: every recommendation except line endings and signing, which
+    /// stay as the user chose them.
     pub fn recommended_write(self) -> Option<&'static str> {
         match self {
-            Self::PullRebase => Some("false"),
-            _ => self.recommendation(),
+            Self::Autocrlf | Self::CommitSigning | Self::SigningFormat => None,
+            _ => Some(self.recommendation()),
         }
     }
 
     /// Pure metadata for a UI that already received the installed Git version from its worker.
-    pub fn recommendation_for(self, git: Option<(u32, u32)>) -> Option<&'static str> {
+    pub fn recommendation_for(self, git: Option<(u32, u32)>) -> &'static str {
         match self {
-            Self::FetchPruneTags => Some("false"),
-            Self::PullFastForward => Some("only"),
+            Self::FetchPruneTags | Self::PullRebase | Self::CommitSigning => "false",
+            Self::PullFastForward => "only",
             Self::PullAutostash
             | Self::FetchPrune
             | Self::RebaseAutostash
             | Self::MergeAutostash
             | Self::PushFollowTags
-            | Self::SubmoduleRecurse => Some("true"),
-            Self::PushDefault => Some("simple"),
-            Self::ConflictStyle => Some(crate::ConflictStyle::default().value(git)),
-            Self::InitialBranch => Some("main"),
-            Self::CommitCleanup => Some("whitespace"),
-            Self::PullRebase | Self::Autocrlf | Self::CommitSigning | Self::SigningFormat => None,
+            | Self::SubmoduleRecurse => "true",
+            Self::PushDefault => "simple",
+            Self::ConflictStyle => crate::ConflictStyle::default().value(git),
+            Self::InitialBranch => "main",
+            Self::CommitCleanup => "whitespace",
+            Self::Autocrlf => {
+                if cfg!(windows) {
+                    "true"
+                } else {
+                    "input"
+                }
+            }
+            Self::SigningFormat => "ssh",
         }
     }
 }

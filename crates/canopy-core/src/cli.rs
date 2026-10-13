@@ -286,12 +286,21 @@ pub fn userinfo(after: &str, stop: impl Fn(char) -> bool) -> Option<std::ops::Ra
     Some(start..start + at)
 }
 
-/// Logs a finished git command: at debug level always, at warn level when it failed.
+/// Whether `git args…` finished with an answer: success, or `git config` reporting an unset key
+/// (exit 1 with nothing on standard error).
+fn answered(args: &[&str], status: Option<i32>, stderr: &[u8]) -> bool {
+    status == Some(0)
+        || (status == Some(1)
+            && subcommand(args) == "config"
+            && stderr.iter().all(u8::is_ascii_whitespace))
+}
+
+/// Logs a finished git command: at debug level when it answered, at warn level when it failed.
 fn record(args: &[&str], started: Instant, status: Option<i32>, stderr: &[u8]) {
     let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let command = subcommand(args);
     let shown = loggable(args);
-    if status == Some(0) {
+    if answered(args, status, stderr) {
         tracing::debug!(%command, args = ?shown, ms, "git finished");
     } else {
         let text = String::from_utf8_lossy(stderr);
@@ -881,6 +890,31 @@ mod tests {
         assert!(!out.stderr.is_empty(), "git explained nothing");
         let out = run_unchecked(dir.path(), &["--version"]).expect("git runs");
         assert_eq!(out.code, Some(0));
+    }
+
+    /// #196: `git config` exiting 1 with nothing on standard error is how it says a key is unset,
+    /// an answer rather than a failure; a configuration git cannot read still fails loudly.
+    #[test]
+    fn an_unset_config_key_is_an_answer_not_a_failure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        run(dir.path(), &["init", "-q"]).expect("init");
+        let get = ["config", "--get", "--", "canopy.unsetKey"];
+        let unset = command(Some(dir.path()))
+            .args(get)
+            .output()
+            .expect("git config");
+        assert_eq!(unset.status.code(), Some(1));
+        assert!(answered(&get, unset.status.code(), &unset.stderr));
+
+        std::fs::write(dir.path().join(".git").join("config"), "[broken\n").expect("break config");
+        let broken = command(Some(dir.path()))
+            .args(get)
+            .output()
+            .expect("git config");
+        assert!(!broken.status.success() && !broken.stderr.is_empty());
+        assert!(!answered(&get, broken.status.code(), &broken.stderr));
+        // Exit 1 from anything else is still a failure.
+        assert!(!answered(&["fetch", "origin"], Some(1), b""));
     }
 
     #[test]

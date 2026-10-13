@@ -53,6 +53,12 @@ fn credential_refused(message: &str) -> bool {
     message.starts_with("The server refused the request (check the access token")
 }
 
+/// Whether `message`, a hosting error's text, is the server not being reached
+/// (`canopy_hosting::Error::Network`): no token would change that.
+pub(crate) fn host_unreachable(message: &str) -> bool {
+    message.starts_with("Could not reach the server: ")
+}
+
 /// How the history list and selected commit share the content area.
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryLayout {
@@ -168,6 +174,8 @@ pub struct Resolver {
     pub show_base: bool,
     /// Measured heights of the resolver's blocks, so off-screen ones are skipped.
     pub layout: crate::views::resolve::Layout,
+    /// What the current side is called when git labels it only `HEAD`: the checked-out branch.
+    pub current: Option<String>,
 }
 
 impl Resolver {
@@ -183,6 +191,7 @@ impl Resolver {
             expanded: HashSet::new(),
             show_base: false,
             layout: crate::views::resolve::Layout::default(),
+            current: None,
         }
     }
 
@@ -530,6 +539,7 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
         }
         OpKind::Push
         | OpKind::Other
+        | OpKind::Worktree
         | OpKind::Squash(_)
         | OpKind::SafeDelete(_)
         | OpKind::Merge
@@ -742,10 +752,14 @@ pub struct Requests {
     pub refresh: RefreshTimer,
     /// The host holds requests after the pages loaded.
     pub more: bool,
-    /// How many pages of the list are loaded (the first, then one per "Load more").
+    /// How many pages of the list are loaded (the first, then one per page the end of the list
+    /// asked for).
     pub pages: usize,
     /// A page after the first is on its way.
     pub loading_more: bool,
+    /// The newest page after the first failed: the end of the list stops asking until the next
+    /// load of the first page.
+    pub more_failed: bool,
     /// The rows of the pages after the first, as they arrived; a reload of the first page keeps
     /// them, a reload the user asked for drops them.
     tail: Vec<RequestSummary>,
@@ -788,6 +802,7 @@ impl Default for Requests {
             more: false,
             pages: 1,
             loading_more: false,
+            more_failed: false,
             tail: Vec::new(),
             query: RequestQuery::default(),
             truncated: None,
@@ -1037,6 +1052,9 @@ pub struct RepoTab {
     /// Hint at a commit message that is too wide (from the settings; set each frame the
     /// Changes view is drawn).
     pub check_message: bool,
+    /// Settings' calendar date format for absolute dates drawn from the tab (blame); set each
+    /// frame.
+    pub iso_dates: bool,
     pub filter: String,
     pub filtered: Option<Vec<usize>>,
     pub filter_for: String,
@@ -1073,6 +1091,9 @@ pub struct RepoTab {
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
+    /// How the last `git worktree add` went, for the New worktree dialog (git's words when it
+    /// refused); the app shows a refusal there, or in a toast once the dialog is gone.
+    pub worktree_result: Option<Result<(), String>>,
     /// Where a force push would go, once the repository thread has worked it out: the app asks
     /// before pushing.
     pub force_push_offer: Option<canopy_core::PushTarget>,
@@ -1190,6 +1211,7 @@ impl RepoTab {
             split_diff: false,
             highlight_diff: true,
             check_message: true,
+            iso_dates: false,
             filter: String::new(),
             filtered: None,
             filter_for: String::new(),
@@ -1212,6 +1234,7 @@ impl RepoTab {
             template_loaded: false,
             pull_config_branch: None,
             force_delete_offer: None,
+            worktree_result: None,
             force_push_offer: None,
             pull_decision: None,
             progress: None,
@@ -1590,6 +1613,7 @@ impl RepoTab {
             self.requests.loading_more = false;
             self.requests.search_due = None;
             self.requests.query = self.wanted_query();
+            self.requests.more_failed = false;
             self.host_job(HostJob::List(self.list_key()));
             // Refreshing the rows must refresh the open request's body and action state too.
             // Otherwise a manual refresh leaves its details stale until another selection.
@@ -1609,6 +1633,7 @@ impl RepoTab {
             return;
         }
         self.requests.loading_more = true;
+        self.requests.more_failed = false;
         self.host_job(HostJob::ListMore(
             self.list_key(),
             self.requests.pages + 1,
@@ -2636,6 +2661,9 @@ impl RepoTab {
                                 self.worker.send(Job::SquashMessage(target.clone()));
                                 self.view = View::Changes;
                             }
+                            if kind == OpKind::Worktree {
+                                self.worktree_result = Some(Ok(()));
+                            }
                             if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
                                 self.auto_fetch_failure = None;
@@ -2674,6 +2702,7 @@ impl RepoTab {
                             OpKind::SafeDelete(name) if e.contains("not fully merged") => {
                                 self.force_delete_offer = Some(name.clone());
                             }
+                            OpKind::Worktree => self.worktree_result = Some(Err(e)),
                             // An automatic fetch that fails the way it failed last time (the
                             // folder is not trusted, the server is down) says so once.
                             OpKind::Fetch
@@ -2821,7 +2850,9 @@ impl RepoTab {
                     if key == self.list_key() {
                         match result {
                             Ok((rows, more)) => {
-                                if page == self.requests.pages + 1 && self.requests.loading_more {
+                                let asked =
+                                    page == self.requests.pages + 1 && self.requests.loading_more;
+                                if asked {
                                     self.requests.pages = page;
                                     self.requests.more = more;
                                     self.requests.cursor = cursor;
@@ -2837,6 +2868,7 @@ impl RepoTab {
                             }
                             Err(e) => {
                                 self.requests.loading_more = false;
+                                self.requests.more_failed = true;
                                 notices.push(Notice {
                                     ok: false,
                                     title: format!(
@@ -2870,6 +2902,7 @@ impl RepoTab {
                         self.requests.loaded_at = Some(Instant::now());
                         self.requests.refresh.in_flight = false;
                         if result.is_ok() {
+                            self.requests.more_failed = false;
                             self.requests.refresh.failures = 0;
                             self.requests.refresh.failed_at = None;
                             self.requests.refresh.held_until = None;
@@ -4720,6 +4753,31 @@ mod tests {
         Ok(())
     }
 
+    /// #193: git's refusal to add a worktree goes to the dialog that asked (through the app), not
+    /// straight to a toast; a success still says so.
+    #[test]
+    fn a_worktree_refusal_is_kept_for_its_dialog() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let finished = |result: Result<&str, &str>| Event::OpFinished {
+            label: "Adding a worktree for topic".into(),
+            kind: OpKind::Worktree,
+            announce: true,
+            result: result.map(str::to_owned).map_err(str::to_owned),
+        };
+        let refusal = "fatal: '/work/busy' already exists";
+        events.send(finished(Err(refusal)))?;
+        assert!(tab.poll(&[]).is_empty(), "no toast of its own");
+        assert_eq!(tab.worktree_result.take(), Some(Err(refusal.to_owned())));
+        events.send(finished(Ok("Added a worktree")))?;
+        assert_eq!(tab.poll(&[]).len(), 1);
+        assert_eq!(tab.worktree_result, Some(Ok(())));
+        Ok(())
+    }
+
     #[test]
     fn an_unmerged_branch_is_offered_for_a_forced_delete() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -5703,6 +5761,55 @@ mod tests {
             "Request 2",
             "the loaded rows are filtered here"
         );
+        Ok(())
+    }
+
+    /// #197: a failed page stops the end of the list from asking again until the first page
+    /// loads again.
+    #[test]
+    fn a_failed_page_waits_for_the_next_load_of_the_list() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::hosting::HostEvent;
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            return Err("no host".into());
+        };
+        let (host, host_events, _jobs) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        drop(host_jobs);
+        tab.load_requests();
+        host_events.send(HostEvent::More {
+            key: StateFilter::Open.into(),
+            more: true,
+            cursor: None,
+        })?;
+        host_events.send(HostEvent::List(
+            StateFilter::Open.into(),
+            Ok(vec![listed(3, 30)]),
+        ))?;
+        tab.poll(&[]);
+
+        tab.load_more_requests();
+        host_events.send(HostEvent::Page {
+            key: StateFilter::Open.into(),
+            page: 2,
+            result: Err("Bad Gateway".into()),
+            cursor: None,
+        })?;
+        tab.poll(&[]);
+        assert!(tab.requests.more_failed && !tab.requests.loading_more);
+        assert!(tab.requests.more, "the host still holds more");
+
+        // The timed refresh of the first page lets the end of the list ask again.
+        tab.refresh_requests_quietly();
+        host_events.send(HostEvent::List(
+            StateFilter::Open.into(),
+            Ok(vec![listed(3, 30)]),
+        ))?;
+        tab.poll(&[]);
+        assert!(!tab.requests.more_failed);
         Ok(())
     }
 

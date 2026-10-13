@@ -13,7 +13,7 @@ use crate::ui::kit::overlay::{Layer, ground};
 use crate::ui::kit::row::{ListRow, RowKind};
 use crate::ui::kit::toggle::Checkbox;
 use crate::ui::theme::palette;
-use crate::ui::widgets::absolute_date;
+use crate::ui::widgets::{absolute_date, split_path};
 use crate::views::commit_detail::virtual_rows;
 use canopy_core::{ChangeHit, ChangeSearch};
 use egui_phosphor::regular as icon;
@@ -120,15 +120,16 @@ fn list(ui: &mut Ui, found: &ChangeSearch) -> Option<ChangeHit> {
         .show(ui, |ui| {
             virtual_rows(ui, found.hits.len(), RowKind::File.height(), |ui, i| {
                 let hit = &found.hits[i];
-                let detail = format!("{} · {}", hit.author, absolute_date(hit.time));
+                // The file name and date stay whole; the folder and author are in the tooltip.
+                let (name, _) = split_path(&hit.path);
                 let row = ListRow::new(("search-changes", hit.oid, &hit.path))
                     .kind(RowKind::File)
                     .icon(icon::GIT_COMMIT)
                     .label(&hit.summary)
-                    .detail(format!("{} · {detail}", hit.path))
+                    .detail(format!("{name} · {}", absolute_date(hit.time)))
                     .whole_detail()
                     .trailing(canopy_core::short_id(hit.oid))
-                    .tooltip(hit.path.clone())
+                    .tooltip(format!("{}\n{} · {}", hit.summary, hit.path, hit.author))
                     .ground(ground)
                     .show(ui);
                 if row.clicked() {

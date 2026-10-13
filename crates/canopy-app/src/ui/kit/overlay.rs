@@ -719,6 +719,7 @@ impl TooltipExt for Response {
             at_pointer: false,
             extra: false,
             unavailable: false,
+            always: false,
         }
     }
 }
@@ -738,6 +739,7 @@ pub struct Tooltip {
     at_pointer: bool,
     extra: bool,
     unavailable: bool,
+    always: bool,
 }
 
 /// How far above and below the pointer a pointer-placed tooltip may still sit against the control
@@ -802,6 +804,13 @@ impl Tooltip {
         self
     }
 
+    /// The control only shows this tooltip (a help mark): shown at every level, and while the
+    /// control has keyboard focus as well as on hover.
+    pub fn always(mut self) -> Self {
+        self.always = true;
+        self
+    }
+
     pub fn show(self) -> Response {
         let Self {
             response,
@@ -811,8 +820,9 @@ impl Tooltip {
             at_pointer,
             extra,
             unavailable,
+            always,
         } = self;
-        if !tooltip_shows(tooltip_level(), response.enabled() && !unavailable, extra) {
+        if !always && !tooltip_shows(tooltip_level(), response.enabled() && !unavailable, extra) {
             return response;
         }
         let mut tip = if response.enabled() {
@@ -820,6 +830,11 @@ impl Tooltip {
         } else {
             egui::containers::Tooltip::for_disabled(&response)
         };
+        if always {
+            let open = response.has_focus()
+                || egui::containers::Tooltip::should_show_tooltip(&response, true);
+            tip.popup = tip.popup.open(open);
+        }
         tip.popup = tip
             .popup
             .frame(Frame::NONE)

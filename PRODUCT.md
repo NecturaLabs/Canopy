@@ -80,6 +80,7 @@ from a tiled half-screen (minimum 900×560) to 4K, at interface zoom up to 160%.
 
 ## Accessibility & Inclusion
 
-Contrast targets are enforced by tests for every theme (text 7:1, secondary text 4.5:1, controls
-and graph lanes 3:1), including High contrast on every theme. Reduce motion is a setting.
+Contrast targets are enforced by tests for every theme (text 7:1, secondary text 4.5:1, focus
+rings, checkbox rims and graph lanes 3:1), including High contrast on every theme, which also gives
+text fields a 4.5:1 outline. Reduce motion is a setting.
 Custom-drawn controls carry AccessKit names; a full screen-reader pass (Orca) is still open.

@@ -4,7 +4,7 @@
 //! the 72 characters git tooling conventionally wraps at, which most history views, mail
 //! clients and terminals show in full.
 
-/// The most characters a summary or a description line should have.
+/// The most characters a subject or a body line should have.
 pub const LIMIT: usize = 72;
 
 /// Something a commit message does that tools commonly cut off or wrap badly.
@@ -33,17 +33,15 @@ impl Problem {
     pub fn describe(&self) -> String {
         match *self {
             Self::SummaryTooLong { chars } => {
-                format!("Summary is {chars} characters; {LIMIT} is the most tools show.")
+                format!("Subject is {chars} characters; {LIMIT} is the most tools show.")
             }
             Self::DescriptionTooWide {
                 lines: 1,
                 first,
                 chars,
-            } => format!("Description line {first} is {chars} characters; wrap it at {LIMIT}."),
+            } => format!("Body line {first} is {chars} characters; wrap it at {LIMIT}."),
             Self::DescriptionTooWide { lines, first, .. } => {
-                format!(
-                    "{lines} description lines pass {LIMIT} characters; the first is line {first}."
-                )
+                format!("{lines} body lines pass {LIMIT} characters; the first is line {first}.")
             }
         }
     }
@@ -143,7 +141,7 @@ mod tests {
     #[test]
     fn a_summary_over_the_limit_says_how_long_it_is() {
         let text = check(&words(80), "")[0].describe();
-        assert_eq!(text, "Summary is 80 characters; 72 is the most tools show.");
+        assert_eq!(text, "Subject is 80 characters; 72 is the most tools show.");
     }
 
     #[test]
@@ -220,7 +218,7 @@ mod tests {
         };
         assert_eq!(
             one.describe(),
-            "Description line 4 is 85 characters; wrap it at 72."
+            "Body line 4 is 85 characters; wrap it at 72."
         );
         let many = Problem::DescriptionTooWide {
             lines: 3,
@@ -229,7 +227,7 @@ mod tests {
         };
         assert_eq!(
             many.describe(),
-            "3 description lines pass 72 characters; the first is line 2."
+            "3 body lines pass 72 characters; the first is line 2."
         );
     }
 }

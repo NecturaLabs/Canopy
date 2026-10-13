@@ -285,7 +285,7 @@ unavailable, cut-off text, shortcuts, and details such as full dates, addresses 
 tooltip that only describes a labelled control (a kit button, toggle, field or chip with its name
 on screen and no shortcut) or says how to use something is `Tooltip::extra` and shows only at
 All. Every level, Off included, shows why a control is unavailable, also for kit buttons that
-draw themselves disabled. A truncated label's tooltip shows only when
+draw themselves disabled, and a help mark's explanation (`Tooltip::always`). A truncated label's tooltip shows only when
 the label is actually cut.
 
 A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
@@ -426,9 +426,10 @@ in the density's metrics:
   one column without the empty line-number column (the layout switch shows disabled on Unified,
   its tooltip saying why), and
   its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
-  A line wider than the pane fades out at the edge. The hint "Click lines to pick part of a hunk"
-  shows on a hunk header only when it fits beside the whole hunk title; otherwise the title shows
-  alone, so the two never overlap.
+  A line wider than the pane fades out at the edge. A hunk header shows its title and actions
+  only; how to pick lines is in the Stage hunk and Unstage hunk tooltips.
+- The diff header names the file with its folder and its +/− count on the left; the diff
+  options, layout switch, Blame and the file's action keep to the right edge.
 - Conflict side previews (no line numbers) drop the indentation their lines share, and a line
   too long for the card is cut back to a word or number boundary before its ellipsis, so a number
   is never cut in two, unless that would lose more than a quarter of what fits. A file both sides
@@ -439,25 +440,27 @@ in the density's metrics:
   State and conflict count precede Continue; unresolved conflicts or active work disable it.
   Abort is separated and confirmed. The merge composer says Conclude merge and starts with
   Git's pending message when no draft exists.
-- Changes list headers: "Stage all" and "Unstage all" are small kit buttons (`Size::Sm`); the
-  Unstaged header adds "Stage selected" immediately to the right of "Stage all" (disabled unless an
-  unstaged file is selected). Ctrl-click toggles and Shift-click extends a selection of several
-  unstaged files from the open one (`RepoTab::marked`, the kit's `Selection` rules); Stage
-  selected, Space and the row menu stage all of them, and any plain selection drops the rest. Narrow columns drop Stage selected's label first, then Stage all's.
-  The diff header has no Stage file button: staging a file is that button, the row's action and
-  Space. Discard
+- Changes list headers: "Stage all" and "Unstage all" are small ghost buttons (`Size::Sm`).
+  Ctrl-click toggles and Shift-click extends a selection of several unstaged files from the open
+  one (`RepoTab::marked`, the kit's `Selection` rules); the Unstaged header then adds "Stage N
+  files" to the right of Stage all (which becomes its icon), and that button, a picked row's
+  Stage button, Space and the row menu stage all of them. Any plain selection drops the rest.
+  Narrow columns show both as icons. The diff header has no Stage file button: one file is
+  staged from its row, its menu or Space. Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
 - The disabled primary button is flat with a hairline outline and faint text in every theme, never
-  the primary fill. When the commit button is disabled for a reason its label does not give, a line
-  above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
-- The commit button never cuts its label in a narrow column (a small window at a large zoom): it
-  drops its keys first (they stay in its tooltip), then the branch, then the file count ("Commit
-  2 files to main", "Commit 2 files", "Commit"); screen readers still hear the whole label.
-- The commit composer follows the file lists while both fit the column, under a hairline, and
-  pins to the bottom with the lists scrolling above it only when they would crowd it (about
-  260 points of composer). Row actions (stage, unstage, mark resolved) show on the selected row
+  the primary fill. When the commit button is disabled for a reason its label does not give, its
+  tooltip and accessible description say so ("Write a subject to commit", "Resolve the conflicts
+  to commit").
+- The commit button shows no keys (Ctrl+Enter is in its tooltip) and never cuts its label in a
+  narrow column (a small window at a large zoom): it drops the branch, then the file count
+  ("Commit 2 files to main", "Commit 2 files", "Commit"); screen readers still hear the whole
+  label.
+- The commit composer has no heading: it is pinned to the bottom of the column under a hairline,
+  as tall as its fields, Amend last commit and the button need, and the lists scroll above it
+  (they keep up to 60% of the column, so the composer's fields scroll in a short one). Row actions (stage, unstage, mark resolved) show on the selected row
   and under the pointer on any row. Changes and commit details draw file rows the same way
   (`commit_detail::file_list_row_with`); a conflicted file's action is a labelled ghost
   "Resolve conflicts…".
@@ -465,9 +468,11 @@ in the density's metrics:
   design spec's Commit / Commit and push `SplitButton`, and Amend last commit is a plain
   `Checkbox` with no indeterminate state. Both kit components exist; the composer does not use
   them yet.
-- Conflict cards: the two "Keep this version" buttons are the card's main choices (Secondary);
-  "Both: current first", "Both: incoming first", "Ancestor" and "Edit" are Ghost until chosen. A
-  chosen option shows a check. The resolver footer's "Save resolved file" is the one Primary.
+- Conflict cards: each side is headed "Current (branch)" or "Incoming (branch)". Accept current
+  and Accept incoming are the card's main choices (Secondary); "Accept both (current first)",
+  "Accept both (incoming first)", "Accept ancestor" and "Edit" are Ghost until chosen. A chosen
+  option shows a check. The resolver footer holds only its buttons; "Save resolved file" is the
+  one Primary.
 - Without a GitHub or GitLab remote, Requests offers Publish… (no remote at all) or Add remote…
   (remotes elsewhere) under its empty-state illustration.
 - A clean working tree uses one kit `EmptyState` across the main pane, with the clean
@@ -535,9 +540,13 @@ opening with the mouse as well as from the keyboard, and the highlighted option 
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
 
-A select can mark one option with the kit's Recommended badge; its accessible description
-announces the recommendation without repeating the option name. The list reserves room for the
+A select can mark one option with the kit's Recommended badge, and then lists it first; its
+accessible description announces the recommendation without repeating the option name. The list reserves room for the
 badge and check, truncating only the painted label while keeping its full accessible name.
+
+Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
+open and closed; app-launcher selects stop at the 280-pixel text-field width. Number fields are
+120 pixels and the first-branch field 160, so a control is never much wider than what it holds.
 Repository selects show the effective value once. Explicit selection pins even the current value;
 only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
 controls name their setting. Context lines and whitespace are one saved diff preset, with one
@@ -577,15 +586,14 @@ The rest of the kit, each with the states `--overlay gallery` shows:
 ### Text field
 
 `kit::field` draws every text input (single-line, search, secret, numeric and the commit composer);
-no view uses egui's `TextEdit` directly. The placeholder reads at 4.5:1 and the field's bottom edge
-and well at 3:1 (4.5:1 at high contrast) on every surface, tested per theme, style and contrast; the
-look is cached per palette, so a high contrast or custom theme never reuses its base theme's. In a
-dark theme the well is a faint lift of the surface; in a light theme it is a plate as light as the
-lightest surface, so a field never reads as a disabled control. The summary's character count shows
-once something is typed. The commit summary and description are one message box: two fields stacked with
-square corners at the seam (`Join`), the description's top edge being the summary's bottom edge; their
-placeholders are the short names ("Summary", "Description (optional)"), and the commit button says
-what is missing. Focus
+no view uses egui's `TextEdit` directly. The placeholder reads at 4.5:1 on every surface. At rest
+the edge is a hairline as quiet as the buttons' and selects' edges, just enough to trace the well
+(1.5:1); High contrast restores an input outline of 4.5:1. Both are tested per theme, style and
+contrast, and the look is cached per palette, so a high contrast or custom theme never reuses its
+base theme's. In a dark theme the well is a faint lift of the surface; in a light theme it is a
+plate as light as the lightest surface, so a field never reads as a disabled control. The commit
+message is two separate fields named as git names the parts, "Subject" and "Body"; the subject's
+character count shows once something is typed, and the commit button says what is missing. Focus
 shows a ring for keyboard and pointer alike; the borderless search of the palette and the
 cheatsheet, which has no box, turns the 2 pt line under it to the focus colour. An error is message text with an icon under the field,
 announced as invalid with the message as its description, and never shows before the user typed.
@@ -850,8 +858,8 @@ content changes, using the theme's metadata size and subdued text colour.
 ### Git identity
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings
-rows: Name and Email, each with a text field and, as its help text, what Git uses now and where it
-comes from ("In use now: Ada (global: ~/.gitconfig)"); a Committer row only when the committer
+rows: Name and Email, each with a text field and a note mark saying where Git takes the value from
+("From your global git config (~/.gitconfig)."); a Committer row only when the committer
 differs; a "Save to" choice between this repository and all repositories (only with a repository
 open); Save identity, which stays disabled until both fields have text; and Clear…, which asks first
 in a `danger` confirmation. A `warning` line with the warning icon sits above the rows when Git
@@ -879,10 +887,13 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
 ### Git configuration editing
 
 The Git page edits the main global Git file; This repository edits its common local Git file.
-Rows use the existing Select/TextField and row layout, with the configured value, scope and
-source below the help. Enumerated values have one option each; unsupported configured values
-remain visible as text. Recommendations are badges, never a reason to lock a control. Unset and
-Inherit remove the direct override, leaving includes and higher-priority scopes intact. The
+Rows use the existing Select/TextField and row layout, with where a value is set in a note mark,
+named by scope and path ("your global git config (~/.gitconfig)"), or by path alone for an
+included file. An unset row's select reads "Value (Recommended)", or just the value Git uses where Canopy
+leaves the choice to Git. Enumerated values have one option each; unsupported configured values
+remain visible as text. Recommendations are badges, never a reason to lock a control. A global
+value is changed, never cleared; a repository's own value has the reset button, which removes the
+override and leaves includes and higher-priority scopes intact. The
 first-branch field requires Save and validates before writing. Writes temporarily disable the
 editor, then reread facts and show success or Git's error. Use recommended confirms its global
 scope and preserves signing, hooks, identity and line endings.
@@ -894,14 +905,21 @@ replaces the left navigation below 720 points. Below 620 points of content width
 label and help sit above its controls. Shortcut descriptions and keycaps stack when they cannot
 fit together. Zoom shows a percentage preview while dragging and applies
 on release, so the control stays under the pointer; typing a percentage applies on Enter or
-when the field loses focus. A row's label column is always half the width, so controls of different
-rows line up on the right however short their help text is.
+when the field loses focus. A row's label column takes the room its control and reset button leave,
+at least half the row and at most 640 points; controls of every row line up on the right.
 
-A row's help is one sentence; longer explanation sits behind a "More" link and opens beneath the
-row at reading width (560 points). Settings → Keyboard shows one key column of the cheatsheet's
+Every row has help of one plain sentence that fits on one line at the usual window size (a test
+renders every page and fails on a wrapped one), and names settings by their labels, never by git
+keys or flags. A longer explanation sits in a help mark (`HelpMark`, a faint "?" at `icon_md`
+right after the title, `XS` apart) whose tooltip shows on hover and on keyboard focus at every
+Tooltips level; screen readers hear it as the mark's description. A remark about the row's current
+state (where git sets the value, why profile pictures are missing, a signing problem) is a second
+mark beside it, `HelpMark::notice`: an info glyph in `text_faint`, or a warning glyph in `warning`
+for a problem, announced as "Note on …" or "Warning on …"; it never adds a line under the help, and
+an action it suggests is a ghost button among the row's controls. Settings → Keyboard shows one key column of the cheatsheet's
 keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo
 and a tick; hover is a neutral hairline. Cards fill the row in whole columns and reflow with the
-width, using a 180-point minimum so the theme name and default/dark/light caption stay apart. Text-field placeholders are italic and faint, and fields in a section share one width.
+width, using a 180-point minimum so the theme name and Recommended/Dark/Light caption stay apart. Text-field placeholders are italic and faint, and fields in a section share one width.
 Long paths in settings are cut in the middle with the whole path in a tooltip.
 
 Browse opens the native folder chooser on a background thread. The requesting button displays

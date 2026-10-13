@@ -587,6 +587,11 @@ fn header(
         ))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
+            let stat = tab
+                .diff
+                .as_deref()
+                .filter(|d| !gitlink && !d.too_large)
+                .map(|d| (d.additions, d.deletions));
             let identity = |ui: &mut Ui| {
                 ChangeBadge::new(sel.entry.kind).show(ui);
                 let (name, dir) = widgets::split_path(&sel.entry.path);
@@ -620,6 +625,9 @@ fn header(
                     .kit_tooltip(old)
                     .show();
                 }
+                if let Some((added, removed)) = stat {
+                    DiffStat::new(added, removed).show(ui);
+                }
             };
             let mut controls = |ui: &mut Ui| {
                 if !gitlink {
@@ -630,11 +638,6 @@ fn header(
                             .as_deref()
                             .is_some_and(|d| gutters(d) != (true, true));
                         layout_toggle(ui, tab.split_diff, one_column, single_row, actions);
-                    }
-                    if let Some(d) = &tab.diff
-                        && !d.too_large
-                    {
-                        DiffStat::new(d.additions, d.deletions).show(ui);
                     }
                     if Button::new("Blame")
                         .secondary()
@@ -668,8 +671,8 @@ fn header(
                             actions.push(Action::Op(Op::Stage(vec![path])));
                         }
                     }
-                    // Staging an unstaged file is "Stage selected" in the list header, the row's
-                    // action and Space, and a commit's files have no action.
+                    // An unstaged file is staged from its row, its menu or Space, and a
+                    // commit's files have no action.
                     (DiffSource::Unstaged, false) | (DiffSource::Commit(_), _) => {}
                     (DiffSource::Staged, false) => {
                         if file_action("Unstage file", icon::MINUS).show(ui).clicked() {
@@ -684,13 +687,13 @@ fn header(
                     // grows while they wrap and settles on what they use, so a font
                     // or button change needs no new guess. The numbers are only the first one.
                     let width_id = ui.id().with("diff-controls-width");
-                    let controls_width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(
-                        if matches!(sel.source, DiffSource::Commit(_)) {
+                    let learnt = ui.data(|d| d.get_temp::<f32>(width_id));
+                    let controls_width =
+                        learnt.unwrap_or(if matches!(sel.source, DiffSource::Commit(_)) {
                             280.0
                         } else {
                             400.0
-                        },
-                    );
+                        });
                     let identity_width =
                         (ui.available_width() - controls_width - theme::SM).max(0.0);
                     ui.allocate_ui_with_layout(
@@ -701,6 +704,11 @@ fn header(
                             identity(ui);
                         },
                     );
+                    // Once their width is known the controls keep to the right edge, with a little
+                    // slack so a rounding difference never wraps them.
+                    if learnt.is_some() {
+                        ui.add_space((ui.available_width() - controls_width - theme::SM).max(0.0));
+                    }
                     let laid_out = ui.horizontal_wrapped(controls).response.rect;
                     let learnt = if laid_out.height() > m.control_sm * 1.5 {
                         controls_width + 40.0
@@ -933,8 +941,8 @@ fn spoken_line(line: &DiffLine, marker: bool) -> String {
     }
 }
 
-/// The first hunk's note on picking lines.
-const PICK_HINT: &str = "Click lines to pick part of a hunk";
+/// How to act on part of a hunk, in the tooltip of its Stage or Unstage button.
+const PICK_HINT: &str = "Click lines to pick part of the hunk.";
 
 /// Width of the mark at the left of a picked line.
 const PICKED_MARK: f32 = 4.0;
@@ -1121,11 +1129,16 @@ fn hunk_header(
             }
             b.show(&mut row)
         } else {
+            let tip = if n == 0 && !danger {
+                format!("{label}. {PICK_HINT}")
+            } else {
+                label.clone()
+            };
             let mut b = Button::new(label.as_str())
                 .ghost()
                 .size(Size::Sm)
                 .icon(glyph)
-                .tooltip(label.as_str())
+                .tooltip(tip)
                 .id_salt(salt);
             if let Some(t) = tone {
                 b = b.icon_tone(t);
@@ -1190,21 +1203,6 @@ fn hunk_header(
     };
     let title_left = visible_left + 12.0;
     let title_room = bx - theme::SM - title_left;
-    // The first hunk explains line picking, but only where the whole title leaves room for it:
-    // the hint never paints over the title.
-    let hint = (n == 0 && h == 0)
-        .then(|| {
-            ui.painter()
-                .layout_no_wrap(PICK_HINT.to_owned(), note_font.clone(), p.text_faint)
-        })
-        .filter(|hint| {
-            let title_w = ui
-                .painter()
-                .layout_no_wrap(hunk.header.clone(), coordinates.clone(), p.text_faint)
-                .size()
-                .x;
-            title_w + theme::LG + hint.size().x <= title_room
-        });
     let header = widgets::single_line_galley(
         ui,
         hunk.header.clone(),
@@ -1217,16 +1215,6 @@ fn hunk_header(
         header,
         p.text_faint,
     );
-    if let Some(hint) = hint {
-        ui.painter().galley(
-            pos2(
-                bx - 6.0 - hint.size().x,
-                band.center().y - hint.size().y / 2.0,
-            ),
-            hint,
-            p.text_faint,
-        );
-    }
 }
 
 /// The diff options popover's open state, and the popup id `--overlay diff-options` opens.
@@ -2012,17 +2000,14 @@ mod tests {
         assert!(!texts.iter().any(|t| t.contains("Stage hunk")), "{texts:?}");
     }
 
-    /// QVIS-1: the "Click lines" hint never paints over a long hunk title; it shows only where
-    /// the whole title leaves room for it.
+    /// QVIS-1: a hunk header shows its title and its actions only (line picking is explained in
+    /// the Stage hunk tooltip), and a long title never runs under the actions.
     #[test]
-    fn the_pick_hint_never_overlaps_the_hunk_title() {
+    fn the_hunk_title_never_runs_under_its_actions() {
         let ctx = themed();
-        for (header, hint_expected) in [
-            ("@@ -1,2 +1,2 @@", true),
-            (
-                "@@ -15,3 +15,4 @@ Set TIDEPOOL_DATA to choose where pastes are stored (default: ./data).",
-                false,
-            ),
+        for header in [
+            "@@ -1,2 +1,2 @@",
+            "@@ -15,3 +15,4 @@ Set TIDEPOOL_DATA to choose where pastes are stored (default: ./data). Then restart the server so it reads the folder again.",
         ] {
             let d = FileDiff {
                 hunks: vec![Hunk {
@@ -2073,17 +2058,19 @@ mod tests {
                 .find(|(t, _)| t.starts_with("@@"))
                 .map(|(_, r)| *r)
                 .expect("the hunk title");
-            let hint = texts
+            assert!(
+                !texts.iter().any(|(t, _)| t.starts_with("Click lines")),
+                "{header}: {texts:?}"
+            );
+            let stage = texts
                 .iter()
-                .find(|(t, _)| t.starts_with("Click lines"))
-                .map(|(_, r)| *r);
-            assert_eq!(hint.is_some(), hint_expected, "{header}: {texts:?}");
-            if let Some(hint) = hint {
-                assert!(
-                    title.right() < hint.left(),
-                    "title {title:?} overlaps hint {hint:?}"
-                );
-            }
+                .find(|(t, _)| t == "Stage hunk")
+                .map(|(_, r)| *r)
+                .expect("Stage hunk");
+            assert!(
+                title.right() < stage.left(),
+                "title {title:?} runs under {stage:?}"
+            );
         }
     }
 

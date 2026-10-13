@@ -40,7 +40,7 @@ pub mod toggle;
 #[cfg(test)]
 pub(crate) mod testkit;
 
-pub use button::{Button, ButtonKind, IconButton, ToolButton};
+pub use button::{Button, ButtonKind, HelpMark, IconButton, ToolButton};
 
 use egui::{Color32, Id, Response};
 
