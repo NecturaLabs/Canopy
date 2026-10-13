@@ -495,6 +495,11 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 .iter()
                 .find(|(at, _)| *at == i)
                 .map(|(_, c)| *c);
+            let r = if ok {
+                r
+            } else {
+                r.on_hover_cursor(egui::CursorIcon::NotAllowed)
+            };
             tip_for(r, ok, tip, reason, shortcut, named);
         }
         let mut group = ui.interact(track, group_id, Sense::hover());
