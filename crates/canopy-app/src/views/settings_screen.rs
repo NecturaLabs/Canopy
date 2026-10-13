@@ -5115,22 +5115,24 @@ fn accounts<'f>(
     changed
 }
 
-/// The status line under "Download profile pictures": why the open repository's authors show
-/// initials, and the way to Accounts when a token would fix it.
 /// What the user agreed to: the Terms and the Privacy Policy accepted, and the crash report
 /// answer, with the way to change it. Reading a document here accepts nothing.
 fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
     use crate::ui::legal::{Document, PRIVACY_VERSION, TERMS_VERSION};
     let p = palette(ui.ctx());
     heading(ui, "Consent");
-    let status = |accepted: &str, current: &str| {
+    let status = |accepted: &str, current: &str, document: Document| {
         if accepted == current {
-            format!("You accepted this version (last updated {current}).")
+            format!(
+                "You accepted this version (last updated {}).",
+                document.updated()
+            )
         } else if accepted.is_empty() {
             "Not accepted yet. Canopy asks before it contacts any server.".to_owned()
         } else {
             format!(
-                "You accepted the version of {accepted}; it was updated on {current}. Canopy asks you to accept the new one when it starts."
+                "You accepted the version of {accepted}; it was updated on {}. Canopy asks you to accept the new one when it starts.",
+                document.updated()
             )
         }
     };
@@ -5139,7 +5141,7 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
             Document::Terms,
             "Terms of Service",
             "",
-            status(&s.accepted_terms, TERMS_VERSION),
+            status(&s.accepted_terms, TERMS_VERSION, Document::Terms),
             icon::SCROLL,
             "read-terms",
         ),
@@ -5147,7 +5149,7 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
             Document::Privacy,
             "Privacy Policy",
             "What Canopy collects and your rights.",
-            status(&s.accepted_privacy, PRIVACY_VERSION),
+            status(&s.accepted_privacy, PRIVACY_VERSION, Document::Privacy),
             icon::SHIELD_CHECK,
             "read-privacy",
         ),
