@@ -18,6 +18,6 @@ has the template and the test for what earns one.
 | [0008](0008-author-profile-pictures.md) | Author profile pictures on approved image hosts, after consent, cached locally for twelve hours, including authors without one | accepted |
 | [0009](0009-partial-clone-downloads-only-in-trusted-folders.md) | A partial clone downloads missing objects on its own only inside a folder the user trusted, because git then runs the repository's own configuration | accepted |
 | [0010](0010-unsafe-code-only-for-the-backdrop-blur.md) | Unsafe code only in the backdrop blur's OpenGL module (`ui/kit/glass/gl.rs`), held there by lints and a policy test | accepted |
-| [0011](0011-request-list-rollup-through-graphql.md) | With a token, one GraphQL query per request-list refresh, on the same host, fetches the rows' checks and reviews | accepted |
+| [0011](0011-request-list-rollup-through-graphql.md) | With a token, one GraphQL query per request-list refresh, on the same host, fetches the rows' checks and reviews; GitHub's GraphQL search finds requests not loaded yet | accepted |
 | [0012](0012-git-defaults.md) | Canopy's git defaults are today's recommended practice, passed explicitly; a pull checks for divergence and conflicts before it runs | accepted |
 | [0013](0013-hosting-credentials-from-the-cli-first.md) | Hosting credentials come from the signed-in `gh` / `glab` CLI first, then the environment, the saved token and git's credential helper; the CLI token stays in memory | accepted |

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 12 October 2026
+Last updated: 13 October 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 

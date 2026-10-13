@@ -3,7 +3,7 @@
 Canopy is a Cargo workspace with three crates. The split is strict: everything that knows about Git
 lives in `canopy-core`, everything that draws lives in `canopy-app`, and the only bridge is a
 background worker per repository. `canopy-hosting` is the one HTTP client: the GitHub and GitLab
-REST APIs (plus one GraphQL query for a request list's checks and reviews) and Canopy's update
+REST APIs (plus GraphQL for a request list's checks and reviews and for GitHub's request search) and Canopy's update
 manifest. `canopy-core` never makes an HTTP request, and
 `canopy-app` reaches the network only through `git` and `canopy-hosting` (plus the opt-in crash
 report transport).
