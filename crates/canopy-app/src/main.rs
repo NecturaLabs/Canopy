@@ -79,7 +79,7 @@ OPTIONS:
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
         --demo-requests <V>   With --screenshot, show invented pull requests (no network) in a
                               repository without a GitHub or GitLab remote: list, list-all,
-                              list-closed, list-unchecked, list-overflow, list-more, filtered, no-match,
+                              list-closed, list-unchecked, list-overflow, list-more, list-search, filtered, no-match,
                               a request number such as 428, busy, loading, details-loading,
                               details-error, error, no-token or empty;
                               prefix gitlab: for merge requests. Implies --view requests

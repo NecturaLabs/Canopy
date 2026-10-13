@@ -1,16 +1,17 @@
 //! GitLab REST API v4 (gitlab.com and self-hosted): merge requests.
 
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::client::{PER_PAGE, optional, unix};
+use crate::client::{PER_PAGE, optional, search_words, unix};
 use crate::error::{Error, Result, head_changed, map_head_conflict};
 use crate::http::{Http, Method, encode, shorten};
 use crate::model::{
-    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestState,
-    RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
+    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
+    RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
 };
 use crate::preview::description_preview;
 
@@ -255,7 +256,81 @@ pub(crate) fn list_page(
         rows.extend(part);
     }
     rows.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
-    Ok(ListPage { rows, more })
+    Ok(ListPage {
+        rows,
+        more,
+        cursor: None,
+    })
+}
+
+/// One page of `per_page` merge requests in `state` matching `query`, in the order it asks for.
+fn search_state_page(
+    http: &Http,
+    project: &str,
+    state: &str,
+    query: &RequestQuery,
+    page: usize,
+) -> Result<Vec<RequestSummary>> {
+    let (order_by, sort) = match query.order {
+        SearchOrder::Updated => ("updated_at", "desc"),
+        SearchOrder::Newest => ("created_at", "desc"),
+        SearchOrder::Oldest => ("created_at", "asc"),
+    };
+    let mut path = format!(
+        "{project}/merge_requests?state={state}&order_by={order_by}&sort={sort}&per_page={PER_PAGE}&page={page}"
+    );
+    let words = search_words(&query.text);
+    if !words.is_empty() {
+        let _ = write!(
+            path,
+            "&search={}&in=title,description",
+            encode(&words.join(" "))
+        );
+    }
+    if let Some(author) = query.author.as_deref().filter(|a| !a.is_empty()) {
+        let _ = write!(path, "&author_username={}", encode(author));
+    }
+    match query.draft {
+        Some(true) => path.push_str("&wip=yes"),
+        Some(false) => path.push_str("&wip=no"),
+        None => {}
+    }
+    let mrs: Vec<Mr> = http.json(Method::Get, &path, None)?;
+    Ok(mrs.iter().map(Mr::summary).collect())
+}
+
+/// Page `page` (1-based) of the merge requests matching `query`, by the list endpoint's own
+/// search, author and draft parameters. "Closed" reads the page of "closed" and of "merged" and
+/// interleaves them in the order asked for, as [`list_page`] does.
+pub(crate) fn search_page(
+    http: &Http,
+    project: &str,
+    filter: StateFilter,
+    query: &RequestQuery,
+    page: usize,
+) -> Result<ListPage> {
+    let states: &[&str] = match filter {
+        StateFilter::Open => &["opened"],
+        StateFilter::All => &["all"],
+        StateFilter::Closed => &["closed", "merged"],
+    };
+    let mut rows = Vec::new();
+    let mut more = false;
+    for state in states {
+        let part = search_state_page(http, project, state, query, page)?;
+        more |= part.len() == PER_PAGE;
+        rows.extend(part);
+    }
+    match query.order {
+        SearchOrder::Updated => rows.sort_by_key(|r| std::cmp::Reverse(r.updated_at)),
+        SearchOrder::Newest => rows.sort_by_key(|r| std::cmp::Reverse(r.created_at)),
+        SearchOrder::Oldest => rows.sort_by_key(|r| r.created_at),
+    }
+    Ok(ListPage {
+        rows,
+        more,
+        cursor: None,
+    })
 }
 
 /// What [`rollup`] asks for: each merge request's head pipeline status and whether anyone

@@ -510,6 +510,9 @@ fn list(
 ) {
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
+    if let Some(wait) = tab.run_search_if_due() {
+        ui.ctx().request_repaint_after(wait);
+    }
     egui::Frame::new()
         .inner_margin(Margin::same(crate::ui::points_i8(theme::SM)))
         .show(ui, |ui| {
@@ -556,8 +559,9 @@ fn list(
                     }
                 });
             });
+            // A search that found nothing keeps its field, so it can be changed.
             if let Some(Ok(items)) = &tab.requests.list.clone()
-                && !items.is_empty()
+                && (!items.is_empty() || !tab.requests.query.is_empty())
             {
                 ui.add_space(theme::XS);
                 filter_bar(ui, tab, items, actions);
@@ -596,6 +600,18 @@ fn list(
             .compact(true)
             .id_salt("request-list-error")
             .show(ui);
+        }
+        Some(Ok(items)) if items.is_empty() && !tab.requests.query.is_empty() => {
+            let clicked = EmptyState::filtered("No requests match these filters")
+                .compact(true)
+                .id_salt("request-list-searched")
+                .show(ui)
+                .value;
+            if clicked == Some(EmptyAction::Primary) {
+                tab.request_view.clear_filters();
+                tab.request_view_changed();
+                remember_view(tab, actions);
+            }
         }
         Some(Ok(items)) if items.is_empty() => {
             EmptyState::new(format!(
@@ -696,9 +712,13 @@ fn filter_bar(ui: &mut Ui, tab: &mut RepoTab, items: &[RequestSummary], actions:
         ui.add_space(theme::XS);
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("{shown} of {} shown", items.len()))
-                    .size(m.meta_size)
-                    .color(p.text_faint),
+                RichText::new(if tab.requests.query.is_empty() {
+                    format!("{shown} of {} shown", items.len())
+                } else {
+                    format!("{shown} of {} found", items.len())
+                })
+                .size(m.meta_size)
+                .color(p.text_faint),
             );
             if LinkButton::new("Clear filters").show(ui).clicked() {
                 view.clear_filters();
@@ -707,6 +727,7 @@ fn filter_bar(ui: &mut Ui, tab: &mut RepoTab, items: &[RequestSummary], actions:
     }
     if view != before {
         tab.request_view = view;
+        tab.request_view_changed();
         remember_view(tab, actions);
     }
 }
@@ -820,7 +841,7 @@ fn rows(
     let m = theme::metrics();
     let ctx = ui.ctx().clone();
     let order = tab
-        .request_view
+        .local_request_view()
         .visible(items, |r| row_standing(&ctx, tab, r));
     let numbers: Vec<u64> = order.iter().map(|&i| items[i].number).collect();
     if tab.requests.shown.as_ref() != Some(&numbers) {
@@ -834,6 +855,7 @@ fn rows(
             .value;
         if clicked == Some(EmptyAction::Primary) {
             tab.request_view.clear_filters();
+            tab.request_view_changed();
             remember_view(tab, actions);
         }
         return;

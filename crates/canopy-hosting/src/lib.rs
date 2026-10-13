@@ -1,5 +1,6 @@
 //! Pull requests (GitHub) and merge requests (GitLab) for Canopy, over the providers' REST APIs
-//! (plus one GraphQL query for a list's checks and reviews, [`Client::rollup`]).
+//! (plus GraphQL for a list's checks and reviews, [`Client::rollup`], and for searching GitHub's
+//! requests, [`Client::search_page`]).
 //!
 //! This crate is Canopy's only network client besides the `git` executable. Its scope is
 //! deliberately narrow:
@@ -41,12 +42,13 @@ mod transport;
 pub mod updates;
 
 pub use cli_token::{CliError, CliLogin, login_from_cli};
-pub use client::Client;
+pub use client::{Client, SEARCH_WORDS, is_login};
 pub use error::{Error, Result};
 pub use http::{is_loopback_base, plain_text, set_build};
 pub use model::{
-    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestState,
-    RequestSummary, Review, ReviewDecision, Rollup, StateFilter, checkout_ref,
+    Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
+    RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
+    checkout_ref,
 };
 pub use preview::{PREVIEW_CHARS, description_preview};
 pub use token::{TOKEN_PREFIXES, token_from_env_for, token_from_git_credentials};

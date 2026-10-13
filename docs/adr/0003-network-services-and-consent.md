@@ -2,7 +2,8 @@
 
 **Status:** partially superseded by [ADR 0008](0008-author-profile-pictures.md) for author pictures;
 amended by [ADR 0011](0011-request-list-rollup-through-graphql.md): the hosting API row also covers
-one GraphQL query per request-list refresh on the same host
+one GraphQL query per request-list refresh on the same host, and GitHub's GraphQL search for a
+request filter
 **Date:** 2026-10-01
 
 ## Context and problem statement

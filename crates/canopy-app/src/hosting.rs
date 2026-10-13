@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_hosting::{
-    Client, MergeMethod, NewRequest, RequestDetails, RequestSummary, StateFilter,
+    Client, MergeMethod, NewRequest, RequestDetails, RequestQuery, RequestSummary, StateFilter,
 };
 
 /// Where a token came from, shown in settings.
@@ -294,13 +294,31 @@ pub fn token_page(kind: ForgeKind, host: &str) -> String {
     }
 }
 
+/// Which list a job or an event is about: the state tab and what the host is asked to search for.
+/// A result for another key than the tab's is out of date and dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListKey {
+    pub state: StateFilter,
+    pub query: RequestQuery,
+}
+
+impl From<StateFilter> for ListKey {
+    fn from(state: StateFilter) -> Self {
+        Self {
+            state,
+            query: RequestQuery::default(),
+        }
+    }
+}
+
 /// Work for the hosting thread.
 #[derive(Debug, Clone)]
 pub enum HostJob {
     Avatar(canopy_core::Oid, String),
-    List(StateFilter),
-    /// Page (2 or later) of the list for this filter: the pages already loaded stay as they are.
-    ListMore(StateFilter, usize),
+    List(ListKey),
+    /// Page (2 or later) of the list for this key: the pages already loaded stay as they are.
+    /// GitHub's search continues from the cursor the page before reported.
+    ListMore(ListKey, usize, Option<String>),
     /// Request number and the tab's monotonically changing details generation.
     Details(u64, u64),
     Create(NewRequest),
@@ -345,18 +363,21 @@ pub enum HostEvent {
     RateLimited {
         reset: Option<i64>,
     },
-    List(StateFilter, Result<Vec<RequestSummary>, String>),
-    /// Whether the host holds requests beyond the first page; sent just before that list.
+    List(ListKey, Result<Vec<RequestSummary>, String>),
+    /// Whether the host holds requests beyond the first page (and where a search goes on from);
+    /// sent just before that list.
     More {
-        filter: StateFilter,
+        key: ListKey,
         more: bool,
+        cursor: Option<String>,
     },
     /// A page after the first, and whether the host holds more beyond it. Sent again with the
     /// page's checks and reviews, which replace its rows.
     Page {
-        filter: StateFilter,
+        key: ListKey,
         page: usize,
         result: Result<(Vec<RequestSummary>, bool), String>,
+        cursor: Option<String>,
     },
     Details(u64, u64, Box<Result<RequestDetails, String>>),
     Created(Result<RequestSummary, String>),
@@ -589,11 +610,13 @@ fn log_blocked(host: &str, why: &crate::avatars::Blocked) {
 /// filter and its rows.
 struct Shown {
     list: u64,
-    filter: StateFilter,
+    key: ListKey,
     /// The page the rows are (1 for the first).
     page: usize,
     /// Whether the host holds more after this page.
     more: bool,
+    /// Where a search continues after this page.
+    cursor: Option<String>,
     rows: Vec<RequestSummary>,
 }
 
@@ -668,12 +691,13 @@ fn add_rollups(
                 let current = last_list(last);
                 if *current == next.list {
                     emit(if next.page <= 1 {
-                        HostEvent::List(next.filter, Ok(next.rows))
+                        HostEvent::List(next.key, Ok(next.rows))
                     } else {
                         HostEvent::Page {
-                            filter: next.filter,
+                            key: next.key,
                             page: next.page,
                             result: Ok((next.rows, next.more)),
+                            cursor: next.cursor,
                         }
                     });
                 }
@@ -724,9 +748,9 @@ fn serve_jobs(
                     send(HostEvent::Avatar { oid, email, result });
                 }
             }
-            HostJob::List(filter) => {
+            HostJob::List(key) => {
                 waiting = None;
-                let result = client.list_page(filter, 1);
+                let result = client.search_page(key.state, &key.query, 1, None);
                 // Held while the list is sent, so no older list's checks can follow it.
                 let mut sent = last_list(last);
                 *sent += 1;
@@ -735,18 +759,24 @@ fn serve_jobs(
                 // the same filter, which replaces it (the selection stays). A list the tab no
                 // longer takes was let go with its thread: nothing more is asked.
                 let mut more = false;
+                let mut cursor = None;
                 let delivered = match result {
                     Ok(page) => {
                         more = page.more;
+                        cursor.clone_from(&page.cursor);
                         let rows = page.rows;
-                        emit(HostEvent::More { filter, more });
-                        emit(HostEvent::List(filter, Ok(rows.clone()))).then_some(rows)
+                        emit(HostEvent::More {
+                            key: key.clone(),
+                            more,
+                            cursor: page.cursor,
+                        });
+                        emit(HostEvent::List(key.clone(), Ok(rows.clone()))).then_some(rows)
                     }
                     Err(e) => {
                         if let canopy_hosting::Error::RateLimited { reset } = &e {
                             send(HostEvent::RateLimited { reset: *reset });
                         }
-                        send(HostEvent::List(filter, Err(s(e))));
+                        send(HostEvent::List(key.clone(), Err(s(e))));
                         None
                     }
                 };
@@ -755,47 +785,51 @@ fn serve_jobs(
                     let due = Instant::now() + ROLLUP_DELAY;
                     let shown = Shown {
                         list,
-                        filter,
+                        key,
                         page: 1,
                         more,
+                        cursor,
                         rows,
                     };
                     waiting = Some((shown, due));
                 }
             }
-            HostJob::ListMore(filter, page) => {
+            HostJob::ListMore(key, page, after) => {
                 // The list still counts as the one the tab shows: its checks and these pages'
                 // are asked for in the same lane.
-                let result = client.list_page(filter, page);
+                let result = client.search_page(key.state, &key.query, page, after.as_deref());
                 let list = *last_list(last);
                 let delivered = match result {
                     Ok(got) => {
-                        let (rows, more) = (got.rows, got.more);
+                        let (rows, more, cursor) = (got.rows, got.more, got.cursor);
                         let sent = emit(HostEvent::Page {
-                            filter,
+                            key: key.clone(),
                             page,
                             result: Ok((rows.clone(), more)),
+                            cursor: cursor.clone(),
                         });
-                        sent.then_some((rows, more))
+                        sent.then_some((rows, more, cursor))
                     }
                     Err(e) => {
                         if let canopy_hosting::Error::RateLimited { reset } = &e {
                             send(HostEvent::RateLimited { reset: *reset });
                         }
                         send(HostEvent::Page {
-                            filter,
+                            key: key.clone(),
                             page,
                             result: Err(s(e)),
+                            cursor: None,
                         });
                         None
                     }
                 };
-                if let Some((rows, more)) = delivered {
+                if let Some((rows, more, cursor)) = delivered {
                     let _ = rollups.send(Shown {
                         list,
-                        filter,
+                        key,
                         page,
                         more,
+                        cursor,
                         rows,
                     });
                 }
@@ -1321,7 +1355,7 @@ mod tests {
             }
         });
         let (worker, thread) = worker_for(&base);
-        worker.send(HostJob::List(StateFilter::Open));
+        worker.send(HostJob::List(StateFilter::Open.into()));
         let mut seen = Vec::new();
         while !matches!(seen.last(), Some(HostEvent::List(..))) {
             match worker.events.recv_timeout(Duration::from_secs(20)) {
@@ -1355,7 +1389,8 @@ mod tests {
         let (worker, thread) = worker_for(&base);
         {
             let mut slot = held.lock().expect("worker");
-            slot.insert(worker).send(HostJob::List(StateFilter::Open));
+            slot.insert(worker)
+                .send(HostJob::List(StateFilter::Open.into()));
         }
         thread.join().expect("hosting thread");
         let log = log.lock().expect("log").clone();
@@ -1379,7 +1414,7 @@ mod tests {
             }
         }));
         let (worker, thread) = worker_for(&base);
-        worker.send(HostJob::List(StateFilter::Open));
+        worker.send(HostJob::List(StateFilter::Open.into()));
         worker.send(HostJob::Details(1, 1));
         worker.send(HostJob::Comment(1, "Looks good".into()));
         let mut lists = 0;
@@ -1423,7 +1458,7 @@ mod tests {
             }
         }));
         let (worker, thread) = worker_for(&base);
-        worker.send(HostJob::List(StateFilter::Open));
+        worker.send(HostJob::List(StateFilter::Open.into()));
         query_arrived
             .recv_timeout(Duration::from_secs(10))
             .expect("the list's query was sent");
@@ -1474,11 +1509,11 @@ mod tests {
             }
         }));
         let (worker, thread) = worker_for(&base);
-        worker.send(HostJob::List(StateFilter::Open));
+        worker.send(HostJob::List(StateFilter::Open.into()));
         query_arrived
             .recv_timeout(Duration::from_secs(10))
             .expect("the first list's query was sent");
-        worker.send(HostJob::List(StateFilter::Open));
+        worker.send(HostJob::List(StateFilter::Open.into()));
         let mut shown = Vec::new();
         while shown.len() < 2 {
             match worker.events.recv_timeout(Duration::from_secs(5)) {

@@ -3,7 +3,7 @@
 Canopy is a Cargo workspace with three crates. The split is strict: everything that knows about Git
 lives in `canopy-core`, everything that draws lives in `canopy-app`, and the only bridge is a
 background worker per repository. `canopy-hosting` is the one HTTP client: the GitHub and GitLab
-REST APIs (plus one GraphQL query for a request list's checks and reviews) and Canopy's update
+REST APIs (plus GraphQL for a request list's checks and reviews and for GitHub's request search) and Canopy's update
 manifest. `canopy-core` never makes an HTTP request, and
 `canopy-app` reaches the network only through `git` and `canopy-hosting` (plus the opt-in crash
 report transport).
@@ -122,7 +122,7 @@ thread.
 | `keymap.rs` | Every keyboard shortcut in one table (`BINDINGS`) that dispatches keys and renders the cheatsheet and Settings → Keyboard; the keys the user changed (`Settings::keybindings`) are applied on top of it each frame (`apply_saved`) and Settings → Keyboard listens for a new key with `capture_key`; see `docs/keybindings.md`. |
 | `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders, per-repository choices (`repos`, keyed by working directory), recent and open repositories. A saved theme or option this build no longer has reads as its default (`known`, `known_option`) and a setting it no longer has is ignored; the next save writes the file without either. |
 | `settings_file.rs` | Export, import and reset of preferences: the versioned JSON format, the keys that are never exported or replaced (consent, trust, session memory), validation, and the file choosers on a background thread. |
-| `request_view.rs` | The request list's text, draft, checks, review and author filters and its sort, applied to the loaded rows (`RequestView::visible`); one value per repository in `Settings::repo_requests`, kept like the sidebar's sections (`Action::RememberRequestView`). |
+| `request_view.rs` | The request list's text, draft, checks, review and author filters and its sort, applied to the loaded rows (`RequestView::visible`), with the part the host can do (`host_query`) sent as a search once the list is longer than a page (`remaining` is what is left for the loaded rows); one value per repository in `Settings::repo_requests`, kept like the sidebar's sections (`Action::RememberRequestView`). |
 | `repo_config.rs` | Background Git facts for Settings and notifications: effective and directly editable supported values, remote-specific pruning, pull/autostash precedence, signing diagnostics and hooks-path information; failed reads retain contextual errors rather than masquerading as absent configuration. |
 | `system_apps.rs` | The editor, terminal and file manager the system provides (`$VISUAL`/`$EDITOR`/`$TERMINAL`, desktop defaults, `PATH`) and the installed ones (Linux desktop entries, macOS `/Applications`, Windows App Paths), resolved on one background thread and cached; `command_for` is what the open actions run. |
 | `trust.rs` | The trusted folders (`Settings::trusted_folders`) as a process-wide list the repository threads read; adding a folder (never a root), resolving the working/common/private Git folders on the repository thread for `Event::TrustFolders`, and the parent offered next to a repository's own folder (ADR 0009). |

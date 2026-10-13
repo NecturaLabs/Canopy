@@ -48,6 +48,24 @@ query on the same host.
 One extra request per refresh counts against the provider's GraphQL limit. GitHub keeps a
 separate budget of 5,000 points an hour for GraphQL, and the query costs a few points.
 
+## Searching on the host (amendment)
+
+When the host holds more requests than the first page, the request list's text, draft choice,
+author and newest/oldest sort are put to the host (`Client::search_page`), so a search reaches
+requests that are not loaded. GitHub's REST search does not return the branches a row needs, so
+GitHub uses the same GraphQL endpoint and token as the rollup: `search(type: ISSUE)` on
+`repo:<owner>/<name> is:pr`, paged by cursor, each typed word quoted without quotes, colons or
+backslashes so it cannot become a qualifier, at most eight words, the author only when it can be a
+login. Without a token GitHub is not searched (GraphQL refuses anonymous calls); the loaded rows
+are filtered locally as before. GitLab's list endpoint takes `search`, `in`, `author_username`,
+`wip`, `order_by` and `sort` directly.
+
+Cost: one request per search page, none per keystroke (the list waits 400 ms after the last key),
+and a result for an older text is dropped by comparing the list's key. GitHub's search has its own
+limit of 30 requests a minute and 1,000 results per query; a limit answer pauses the list the way
+the timed refresh already pauses. The typed text now reaches the repository's own host, which the
+privacy policy says.
+
 ## References
 
 - [GitHub GraphQL `PullRequest`](https://docs.github.com/en/graphql/reference/objects#pullrequest)

@@ -384,6 +384,7 @@ impl CanopyApp {
             {
                 if let Some(view) = self.settings.repo_requests.get(key) {
                     tab.request_view = view.clone();
+                    tab.request_view_changed();
                 }
                 tab.request_view_restored = true;
             }

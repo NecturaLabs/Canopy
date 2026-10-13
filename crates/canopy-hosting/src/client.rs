@@ -9,12 +9,43 @@ use canopy_core::forge::{Forge, ForgeKind};
 use crate::error::Result;
 use crate::http::{Http, redact_userinfo};
 use crate::model::{
-    ListPage, MergeMethod, NewRequest, RequestDetails, RequestSummary, StateFilter,
+    ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery, RequestSummary, StateFilter,
 };
 use crate::{github, gitlab};
 
 /// Largest page both providers serve.
 pub(crate) const PER_PAGE: usize = 100;
+
+/// The most words of a search the host is asked about.
+pub const SEARCH_WORDS: usize = 8;
+
+/// The longest word of a search, in characters; longer words are cut.
+const SEARCH_WORD_LEN: usize = 64;
+
+/// Whether `name` can be a GitHub login or GitLab username (letters, digits and `-_.[]`), so it
+/// is safe to send as an author.
+pub fn is_login(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '[' | ']'))
+}
+
+/// The words of `text` to search for: at most [`SEARCH_WORDS`], each cut to [`SEARCH_WORD_LEN`]
+/// characters, without the characters search syntax gives a meaning (quotes, colons,
+/// backslashes), so every word is plain text.
+pub(crate) fn search_words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|w| {
+            w.chars()
+                .filter(|c| !matches!(c, '"' | ':' | '\\') && !c.is_control())
+                .take(SEARCH_WORD_LEN)
+                .collect::<String>()
+        })
+        .filter(|w| !w.is_empty())
+        .take(SEARCH_WORDS)
+        .collect()
+}
 
 /// RFC 3339 → unix seconds; 0 when missing or malformed.
 pub(crate) fn unix(ts: Option<&str>) -> i64 {
@@ -183,6 +214,41 @@ impl Client {
         match self.kind {
             ForgeKind::GitHub => github::list_page(&self.http, &self.project, filter, page),
             ForgeKind::GitLab => gitlab::list_page(&self.http, &self.project, filter, page),
+        }
+    }
+
+    /// Whether [`Self::search_page`] can run: GitHub's search is a GraphQL query, which the host
+    /// answers only with a token; GitLab searches its list endpoint, token or not.
+    pub fn can_search(&self) -> bool {
+        self.kind == ForgeKind::GitLab || self.has_token()
+    }
+
+    /// One page of the requests matching `filter` and `query` on the host, so a search reaches
+    /// requests that are not loaded. `page` is 1-based; `cursor` is the one the previous page
+    /// returned ([`ListPage::cursor`], needed from the second page on GitHub and ignored by
+    /// GitLab). Needs [`Self::can_search`]; an empty `query` is the plain list.
+    ///
+    /// The words of `query.text` go to the host as plain text (each quoted, with quotes, colons
+    /// and backslashes removed on GitHub, so a word cannot become a qualifier or leave the
+    /// repository); at most [`SEARCH_WORDS`] words are sent.
+    pub fn search_page(
+        &self,
+        filter: StateFilter,
+        query: &RequestQuery,
+        page: usize,
+        cursor: Option<&str>,
+    ) -> Result<ListPage> {
+        if query.is_empty() {
+            return self.list_page(filter, page);
+        }
+        let page = page.max(1);
+        match self.kind {
+            ForgeKind::GitHub => {
+                github::search_page(&self.http, &self.forge.path, filter, query, page, cursor)
+            }
+            ForgeKind::GitLab => {
+                gitlab::search_page(&self.http, &self.project, filter, query, page)
+            }
         }
     }
 

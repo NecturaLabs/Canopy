@@ -1,10 +1,12 @@
 //! What the request list shows: the text, draft, checks, review and author filters and the sort
-//! order, chosen per repository and applied to the rows already loaded. Nothing here asks the
-//! host for anything, so a change of filter or sort answers at once.
+//! order, chosen per repository and applied to the rows already loaded, so a change of filter or
+//! sort answers at once. The part of a view the host can do ([`RequestView::host_query`]) is also
+//! put to the host once the list is longer than a page; [`RequestView::remaining`] is what is left
+//! for the loaded rows then.
 
 use std::cmp::{Ordering, Reverse};
 
-use canopy_hosting::RequestSummary;
+use canopy_hosting::{RequestQuery, RequestSummary, SearchOrder, is_login};
 use serde::{Deserialize, Serialize};
 
 use crate::settings::{known, known_option};
@@ -102,6 +104,16 @@ impl RequestSort {
         }
     }
 
+    /// The order the host can give for this sort; the others (number, title, author) it cannot,
+    /// so the loaded rows are put in them.
+    fn host_order(self) -> SearchOrder {
+        match self {
+            Self::Newest => SearchOrder::Newest,
+            Self::Oldest => SearchOrder::Oldest,
+            _ => SearchOrder::Updated,
+        }
+    }
+
     /// How `a` and `b` order under this sort; ties fall back to the most recently updated, then
     /// the highest number, so the order is the same on every frame.
     fn compare(self, a: &RequestSummary, b: &RequestSummary) -> Ordering {
@@ -164,6 +176,35 @@ impl RequestView {
     /// holds).
     pub fn menu_filters(&self) -> usize {
         self.filters() - usize::from(!self.text.trim().is_empty())
+    }
+
+    /// What the host can do for this view: the text, the draft choice, an author that can be a
+    /// login and the newest or oldest order.
+    pub fn host_query(&self) -> RequestQuery {
+        RequestQuery {
+            text: self.text.trim().to_owned(),
+            author: self.author.clone().filter(|a| is_login(a)),
+            draft: self.draft.map(|d| d == DraftChoice::Drafts),
+            order: self.sort.host_order(),
+        }
+    }
+
+    /// The view the loaded rows still have to be put through when the host answered `applied`:
+    /// whatever `applied` already covers (the same text, author or draft choice as this view
+    /// asks for) is dropped, the rest (checks, review, a newer text) stays.
+    pub fn remaining(&self, applied: &RequestQuery) -> Self {
+        let asked = self.host_query();
+        let mut rest = self.clone();
+        if applied.text == asked.text {
+            rest.text.clear();
+        }
+        if applied.author == asked.author && asked.author.is_some() {
+            rest.author = None;
+        }
+        if applied.draft == asked.draft {
+            rest.draft = None;
+        }
+        rest
     }
 
     /// Drops every filter and keeps the sort.
@@ -519,5 +560,55 @@ mod tests {
         .expect("settings load");
         assert_eq!(settings.theme, crate::ui::theme::ThemeId::Daylight);
         assert!(settings.repo_requests[std::path::Path::new("/r")].is_default());
+    }
+
+    #[test]
+    fn the_host_gets_the_text_draft_author_and_order_it_can_use() {
+        let view = RequestView {
+            text: "  fix crash ".into(),
+            draft: Some(DraftChoice::Ready),
+            checks: Some(ChecksChoice::Failed),
+            author: Some("ann".into()),
+            sort: RequestSort::Oldest,
+            ..RequestView::default()
+        };
+        let asked = view.host_query();
+        assert_eq!(asked.text, "fix crash");
+        assert_eq!(asked.draft, Some(false));
+        assert_eq!(asked.author.as_deref(), Some("ann"));
+        assert_eq!(asked.order, SearchOrder::Oldest);
+        // The checks are the loaded rows' to filter; what the host answered is not filtered again.
+        let rest = view.remaining(&asked);
+        assert_eq!(
+            (rest.text.as_str(), rest.draft, rest.author),
+            ("", None, None)
+        );
+        assert_eq!(rest.checks, Some(ChecksChoice::Failed));
+        assert_eq!(rest.sort, RequestSort::Oldest);
+        // A word typed since the host was asked still narrows the loaded rows at once.
+        let typing = RequestView {
+            text: "fix crash now".into(),
+            ..view
+        };
+        assert_eq!(typing.remaining(&asked).text, "fix crash now");
+        // An author that cannot be a login stays a filter of the loaded rows.
+        let odd = RequestView {
+            author: Some("a b".into()),
+            ..RequestView::default()
+        };
+        assert_eq!(odd.host_query().author, None);
+        assert_eq!(
+            odd.remaining(&odd.host_query()).author.as_deref(),
+            Some("a b")
+        );
+        // Number, title and author orders are the loaded rows' too.
+        for sort in [RequestSort::Number, RequestSort::Title, RequestSort::Author] {
+            let by = RequestView {
+                sort,
+                ..RequestView::default()
+            };
+            assert!(by.host_query().is_empty(), "{sort:?}");
+        }
+        assert!(RequestView::default().host_query().is_empty());
     }
 }

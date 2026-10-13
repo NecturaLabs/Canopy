@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 12 October 2026
+Last updated: 13 October 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -84,7 +84,7 @@ Canopy checks the archive against the SHA-256 checksum in the update file before
 
 ## GitHub and GitLab
 
-When you open a repository whose remote is on GitHub (github.com) or GitLab (gitlab.com or a self-hosted GitLab server), Canopy loads its pull or merge requests from that service's API. When you comment, review, merge or create a request in Canopy, it sends that to the same API. When Canopy has a token for that server, each time it loads the list of requests it also asks the same server, in one request, where each listed request's checks and reviews stand; that request names the project and the request numbers and carries your token like the others. Without a token, Canopy does not send it. To stop all of this, turn off Pull and merge requests in the Integrations section of Settings.
+When you open a repository whose remote is on GitHub (github.com) or GitLab (gitlab.com or a self-hosted GitLab server), Canopy loads its pull or merge requests from that service's API. When you comment, review, merge or create a request in Canopy, it sends that to the same API. When Canopy has a token for that server, each time it loads the list of requests it also asks the same server, in one request, where each listed request's checks and reviews stand; that request names the project and the request numbers and carries your token like the others. Without a token, Canopy does not send it. When a repository has more requests than the first page of the list and you type in the request filter or choose a draft, author or sort filter, Canopy sends those words and choices to the same server to search the requests that are not loaded yet. To stop all of this, turn off Pull and merge requests in the Integrations section of Settings.
 
 To sign in to the API, Canopy uses the first of these that it finds:
 
