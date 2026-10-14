@@ -1266,6 +1266,81 @@ mod tests {
         assert_eq!(s.initial_branch(), "main");
     }
 
+    /// Canopy's own choices (Settings → Git with Follow my git config off) are the recommendations
+    /// of ADR 0012's audit: for every git key that has a Canopy choice, what `Settings::default`
+    /// says is the value `Setting::recommendation_for` gives. Line endings and signing have no
+    /// Canopy choice: Canopy leaves them to git.
+    #[test]
+    fn canopys_defaults_agree_with_the_recommendation_for_every_key() {
+        use canopy_core::config::Setting;
+        let s = Settings::default();
+        let o = s.git_options();
+        let on = |b: bool| if b { "true" } else { "false" };
+        let strategy = s.pull_mode.strategy();
+        for git in [Some((2, 55)), Some((2, 34)), None] {
+            let mut without = Vec::new();
+            for setting in Setting::ALL {
+                let canopy: Option<String> = match setting {
+                    Setting::PullRebase => Some(
+                        match strategy {
+                            PullStrategy::Rebase => "true",
+                            PullStrategy::RebaseMerges => "merges",
+                            _ => "false",
+                        }
+                        .into(),
+                    ),
+                    Setting::PullFastForward => Some(
+                        match strategy {
+                            PullStrategy::FastForwardOnly => "only",
+                            PullStrategy::MergeNoFastForward => "false",
+                            _ => "true",
+                        }
+                        .into(),
+                    ),
+                    Setting::PullAutostash | Setting::RebaseAutostash | Setting::MergeAutostash => {
+                        Some(on(o.autostash).into())
+                    }
+                    Setting::FetchPrune => Some(on(s.prune_on_fetch).into()),
+                    Setting::FetchPruneTags => Some(on(o.prune_tags).into()),
+                    Setting::PushFollowTags => Some(on(o.follow_tags).into()),
+                    Setting::SubmoduleRecurse => Some(on(o.recurse_submodules).into()),
+                    Setting::PushDefault => Some(o.push_default.value().into()),
+                    Setting::ConflictStyle => Some(o.conflict_style.value(git).into()),
+                    Setting::InitialBranch => Some(s.initial_branch().into()),
+                    // Canopy's commits are never edited, and git's `default` cleans such a message
+                    // up as `whitespace` (the core test `the_recommended_commit_cleanup...`).
+                    Setting::CommitCleanup => Some(
+                        match o.cleanup {
+                            Cleanup::Whitespace => "default",
+                            Cleanup::Strip => "strip",
+                            Cleanup::Verbatim => "verbatim",
+                        }
+                        .into(),
+                    ),
+                    Setting::Autocrlf | Setting::CommitSigning | Setting::SigningFormat => None,
+                };
+                let Some(canopy) = canopy else {
+                    without.push(setting);
+                    continue;
+                };
+                assert_eq!(
+                    canopy,
+                    setting.recommendation_for(git),
+                    "{} on git {git:?}",
+                    setting.key()
+                );
+            }
+            assert_eq!(
+                without,
+                [
+                    Setting::Autocrlf,
+                    Setting::CommitSigning,
+                    Setting::SigningFormat
+                ]
+            );
+        }
+    }
+
     #[test]
     fn the_git_options_follow_the_settings() {
         let s = Settings {

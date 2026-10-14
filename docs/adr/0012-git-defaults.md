@@ -1,6 +1,6 @@
 # ADR 0012: Canopy's git defaults are today's recommended practice, and pulls look before they leap
 
-**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration) and 2026-10-11 (one pull recommendation)
+**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration), 2026-10-11 (one pull recommendation) and 2026-10-14 (audit of every recommendation against Git's documentation)
 **Date:** 2026-10-06
 
 ## Context
@@ -35,13 +35,13 @@ its own choice explicitly:
 | Pull strategy | Fast-forward only; when the branches diverged Canopy asks Rebase (recommended) or Merge (optionally remembered for the repository or, where Canopy's setting asked for fast-forwards, every repository) | `branch.<name>.rebase`, `pull.rebase`, `pull.ff` | strategy flags |
 | Prune on fetch | on | `remote.<name>.prune`, else `fetch.prune` | `-c fetch.prune=…` while following, else `--prune` / `--no-prune` |
 | Prune tags too | off | `remote.<name>.pruneTags`, else `fetch.pruneTags` | `-c fetch.pruneTags=…` while following, else `--prune-tags` / `--no-prune-tags` |
-| Autostash for pull and rebase | on | `pull.autoStash` for pulls when set, else `rebase.autoStash` / `merge.autoStash`; direct rebase/merge use their own key | `--autostash` / `--no-autostash` (merges: git 2.27 and later) |
+| Autostash for pull, rebase and merge | on | `pull.autoStash` for pulls when set (git 2.51 and later), else `rebase.autoStash` / `merge.autoStash`; direct rebase/merge use their own key | `--autostash` / `--no-autostash` (merges: git 2.27 and later) |
 | Push annotated tags with their commits | on | `push.followTags` | `--follow-tags` / `--no-follow-tags` |
 | Update submodules after a pull or checkout, and in a clone | on | `submodule.recurse` (pull and checkout only: git ignores it for `clone`) | after a pull or checkout, `git submodule update --init --recursive` unless the configuration decides; `clone --recurse-submodules` |
 | Push to | the branch's upstream, when the names match | `push.default` (a force push follows only `simple`, `upstream` or `current`, so it never sends other branches) | `-c push.default=simple` (or upstream, current) |
 | Conflict style | both sides and the original, trimmed | `merge.conflictStyle` | `-c merge.conflictStyle=zdiff3` (`diff3` before git 2.35) |
 | First branch of a new repository | `main` | `init.defaultBranch` | native `git init` when following configuration; `symbolic-ref` sets Canopy's fallback only for a newly initialized, unconfigured repository |
-| Message cleanup | trailing spaces and surrounding blank lines only | `commit.cleanup` | `--cleanup=whitespace` (or strip, verbatim) |
+| Message cleanup | trailing spaces and surrounding blank lines only: the commit box is never an editor, so this is what git's own `default` does for it | `commit.cleanup` | `--cleanup=whitespace` (or strip, verbatim) |
 
 `rerere`, `rebase.updateRefs` and `diff.algorithm` stay off or unused: the first two change results
 without the UI saying so yet, and Canopy's diffs come from libgit2.
@@ -64,8 +64,8 @@ repository page shows the effective configuration across scopes.
 Every supported setting carries a recommendation (the owner's decision, 2026-10-13), and a row
 the configuration leaves unset shows the recommended value, or Git's built-in one for line endings
 and signing, which Canopy leaves to Git; never a bare "Unset". The pull recommendation is fast-forward only (`pull.ff = only`) with
-`pull.rebase = false`, so a `pull.rebase = true` cannot override it; when branches diverge Canopy
-still asks Rebase (recommended) or Merge. Line endings follow
+`pull.rebase = false` beside it (what each does is under "Audit of the recommendations"); when
+branches diverge Canopy still asks Rebase (recommended) or Merge. Line endings follow
 [GitHub's guidance](https://docs.github.com/en/get-started/git-basics/configuring-git-to-handle-line-endings)
 (`core.autocrlf = true` on Windows, `input` elsewhere); signing is recommended off until the user
 sets up a key, then with an SSH key (`gpg.format = ssh`), the simplest format
@@ -76,14 +76,57 @@ worker. It leaves identity, signing, hooks and line endings alone. A failed batc
 progress; Settings rereads actual state. Canopy fallback controls remain available when Follow
 my git config is off. Existing repository preferences remain compatible.
 
-The recommendations are product choices, not universal Git requirements. The primary basis is
-[Git pull](https://git-scm.com/docs/git-pull) for fast-forward-only integration,
-[Git fetch](https://git-scm.com/docs/git-fetch) for branch pruning and the risk of deleting local
-tags, [Git config](https://git-scm.com/docs/git-config) for `simple` pushes, autostash precedence,
-submodule recursion and conflict styles, [Git init](https://git-scm.com/docs/git-init) for the
-first branch, and [Git commit](https://git-scm.com/docs/git-commit) for cleanup preserving `#`
-lines. Autostash, follow-tags, recursive updates, `main` and whitespace cleanup remain explicit
+The recommendations are product choices, not universal Git requirements; the audit below gives
+each one's reason and source. Autostash, follow-tags, recursive updates and `main` remain explicit
 Canopy defaults; projects may prefer other values.
+
+## Audit of the recommendations (2026-10-14)
+
+Issue #233. Every recommendation was re-derived from Git's own documentation and release notes
+only (blog posts and surveys, which the first version of this ADR also read, are not a source),
+checked on 2026-10-14 against the installed Git 2.55.0 and the git-scm.com documentation for
+2.56.0 (released 2026-09-28). "Git's default" is what git does with the key unset. Each row names
+the tests that run the claim against the git executable (`crates/canopy-core/tests/git_recommendations.rs`;
+tests below are named without their long suffixes). `recommendation_for` (`crates/canopy-core/src/config.rs`),
+`Settings::default` and this table agree for every key; a test fails when one changes alone.
+
+| Key | Recommended | Git's default | Why | Sources |
+|---|---|---|---|---|
+| `pull.rebase` | `false` | unset: a diverged pull stops with "Need to specify how to reconcile divergent branches" (git 2.55) | Merge is the neutral value beside `pull.ff = only`. Since git 2.34, `pull.ff = only` wins over `pull.rebase = true` and `branch.<name>.rebase` (only `--rebase` on the command line overrides it); before 2.34 the rebase won, so `false` keeps older git from rebasing behind the user's back. This replaces the first version's claim that `false` is what lets `only` take effect on current git. | [git-config pull.rebase](https://git-scm.com/docs/git-config#Documentation/git-config.txt-pullrebase), [2.34 release notes](https://github.com/git/git/blob/master/Documentation/RelNotes/2.34.0.adoc) ("git pull --ff-only did not stop but went ahead and rebased"); test `pulls_fast_forward_or_stop` |
+| `pull.ff` | `only` | unset, which behaves as `only` when branches diverged | Never a surprise merge commit or rewrite; Canopy then asks Rebase (recommended) or Merge. Written, it pins git's documented default against a later `pull.rebase`. | [git-pull](https://git-scm.com/docs/git-pull) ("`--ff-only` ... is the default when no method for reconciling divergent histories is provided"), [git-config pull.ff](https://git-scm.com/docs/git-config#Documentation/git-config.txt-pullff); `pulls_fast_forward_or_stop` |
+| `pull.autoStash` | `true` | unset: `rebase.autoStash` or `merge.autoStash` decide | A pull over local changes goes ahead and puts them back. Set to either value it overrides the other two keys for pulls. Only git 2.51 and later read it; older git, and Canopy there, use the next two rows, which are written too and give the same result. | [git-config pull.autoStash](https://git-scm.com/docs/git-config#Documentation/git-config.txt-pullautoStash), [2.51 release notes](https://github.com/git/git/blob/master/Documentation/RelNotes/2.51.0.adoc); `the_three_autostash_keys` |
+| `rebase.autoStash` | `true` | `false` | A rebase runs over local changes. Git's caution: "the final stash application after a successful rebase might result in non-trivial conflicts"; Canopy reports a stash that conflicts when it comes back. A product choice (owner, 2026-10-13). | [git-config rebase.autoStash](https://git-scm.com/docs/git-config#Documentation/git-config.txt-rebaseautoStash); `the_three_autostash_keys` |
+| `merge.autoStash` | `true` | `false` | The same for a merge (`git merge --autostash`, git 2.27). Canopy's Merge now passes it too (#249, found by #110): `canopys_merge_stashes`. | [git-config merge.autoStash](https://git-scm.com/docs/git-config#Documentation/git-config.txt-mergeautoStash), [2.27 release notes](https://github.com/git/git/blob/master/Documentation/RelNotes/2.27.0.adoc); `the_three_autostash_keys`, `canopys_merge_stashes` |
+| `fetch.prune` | `true` | `false` | Removes the remote-tracking branches whose branch was deleted on the remote, never a local branch. git-fetch: "To prune references as part of your normal workflow without needing to remember to run that, set fetch.prune globally". | [git-fetch, Pruning](https://git-scm.com/docs/git-fetch#_pruning); `fetch_prunes_stale_branches` |
+| `fetch.pruneTags` | `false` | `false` | Written so a later `true` stands out. `--prune-tags` "will remove any local references (local tags) that have been created": a tag never pushed disappears with the next fetch (shown by the test). | [git-fetch `--prune-tags`](https://git-scm.com/docs/git-fetch#Documentation/git-fetch.txt--P), [Pruning](https://git-scm.com/docs/git-fetch#_pruning); `fetch_prunes_stale_branches` |
+| `push.followTags` | `true` | `false` | A push also sends the annotated tags (never lightweight ones) that point at the commits it sends and are missing from the remote. The cost: a private annotated tag on a pushed commit is published. A product choice. | [git-config push.followTags](https://git-scm.com/docs/git-config#Documentation/git-config.txt-pushfollowTags), [git-push `--follow-tags`](https://git-scm.com/docs/git-push#Documentation/git-push.txt---follow-tags); `a_plain_push_sends_annotated_tags` |
+| `submodule.recurse` | `true` | `false` | Checkout, switch, pull and the other commands the option lists keep submodules at the commits the superproject records; without it status shows the submodule modified after every switch. Side effect, documented under `push.recurseSubmodules` ("unless `submodule.recurse` is set, in which case a true value means on-demand"): a push also pushes the submodule commits it needs, with the superproject's branch name, and is aborted where it cannot (a submodule without a branch of that name); `--no-recurse-submodules` pushes the superproject alone. Kept by the owner's decision (2026-10-13); the failing push is #250. | [git-config submodule.recurse](https://git-scm.com/docs/git-config#Documentation/git-config.txt-submodulerecurse), [push.recurseSubmodules](https://git-scm.com/docs/git-config#Documentation/git-config.txt-pushrecurseSubmodules); `submodules_follow_a_checkout` |
+| `push.default` | `simple` | `simple` (since git 2.0) | A bare push sends the branch to its upstream only when the names match, and refuses otherwise (the test shows the refusal and `upstream` sending it). Written, it holds against a later `matching`. | [git-config push.default](https://git-scm.com/docs/git-config#Documentation/git-config.txt-pushdefault); `simple_pushes_only` |
+| `merge.conflictStyle` | `zdiff3` (`diff3` before git 2.35) | `merge` | Shows the original text between the sides, and leaves out the lines both sides share, which `diff3` keeps inside the conflict. git older than 2.35 reports `zdiff3` as an unknown style, so Canopy writes `diff3` there. | [git-config merge.conflictStyle](https://git-scm.com/docs/git-config#Documentation/git-config.txt-mergeconflictStyle), [2.35 release notes](https://github.com/git/git/blob/master/Documentation/RelNotes/2.35.0.adoc) ("Zealous diff3"); `conflicts_show_the_original` |
+| `init.defaultBranch` | `main` | `master`; git 3.0 makes it `main` | The branch new repositories start on; git is moving to the same name. | [git-config init.defaultBranch](https://git-scm.com/docs/git-config#Documentation/git-config.txt-initdefaultBranch), [BreakingChanges, Git 3.0](https://github.com/git/git/blob/master/Documentation/BreakingChanges.adoc); `new_repositories_start_on_main` |
+| `commit.cleanup` | `default` | `default` | Corrected by this audit from `whitespace`. `whitespace` keeps every `#` line, git's own template included: written globally, a `git commit` in a terminal commits "Please enter the commit message..." and the status lines, as does `--amend` and a squash in `rebase -i` (shown by the test); git-config warns "you will have to remove the help lines that begin with the comment character in the commit log template yourself, if you do this". `scissors` drops the template of a commit but still leaks a squash's. `default` is `whitespace` for a message that is not edited, which is every commit Canopy makes (`-F`), so Canopy's own choice stays Whitespace and keeps a typed `#` line, and strip, which drops `#` lines from a message written in an editor, for one that is. | [git-commit `--cleanup`](https://git-scm.com/docs/git-commit#Documentation/git-commit.txt---cleanupltmodegt), [git-config commit.cleanup](https://git-scm.com/docs/git-config#Documentation/git-config.txt-commitcleanup); `the_recommended_commit_cleanup` |
+| `core.autocrlf` | `input` (`true` on Windows) | unset: no conversion | Not written, see below. GitHub's guidance for Windows is `true`, for macOS and Linux `input`, and a `.gitattributes` file in the repository overrides it for every contributor. | [git-config core.autocrlf](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf), [GitHub: Configuring Git to handle line endings](https://docs.github.com/en/get-started/git-basics/configuring-git-to-handle-line-endings); `changing_line_endings_is_not_neutral` |
+| `commit.gpgsign` | `false` | `false` | Not written, see below. Signing stays off until the user has a key. git-config: use of it "when doing operations such as rebase can result in a large number of commits being signed". | [git-config commit.gpgSign](https://git-scm.com/docs/git-config#Documentation/git-config.txt-commitgpgSign) |
+| `gpg.format` | `ssh` (git 2.34 and later, else `openpgp`) | `openpgp` | Not written, see below. The simplest format GitHub verifies; "SSH signature verification is available in Git 2.34 or later". | [git-config gpg.format](https://git-scm.com/docs/git-config#Documentation/git-config.txt-gpgformat), [2.34 release notes](https://github.com/git/git/blob/master/Documentation/RelNotes/2.34.0.adoc), [GitHub: About commit signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification) |
+
+**Why line endings and signing are recommended but not written.** `core.autocrlf` changes how
+every existing repository's files are read: a file committed with CRLF is stored with LF the next
+time git normalises it (`git add --renormalize`, and every touch), turning the file into a
+whole-file change in someone else's history; the right value depends on the platform and on the
+project's own `.gitattributes`, which overrides it. `commit.gpgsign = true` needs a key Canopy
+cannot create, and `gpg.format = ssh` needs `user.signingKey` and a user who is not already
+signing with a GnuPG key under git's default `openpgp`: writing it would break that user's
+signing. `commit.gpgsign = false` is git's own default, so writing it adds nothing. They stay
+shown, with their recommendation and where they are set, and the user writes them. The owner's
+decision of 2026-10-09 keeps `commit.gpgsign` and `core.hooksPath` the user's.
+
+**Corrections the audit made.** `commit.cleanup` from `whitespace` to `default` (above); the
+claim that `pull.rebase = false` lets `pull.ff = only` take effect (above); `gpg.format` is
+`openpgp` on git older than 2.34, where `ssh` is not a valid value; Canopy reads `pull.autoStash`
+only on git 2.51 and later, as git does; and Canopy's Merge passes Canopy's Autostash choice, as
+this ADR's first table already said (#249). A machine that already holds `commit.cleanup =
+whitespace` from an earlier Use recommended is reported by the notification center, and Use
+recommended replaces it.
 
 ## Consequences
 

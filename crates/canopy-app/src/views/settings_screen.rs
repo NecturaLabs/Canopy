@@ -1299,7 +1299,9 @@ fn git_setting_help(setting: Setting) -> &'static str {
         Setting::PullFastForward => {
             "With fast-forward only, Canopy asks Rebase or Merge when branches diverged."
         }
-        Setting::PullAutostash => "Stashes local changes before a pull and restores them after.",
+        Setting::PullAutostash => {
+            "Stashes local changes before a pull and restores them after. Git before 2.51 ignores it."
+        }
         Setting::FetchPrune => "Removes remote branches that were deleted on the remote.",
         Setting::FetchPruneTags => {
             "Deletes local tags the remote doesn't have, even unpushed ones."
@@ -1309,12 +1311,14 @@ fn git_setting_help(setting: Setting) -> &'static str {
         }
         Setting::MergeAutostash => "Stashes local changes before a merge and restores them after.",
         Setting::PushFollowTags => "Pushes the annotated tags on the commits being pushed.",
-        Setting::SubmoduleRecurse => "Checkout, pull and switch also update submodules.",
+        Setting::SubmoduleRecurse => {
+            "Checkout, switch and pull also update submodules; a push also pushes the submodule commits it needs."
+        }
         Setting::PushDefault => "Simple pushes to the upstream branch only when the names match.",
         Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
         Setting::InitialBranch => "The branch a new repository starts on.",
         Setting::CommitCleanup => {
-            "Whitespace trims spaces and blank lines; Strip also removes lines starting with #."
+            "Default drops # lines from an edited message. Whitespace keeps them, git's template too."
         }
         Setting::Autocrlf => "Converts CRLF to LF on commit; CRLF on checkout converts back.",
         Setting::CommitSigning => "Signs every commit with your configured key.",
@@ -3164,6 +3168,7 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         (Setting::SigningFormat, "openpgp") => "OpenPGP",
         (Setting::SigningFormat, "ssh") => "SSH",
         (Setting::SigningFormat, "x509") => "X.509",
+        (Setting::CommitCleanup, "default") => "Git's default",
         (_, "true") => "On",
         (_, "false") => "Off",
         // Branch names and the diff3 styles are names, not words.
@@ -3285,7 +3290,7 @@ fn git(
         row_with_note(
             ui,
             "Autostash",
-            "Sets uncommitted changes aside before a pull or rebase and restores them after.",
+            "Sets uncommitted changes aside before a pull, rebase or merge and restores them after.",
             f.and_then(|f| autostash_note(f, s.autostash, follow))
                 .as_ref(),
             |ui| {

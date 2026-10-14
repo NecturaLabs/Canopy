@@ -683,10 +683,14 @@ impl Repo {
         self.git_cmd(&["branch", "-D", "--", name]).map(drop)
     }
 
-    /// Merges `target` into the current branch as `mode` says and returns git's standard output.
+    /// Merges `target` into the current branch as `mode` says and returns git's standard output,
+    /// stashing uncommitted changes around it when [`crate::GitOptions::autostash`] says so.
     /// [`MergeMode::Squash`] stages the changes and stops before committing; the caller commits.
     pub fn merge(&self, target: &str, mode: MergeMode) -> Result<String> {
-        self.conflicting_cmd(&["merge", "--no-edit", mode.flag(), "--", target])
+        let mut args = vec!["merge", "--no-edit", mode.flag()];
+        args.extend(self.autostash_flag(false));
+        args.extend(["--", target]);
+        self.conflicting_cmd(&args)
     }
 
     /// Rebases the current branch onto `onto`, stashing uncommitted changes around it when

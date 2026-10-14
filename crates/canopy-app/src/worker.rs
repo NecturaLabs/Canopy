@@ -1156,6 +1156,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     // A pull or a rebase: it can autostash, and stopping on conflicts is not a
                     // failure.
                     let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_));
+                    // A merge autostashes too; one stopped on conflicts has its own banner.
+                    let autostashes = integrates || matches!(op, Op::Merge(..));
                     let pull = match op {
                         Op::Pull {
                             strategy,
@@ -1217,7 +1219,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed");
                         }
                     }
-                    let stash_conflict = integrates
+                    let stash_conflict = autostashes
                         && result.is_ok()
                         && repo.autostash_conflicted().unwrap_or_else(|e| {
                             tracing::warn!(error = %redacted(&e), "conflicts not checked");
