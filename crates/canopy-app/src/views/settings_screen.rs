@@ -42,7 +42,7 @@ use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
 use crate::ui::kit::row::{ListRow, Roving, RowKind};
 use crate::ui::kit::select::{self, Select};
-use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, NoticeAction, column_label};
+use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, column_label};
 use crate::ui::kit::toggle::Switch;
 use crate::ui::kit::{Button, HelpMark, IconButton, Size, Tone};
 use crate::ui::motion::{self, MotionPref};
@@ -688,23 +688,9 @@ struct Page<'a, 'd> {
 impl Page<'_, '_> {
     /// What stays at the top of every page while trust safety is off.
     fn trust_notice(&mut self, ui: &mut Ui) {
-        if self.settings.trust_safety {
-            return;
-        }
-        let clicked = Callout::new(
-            Tone::Danger,
-            "Canopy no longer asks before it changes or runs anything in a repository. Any repository can run programs on this computer through its hooks and settings.",
-        )
-        .title("Trust safety is off")
-        .icon(icon::SHIELD_WARNING)
-        .id_salt("trust-safety-off")
-        .action(NoticeAction::new("Turn on").icon(icon::SHIELD_CHECK))
-        .show_actions(ui)
-        .value;
-        if clicked == Some(0) {
+        if !self.settings.trust_safety && trust_off_notice(ui) {
             self.actions.push(Action::SetTrustSafety(true));
         }
-        ui.add_space(theme::MD);
     }
 
     /// One section's rows (all of them, or while searching those that match).
@@ -5216,6 +5202,30 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
     }
 }
 
+/// The notice shown while trust safety is off; whether Turn on was pressed. A bordered button, not
+/// the callout's ghost action, which shows no edge until hovered: this notice must be answerable
+/// at a glance, with the kit button's focus ring and keys.
+fn trust_off_notice(ui: &mut Ui) -> bool {
+    let mut turn_on = false;
+    Callout::new(
+        Tone::Danger,
+        "Canopy no longer asks before it changes or runs anything in a repository. Any repository can run programs on this computer through its hooks and settings.",
+    )
+    .title("Trust safety is off")
+    .icon(icon::SHIELD_WARNING)
+    .id_salt("trust-safety-off")
+    .show_with(ui, |ui| {
+        turn_on = Button::new("Turn on")
+            .size(Size::Sm)
+            .icon(icon::SHIELD_CHECK)
+            .id_salt("trust-safety-on")
+            .show(ui)
+            .clicked();
+    });
+    ui.add_space(theme::MD);
+    turn_on
+}
+
 /// Returns true when "Open Accounts" was clicked.
 fn privacy(
     ui: &mut Ui,
@@ -8495,5 +8505,26 @@ mod tests {
             !decided.iter().any(|l| l == "Prune on fetch"),
             "{decided:?}"
         );
+    }
+
+    /// Turn on, in the notice that stays while trust safety is off, is reached with Tab and
+    /// pressed with Enter, like any kit button.
+    #[test]
+    fn the_trust_off_notice_turns_on_from_the_keyboard() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let pressed = std::cell::Cell::new(false);
+        let draw = |events| {
+            crate::ui::kit::testkit::frame(&ctx, events, |ui| {
+                pressed.set(pressed.get() | trust_off_notice(ui));
+            });
+        };
+        draw(Vec::new());
+        draw(crate::ui::kit::testkit::key(egui::Key::Tab));
+        draw(Vec::new());
+        assert!(!pressed.get(), "reaching it does not press it");
+        draw(crate::ui::kit::testkit::key(egui::Key::Enter));
+        assert!(pressed.get(), "Enter presses the focused button");
     }
 }
