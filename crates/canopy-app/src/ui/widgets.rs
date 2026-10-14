@@ -18,7 +18,48 @@ pub fn single_line_galley(
     let mut job = egui::text::LayoutJob::simple(text, font, color, width.max(0.0));
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
-    ui.painter().layout_job(job)
+    layout_tidy(ui.painter(), job)
+}
+
+/// `job` laid out; when it is cut, the ellipsis follows the last word, not a space.
+/// egui cuts at a word boundary and keeps the space before its ellipsis ("Make the …").
+pub fn layout_tidy(
+    painter: &egui::Painter,
+    job: egui::text::LayoutJob,
+) -> std::sync::Arc<egui::Galley> {
+    let galley = painter.layout_job(job.clone());
+    let Some(ellipsis) = job.wrap.overflow_character.filter(|_| galley.elided) else {
+        return galley;
+    };
+    let shown: String = galley.rows.iter().map(|row| row.text()).collect();
+    let before = shown.strip_suffix(ellipsis).unwrap_or(&shown);
+    if !before.ends_with(char::is_whitespace) {
+        return galley;
+    }
+    let kept_chars = before.trim_end().chars().count();
+    let kept = tidy_end(&job.text, kept_chars);
+    let mut tidy = job;
+    tidy.text.truncate(kept);
+    tidy.sections.retain_mut(|section| {
+        section.byte_range.end.0 = section.byte_range.end.0.min(kept);
+        section.byte_range.start.0 < section.byte_range.end.0
+    });
+    let Some(last) = tidy.sections.last().map(|s| s.format.clone()) else {
+        return galley;
+    };
+    tidy.append(&ellipsis.to_string(), 0.0, last);
+    tidy.wrap.max_rows = usize::MAX;
+    let mut galley = painter.layout_job(tidy);
+    // The text is cut all the same: callers ask the galley.
+    std::sync::Arc::make_mut(&mut galley).elided = true;
+    galley
+}
+
+/// The byte offset after the first `chars` characters of `text`.
+fn tidy_end(text: &str, chars: usize) -> usize {
+    text.char_indices()
+        .nth(chars)
+        .map_or(text.len(), |(i, _)| i)
 }
 
 /// Removes tooltips from content below a newly drawn blocking overlay.
@@ -149,6 +190,30 @@ mod tests {
     use super::*;
     use crate::ui::kit;
     use crate::ui::theme::{self, palette};
+
+    #[test]
+    fn a_cut_label_ends_its_last_word_with_the_ellipsis_and_no_space() {
+        let ctx = kit::testkit::ctx();
+        let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+        for step in 0..52_u16 {
+            let width = 40.0 + f32::from(step) * 5.0;
+            let mut cut = String::new();
+            kit::testkit::frame(&ctx, Vec::new(), |ui| {
+                let mut job = egui::text::LayoutJob::simple(
+                    text.to_owned(),
+                    FontId::proportional(13.0),
+                    Color32::WHITE,
+                    width,
+                );
+                job.wrap.max_rows = 1;
+                let g = layout_tidy(ui.painter(), job);
+                cut = g.rows.iter().map(|r| r.text()).collect();
+                assert_eq!(g.rows.len(), 1, "one row at {width}");
+            });
+            assert!(!cut.contains(" …"), "{width}: {cut:?}");
+            assert!(cut == text || cut.ends_with('…'), "{width}: {cut:?}");
+        }
+    }
 
     #[test]
     fn controls_keep_keyboard_activation_and_disabled_guards() {

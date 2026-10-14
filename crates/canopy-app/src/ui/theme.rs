@@ -262,6 +262,28 @@ pub struct Palette {
     pub lanes: [Color32; 10],
     /// Code colours in diffs. 4.5:1 on `pane`, `added_bg`, `removed_bg`.
     pub syntax: Syntax,
+    /// Colours of a request's fields in the list and the details header.
+    pub fields: Fields,
+}
+
+/// One colour for each field of a request (pull or merge request) row and details header, so the
+/// eye finds the number, the author or the age by colour as well as by place. The title is
+/// `text` and the state its tone's colour. Each is text-grade: 4.5:1 on the plain grounds, hovers
+/// and selected rows, and distinct from the others and from `text`, `text_dim` and `accent`
+/// (`every_theme_keeps_the_request_fields_apart`). A field is never told by colour alone: each also
+/// has its place, its icon or its wording.
+#[derive(Debug, Clone, Copy)]
+pub struct Fields {
+    /// The request's number (`#428`, `!428`).
+    pub number: Color32,
+    /// Who opened it.
+    pub author: Color32,
+    /// When it was last updated.
+    pub time: Color32,
+    /// Its labels: the ink, and the base of the tint behind each label.
+    pub label: Color32,
+    /// How many comments it has.
+    pub comments: Color32,
 }
 
 /// Syntax highlighting colours. Plain code uses `text`.
@@ -485,6 +507,13 @@ pub const MIDNIGHT: Palette = Palette {
         type_: hex(0x7BDAD9),
         constant: hex(0xF49CBB),
     },
+    fields: Fields {
+        number: hex(0xF2A26A),
+        author: hex(0x5ECAD6),
+        time: hex(0xBDBA8E),
+        label: hex(0xF197C2),
+        comments: hex(0xD1A1EF),
+    },
 };
 
 /// "Daylight" (concept 1 by day): white canvas, light-grey chrome and the same indigo.
@@ -684,6 +713,13 @@ pub const DAYLIGHT: Palette = Palette {
         function: hex(0x006495),
         type_: hex(0x006B70),
         constant: hex(0xA22C5E),
+    },
+    fields: Fields {
+        number: hex(0x874300),
+        author: hex(0x02646D),
+        time: hex(0x5D5A31),
+        label: hex(0x873761),
+        comments: hex(0x6E4188),
     },
 };
 
@@ -889,6 +925,13 @@ pub const OBSERVATORY: Palette = Palette {
         type_: hex(0xCDB8FF),
         constant: hex(0xF5A1C0),
     },
+    fields: Fields {
+        number: hex(0xF6A56D),
+        author: hex(0x61CDD9),
+        time: hex(0xC0BD91),
+        label: hex(0xF59AC5),
+        comments: hex(0xD4A4F2),
+    },
 };
 
 /// High contrast's reference: Midnight at full contrast. Every theme's high contrast
@@ -1092,6 +1135,13 @@ pub const CONTRAST_REFERENCE: Palette = Palette {
         function: hex(0x82CBF6),
         type_: hex(0x7BDAD9),
         constant: hex(0xFAA2C1),
+    },
+    fields: Fields {
+        number: hex(0xFED4B9),
+        author: hex(0x87F2FE),
+        time: hex(0xE3E1B3),
+        label: hex(0xFECEE4),
+        comments: hex(0xEDD2FE),
     },
 };
 
@@ -3744,6 +3794,15 @@ mod tests {
         );
     }
 
+    /// How far apart two colours look: their `OKLab` distance, times 100.
+    fn oklab_distance(a: Color32, b: Color32) -> f32 {
+        let (a, b) = (
+            super::super::contrast::oklab(a),
+            super::super::contrast::oklab(b),
+        );
+        100.0 * ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+    }
+
     /// Collects failed pairings so one run lists all of them.
     struct Gate {
         failures: Vec<String>,
@@ -3932,6 +3991,19 @@ mod tests {
                     }
                 }
 
+                let fields = p.fields;
+                for (what, fg) in [
+                    ("number", fields.number),
+                    ("author", fields.author),
+                    ("time", fields.time),
+                    ("label", fields.label),
+                    ("comments", fields.comments),
+                ] {
+                    for (on, bg) in plain.iter().chain(&selrows) {
+                        gate.need(&format!("fields {what}"), fg, on, *bg, 4.5);
+                    }
+                }
+
                 // Kit pairings.
                 for (name, fill) in [
                     ("primary", s.primary),
@@ -4105,6 +4177,49 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
+    /// The fields of a request each have a colour of their own: apart from each other and from the
+    /// neutral text and the accent, in every theme. High contrast pulls every colour toward the
+    /// ends of the lightness scale, so there the hue alone has to carry the difference. A custom
+    /// theme lets the person choose the accent and tint every neutral with a hue of their choosing,
+    /// so there the fields only have to differ from each other.
+    #[test]
+    fn every_theme_keeps_the_request_fields_apart() {
+        let mut failures = Vec::new();
+        for p in every_palette() {
+            let f = p.fields;
+            let fields = [
+                ("number", f.number),
+                ("author", f.author),
+                ("time", f.time),
+                ("label", f.label),
+                ("comments", f.comments),
+            ];
+            let others = [
+                ("text", p.text),
+                ("text_dim", p.text_dim),
+                ("text_faint", p.text_faint),
+                ("accent", p.accent),
+            ];
+            let (among, beside) = if p.strict { (3.0, 2.5) } else { (7.0, 6.0) };
+            let others: &[(&str, Color32)] = if p.name == "Custom" { &[] } else { &others };
+            for (i, (a, ca)) in fields.iter().enumerate() {
+                for (b, cb) in &fields[i + 1..] {
+                    let d = oklab_distance(*ca, *cb);
+                    if d < among {
+                        failures.push(format!("{}: {a} and {b} are {d:.1} apart", p.name));
+                    }
+                }
+                for (b, cb) in others {
+                    let d = oklab_distance(*ca, *cb);
+                    if d < beside {
+                        failures.push(format!("{}: {a} and {b} are {d:.1} apart", p.name));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     /// Pills, avatars and badges keep their hue and still read at 4.5:1 wherever they are drawn,
     /// in both styles.
     #[test]
@@ -4117,6 +4232,7 @@ mod tests {
                 colours.extend([
                     p.accent, p.accent2, p.success, p.warning, p.danger, p.text_dim,
                 ]);
+                colours.extend([p.fields.label, p.fields.comments]);
                 for c in colours {
                     let mut fills = vec![
                         s.badge,

@@ -11,7 +11,7 @@
 
 use egui::Color32;
 
-use super::theme::{Fill, Palette, Surfaces, Syntax, Tones, contrast as ratio, luminance};
+use super::theme::{Fields, Fill, Palette, Surfaces, Syntax, Tones, contrast as ratio, luminance};
 
 fn to_linear(v: u8) -> f32 {
     let v = f32::from(v) / 255.0;
@@ -363,6 +363,13 @@ pub fn lift(base: &Palette, reference: &Palette, margin: f64) -> Palette {
             function: on.color(b.syntax.function, r.syntax.function),
             type_: on.color(b.syntax.type_, r.syntax.type_),
             constant: on.color(b.syntax.constant, r.syntax.constant),
+        },
+        fields: Fields {
+            number: on.color(b.fields.number, r.fields.number),
+            author: on.color(b.fields.author, r.fields.author),
+            time: on.color(b.fields.time, r.fields.time),
+            label: on.color(b.fields.label, r.fields.label),
+            comments: on.color(b.fields.comments, r.fields.comments),
         },
         standard,
         deeper,

@@ -893,6 +893,7 @@ fn synonyms(title: &str) -> &'static str {
         "High contrast" => "contrast accessibility low vision glare legibility readable bold",
         "Translucent surfaces" => "glass blur transparency transparent frosted",
         "Density" => "compact dense comfortable spacing row height",
+        "Request list" => "pull merge requests compact dense comfortable one line rows items",
         "Graph nodes" => "commit graph dots rings squares diamonds shape nodes history",
         "Graph lines" => "commit graph curves metro circuit lines edges branches history",
         "Motion" => "animation animations reduce reduced motion",
@@ -2263,6 +2264,23 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             let options = Density::ALL.map(|v| (v, v.label()));
             Segmented::new(&mut s.density, &options)
                 .label("Density")
+                .show(ui);
+        },
+    );
+    row(
+        ui,
+        "Request list",
+        "Dense shows one line per pull or merge request, without the author line and the preview.",
+        |ui| {
+            revert(
+                ui,
+                &mut s.request_density,
+                &DEFAULTS.request_density,
+                "Request list",
+            );
+            let options = crate::request_view::RequestDensity::ALL.map(|v| (v, v.label()));
+            Segmented::new(&mut s.request_density, &options)
+                .label("Request list")
                 .show(ui);
         },
     );
@@ -4789,7 +4807,7 @@ fn is_system_choice(
     system: Option<&crate::system_apps::SystemChoice>,
     app: &crate::system_apps::App,
 ) -> bool {
-    system.is_some_and(|s| s.command.as_deref() == Some(app.command.as_str()))
+    system.is_some_and(|s| s.is(app))
 }
 
 /// An editor, terminal or file manager: the system's (named, with where that comes from), one of
@@ -6888,6 +6906,7 @@ mod tests {
             kind: Kind::Editor,
             name: name.to_owned(),
             command: command.to_owned(),
+            id: command.to_owned(),
         };
         let (zed, code) = (app("Zed", "zed"), app("Code", "code %f"));
         let installed = [&zed, &code];
@@ -7948,19 +7967,40 @@ mod tests {
     #[test]
     fn the_system_program_is_listed_once_in_a_launchers_list() {
         use crate::system_apps::{App, Kind, Origin, SystemChoice};
-        let app = |name: &str, command: &str| App {
-            kind: Kind::Editor,
+        let app = |name: &str, command: &str, id: &str| App {
+            kind: Kind::Terminal,
             name: name.to_owned(),
             command: command.to_owned(),
+            id: id.to_owned(),
         };
+        // xdg-terminal-exec starts kitty: the default is kitty's own row, not a second one.
         let system = SystemChoice {
-            name: "Zed".to_owned(),
-            command: Some("zed".to_owned()),
+            name: "kitty".to_owned(),
+            command: Some("xdg-terminal-exec".to_owned()),
+            id: Some("/usr/bin/kitty".to_owned()),
             origin: Origin::Desktop,
         };
-        assert!(is_system_choice(Some(&system), &app("Zed", "zed")));
-        assert!(!is_system_choice(Some(&system), &app("Vim", "vim")));
-        assert!(!is_system_choice(None, &app("Zed", "zed")));
+        assert!(is_system_choice(
+            Some(&system),
+            &app("kitty", "kitty", "/usr/bin/kitty")
+        ));
+        assert!(
+            !is_system_choice(Some(&system), &app("kitty", "kitty", "/opt/kitty")),
+            "a name or command in common is not the program"
+        );
+        assert!(!is_system_choice(
+            Some(&system),
+            &app("Foot", "foot", "/usr/bin/foot")
+        ));
+        assert!(!is_system_choice(
+            None,
+            &app("kitty", "kitty", "/usr/bin/kitty")
+        ));
+        let unlisted = SystemChoice { id: None, ..system };
+        assert!(!is_system_choice(
+            Some(&unlisted),
+            &app("kitty", "kitty", "/usr/bin/kitty")
+        ));
     }
 
     #[test]
