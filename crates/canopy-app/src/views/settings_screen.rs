@@ -893,6 +893,7 @@ fn synonyms(title: &str) -> &'static str {
         "High contrast" => "contrast accessibility low vision glare legibility readable bold",
         "Translucent surfaces" => "glass blur transparency transparent frosted",
         "Density" => "compact dense comfortable spacing row height",
+        "Request list" => "pull merge requests compact dense comfortable one line rows items",
         "Graph nodes" => "commit graph dots rings squares diamonds shape nodes history",
         "Graph lines" => "commit graph curves metro circuit lines edges branches history",
         "Motion" => "animation animations reduce reduced motion",
@@ -2263,6 +2264,23 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             let options = Density::ALL.map(|v| (v, v.label()));
             Segmented::new(&mut s.density, &options)
                 .label("Density")
+                .show(ui);
+        },
+    );
+    row(
+        ui,
+        "Request list",
+        "Dense shows one line per pull or merge request, without the author line and the preview.",
+        |ui| {
+            revert(
+                ui,
+                &mut s.request_density,
+                &DEFAULTS.request_density,
+                "Request list",
+            );
+            let options = crate::request_view::RequestDensity::ALL.map(|v| (v, v.label()));
+            Segmented::new(&mut s.request_density, &options)
+                .label("Request list")
                 .show(ui);
         },
     );
