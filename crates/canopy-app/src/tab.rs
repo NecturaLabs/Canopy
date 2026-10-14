@@ -2740,7 +2740,9 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: false,
-                                    delivery: if announce {
+                                    // Only a fetch nobody asked for is quiet; a failed
+                                    // stage or resolve is the user's own action.
+                                    delivery: if announce || kind != OpKind::Fetch {
                                         Delivery::Card
                                     } else {
                                         Delivery::Quiet
@@ -4808,6 +4810,13 @@ mod tests {
             };
         assert_eq!(delivery(&mut tab, fetch(false))?, Delivery::Quiet);
         assert_eq!(delivery(&mut tab, fetch(true))?, Delivery::Card);
+        let stage = Event::OpFinished {
+            label: "Staging".into(),
+            kind: OpKind::Stage,
+            announce: false,
+            result: Err("fatal: Unable to create index.lock".into()),
+        };
+        assert_eq!(delivery(&mut tab, stage)?, Delivery::Card, "the user's own");
         assert_eq!(
             delivery(&mut tab, Event::Conflicted("Pulling".into()))?,
             Delivery::Attention

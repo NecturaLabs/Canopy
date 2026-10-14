@@ -80,7 +80,7 @@ impl Topic {
                 "An operation, the host or opening something failed, with the reason it gave."
             }
             Self::Attention => {
-                "SSH waits for your security key, or an installed update waits for a restart."
+                "SSH waits for your security key, Git stopped on conflicts or a missing program, or an installed update waits for a restart."
             }
             Self::Update => "A new Canopy build is out, or the result of checking for one.",
             Self::Finished => "A commit, push, pull, fetch, clone or other Git work finished.",
