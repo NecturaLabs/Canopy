@@ -33,6 +33,8 @@ git2 = { version = "0.21", default-features = false }
 crossbeam-channel = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tempfile = "3"
+# Tells whether two spellings of a path are the same folder (case-insensitive volumes, links).
+same-file = "1"
 
 [workspace.lints.rust]
 # Denied, not forbidden, so the one owner-approved module can allow it: the backdrop blur's OpenGL

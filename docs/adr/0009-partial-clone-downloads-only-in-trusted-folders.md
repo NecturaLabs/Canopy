@@ -1,6 +1,6 @@
 # ADR 0009: Partial clones download on their own only inside trusted folders
 
-**Status:** accepted
+**Status:** accepted; amended by [ADR 0014](0014-every-repository-is-trusted-or-read-only.md) (trust covers every repository, folders compared by identity)
 **Date:** 2026-10-03
 
 ## Context
