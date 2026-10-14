@@ -3155,6 +3155,17 @@ fn editor_value(facts: &GitFacts, setting: Setting) -> Option<&ConfigValue> {
 }
 
 fn git_value_label(setting: Setting, value: &str) -> String {
+    // A setting that takes a boolean or a word reads `yes` or `1` as `true`, as git does.
+    let value = match setting {
+        Setting::PullRebase | Setting::PullFastForward | Setting::Autocrlf if !value.is_empty() => {
+            match crate::repo_config::git_bool(value) {
+                Some(true) => "true",
+                Some(false) => "false",
+                None => value,
+            }
+        }
+        _ => value,
+    };
     match (setting, value) {
         (Setting::PullRebase, "false") => "Don't rebase",
         (Setting::PullRebase, "true") => "Rebase",
@@ -7851,6 +7862,22 @@ mod tests {
     }
 
     /// Rows name settings by their labels, never by git's keys.
+    /// A boolean written as `yes` or `1` names the option `true` does, in a row and in a note.
+    #[test]
+    fn a_spelled_out_boolean_has_the_label_of_its_option() {
+        for (setting, written, label) in [
+            (Setting::PullRebase, "1", "Rebase"),
+            (Setting::PullRebase, "off", "Don't rebase"),
+            (Setting::PullRebase, "merges", "Rebase preserving merges"),
+            (Setting::PullFastForward, "yes", "Allow fast-forward"),
+            (Setting::PullFastForward, "only", "Fast-forward only"),
+            (Setting::Autocrlf, "on", "CRLF on checkout"),
+            (Setting::Autocrlf, "input", "LF on commit"),
+        ] {
+            assert_eq!(git_value_label(setting, written), label, "{written}");
+        }
+    }
+
     #[test]
     fn the_git_page_never_shows_a_configuration_key() {
         let facts = GitFacts {

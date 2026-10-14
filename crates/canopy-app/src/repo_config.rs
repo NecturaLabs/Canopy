@@ -38,11 +38,17 @@ impl ConfigValue {
 
     /// The value read as a git boolean (`true`, `yes`, `on`, `1`; `false`, `no`, `off`, `0`).
     pub fn as_bool(&self) -> Option<bool> {
-        match self.value.trim().to_ascii_lowercase().as_str() {
-            "true" | "yes" | "on" | "1" => Some(true),
-            "false" | "no" | "off" | "0" | "" => Some(false),
-            _ => None,
-        }
+        git_bool(&self.value)
+    }
+}
+
+/// `text` read as a git boolean: `true`, `yes`, `on` or a non-zero number; `false`, `no`, `off`, zero
+/// or nothing at all. `None` for any other word.
+pub fn git_bool(text: &str) -> Option<bool> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" => Some(true),
+        "false" | "no" | "off" | "" => Some(false),
+        number => number.parse::<i64>().ok().map(|n| n != 0),
     }
 }
 
