@@ -558,9 +558,13 @@ pub struct Settings {
     pub file_manager: String,
     /// Load pull/merge requests from GitHub and GitLab.
     pub hosting_api: bool,
-    /// Folders whose repositories may download missing objects in a partial clone without being
-    /// asked, because git then runs the repository's own configuration (see `trust.rs`).
+    /// Folders whose repositories Canopy trusts, and everything inside them: a repository outside
+    /// them is read-only and downloads nothing on its own, because git runs the repository's own
+    /// configuration and hooks (see `trust.rs`).
     pub trusted_folders: Vec<PathBuf>,
+    /// Whether trust is checked at all. Off, no location is asked about or refused, and
+    /// `trusted_folders` is kept for when it is turned on again.
+    pub trust_safety: bool,
 
     // Updates.
     pub check_updates: bool,
@@ -655,6 +659,7 @@ impl Default for Settings {
             file_manager: String::new(),
             hosting_api: true,
             trusted_folders: Vec::new(),
+            trust_safety: true,
             check_updates: true,
             include_prereleases: false,
             last_update_check: 0,
@@ -699,9 +704,13 @@ impl Settings {
         self.zoom = self.zoom.clamp(0.8, 1.6);
         self.commit_page = self.commit_page.clamp(200, 50_000);
         self.diff.context = self.diff.context.min(25);
-        let mut seen = Vec::new();
-        self.trusted_folders
-            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f));
+        let mut kept = Vec::new();
+        for folder in std::mem::take(&mut self.trusted_folders) {
+            if folder.is_absolute() {
+                crate::trust::add(&mut kept, &folder);
+            }
+        }
+        self.trusted_folders = kept;
         for repo in self.repos.values_mut() {
             repo.display_name = repo
                 .display_name
@@ -1460,6 +1469,29 @@ mod tests {
             Settings::default().trusted_folders.is_empty(),
             "nothing is trusted until the user says so"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_trusted_list_read_from_settings_keeps_only_the_parents() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"trusted_folders": ["/home/ada/src/tide", "/home/ada/src", "/srv/git", "/home/ada/src/reef"]}"#,
+        )
+        .expect("parse");
+        s.migrate();
+        assert_eq!(
+            s.trusted_folders,
+            [PathBuf::from("/home/ada/src"), PathBuf::from("/srv/git")]
+        );
+    }
+
+    #[test]
+    fn trust_safety_is_on_unless_the_user_turned_it_off() {
+        assert!(Settings::default().trust_safety);
+        let off: Settings = serde_json::from_str(r#"{"trust_safety": false}"#).expect("parse");
+        assert!(!off.trust_safety);
+        let none: Settings = serde_json::from_str("{}").expect("parse");
+        assert!(none.trust_safety, "a settings file from before the switch");
     }
 
     #[test]

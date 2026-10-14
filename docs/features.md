@@ -54,13 +54,27 @@ in the error text. A diff that could not be downloaded keeps its message with a 
 is not asked for again by the status refreshes; its file row carries a "not downloaded" mark
 until a read succeeds.
 
-Downloads run on their own only for repositories inside a folder trusted in Settings (Privacy,
-Trusted folders), because git then follows the repository's own configuration, which can run
-programs and contact servers. Elsewhere Canopy shows what is on disk, says why a read needs a
-download, and the status bar offers "Downloads off · Trust…" with the repository's folder or its
-parent. Linked worktrees also list the external Git folders they use; confirmation trusts those
-folders too. The chip disappears when its refused details are no longer visible. Nothing is
-trusted by default (ADR 0009).
+Downloads run on their own only for a trusted repository (see Trust below), because git then
+follows the repository's own configuration, which can run programs and contact servers. Elsewhere
+Canopy shows what is on disk, says why a read needs a download, and the status bar offers
+"Downloads off · Trust…", which opens the same Trust prompt. The chip disappears when its refused
+details are no longer visible (ADR 0009).
+
+### Trust
+
+A repository's hooks, configuration and filters can run programs on this computer whenever `git`
+runs in it, so Canopy trusts a location before it acts on it (ADR 0014). A repository is trusted
+when it lies inside a folder in Settings → Privacy → Trusted folders, at any depth, linked
+worktrees and their Git folders included; nothing is trusted by default.
+
+| Feature | Status | Linux | macOS | Windows |
+|---|---|---|---|---|
+| Opening a repository that is not trusted asks first (Trust or Don't trust), for the active tab; the other restored tabs ask when first active. Trust adds the repository's folders (and a linked worktree's outside Git folders) to the list | Unreleased (#228) | Yes | ? | ? |
+| An untrusted repository is read-only: History, diffs and blame still show, every action (stage, commit, checkout, fetch, pull, push, ...) is refused with a toast that says why, background fetches skip it, and a banner above History, Changes and Pull requests offers Trust… | Unreleased (#228) | Yes | ? | ? |
+| The trusted list keeps only outer folders: adding a parent replaces the folders below it and a covered folder is not added; Settings explains it behind the help mark | Unreleased (#228) | Yes | ? | ? |
+| Folders are compared by what they are on disk, not by spelling, so capitalization and links never decide (a volume that ignores capitalization recognises `SRC` as `src`; one that does not does not) | Unreleased (#228) | Yes | Not verified | Not verified |
+| Trust safety switch (Settings → Privacy): off asks for confirmation and stops all prompts and refusals; Settings shows a notice on every page while it is off and keeps the list; a settings file never sets the list or the switch | Unreleased (#228) | Yes | ? | ? |
+
 
 A download of the working tree status that failed (server unreachable) is remembered: the
 refreshes the file watcher makes show the same message without trying the network again, until

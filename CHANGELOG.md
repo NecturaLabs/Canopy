@@ -10,6 +10,15 @@ commits since the previous build.
 
 ### Added
 
+- Canopy asks before it acts on a repository it does not trust: opening one outside every trusted
+  folder shows a prompt that says a repository can run programs on this computer through its hooks
+  and settings, with Trust and Don't trust. Don't trust opens it read-only: history and diffs show,
+  every action is refused with a toast that says why, background fetches skip it, and a banner offers
+  Trust…. A trusted folder
+  trusts everything inside it, linked worktrees included, and the list in Settings → Privacy keeps
+  only the outer folders. Trust safety can be turned off there, after a confirmation; a settings file
+  never changes the list or the switch. Folders are compared by what they are on disk, so
+  capitalization and links never decide.
 - Pull and merge requests use the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) as their credential,
   before the environment, a token saved in Canopy and git's credential helper, so no second token is
   needed. Canopy reads the CLI's token when the repository opens, keeps it in memory only and says why

@@ -434,6 +434,13 @@ in the density's metrics:
   too long for the card is cut back to a word or number boundary before its ellipsis, so a number
   is never cut in two, unless that would lose more than a quarter of what fits. A file both sides
   deleted offers one "Delete it", not one per side.
+- A repository that is not trusted leads History, Changes and Requests with the kit warning
+  `Banner` "Read-only: this repository is not trusted" and a Trust… ghost action at its right end
+  (`views/state_banner.rs`); it stacks above the operation banner. Settings shows the kit `Callout`
+  in the danger tone, "Trust safety is off" with Turn on, at the top of every page while the
+  switch is off. The Trust prompt is a form-width dialog (shield icon, what a repository can do, what
+  Don't trust means, the folders it trusts in monospace); turning the switch off is a danger
+  confirmation.
 - The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests,
   drawn the same way in all three (`views/state_banner.rs`): the kit warning `Banner` with
   Continue and Abort as ghost buttons at its right end.

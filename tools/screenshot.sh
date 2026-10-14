@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|settings-git-pull|settings-git-commits|settings-git-config|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-repository-pull|settings-repository-diffs|settings-search|settings-search-none|about|repository-insights|file-history|file-history-commit|search-changes|clean-stale|author-card|request-filters|request-sort|commit-expanded|commit-compact|amend-commit|toasts|notifications|branch-selected|long-message|gallery|menu-branch|menu-commit|menu-file|blame|<dialog>]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|settings-git-pull|settings-git-commits|settings-git-config|clear-identity|update-installed|update-running|trust-prompt|trust-banner|trust-safety-off|privacy-trust-off|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-repository-pull|settings-repository-diffs|settings-search|settings-search-none|about|repository-insights|file-history|file-history-commit|search-changes|clean-stale|author-card|request-filters|request-sort|commit-expanded|commit-compact|amend-commit|toasts|notifications|branch-selected|long-message|gallery|menu-branch|menu-commit|menu-file|blame|<dialog>]
 #                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
 #                            [--contrast on|off] [--custom-theme SPEC]
 #                            [--motion system|reduced|full] [--gallery-page N]
@@ -14,6 +14,12 @@
 # showcase fixture's names).
 #
 # blame clicks the Blame button of the file the Changes view selects first, and shows its blame.
+#
+# The repository is trusted, so the picture shows the view and not the Trust prompt. trust-banner
+# shows it as an untrusted one (read-only banner, prompt answered with Don't trust); trust-prompt
+# is the prompt over a fixed illustrative path; privacy-trust-off is Settings with trust safety off.
+# CANOPY_SCREENSHOT_TRUSTED=<dir> in the environment also trusts <dir>, for what a trusted folder
+# shows (a signature, say).
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
 #
@@ -123,6 +129,9 @@ else
   if [[ -z ${WAYLAND_DISPLAY:-} ]]; then command+=(-u WAYLAND_DISPLAY); fi
   if [[ -v CANOPY_HOSTING_API_BASE ]]; then
     command+=("CANOPY_HOSTING_API_BASE=$CANOPY_HOSTING_API_BASE")
+  fi
+  if [[ -v CANOPY_SCREENSHOT_TRUSTED ]]; then
+    command+=("CANOPY_SCREENSHOT_TRUSTED=$CANOPY_SCREENSHOT_TRUSTED")
   fi
   command+=(CANOPY_SCREENSHOT_ISOLATED=1 HOME="$isolated/home" \
     XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" \

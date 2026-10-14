@@ -42,7 +42,7 @@ use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
 use crate::ui::kit::row::{ListRow, Roving, RowKind};
 use crate::ui::kit::select::{self, Select};
-use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, column_label};
+use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, NoticeAction, column_label};
 use crate::ui::kit::toggle::Switch;
 use crate::ui::kit::{Button, HelpMark, IconButton, Size, Tone};
 use crate::ui::motion::{self, MotionPref};
@@ -556,6 +556,7 @@ pub fn show(
                                 actions,
                                 tokens_changed: false,
                             };
+                            page.trust_notice(ui);
                             if words.is_empty() {
                                 Filter::set(
                                     ui.ctx(),
@@ -685,6 +686,27 @@ struct Page<'a, 'd> {
 }
 
 impl Page<'_, '_> {
+    /// What stays at the top of every page while trust safety is off.
+    fn trust_notice(&mut self, ui: &mut Ui) {
+        if self.settings.trust_safety {
+            return;
+        }
+        let clicked = Callout::new(
+            Tone::Danger,
+            "Canopy no longer asks before it changes or runs anything in a repository. Any repository can run programs on this computer through its hooks and settings.",
+        )
+        .title("Trust safety is off")
+        .icon(icon::SHIELD_WARNING)
+        .id_salt("trust-safety-off")
+        .action(NoticeAction::new("Turn on").icon(icon::SHIELD_CHECK))
+        .show_actions(ui)
+        .value;
+        if clicked == Some(0) {
+            self.actions.push(Action::SetTrustSafety(true));
+        }
+        ui.add_space(theme::MD);
+    }
+
     /// One section's rows (all of them, or while searching those that match).
     fn section(&mut self, ui: &mut Ui, section: Section) {
         let Self {
@@ -927,7 +949,8 @@ fn synonyms(title: &str) -> &'static str {
         "Terminal" => "console shell command line $terminal kitty alacritty",
         "Editor" => "ide vscode code zed sublime vim open file $editor $visual",
         "File manager" => "folder explorer finder nautilus files dolphin show reveal",
-        "Trusted folders" => "trust partial clone security",
+        "Trusted folders" => "trust trusted repository worktree partial clone security folder",
+        "Trust safety" => "trust untrusted read-only hooks programs security safety off",
         "Send crash reports" => "crash sentry telemetry error report",
         "Log detail" => "log logging debug verbose diagnostics",
         "Logs and crash reports" => "log logs diagnostics folder copy",
@@ -5203,12 +5226,12 @@ fn privacy(
     clone_parent: &str,
 ) -> bool {
     consent(ui, s, actions);
-    heading(ui, "Partial clones");
+    heading(ui, "Trust");
     row_more(
         ui,
         "Trusted folders",
-        "Canopy downloads a partial clone's missing files on its own only inside these folders.",
-        "Opening a commit or diff in a partial clone downloads the missing files, and git then follows the repository's configuration, which can run programs and contact servers. Trust a folder only if everything in it comes from you or people you trust; elsewhere, Trust… in the status bar asks first.",
+        "A repository inside one of these folders is trusted, and so is everything below each folder.",
+        "A repository's hooks and settings can run programs on this computer, and git follows them when it downloads a partial clone's missing files. Canopy opens a repository outside these folders read-only and asks before trusting it. Trusting a folder trusts every repository inside it, linked worktrees and ones you clone later included, so the list keeps only the outer folder. Trust a folder only if everything in it comes from you or people you trust.",
         |ui| {
             if let Some(dir) = picker.show_labelled(
                 ui,
@@ -5217,7 +5240,7 @@ fn privacy(
                 "Add folder…",
             ) && crate::trust::add(&mut s.trusted_folders, &dir)
             {
-                crate::trust::set(&s.trusted_folders);
+                crate::trust::publish(s);
                 ui.ctx().request_repaint();
             }
         },
@@ -5226,6 +5249,25 @@ fn privacy(
         trusted_folder_list(ui, s);
     }
     row_end(ui);
+    let before = s.trust_safety;
+    let mut safe = before;
+    row_explained(
+        ui,
+        "Trust safety",
+        "Asks before a repository can change anything or run programs. Off, every repository is trusted.",
+        "With it on, a repository outside the trusted folders opens read-only: Canopy shows its history and diffs but stages, commits, fetches and downloads nothing, because those run git with the repository's own hooks and settings. Turning it off asks first, applies to every open repository at once, and keeps your trusted folders for when you turn it back on.",
+        |ui| {
+            switch(ui, &mut safe, "Trust safety");
+        },
+    );
+    if safe != before {
+        // Off asks first; the row shows the old state until the answer comes.
+        actions.push(if safe {
+            Action::SetTrustSafety(true)
+        } else {
+            Action::OpenDialog(Dialog::ConfirmTrustSafetyOff)
+        });
+    }
     heading(ui, "Profile pictures");
     let help = "Shows GitHub or GitLab account pictures next to authors.";
     let mut open_accounts = false;
@@ -5341,7 +5383,7 @@ fn trusted_folder_list(ui: &mut Ui, s: &mut Settings) {
     if let Some(i) = remove {
         s.trusted_folders.remove(i);
         // At once, not on the next frame: a download queued on a repository thread must see it.
-        crate::trust::set(&s.trusted_folders);
+        crate::trust::publish(s);
     }
     if s.trusted_folders.is_empty() {
         ui.label(
