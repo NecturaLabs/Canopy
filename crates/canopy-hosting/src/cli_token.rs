@@ -287,6 +287,9 @@ fn read_login(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
     }
 }
 
+/// The most digits a TCP port has (65535).
+const PORT_DIGITS: usize = 5;
+
 /// Whether `host` is `name` or `name:port`, the name made of letters, digits, `.`, `_` and `-` and not
 /// starting with `-` or `.`.
 fn is_host_name(host: &str) -> bool {
@@ -298,8 +301,9 @@ fn is_host_name(host: &str) -> bool {
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-        && port
-            .is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
+        && port.is_none_or(|p| {
+            !p.is_empty() && p.len() <= PORT_DIGITS && p.bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
 /// Whether the key of an `auth status` line, as `glab` and `gh` word it, introduces a token.
