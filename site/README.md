@@ -24,7 +24,9 @@ The page's motif is the app's commit graph. Each section has a lane colour, take
 lanes in `ui/theme.rs` (Midnight's in dark, Daylight's in light): History indigo, Changes green,
 Conflicts pink, Requests amber, Git settings blue, Keyboard orange, Themes violet, Privacy teal,
 Download indigo again. A rail in the left gutter carries that colour from section to section, with
-a commit dot level with each heading, and the section's ground and the light under its shots are
+a commit dot level with each heading; it keeps at least 24 px from the window's edge (below
+1200 px the section text moves in to 48 px to make room) and is left out on phones, where there is
+no room beside the text, and the section's ground and the light under its shots are
 faintly tinted with it (an offset, soft shadow; no zero-offset halos). Sections alternate their
 layout: text beside a shot, on either side, or a full view with an enlarged detail of it (a hunk,
 the conflict card, a request row) laid over one corner; phones show the full view's crop only.
@@ -106,7 +108,9 @@ link previews do not read WebP.
   (`object-fit: cover`, anchored top left) so they show at about three quarters of their real size
   and their text stays readable; the hero shot is drawn at 150 % width for the same reason, and
   the shortcuts sheet is left out, since the rules beside it say the same; the enlarged details
-  are left out too, as the crops already show those parts at that size. Phones and tablets
+  are left out too, as the crops already show those parts at that size. A picture wider than the
+  screen (the hero window, the cropped full views) fades out over its last 56 px instead of ending
+  in a hard cut. Phones and tablets
   (detected, or any coarse pointer) get controls at least 44 px tall, and the header, page edges
   and footer keep clear of notches through `viewport-fit=cover` and `env(safe-area-inset-*)`.
 - **Themes.** The Midnight and Daylight slider has a Standard and Deeper switch that swaps both

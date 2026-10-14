@@ -71,7 +71,7 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --pad: clamp(56px, 6vw, 96px);
   --h2-size: clamp(34px, 4.4vw, 60px);
-  --rail-gap: 30px;
+  --rail-gap: 24px;
   --dot: 14px;
 }
 
@@ -360,9 +360,11 @@ kbd + kbd { margin-left: 3px; }
   position: relative; isolation: isolate; padding: var(--pad) 0;
   background: radial-gradient(ellipse 75% 60% at 68% 60%, color-mix(in srgb, var(--lane) var(--tint-mix), transparent), transparent 72%);
   /* The rail: a line of the commit graph in this section's lane colour, with a commit at its heading */
-  --rail-x: max(8px, calc(max(var(--gutter), (100% - var(--max)) / 2) - var(--rail-gap)));
+  /* The text sits at least 48px in, so the rail always keeps 24px from the window's edge */
+  --rail-x: calc(max(48px, (100% - var(--max)) / 2) - var(--rail-gap));
   --dot-y: calc(var(--pad) + var(--h2-size) * 0.52);
 }
+.sec > .wrap { padding-left: max(48px, env(safe-area-inset-left)); }
 .history { --lane: var(--lane-1); }
 .changes { --lane: var(--lane-2); }
 .conflicts { --lane: var(--lane-3); }
@@ -630,7 +632,12 @@ kbd + kbd { margin-left: 3px; }
 
 /* Phones */
 @media (max-width: 600px) {
-  :root { --gutter: 20px; --pad: 56px; --h2-size: clamp(31px, 9vw, 38px); --rail-gap: 12px; --dot: 10px; }
+  :root { --gutter: 20px; --pad: 56px; --h2-size: clamp(31px, 9vw, 38px); }
+  /* No room for the rail beside the text: the lane colours stay in the tints and the light */
+  .sec::before, .sec::after { display: none; }
+  .sec > .wrap { padding-left: max(var(--gutter), env(safe-area-inset-left)); }
+  /* Pictures wider than the screen fade out at the right edge instead of being cut */
+  .pair-main, .hero-shot { mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); }
   .top-inner { height: 58px; }
   .hero { padding-top: 40px; }
   .hero h1 { font-size: clamp(40px, 11.5vw, 50px); line-height: 1.0; letter-spacing: -0.038em; }
