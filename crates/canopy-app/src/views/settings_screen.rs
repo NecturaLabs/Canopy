@@ -4889,7 +4889,7 @@ const fn cli_program(kind: ForgeKind) -> &'static str {
 }
 
 /// What a host's card says about the CLI's sign-in, and the tone of the line.
-fn account_status(kind: ForgeKind, state: &hosting::CliState) -> (String, Tone) {
+pub(crate) fn account_status(kind: ForgeKind, state: &hosting::CliState) -> (String, Tone) {
     let cli = format!("{} CLI", kind.name());
     match state {
         Ok(account) => (

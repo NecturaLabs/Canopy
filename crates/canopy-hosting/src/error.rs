@@ -23,8 +23,8 @@ pub enum Error {
         reset: Option<i64>,
     },
     /// HTTP 404. GitHub and GitLab answer 404 rather than 403 for private projects the signed-in
-    /// account cannot see.
-    #[error("Not found, or the signed-in account cannot see this repository ({0})")]
+    /// account cannot see, or that nobody is signed in to see.
+    #[error("Not found, or the repository is private ({0})")]
     NotFound(String),
     /// Any other unsuccessful status, with the message from the response's `message`, `error`
     /// or `errors` fields when present.
@@ -98,7 +98,7 @@ mod tests {
         assert!(
             Error::NotFound("Not Found".into())
                 .to_string()
-                .contains("signed-in account cannot see this repository")
+                .contains("repository is private")
         );
         assert_eq!(
             Error::RateLimited {

@@ -1336,9 +1336,12 @@ fn unselected(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec
             } else {
                 format!("Could not load {noun}s")
             };
-            // Why, in the host's own words and, when the CLI is why, in the CLI's.
+            // Why: the CLI's state first when that is the reason, then the host's own words.
             let body = match &tab.requests.cli {
-                Some(Err(error)) if sign_in => format!("{message} {error}"),
+                Some(Err(error)) if sign_in => format!(
+                    "{}. {message}",
+                    crate::views::settings_screen::account_status(kind, &Err(error.clone())).0
+                ),
                 _ => message.clone(),
             };
             // The main action leads: the sign-in when that is missing, else another try.
@@ -2505,7 +2508,11 @@ mod tests {
             "{:?}",
             frame.texts
         );
-        assert!(frame.mentions("auth login --hostname"), "{:?}", frame.texts);
+        assert!(
+            frame.mentions("Not signed in with the GitHub CLI. Not Found"),
+            "{:?}",
+            frame.texts
+        );
         assert!(frame.has("Open Accounts"), "{:?}", frame.texts);
     }
 
