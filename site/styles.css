@@ -1,6 +1,6 @@
-/* Canopy's site. Its own palette (a near-black ground, a white call to action, one blue accent and
-   a green for success), Inter Display for headings, Inter for text and JetBrains Mono for keys,
-   commands and paths. Screenshots keep the app's own Midnight and Daylight. */
+/* Canopy's site. A near-black ground, a white call to action, and the app's own indigo accent and
+   success green from Midnight and Daylight (crates/canopy-app/src/ui/theme.rs); Inter Display for
+   headings, Inter for text and JetBrains Mono for keys, commands and paths. */
 
 @font-face { font-family: "Inter Display"; src: url("fonts/InterDisplay-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
 @font-face { font-family: "Inter"; src: url("fonts/Inter-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
@@ -28,18 +28,18 @@
   --text: #F4F4F6;
   --dim: #A3A5AE;
   --faint: #8C8E98;
-  --accent: #4C82FF;
-  --ink: #8DB1FF;
-  --leaf-ink: #5FE0A6;
-  --focus: #8DB1FF;
+  --accent: #7C86FF;
+  --ink: #9AA2FF;
+  --leaf-ink: #4CC38A;
+  --focus: #9AA2FF;
   --cta: #F4F4F6;
   --cta-hover: #FFFFFF;
   --on-cta: #0A0A0C;
   --keycap-a: #26272E;
   --keycap-b: #1C1D22;
   --keycap-edge: #050506;
-  --selected: rgb(76 130 255 / 0.18);
-  --selection: rgb(76 130 255 / 0.35);
+  --selected: rgb(124 134 255 / 0.18);
+  --selection: rgb(124 134 255 / 0.35);
   --scrollbar: #2C2D33;
   --hl: inset 0 1px 0 rgb(255 255 255 / 0.06);
   --sh-control: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 1px 1px rgb(0 0 0 / 0.4), 0 3px 8px -2px rgb(0 0 0 / 0.45);
@@ -79,18 +79,18 @@
   --text: #0B0C10;
   --dim: #4D505B;
   --faint: #5D606B;
-  --accent: #2F66F0;
-  --ink: #2557D6;
-  --leaf-ink: #0B7A51;
-  --focus: #2F66F0;
+  --accent: #5E6AD2;
+  --ink: #4651C0;
+  --leaf-ink: #006A4B;
+  --focus: #5E6AD2;
   --cta: #0B0C10;
   --cta-hover: #24262E;
   --on-cta: #FFFFFF;
   --keycap-a: #FFFFFF;
   --keycap-b: #F1F2F4;
   --keycap-edge: #C9CCD3;
-  --selected: rgb(47 102 240 / 0.1);
-  --selection: rgb(47 102 240 / 0.2);
+  --selected: rgb(94 106 210 / 0.1);
+  --selection: rgb(94 106 210 / 0.2);
   --scrollbar: #D2D4DA;
   --hl: inset 0 1px 0 rgb(255 255 255 / 0.9);
   --sh-control: inset 0 -1px 0 rgb(12 14 22 / 0.05), 0 1px 1px rgb(12 14 22 / 0.06), 0 2px 6px -2px rgb(12 14 22 / 0.12);
@@ -120,18 +120,18 @@
     --text: #0B0C10;
     --dim: #4D505B;
     --faint: #5D606B;
-    --accent: #2F66F0;
-    --ink: #2557D6;
-    --leaf-ink: #0B7A51;
-    --focus: #2F66F0;
+    --accent: #5E6AD2;
+    --ink: #4651C0;
+    --leaf-ink: #006A4B;
+    --focus: #5E6AD2;
     --cta: #0B0C10;
     --cta-hover: #24262E;
     --on-cta: #FFFFFF;
     --keycap-a: #FFFFFF;
     --keycap-b: #F1F2F4;
     --keycap-edge: #C9CCD3;
-    --selected: rgb(47 102 240 / 0.1);
-    --selection: rgb(47 102 240 / 0.2);
+    --selected: rgb(94 106 210 / 0.1);
+    --selection: rgb(94 106 210 / 0.2);
     --scrollbar: #D2D4DA;
     --hl: inset 0 1px 0 rgb(255 255 255 / 0.9);
     --sh-control: inset 0 -1px 0 rgb(12 14 22 / 0.05), 0 1px 1px rgb(12 14 22 / 0.06), 0 2px 6px -2px rgb(12 14 22 / 0.12);
