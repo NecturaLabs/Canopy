@@ -69,7 +69,7 @@ pair is also apart in lightness, green lighter than red in dark themes, so it re
 | Theme | `added_bg` / `added_gutter` | `removed_bg` / `removed_gutter` | `diff_added` | `diff_removed` |
 |---|---|---|---|---|
 | Midnight | `#032917` / `#013820` | `#411418` / `#5A1820` | `#34DE8A` | `#FF7076` |
-| Daylight | `#CBFADF` / `#B0F3CE` | `#FFE9E7` / `#FFD2CF` | `#016B3B` | `#AF001A` |
+| Daylight | `#DDF6E7` / `#BDEDD2` | `#FFE9E7` / `#FFD1CE` | `#016B3B` | `#AF001A` |
 | Observatory | `#022C1D` / `#003D2A` | `#41141C` / `#5A1A27` | `#3FE0A2` | `#FF787C` |
 
 Three themes. Midnight and Daylight are round-2 concept 1, the look the owner locked: one design
