@@ -89,6 +89,7 @@
           <input id="pal-input" type="text" placeholder="Type a command or a section" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list" aria-keyshortcuts="Control+K">
           <span class="pal-shortcut" aria-hidden="true"><kbd>Ctrl</kbd><kbd>K</kbd></span>
         </div>
+        <p class="pal-title" data-pal-title aria-hidden="true">On this page</p>
         <nav class="pal-body" aria-label="On this page" data-pal-body>
           <ul class="pal-list" id="pal-list">
             <li><a href="#history" data-view="history"><i class="ph" aria-hidden="true">&#xE27A;</i><span>History</span></a></li>
@@ -171,31 +172,27 @@
   </section>
 
   <section class="sec history" id="history" aria-labelledby="h-history">
-    <div class="wrap split-list">
-      <div class="text">
+    <div class="wrap duo">
+      <div class="text" data-reveal>
         <h2 id="h-history">History</h2>
         <p>Each line of history has its own colour in the graph, and branches, remotes and tags are labelled on their commits. Select a commit to see its files and diff. Author pictures come from GitHub or GitLab, initials otherwise.</p>
         <p>Blame a file, list the commits that changed it back through renames, or find the commits that added or removed a piece of text.</p>
+        <ul class="keys" aria-label="History shortcuts">
+            <li><span class="caps"><kbd>Ctrl</kbd><kbd>F</kbd> <span class="or">or</span> <kbd>/</kbd></span><span>Search by message, author or SHA</span></li>
+            <li><span class="caps"><kbd>Shift</kbd><kbd>F</kbd></span><span>Search the history for changed text</span></li>
+            <li><span class="caps"><kbd>J</kbd><kbd>K</kbd></span><span>Next and previous commit</span></li>
+            <li><span class="caps"><kbd>Y</kbd></span><span>Copy the commit's SHA</span></li>
+            <li><span class="caps"><kbd>Shift</kbd><kbd>T</kbd></span><span>Tag the commit</span></li>
+            <li><span class="caps"><kbd>O</kbd></span><span>Open it on GitHub or GitLab</span></li>
+          </ul>
       </div>
-      <ul class="keys" aria-label="History shortcuts">
-        <li><span class="caps"><kbd>Ctrl</kbd><kbd>F</kbd> <span class="or">or</span> <kbd>/</kbd></span><span>Search by message, author or SHA</span></li>
-        <li><span class="caps"><kbd>Shift</kbd><kbd>F</kbd></span><span>Search the history for changed text</span></li>
-        <li><span class="caps"><kbd>J</kbd><kbd>K</kbd></span><span>Next and previous commit</span></li>
-        <li><span class="caps"><kbd>Y</kbd></span><span>Copy the commit's SHA</span></li>
-        <li><span class="caps"><kbd>Shift</kbd><kbd>T</kbd></span><span>Tag the commit</span></li>
-        <li><span class="caps"><kbd>O</kbd></span><span>Open it on GitHub or GitLab</span></li>
-      </ul>
-    </div>
-    <div class="wrap">
-      <figure class="window wide-shot">
-        <picture class="shot-dark">
-          <source media="(max-width: 720px)" srcset="assets/shots/m-search-crop.webp" width="504" height="380">
-          <img src="assets/shots/m-search.webp" width="1440" height="900" loading="lazy" alt="Search history for changed text over the History view: the text tokio, and the three commits that added or removed it, each with the file it changed.">
-        </picture>
-        <picture class="shot-light">
-          <source media="(max-width: 720px)" srcset="assets/shots/d-search-crop.webp" width="504" height="380">
-          <img src="assets/shots/d-search.webp" width="1440" height="900" loading="lazy" alt="Search history for changed text in Daylight.">
-        </picture>
+      <figure class="window glow detail-shot" data-reveal="shot">
+          <picture class="shot-dark">
+            <img src="assets/shots/m-search-crop.webp" width="504" height="380" loading="lazy" alt="Search history for changed text: the text tokio, and the three commits that added or removed it, each with the file it changed.">
+          </picture>
+          <picture class="shot-light">
+            <img src="assets/shots/d-search-crop.webp" width="504" height="380" loading="lazy" alt="Search history for changed text in Daylight.">
+          </picture>
       </figure>
     </div>
   </section>
@@ -203,123 +200,133 @@
   <section class="sec changes" id="changes" aria-labelledby="h-changes">
     <div class="wrap">
       <div class="split-list">
-        <div class="text">
+        <div class="text" data-reveal>
           <h2 id="h-changes">Staging and committing</h2>
           <p>Stage a file, a hunk or single lines, in a unified or side-by-side diff with syntax colours. The commit box has a subject and a body, and the Commit button says why it can't run yet.</p>
           <p>Amending a commit you already pushed asks first. When git refuses, you see git's own message.</p>
         </div>
-        <ul class="keys" aria-label="Staging and committing from the keyboard">
-          <li><span class="caps"><kbd>2</kbd></span><span>Open Changes</span></li>
-          <li><span class="caps"><kbd>J</kbd><kbd>K</kbd></span><span>Move through files</span></li>
-          <li><span class="caps"><kbd>Space</kbd></span><span>Stage or unstage</span></li>
-          <li><span class="caps"><kbd>C</kbd></span><span>Write the message</span></li>
-          <li><span class="caps"><kbd>Ctrl</kbd><kbd>Enter</kbd></span><span>Commit</span></li>
-        </ul>
+        <ul class="keys" aria-label="Staging and committing from the keyboard" data-reveal>
+            <li><span class="caps"><kbd>2</kbd></span><span>Open Changes</span></li>
+            <li><span class="caps"><kbd>J</kbd><kbd>K</kbd></span><span>Move through files</span></li>
+            <li><span class="caps"><kbd>Space</kbd></span><span>Stage or unstage</span></li>
+            <li><span class="caps"><kbd>C</kbd></span><span>Write the message</span></li>
+            <li><span class="caps"><kbd>Ctrl</kbd><kbd>Enter</kbd></span><span>Commit</span></li>
+          </ul>
       </div>
-      <figure class="window wide-shot">
-        <picture class="shot-dark">
-          <source media="(max-width: 720px)" srcset="assets/shots/m-changes-hunk.webp" width="800" height="372">
-          <img src="assets/shots/m-changes.webp" width="1440" height="900" loading="lazy" alt="The Changes view: unstaged and staged files, the commit box with Subject and Body, and a diff whose hunks have Stage hunk and Discard hunk buttons.">
-        </picture>
-        <picture class="shot-light">
-          <source media="(max-width: 720px)" srcset="assets/shots/d-changes-hunk.webp" width="800" height="372">
-          <img src="assets/shots/d-changes.webp" width="1440" height="900" loading="lazy" alt="The Changes view in Daylight, with a diff ready to stage.">
-        </picture>
-      </figure>
+      <div class="pair">
+        <figure class="window glow pair-main" data-reveal="shot">
+          <picture class="shot-dark">
+            <source media="(max-width: 720px)" srcset="assets/shots/m-changes-hunk.webp" width="800" height="372">
+            <img src="assets/shots/m-changes.webp" width="1440" height="900" loading="lazy" alt="The Changes view: unstaged and staged files, the commit box with Subject and Body, and a diff whose hunks have Stage hunk and Discard hunk buttons.">
+          </picture>
+          <picture class="shot-light">
+            <source media="(max-width: 720px)" srcset="assets/shots/d-changes-hunk.webp" width="800" height="372">
+            <img src="assets/shots/d-changes.webp" width="1440" height="900" loading="lazy" alt="The Changes view in Daylight.">
+          </picture>
+        </figure>
+        <figure class="window glow pair-detail" data-reveal="detail" aria-hidden="true">
+          <img class="shot-dark" src="assets/shots/m-changes-hunk.webp" width="800" height="372" loading="lazy" alt="">
+          <img class="shot-light" src="assets/shots/d-changes-hunk.webp" width="800" height="372" loading="lazy" alt="">
+        </figure>
+      </div>
     </div>
   </section>
 
   <section class="sec conflicts" id="conflicts" aria-labelledby="h-conflicts">
-    <div class="wrap">
-      <div class="split-list">
-        <div class="text">
-          <h2 id="h-conflicts">Merges and conflicts</h2>
-          <p>The resolver shows both versions side by side, named by their branches: accept either, both, or edit by hand. Continue and Abort stay in view until the merge, rebase or cherry-pick is done.</p>
-          <p class="aside">Discarding, a hard reset, deleting a branch and force pushing ask first. A force push always uses&nbsp;<code translate="no">--force-with-lease</code>.</p>
-        </div>
+    <div class="wrap duo reverse">
+      <div class="text" data-reveal>
+        <h2 id="h-conflicts">Merges and conflicts</h2>
+        <p>The resolver shows both versions side by side, named by their branches: accept either, both, or edit by hand. Continue and Abort stay in view until the merge, rebase or cherry-pick is done.</p>
+        <p class="aside">Discarding, a hard reset, deleting a branch and force pushing ask first. A force push always uses&nbsp;<code translate="no">--force-with-lease</code>.</p>
         <ul class="keys" aria-label="Conflict shortcuts">
-          <li><span class="caps"><kbd>]</kbd><kbd>[</kbd></span><span>Next and previous conflict</span></li>
-          <li><span class="caps"><kbd>H</kbd><kbd>L</kbd></span><span>Take current or incoming</span></li>
-          <li><span class="caps"><kbd>B</kbd></span><span>Take both</span></li>
-          <li><span class="caps"><kbd>Z</kbd></span><span>Undo the choice</span></li>
-        </ul>
+            <li><span class="caps"><kbd>]</kbd><kbd>[</kbd></span><span>Next and previous conflict</span></li>
+            <li><span class="caps"><kbd>H</kbd><kbd>L</kbd></span><span>Take current or incoming</span></li>
+            <li><span class="caps"><kbd>B</kbd></span><span>Take both</span></li>
+            <li><span class="caps"><kbd>Z</kbd></span><span>Undo the choice</span></li>
+          </ul>
       </div>
-      <figure class="window wide-shot">
-        <picture class="shot-dark">
-          <source media="(max-width: 720px)" srcset="assets/shots/m-conflict-crop.webp" width="800" height="420">
-          <img src="assets/shots/m-conflict.webp" width="1440" height="900" loading="lazy" alt="A merge in progress: a banner with Continue and Abort, and a conflict card with the current version from main and the incoming one from feature/backoff, each with its Accept button.">
-        </picture>
-        <picture class="shot-light">
-          <source media="(max-width: 720px)" srcset="assets/shots/d-conflict-crop.webp" width="800" height="420">
-          <img src="assets/shots/d-conflict.webp" width="1440" height="900" loading="lazy" alt="The conflict resolver in Daylight, with the current and incoming versions side by side.">
-        </picture>
-      </figure>
+      <div class="pair stacked">
+        <figure class="window glow pair-main" data-reveal="shot">
+          <picture class="shot-dark">
+            <source media="(max-width: 720px)" srcset="assets/shots/m-conflict-crop.webp" width="800" height="420">
+            <img src="assets/shots/m-conflict.webp" width="1440" height="900" loading="lazy" alt="A merge in progress: a banner with Continue and Abort, and a conflict card with the current version from main and the incoming one from feature/backoff, each with its Accept button.">
+          </picture>
+          <picture class="shot-light">
+            <source media="(max-width: 720px)" srcset="assets/shots/d-conflict-crop.webp" width="800" height="420">
+            <img src="assets/shots/d-conflict.webp" width="1440" height="900" loading="lazy" alt="The conflict resolver in Daylight.">
+          </picture>
+        </figure>
+        <figure class="window glow pair-detail" data-reveal="detail" aria-hidden="true">
+          <img class="shot-dark" src="assets/shots/m-conflict-card.webp" width="784" height="188" loading="lazy" alt="">
+          <img class="shot-light" src="assets/shots/d-conflict-card.webp" width="784" height="188" loading="lazy" alt="">
+        </figure>
+      </div>
     </div>
   </section>
 
   <section class="sec requests" id="requests" aria-labelledby="h-requests">
     <div class="wrap">
       <div class="split-list">
-        <div class="text">
+        <div class="text" data-reveal>
           <h2 id="h-requests">Pull and merge requests</h2>
           <p>Review, check out and merge GitHub pull requests and GitLab merge requests, self-hosted GitLab included. With a token, each row shows its checks and reviews.</p>
           <p>Filter by checks, review, draft or author. When a project has more than 100, the search goes to GitLab, or to GitHub with a token.</p>
           <p>Signed in with <code translate="no">gh</code> or <code translate="no">glab</code>? Canopy uses that sign-in and keeps its token in memory only.</p>
         </div>
-        <ul class="keys" aria-label="Request shortcuts">
-          <li><span class="caps"><kbd>3</kbd></span><span>Open pull requests</span></li>
-          <li><span class="caps"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>A</kbd></span><span>Approve</span></li>
-          <li><span class="caps"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd></span><span>Merge, after you confirm</span></li>
-        </ul>
+        <ul class="keys" aria-label="Request shortcuts" data-reveal>
+            <li><span class="caps"><kbd>3</kbd></span><span>Open pull requests</span></li>
+            <li><span class="caps"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>A</kbd></span><span>Approve</span></li>
+            <li><span class="caps"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd></span><span>Merge, after you confirm</span></li>
+          </ul>
       </div>
-      <figure class="window wide-shot">
-        <picture class="shot-dark">
-          <source media="(max-width: 720px)" srcset="assets/shots/m-requests-crop.webp" width="820" height="520">
-          <img src="assets/shots/m-requests.webp" width="1440" height="900" loading="lazy" alt="The pull requests view: open requests with branches, labels and check results, and one request's description, checks and review conversation.">
-        </picture>
-        <picture class="shot-light">
-          <source media="(max-width: 720px)" srcset="assets/shots/d-requests-crop.webp" width="820" height="520">
-          <img src="assets/shots/d-requests.webp" width="1440" height="900" loading="lazy" alt="The pull requests view in Daylight.">
-        </picture>
-      </figure>
+      <div class="pair flip">
+        <figure class="window glow pair-main" data-reveal="shot">
+          <picture class="shot-dark">
+            <source media="(max-width: 720px)" srcset="assets/shots/m-requests-crop.webp" width="820" height="520">
+            <img src="assets/shots/m-requests.webp" width="1440" height="900" loading="lazy" alt="The pull requests view: open requests with branches, labels and check results, and one request's description, checks and review conversation.">
+          </picture>
+          <picture class="shot-light">
+            <source media="(max-width: 720px)" srcset="assets/shots/d-requests-crop.webp" width="820" height="520">
+            <img src="assets/shots/d-requests.webp" width="1440" height="900" loading="lazy" alt="The pull requests view in Daylight.">
+          </picture>
+        </figure>
+        <figure class="window glow pair-detail" data-reveal="detail" aria-hidden="true">
+          <img class="shot-dark" src="assets/shots/m-request-row.webp" width="540" height="104" loading="lazy" alt="">
+          <img class="shot-light" src="assets/shots/d-request-row.webp" width="540" height="104" loading="lazy" alt="">
+        </figure>
+      </div>
       <p class="caption">The requests shown are Canopy's built-in demo data. A token is only ever sent to the host it belongs to.</p>
     </div>
   </section>
 
   <section class="sec git" id="git" aria-labelledby="h-git">
-    <div class="wrap">
-      <div class="split-list">
-        <div class="text">
-          <h2 id="h-git">Your git settings</h2>
-          <p>Canopy runs your own <code translate="no">git</code>, so credential helpers, SSH keys, hooks, signing and LFS work as they do in a terminal.</p>
-          <p>Where your git configuration makes a choice, it decides. Everywhere else Canopy passes its own choice to git, and Settings&nbsp;→&nbsp;Git shows each one beside its recommendation and where your configuration sets it.</p>
-        </div>
+    <div class="wrap duo">
+      <div class="text" data-reveal>
+        <h2 id="h-git">Your git settings</h2>
+        <p>Canopy runs your own <code translate="no">git</code>, so credential helpers, SSH keys, hooks, signing and LFS work as they do in a terminal.</p>
+        <p>Where your git configuration makes a choice, it decides. Everywhere else Canopy passes its own choice to git, and Settings&nbsp;→&nbsp;Git shows each one beside its recommendation and where your configuration sets it.</p>
         <ul class="rules">
           <li>A pull is fast-forward only, and asks Rebase or Merge when branches diverged.</li>
           <li>A pull that would conflict names the files first.</li>
           <li>Use recommended writes the recommendations to your global git configuration after you confirm, and leaves signing, hooks, identity and line endings alone.</li>
         </ul>
       </div>
-      <figure class="window wide-shot">
-        <picture class="shot-dark">
-          <source media="(max-width: 720px)" srcset="assets/shots/m-settings-git-crop.webp" width="820" height="450">
-          <img src="assets/shots/m-settings-git.webp" width="1440" height="900" loading="lazy" alt="Settings, Git: Follow my git config switched on, Use recommended, and the pull choices, each showing its value and Recommended.">
-        </picture>
-        <picture class="shot-light">
-          <source media="(max-width: 720px)" srcset="assets/shots/d-settings-git-crop.webp" width="820" height="450">
-          <img src="assets/shots/d-settings-git.webp" width="1440" height="900" loading="lazy" alt="Settings, Git, in Daylight.">
-        </picture>
+      <figure class="window glow detail-shot" data-reveal="shot">
+          <picture class="shot-dark">
+            <img src="assets/shots/m-settings-git-crop.webp" width="880" height="450" loading="lazy" alt="Settings, Git: Follow my git config switched on, Use recommended, and the pull choices, each showing its value and Recommended.">
+          </picture>
+          <picture class="shot-light">
+            <img src="assets/shots/d-settings-git-crop.webp" width="880" height="450" loading="lazy" alt="Settings, Git, in Daylight.">
+          </picture>
       </figure>
     </div>
   </section>
 
   <section class="sec keyboard" id="keyboard" aria-labelledby="h-keyboard">
-    <div class="wrap">
-      <div class="split-list">
-        <div class="text">
-          <h2 id="h-keyboard">Keyboard</h2>
-          <p><kbd>Ctrl</kbd><kbd>K</kbd> opens the command palette, with every command and every branch to check out. <kbd>?</kbd> shows every shortcut. Lists take vim motions and single-key actions, as in lazygit.</p>
-        </div>
+    <div class="wrap duo reverse">
+      <div class="text" data-reveal>
+        <h2 id="h-keyboard">Keyboard</h2>
+        <p><kbd>Ctrl</kbd><kbd>K</kbd> opens the command palette, with every command and every branch to check out. <kbd>?</kbd> shows every shortcut. Lists take vim motions and single-key actions, as in lazygit.</p>
         <ul class="rules">
           <li>Super is never bound: it stays your window manager's.</li>
           <li>Bare keys never fire while you are typing.</li>
@@ -327,7 +334,7 @@
           <li>Settings → Keyboard changes any key, and refuses one another command already uses.</li>
         </ul>
       </div>
-      <figure class="window sheet-shot">
+      <figure class="window glow sheet-shot" data-reveal="shot">
         <img class="shot-dark" src="assets/shots/m-cheatsheet-crop.webp" width="864" height="820" loading="lazy" alt="Canopy's keyboard shortcuts sheet, grouped into Anywhere, History, Changes and Resolving a conflicted file, each command with its keys.">
         <img class="shot-light" src="assets/shots/d-cheatsheet-crop.webp" width="864" height="820" loading="lazy" alt="The keyboard shortcuts sheet in Daylight.">
       </figure>
@@ -337,11 +344,11 @@
   <section class="sec themes" id="themes" aria-labelledby="h-themes">
     <div class="wrap">
       <div class="split-list">
-        <div class="text">
+        <div class="text" data-reveal>
           <h2 id="h-themes">Themes</h2>
           <p>Midnight is the default and Daylight the light theme. Observatory has navy backgrounds and a periwinkle accent. High contrast works with any of them, from Settings, the toolbar's theme menu or the command palette.</p>
         </div>
-        <dl class="options">
+        <dl class="options" data-reveal>
           <div><dt>Style</dt><dd>Standard or Deeper</dd></div>
           <div><dt>Density</dt><dd>Comfortable or Dense</dd></div>
           <div><dt>Zoom</dt><dd>80 to 160 percent</dd></div>
@@ -349,8 +356,8 @@
           <div><dt>Graph</dt><dd>Dots, rings, squares or diamonds; curves, metro or circuit lines</dd></div>
         </dl>
       </div>
-      <figure class="compare" data-compare>
-        <div class="compare-frame window">
+      <figure class="compare" data-compare data-reveal="shot">
+        <div class="compare-frame window glow">
           <img class="compare-a" src="assets/shots/m-history.webp" width="1440" height="900" loading="lazy" alt="History in Midnight, Standard style." data-standard="assets/shots/m-history.webp" data-deeper="assets/shots/m-deeper.webp">
           <img class="compare-b" src="assets/shots/d-history.webp" width="1440" height="900" loading="lazy" alt="The same History view in Daylight, Standard style." data-standard="assets/shots/d-history.webp" data-deeper="assets/shots/d-deeper.webp">
           <div class="compare-handle" aria-hidden="true"><span></span></div>
@@ -367,18 +374,16 @@
           </div>
         </figcaption>
       </figure>
-      <div class="split split-media custom">
-        <figure class="window">
+      <div class="duo custom">
+        <figure class="window glow detail-shot" data-reveal="shot">
           <picture class="shot-dark">
-            <source media="(max-width: 720px)" srcset="assets/shots/m-custom-crop.webp" width="840" height="540">
-            <img src="assets/shots/m-custom.webp" width="1440" height="900" loading="lazy" alt="History in a Custom theme built from Midnight: a green accent on the selected row and the buttons, and green-tinted backgrounds and lines.">
+            <img src="assets/shots/m-custom-crop.webp" width="840" height="540" loading="lazy" alt="History in a Custom theme built from Midnight: a green accent on the selected row and the buttons, and green-tinted backgrounds and lines.">
           </picture>
           <picture class="shot-light">
-            <source media="(max-width: 720px)" srcset="assets/shots/d-custom-crop.webp" width="840" height="540">
-            <img src="assets/shots/d-custom.webp" width="1440" height="900" loading="lazy" alt="History in a Custom theme built from Daylight, with a green accent and green-tinted backgrounds and lines.">
+            <img src="assets/shots/d-custom-crop.webp" width="840" height="540" loading="lazy" alt="History in a Custom theme built from Daylight, with a green accent and green-tinted backgrounds and lines.">
           </picture>
         </figure>
-        <div class="text">
+        <div class="text" data-reveal>
           <h3>A theme of your own</h3>
           <p>In Settings → Appearance, start from Midnight or Daylight, then pick an accent and a tint for backgrounds, lines and text. Text keeps at least the base theme's contrast, and the graph, syntax and diff colours keep their hues.</p>
           <p class="caption">Shown: accent hue 150, with a tint of 40 at the same hue.</p>
@@ -389,12 +394,12 @@
 
   <section class="sec privacy" id="privacy" aria-labelledby="h-privacy">
     <div class="wrap">
-      <div class="sec-head">
+      <div class="sec-head" data-reveal>
         <h2 id="h-privacy">What Canopy sends</h2>
         <p>Canopy's own requests wait until you accept the terms and answer the crash-report question, and each has an off switch.</p>
         <p class="doc-links"><a class="arrow-link" href="privacy.html">Privacy Policy<i class="ph" aria-hidden="true">&#xE06C;</i></a><a class="arrow-link" href="terms.html">Terms of Service<i class="ph" aria-hidden="true">&#xE06C;</i></a></p>
       </div>
-      <div class="lists">
+      <div class="lists" data-reveal>
         <div>
           <h3>It contacts</h3>
           <ul>
@@ -408,7 +413,7 @@
           <h3>It has no</h3>
           <ul>
             <li>Telemetry or analytics.</li>
-            <li>Account or sign-in.</li>
+            <li>A Canopy account, or a sign-in of its own.</li>
             <li>Server of its own between you and your code.</li>
           </ul>
         </div>
@@ -418,7 +423,7 @@
 
   <section class="sec download" id="download" aria-labelledby="h-download">
     <div class="wrap">
-      <div class="sec-head center">
+      <div class="sec-head" data-reveal>
         <h2 id="h-download">Download</h2>
         <p>Always the latest build.</p>
       </div>
@@ -453,9 +458,9 @@
       </div>
       <h3 class="archives-head">Or download the archive</h3>
       <ul class="builds" aria-label="Archives">
-        <li data-platform="linux-x86_64"><span class="b-top"><i class="ph" aria-hidden="true">&#xEB02;</i><span class="b-name">Linux</span></span><span class="b-meta">x86_64 &middot;&nbsp;.tar.gz &middot;&nbsp;glibc&nbsp;2.35&nbsp;or&nbsp;newer</span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/latest" data-href>Download<span class="sr"> for Linux x86_64</span><i class="ph" aria-hidden="true">&#xE20C;</i></a></li>
-        <li data-platform="linux-aarch64"><span class="b-top"><i class="ph" aria-hidden="true">&#xEB02;</i><span class="b-name">Linux</span></span><span class="b-meta">arm64, experimental &middot;&nbsp;.tar.gz &middot;&nbsp;glibc&nbsp;2.35&nbsp;or&nbsp;newer</span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/latest" data-href>Download<span class="sr"> for Linux arm64</span><i class="ph" aria-hidden="true">&#xE20C;</i></a></li>
-        <li data-platform="windows-x86_64"><span class="b-top"><i class="ph" aria-hidden="true">&#xE692;</i><span class="b-name">Windows</span></span><span class="b-meta">x86_64 &middot;&nbsp;.zip</span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/latest" data-href>Download<span class="sr"> for Windows</span><i class="ph" aria-hidden="true">&#xE20C;</i></a></li>
+        <li data-platform="linux-x86_64"><span class="b-top"><i class="ph" aria-hidden="true">&#xEB02;</i><span class="b-name">Linux</span></span><span class="b-meta"><span>x86_64 &middot;&nbsp;.tar.gz</span><span>glibc 2.35 or newer</span></span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/latest" data-href>Download<span class="sr"> for Linux x86_64</span><i class="ph" aria-hidden="true">&#xE20C;</i></a></li>
+        <li data-platform="linux-aarch64"><span class="b-top"><i class="ph" aria-hidden="true">&#xEB02;</i><span class="b-name">Linux</span></span><span class="b-meta"><span>arm64 &middot;&nbsp;.tar.gz</span><span>glibc 2.35 or newer</span><span>Experimental</span></span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/latest" data-href>Download<span class="sr"> for Linux arm64</span><i class="ph" aria-hidden="true">&#xE20C;</i></a></li>
+        <li data-platform="windows-x86_64"><span class="b-top"><i class="ph" aria-hidden="true">&#xE692;</i><span class="b-name">Windows</span></span><span class="b-meta"><span>x86_64 &middot;&nbsp;.zip</span></span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/latest" data-href>Download<span class="sr"> for Windows</span><i class="ph" aria-hidden="true">&#xE20C;</i></a></li>
         <li class="off"><span class="b-top"><i class="ph" aria-hidden="true">&#xE516;</i><span class="b-name">macOS</span></span><span class="b-meta">No build yet</span></li>
       </ul>
     </div>
