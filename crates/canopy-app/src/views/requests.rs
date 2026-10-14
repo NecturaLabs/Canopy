@@ -590,9 +590,8 @@ fn list(
         }
         Some(Err(message)) => {
             // The details pane carries the message and the way out; the list only says it is empty.
-            let no_token = tab.requests.token == Some(None) && !host_unreachable(&message);
-            EmptyState::new(if no_token {
-                "A token is needed".to_owned()
+            EmptyState::new(if needs_sign_in(tab, &message) {
+                "Sign-in needed".to_owned()
             } else {
                 "Nothing to list".to_owned()
             })
@@ -1330,19 +1329,23 @@ fn unselected(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec
     match &tab.requests.list {
         Some(Err(message)) => {
             // Why, in the host's own words, and the way out; the list beside it only says "none".
-            // A host that cannot be reached is not asked for a token.
-            let no_token = tab.requests.token == Some(None) && !host_unreachable(message);
-            let title = if no_token {
-                format!("Connect {} to see {noun}s", kind.name())
+            // A host that cannot be reached is not asked for a sign-in.
+            let sign_in = needs_sign_in(tab, message);
+            let title = if sign_in {
+                format!("Sign in to see {noun}s")
             } else {
                 format!("Could not load {noun}s")
             };
-            let body = message.clone();
-            // The main action leads: a token when there is none, else another try.
-            let (main, other) = if no_token {
-                ("Add a token…", "Retry")
+            // Why, in the host's own words and, when the CLI is why, in the CLI's.
+            let body = match &tab.requests.cli {
+                Some(Err(error)) if sign_in => format!("{message} {error}"),
+                _ => message.clone(),
+            };
+            // The main action leads: the sign-in when that is missing, else another try.
+            let (main, other) = if sign_in {
+                ("Open Accounts", "Retry")
             } else {
-                ("Retry", "Add a token…")
+                ("Retry", "Open Accounts")
             };
             let clicked = EmptyState::new(title)
                 .art(art::empty_error())
@@ -1354,8 +1357,8 @@ fn unselected(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec
                 .show(ui)
                 .value;
             match clicked {
-                Some(EmptyAction::Primary) if no_token => actions.push(Action::Settings),
-                Some(EmptyAction::Link) if !no_token => actions.push(Action::Settings),
+                Some(EmptyAction::Primary) if sign_in => actions.push(ACCOUNTS),
+                Some(EmptyAction::Link) if !sign_in => actions.push(ACCOUNTS),
                 Some(_) => tab.load_requests(),
                 None => {}
             }
@@ -1851,7 +1854,7 @@ fn action_bar(
             .show_actions(ui)
             .value;
         if fix.is_some() {
-            actions.push(Action::Settings);
+            actions.push(ACCOUNTS);
         }
     }
 }
@@ -1863,45 +1866,51 @@ struct CredentialProblem {
     fix: &'static str,
 }
 
-/// The credential problem to show under the request's actions: none while the credential works
-/// (its source is Settings' to say), else no token or a token the host refused. Without a token
-/// nothing was refused, whatever the host answered (a GitLab that wants a sign-in answers 401).
+/// The credential problem to show under the request's actions: none while the CLI's sign-in
+/// works (Settings says which), else why the CLI gave none or that the host refused it. Without a
+/// sign-in nothing was refused, whatever the host answered (a GitLab that wants one answers 401).
 fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
-    if tab.requests.token == Some(None) {
-        const NO_TOKEN: &str = "Without one Canopy can only read this request. Approving, merging and commenting need a token.";
-        // A CLI that is installed but cannot be used says why, before anything else.
-        let text = tab
-            .requests
-            .cli
-            .as_ref()
-            .and_then(|cli| cli.problem.as_deref())
-            .map_or_else(|| NO_TOKEN.to_owned(), |why| format!("{why} {NO_TOKEN}"));
+    if let Some(Err(error)) = &tab.requests.cli {
         Some(CredentialProblem {
-            title: "No token",
-            text,
-            fix: "Add a token…",
+            title: "Not signed in",
+            text: format!(
+                "{error} Until then Canopy can only read this request: approving, merging and commenting need a sign-in."
+            ),
+            fix: "Open Accounts",
         })
     } else if tab.requests.token_rejected {
-        Some(CredentialProblem {
-            title: "The host refused the token",
-            // Which one, so the fix goes to the right place.
-            text: match tab.requests.token.flatten() {
-                Some(source @ crate::hosting::TokenSource::Cli(kind)) => format!(
-                    "The token {} is expired, revoked or lacks the scope this needs. Sign in to the {} CLI again, or add a token, to approve, merge or comment.",
-                    source.label(),
-                    kind.name(),
-                ),
-                source => format!(
-                    "The token {} is expired, revoked or lacks the scope this needs. Replace it to approve, merge or comment.",
-                    source.map_or("Canopy sends", |source| source.label()),
-                ),
+        let (cli, command) = tab.forge().map_or_else(
+            || ("GitHub or GitLab CLI".to_owned(), String::new()),
+            |(_, forge)| {
+                (
+                    format!("{} CLI", forge.kind.name()),
+                    format!(
+                        " with `{}`",
+                        canopy_hosting::login_command(forge.kind, &forge.authority())
+                    ),
+                )
             },
-            fix: "Replace the token…",
+        );
+        Some(CredentialProblem {
+            title: "The host refused the sign-in",
+            text: format!(
+                "The {cli}'s sign-in is expired, revoked or lacks the scope this needs. Sign in again{command} to approve, merge or comment."
+            ),
+            fix: "Open Accounts",
         })
     } else {
         None
     }
 }
+
+/// The list failed and the CLI gave no credential, so the sign-in is what to look at; a host that
+/// cannot be reached is not asked for one.
+fn needs_sign_in(tab: &RepoTab, message: &str) -> bool {
+    tab.requests.has_credential() == Some(false) && !host_unreachable(message)
+}
+
+/// Opens Settings at the page that says what to do about the CLI's sign-in.
+const ACCOUNTS: Action = Action::SettingsAt(crate::views::settings_screen::Section::Accounts);
 
 /// The selected request's details carry the state displayed by its action buttons.
 pub(crate) fn selected_summary(tab: &RepoTab) -> Option<&RequestSummary> {
@@ -2196,7 +2205,13 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
 mod tests {
 
     use super::*;
+    use crate::views::settings_screen::Section;
     use crate::worker::Worker;
+    use canopy_hosting::CliError;
+
+    fn signed_out(kind: ForgeKind) -> crate::hosting::CliState {
+        crate::hosting::signed_out(kind, "github.com")
+    }
 
     /// qa-a F13: the empty state without a forge offers the way out, not only an explanation.
     #[test]
@@ -2475,7 +2490,7 @@ mod tests {
     fn a_failed_list_is_explained_in_the_details_pane() {
         let mut tab = test_tab();
         tab.requests.list = Some(Err("Not Found".into()));
-        tab.requests.token = Some(None);
+        tab.requests.cli = Some(signed_out(ForgeKind::GitHub));
         let frame = render(theme::ThemeId::Midnight, SCREEN, |ui| {
             detail(ui, &mut tab, ForgeKind::GitHub, &mut Vec::new());
         });
@@ -2485,20 +2500,26 @@ mod tests {
             frame.texts
         );
         assert!(frame.mentions("Not Found"), "{:?}", frame.texts);
-        assert!(frame.has("Add a token…"), "{:?}", frame.texts);
+        assert!(
+            frame.mentions("Sign in to see pull requests"),
+            "{:?}",
+            frame.texts
+        );
+        assert!(frame.mentions("auth login --hostname"), "{:?}", frame.texts);
+        assert!(frame.has("Open Accounts"), "{:?}", frame.texts);
     }
 
-    /// #74: a host that cannot be reached is not a missing token: both panes say the list could
-    /// not load, with git's own cause and Retry first, even when there is no token.
+    /// #74: a host that cannot be reached is not a missing sign-in: both panes say the list could
+    /// not load, with git's own cause and Retry first, even when the CLI is signed out.
     #[test]
-    fn an_unreachable_host_is_not_asked_for_a_token() {
+    fn an_unreachable_host_is_not_asked_for_a_sign_in() {
         let mut tab = test_tab();
         let cause = canopy_hosting::Error::Network(
             "io: failed to lookup address information: Name or service not known".into(),
         )
         .to_string();
         tab.requests.list = Some(Err(cause));
-        tab.requests.token = Some(None);
+        tab.requests.cli = Some(signed_out(ForgeKind::GitLab));
         let details = render(theme::ThemeId::Midnight, SCREEN, |ui| {
             detail(ui, &mut tab, ForgeKind::GitLab, &mut Vec::new());
         });
@@ -2507,13 +2528,13 @@ mod tests {
             "{:?}",
             details.texts
         );
-        assert!(!details.mentions("Connect GitLab"), "{:?}", details.texts);
+        assert!(!details.mentions("Sign in to see"), "{:?}", details.texts);
         assert!(details.mentions("Name or service not known"));
         let order: Vec<&str> = details
             .texts
             .iter()
             .map(|(t, _)| t.as_str())
-            .filter(|t| *t == "Retry" || *t == "Add a token…")
+            .filter(|t| *t == "Retry" || *t == "Open Accounts")
             .collect();
         assert_eq!(order.first(), Some(&"Retry"), "{order:?}");
         let list = render(theme::ThemeId::Midnight, SCREEN, |ui| {
@@ -2525,7 +2546,7 @@ mod tests {
                 &mut Vec::new(),
             );
         });
-        assert!(!list.mentions("A token is needed"), "{:?}", list.texts);
+        assert!(!list.mentions("Sign-in needed"), "{:?}", list.texts);
     }
 
     /// F2: the merge method's full name fits its trigger.
@@ -2661,74 +2682,75 @@ mod tests {
         }
     }
 
-    /// #142: nothing says where the token came from while the credential works.
+    /// #142: nothing says where the credential came from while the CLI's sign-in works.
     #[test]
-    fn no_credential_line_while_the_token_works() {
-        for source in [
-            crate::hosting::TokenSource::Cli(ForgeKind::GitHub),
-            crate::hosting::TokenSource::Cli(ForgeKind::GitLab),
-            crate::hosting::TokenSource::Saved,
-            crate::hosting::TokenSource::Environment,
-            crate::hosting::TokenSource::GitCredentials,
-        ] {
-            let mut tab = test_tab();
-            tab.requests.token = Some(Some(source));
-            let frame = render(theme::ThemeId::Midnight, vec2(560.0, 400.0), |ui| {
-                let details = details(RequestState::Open);
-                action_bar(
-                    ui,
-                    &mut tab,
-                    ForgeKind::GitHub,
-                    &details.summary,
-                    Some(&details),
-                    &mut Vec::new(),
-                );
-            });
-            for word in ["token", "credential", "Using"] {
-                assert!(
-                    !frame.mentions(word),
-                    "{source:?} shows {word}: {:?}",
-                    frame.texts
-                );
-            }
+    fn no_credential_line_while_the_sign_in_works() {
+        let mut tab = test_tab();
+        tab.requests.cli = Some(Ok(crate::hosting::demo_account()));
+        let frame = render(theme::ThemeId::Midnight, vec2(560.0, 400.0), |ui| {
+            let details = details(RequestState::Open);
+            action_bar(
+                ui,
+                &mut tab,
+                ForgeKind::GitHub,
+                &details.summary,
+                Some(&details),
+                &mut Vec::new(),
+            );
+        });
+        for word in ["token", "credential", "Using", "sign-in"] {
+            assert!(!frame.mentions(word), "shows {word}: {:?}", frame.texts);
         }
     }
 
-    /// #136: a CLI that is installed but cannot be used says why where the missing token is
-    /// reported; a CLI that is not installed adds nothing.
+    /// #136: a CLI that is not installed, signed out, short of a scope or failing says so, in the
+    /// CLI's own words, where the missing sign-in is reported.
     #[test]
-    fn a_cli_that_could_not_be_used_is_named_in_the_no_token_warning() {
-        let mut tab = test_tab();
-        tab.requests.token = Some(None);
-        let plain = credential_problem(&tab).unwrap().text;
-        tab.requests.cli = Some(crate::hosting::CliReport {
-            user: None,
-            problem: Some("The GitHub CLI (gh) is not signed in to github.com.".into()),
-        });
-        let text = credential_problem(&tab).unwrap().text;
-        assert!(
-            text.starts_with("The GitHub CLI (gh) is not signed in"),
-            "{text}"
-        );
-        assert!(text.ends_with(&plain), "{text}");
-    }
-
-    /// #142: a missing or refused token shows as a warning with its fix, and the fix opens
-    /// Settings.
-    #[test]
-    fn a_missing_or_refused_token_is_shown_with_its_fix() {
-        for (rejected, token, fix) in [
-            (false, Some(None), "Add a token…"),
-            // A host that wants a sign-in refuses a tokenless read; there is nothing to replace.
-            (true, Some(None), "Add a token…"),
-            (
-                true,
-                Some(Some(crate::hosting::TokenSource::Saved)),
-                "Replace the token…",
-            ),
+    fn why_the_cli_gave_no_credential_is_in_the_warning() {
+        let kind = ForgeKind::GitHub;
+        for error in [
+            CliError::NotInstalled { kind },
+            CliError::SignedOut {
+                kind,
+                host: "github.com".into(),
+            },
+            CliError::MissingScope {
+                kind,
+                host: "github.com".into(),
+                user: Some("octocat".into()),
+                scope: "repo",
+            },
+            CliError::Failed {
+                kind,
+                message: "it took longer than 10 seconds".into(),
+            },
         ] {
             let mut tab = test_tab();
-            tab.requests.token = token;
+            tab.requests.cli = Some(Err(error.clone()));
+            let problem = credential_problem(&tab).unwrap();
+            assert_eq!(problem.title, "Not signed in");
+            assert!(
+                problem.text.starts_with(&error.to_string()),
+                "{}",
+                problem.text
+            );
+            assert!(problem.text.contains("can only read this request"));
+        }
+    }
+
+    /// #142: a missing or refused sign-in shows as a warning with its fix, and the fix opens
+    /// Settings at Accounts.
+    #[test]
+    fn a_missing_or_refused_sign_in_is_shown_with_its_fix() {
+        for (rejected, cli) in [
+            (false, signed_out(ForgeKind::GitHub)),
+            // A host that wants a sign-in refuses an anonymous read; there is nothing to replace.
+            (true, signed_out(ForgeKind::GitHub)),
+            (true, Ok(crate::hosting::demo_account())),
+        ] {
+            let fix = "Open Accounts";
+            let mut tab = test_tab();
+            tab.requests.cli = Some(cli);
             tab.requests.token_rejected = rejected;
             let details = details(RequestState::Open);
             let mut actions = Vec::new();
@@ -2782,7 +2804,9 @@ mod tests {
             }
             let _ = run(events, &mut actions);
             assert!(
-                actions.iter().any(|a| matches!(a, Action::Settings)),
+                actions
+                    .iter()
+                    .any(|a| matches!(a, Action::SettingsAt(Section::Accounts))),
                 "{fix}: {actions:?}"
             );
         }

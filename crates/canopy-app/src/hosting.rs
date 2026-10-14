@@ -1,15 +1,10 @@
 //! Pull and merge requests: a background thread per repository tab that talks to the GitHub or
-//! GitLab API through `canopy-hosting`, plus token lookup and storage.
+//! GitLab API through `canopy-hosting`, plus the lookup of the credential.
 //!
-//! Tokens come from, in order: the sign-in of the provider's CLI (`gh`, `glab`; held in memory
-//! only), the provider's environment variable (`GH_TOKEN`, `GITLAB_TOKEN`, …), the token saved in
-//! Canopy's settings for that host (and port, see [`TokenStore`]), and the user's git credential
-//! helper (ADR 0013). Saved tokens live in `tokens.json` next to Canopy's other data,
-//! created readable only by the user (mode 0600) on Unix; they are not in the operating system's
-//! keychain. They are sent only to the host they belong to.
+//! The only credential is the sign-in of the provider's CLI (`gh`, `glab`; ADR 0014): its token is
+//! read when the thread starts, held in memory and sent only to the host it belongs to. Canopy
+//! saves no token and takes none from the environment or git's credential helpers.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -17,150 +12,34 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
-use serde::{Deserialize, Serialize};
 
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_hosting::{
-    Client, MergeMethod, NewRequest, RequestDetails, RequestQuery, RequestSummary, StateFilter,
+    CliAccount, CliError, Client, MergeMethod, NewRequest, RequestDetails, RequestQuery,
+    RequestSummary, StateFilter,
 };
 
-/// Where a token came from, shown in settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenSource {
-    /// The sign-in of the GitHub or GitLab CLI; never stored by Canopy.
-    Cli(ForgeKind),
-    Saved,
-    Environment,
-    GitCredentials,
-}
-
-impl TokenSource {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Cli(ForgeKind::GitHub) => "from the GitHub CLI",
-            Self::Cli(ForgeKind::GitLab) => "from the GitLab CLI",
-            Self::Saved => "saved in Canopy",
-            Self::Environment => "from the environment",
-            Self::GitCredentials => "from your git credential helper",
-        }
+/// Deletes what builds before ADR 0014 saved: a `tokens.json` of plaintext tokens (and a leftover
+/// temporary copy). Best effort and off the calling thread; nothing reads those files any more.
+pub fn remove_saved_tokens() {
+    let Some(dir) = eframe::storage_dir("canopy") else {
+        return;
+    };
+    let spawned = std::thread::Builder::new()
+        .name("tokens-cleanup".into())
+        .spawn(move || remove_saved_tokens_in(&dir));
+    if let Err(e) = spawned {
+        tracing::warn!("could not start the removal of the old saved tokens: {e}");
     }
 }
 
-/// Tokens the user saved in Canopy, by URL authority: the host, plus the port when it is not the
-/// default (`gitlab.example.com:8443`), so two services on one host never share a token.
-///
-/// Files written before version 2 keyed tokens by host alone, and such a token was used for
-/// every port of its host. Those entries still load and keep that meaning (`legacy_hosts`) until
-/// the token for that host is saved or removed again.
-#[derive(Clone, Default, Serialize, Deserialize)]
-pub struct TokenStore {
-    tokens: HashMap<String, String>,
-    #[serde(default)]
-    version: u32,
-    /// Hosts whose token was saved before version 2 and still applies to their other ports.
-    #[serde(default)]
-    legacy_hosts: Vec<String>,
-}
-
-/// The current `tokens.json` format.
-const TOKENS_VERSION: u32 = 2;
-
-impl std::fmt::Debug for TokenStore {
-    // Hosts only: a token must never reach a log line.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokenStore")
-            .field("hosts", &self.tokens.keys().collect::<Vec<_>>())
-            .finish_non_exhaustive()
-    }
-}
-
-fn tokens_path() -> Option<PathBuf> {
-    eframe::storage_dir("canopy").map(|d| d.join("tokens.json"))
-}
-
-impl TokenStore {
-    /// Loads saved tokens; an unreadable file counts as empty.
-    pub fn load() -> Self {
-        let Some(path) = tokens_path() else {
-            return Self::default();
-        };
-        match std::fs::read(&path) {
-            Ok(bytes) => Self::parse(&bytes).unwrap_or_else(|e| {
-                tracing::warn!("ignoring unreadable {}: {e}", path.display());
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        }
-    }
-
-    /// Reads `tokens.json`, upgrading an older format.
-    fn parse(bytes: &[u8]) -> serde_json::Result<Self> {
-        let mut store: Self = serde_json::from_slice(bytes)?;
-        if store.version < TOKENS_VERSION {
-            store.legacy_hosts = store
-                .tokens
-                .keys()
-                .filter(|k| !k.contains(':'))
-                .cloned()
-                .collect();
-            store.version = TOKENS_VERSION;
-        }
-        Ok(store)
-    }
-
-    /// The saved token for `forge`: the one saved for its authority, else, for a forge on a
-    /// non-default port, a token its host had before tokens were kept per port.
-    pub fn get_for(&self, forge: &Forge) -> Option<&str> {
-        let exact = self.get(&forge.authority());
-        if exact.is_some() || forge.port.is_none() {
-            return exact;
-        }
-        let host = forge.host.to_lowercase();
-        if self.legacy_hosts.contains(&host) {
-            return self.get(&host);
-        }
-        None
-    }
-
-    fn save(&self) -> std::io::Result<()> {
-        let Some(path) = tokens_path() else {
-            return Err(std::io::Error::other("no data directory"));
-        };
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        let tmp = path.with_extension("json.tmp");
-        let written = write_private(&tmp, &json).and_then(|()| std::fs::rename(&tmp, &path));
-        if written.is_err() {
-            let _ = std::fs::remove_file(&tmp);
-        }
-        written
-    }
-
-    /// The token saved for exactly `authority` (`host` or `host:port`).
-    pub fn get(&self, authority: &str) -> Option<&str> {
-        self.tokens
-            .get(&authority.to_lowercase())
-            .map(String::as_str)
-    }
-
-    /// Saves (or with an empty `token`, removes) the token for `authority` (`host` or
-    /// `host:port`). From then on a host's token applies to that host's default port only.
-    pub fn set(&mut self, authority: &str, token: &str) -> std::io::Result<()> {
-        self.put(authority, token);
-        self.save()
-    }
-
-    fn put(&mut self, authority: &str, token: &str) {
-        let key = authority.to_lowercase();
-        let token = token.trim();
-        self.legacy_hosts.retain(|h| *h != key);
-        self.version = TOKENS_VERSION;
-        if token.is_empty() {
-            self.tokens.remove(&key);
-        } else {
-            self.tokens.insert(key, token.to_owned());
+fn remove_saved_tokens_in(dir: &std::path::Path) {
+    for name in ["tokens.json", "tokens.json.tmp"] {
+        let path = dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => tracing::info!("removed {}: Canopy no longer saves tokens", path.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => tracing::warn!("could not remove {}: {e}", path.display()),
         }
     }
 }
@@ -181,117 +60,82 @@ pub(crate) fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Re
     file.sync_all()
 }
 
-/// What the provider's CLI said about its sign-in, for Settings and the request view.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CliReport {
-    /// The account the CLI is signed in as.
-    pub user: Option<String>,
-    /// Why the CLI's sign-in could not be used (signed out, a scope missing, a failure), in words
-    /// for the user; `None` while it works.
-    pub problem: Option<String>,
-}
+/// What the provider's CLI says about its sign-in to one host: the account and scopes it is
+/// signed in with, or why that sign-in cannot be used (not installed, signed out, a scope missing,
+/// a failure). The error's words say what to do.
+pub type CliState = Result<CliAccount, CliError>;
 
-/// A token and where it came from, with what the CLI reported on the way.
-#[derive(Default)]
+/// The CLI's token, if it gave one, and what it said.
 pub struct Resolved {
-    pub token: Option<(String, TokenSource)>,
-    /// `None` when the CLI is not installed.
-    pub cli: Option<CliReport>,
+    pub token: Option<String>,
+    pub cli: CliState,
 }
 
 impl std::fmt::Debug for Resolved {
-    // The source only: a token must never reach a log line.
+    // Whether there is a token only: a token must never reach a log line.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Resolved")
-            .field("token", &self.token.as_ref().map(|(_, source)| source))
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .field("cli", &self.cli)
             .finish()
     }
 }
 
-/// Finds a token for `forge` (blocking: runs the provider's CLI and may run the git credential
-/// helper), in this order: the CLI's sign-in, the environment, the token `saved` in Canopy, git's
-/// credential helper. Environment tokens are used only for github.com, gitlab.com, `GITLAB_HOST`
-/// and the self-hosted GitLab hosts the user listed (`trusted_gitlab_hosts`), never for a host
-/// recognised as GitLab by its name alone.
-pub fn resolve_token(
-    forge: &Forge,
-    saved: Option<String>,
-    trusted_gitlab_hosts: &[String],
-    use_cli_and_git_credentials: bool,
-) -> Resolved {
-    resolve_in_order(
-        forge.kind,
-        saved,
-        || {
-            use_cli_and_git_credentials.then(|| {
-                canopy_hosting::login_from_cli(forge.kind, &forge.authority()).map(|login| {
-                    let user = login.user.clone();
-                    (login.into_token(), user)
-                })
-            })
-        },
-        || canopy_hosting::token_from_env_for(forge.kind, &forge.host, trusted_gitlab_hosts),
-        || {
-            use_cli_and_git_credentials
-                .then(|| canopy_hosting::token_from_git_credentials(&forge.authority()))
-                .flatten()
-        },
-    )
-}
-
-/// [`resolve_token`] with the sources as functions, each asked only when the ones before it gave
-/// nothing. A CLI that is signed out, lacks a scope or fails is passed over, and says why.
-fn resolve_in_order(
-    kind: ForgeKind,
-    saved: Option<String>,
-    cli: impl FnOnce() -> Option<Result<(String, Option<String>), canopy_hosting::CliError>>,
-    env: impl FnOnce() -> Option<String>,
-    git: impl FnOnce() -> Option<String>,
-) -> Resolved {
-    let mut cli_report = None;
-    match cli() {
-        Some(Ok((token, user))) => {
-            return Resolved {
-                token: Some((token, TokenSource::Cli(kind))),
-                cli: Some(CliReport {
-                    user,
-                    problem: None,
-                }),
-            };
+impl From<Result<canopy_hosting::CliLogin, CliError>> for Resolved {
+    fn from(login: Result<canopy_hosting::CliLogin, CliError>) -> Self {
+        match login {
+            Ok(login) => {
+                let (token, account) = login.into_parts();
+                Self {
+                    token: Some(token),
+                    cli: Ok(account),
+                }
+            }
+            Err(e) => Self {
+                token: None,
+                cli: Err(e),
+            },
         }
-        Some(Err(canopy_hosting::CliError::NotInstalled { .. })) | None => {}
-        Some(Err(e)) => {
-            cli_report = Some(CliReport {
-                user: e.user().map(str::to_owned),
-                problem: Some(e.to_string()),
-            });
-        }
-    }
-    let token = env()
-        .map(|t| (t, TokenSource::Environment))
-        .or_else(|| {
-            saved
-                .filter(|t| !t.trim().is_empty())
-                .map(|t| (t, TokenSource::Saved))
-        })
-        .or_else(|| git().map(|t| (t, TokenSource::GitCredentials)));
-    Resolved {
-        token,
-        cli: cli_report,
     }
 }
 
-/// Where to create a token for `forge`, prefilled with a name and the scopes Canopy needs.
-pub fn token_page(kind: ForgeKind, host: &str) -> String {
-    match kind {
-        ForgeKind::GitHub => {
-            "https://github.com/settings/tokens/new?description=Canopy&scopes=repo".into()
-        }
-        ForgeKind::GitLab => {
-            format!("https://{host}/-/user_settings/personal_access_tokens?name=Canopy&scopes=api")
-        }
+/// The account `--demo-requests` and tests show a CLI signed in as, as they have no real CLI.
+pub fn demo_account() -> CliAccount {
+    CliAccount {
+        user: Some("octocat".into()),
+        scopes: None,
     }
+}
+
+/// A CLI that is installed and not signed in to `host`, for the same uses.
+pub fn signed_out(kind: ForgeKind, host: &str) -> CliState {
+    Err(CliError::SignedOut {
+        kind,
+        host: host.into(),
+    })
+}
+
+/// Asks the provider's CLI for its sign-in to `forge`'s host and port (blocking: runs the CLI, up
+/// to ten seconds). This is the only credential source: nothing saved in Canopy, in the
+/// environment or in git's credential helpers is used.
+pub fn resolve_token(forge: &Forge) -> Resolved {
+    canopy_hosting::login_from_cli(forge.kind, &forge.authority()).into()
+}
+
+/// [`resolve_token`] on its own thread, for the Accounts page, which has no hosting thread for
+/// a host without an open tab. The token is dropped unread; the result arrives on the channel.
+pub fn check_cli(forge: Forge, ctx: egui::Context) -> Receiver<CliState> {
+    let (tx, rx) = unbounded();
+    let spawned = std::thread::Builder::new()
+        .name(format!("cli-check:{}", forge.host))
+        .spawn(move || {
+            let _ = tx.send(resolve_token(&forge).cli);
+            ctx.request_repaint();
+        });
+    if let Err(e) = spawned {
+        tracing::error!("could not start the sign-in check: {e}");
+    }
+    rx
 }
 
 /// Which list a job or an event is about: the state tab and what the host is asked to search for.
@@ -355,9 +199,8 @@ pub enum HostEvent {
         email: String,
         result: crate::avatars::Cached,
     },
-    Token(Option<TokenSource>),
-    /// What the provider's CLI said about its sign-in; `None` when it is not installed.
-    Cli(Option<CliReport>),
+    /// What the provider's CLI said about its sign-in, sent once when the thread starts.
+    Cli(CliState),
     /// The host answered a list with a rate limit; sent just before that list's failure. `reset`
     /// is when the limit lifts (unix seconds), when the host said.
     RateLimited {
@@ -413,13 +256,8 @@ pub struct HostWorker {
 }
 
 impl HostWorker {
-    /// Starts a thread for `forge`. `saved` is the token saved in settings for its host.
-    pub fn spawn(
-        forge: Forge,
-        saved: Option<String>,
-        trusted_gitlab_hosts: Vec<String>,
-        ctx: egui::Context,
-    ) -> Self {
+    /// Starts a thread for `forge`.
+    pub fn spawn(forge: Forge, ctx: egui::Context) -> Self {
         let (jobs, job_rx) = unbounded::<HostJob>();
         let (tx, events) = unbounded::<HostEvent>();
         let thread_forge = forge.clone();
@@ -433,15 +271,7 @@ impl HostWorker {
         let spawned = std::thread::Builder::new()
             .name(format!("hosting:{}", forge.host))
             .spawn(move || {
-                run(
-                    thread_forge,
-                    saved,
-                    &trusted_gitlab_hosts,
-                    job_rx,
-                    tx,
-                    thread_ctx,
-                    switches,
-                );
+                run(thread_forge, job_rx, tx, thread_ctx, switches);
             });
         if let Err(e) = &spawned {
             tracing::error!("could not start the hosting thread: {e}");
@@ -527,8 +357,6 @@ struct Switches {
 )]
 fn run(
     forge: Forge,
-    saved: Option<String>,
-    trusted_gitlab_hosts: &[String],
     jobs: Receiver<HostJob>,
     events: Sender<HostEvent>,
     ctx: egui::Context,
@@ -543,11 +371,9 @@ fn run(
         ctx.request_repaint();
         delivered
     };
-    // The CLI and the credential helper can be slow; resolve once, lazily, on this thread.
-    let Resolved { token, cli } = resolve_token(&forge, saved, trusted_gitlab_hosts, true);
-    emit(HostEvent::Token(token.as_ref().map(|t| t.1)));
+    // The CLI can be slow; ask it once, on this thread.
+    let Resolved { token, cli } = resolve_token(&forge);
     emit(HostEvent::Cli(cli));
-    let token = token.map(|t| t.0);
     // Development and screenshots: talk to a local stand-in (tools/mock-hosting.py). Only a
     // plain loopback address is accepted (no user info, no look-alike host names), so the
     // variable cannot send a token anywhere else.
@@ -924,85 +750,15 @@ fn add_rollup(
     }
 }
 
-/// Tests a token for `forge` off the UI thread; the result arrives on the returned channel.
-pub fn test_token(
-    forge: Forge,
-    token: String,
-    ctx: egui::Context,
-) -> Receiver<Result<String, String>> {
-    let (tx, rx) = unbounded();
-    let _ = std::thread::Builder::new()
-        .name("token-test".into())
-        .spawn(move || {
-            let r = Client::new(&forge, Some(token))
-                .viewer()
-                .map_err(|e| e.to_string());
-            let _ = tx.send(r);
-            ctx.request_repaint();
-        });
-    rx
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use canopy_hosting::CliError;
-
-    fn some(token: &str) -> impl FnOnce() -> Option<String> {
-        let token = token.to_owned();
-        move || Some(token)
-    }
-
-    fn nothing() -> Option<String> {
-        None
-    }
-
-    fn unreachable_source() -> Option<String> {
-        unreachable!("an earlier source already gave a token")
-    }
 
     #[test]
-    fn the_cli_comes_first_then_environment_then_saved_then_git() {
-        let kind = ForgeKind::GitHub;
-        let signed_in = || Some(Ok(("cli".to_owned(), Some("octocat".to_owned()))));
-        let saved = || Some("saved".to_owned());
-        let r = resolve_in_order(
-            kind,
-            saved(),
-            signed_in,
-            unreachable_source,
-            unreachable_source,
-        );
-        assert_eq!(r.token, Some(("cli".into(), TokenSource::Cli(kind))));
-        assert_eq!(
-            r.cli,
-            Some(CliReport {
-                user: Some("octocat".into()),
-                problem: None
-            })
-        );
-        let r = resolve_in_order(kind, saved(), || None, some("env"), unreachable_source);
-        assert_eq!(r.token, Some(("env".into(), TokenSource::Environment)));
-        let r = resolve_in_order(kind, saved(), || None, nothing, unreachable_source);
-        assert_eq!(r.token, Some(("saved".into(), TokenSource::Saved)));
-        let r = resolve_in_order(kind, Some("  ".into()), || None, nothing, some("git"));
-        assert_eq!(r.token, Some(("git".into(), TokenSource::GitCredentials)));
-        let r = resolve_in_order(kind, None, || None, nothing, nothing);
-        assert_eq!(r.token, None);
-        assert_eq!(r.cli, None);
-    }
-
-    /// A CLI that is missing is unremarkable; one that is signed out, lacks a scope or fails is
-    /// passed over for the next source and says why.
-    #[test]
-    fn a_cli_that_cannot_be_used_is_passed_over_and_explained() {
+    fn a_cli_that_cannot_be_used_gives_no_token_and_says_why() {
         let kind = ForgeKind::GitLab;
-        let missing = || Some(Err(CliError::NotInstalled { kind }));
-        let r = resolve_in_order(kind, Some("saved".into()), missing, nothing, nothing);
-        assert_eq!(r.token, Some(("saved".into(), TokenSource::Saved)));
-        assert_eq!(r.cli, None);
-
         let errors = [
+            CliError::NotInstalled { kind },
             CliError::SignedOut {
                 kind,
                 host: "gitlab.corp".into(),
@@ -1019,99 +775,159 @@ mod tests {
             },
         ];
         for error in errors {
-            let words = error.to_string();
-            let r = resolve_in_order(kind, None, || Some(Err(error)), some("env"), nothing);
-            assert_eq!(r.token, Some(("env".into(), TokenSource::Environment)));
-            assert_eq!(r.cli.and_then(|c| c.problem), Some(words));
+            let resolved = Resolved::from(Err(error.clone()));
+            assert!(resolved.token.is_none());
+            assert_eq!(resolved.cli, Err(error));
         }
     }
 
     #[test]
-    fn a_cli_token_is_labelled_by_provider() {
-        assert_eq!(
-            TokenSource::Cli(ForgeKind::GitHub).label(),
-            "from the GitHub CLI"
-        );
-        assert_eq!(
-            TokenSource::Cli(ForgeKind::GitLab).label(),
-            "from the GitLab CLI"
-        );
-    }
-
-    #[test]
-    fn debug_output_never_shows_tokens() {
-        let mut store = TokenStore::default();
-        store
-            .tokens
-            .insert("github.com".into(), "ghp_secretvalue".into());
-        let shown = format!("{store:?}");
-        assert!(shown.contains("github.com"));
-        assert!(!shown.contains("ghp_secretvalue"));
-
+    fn debug_output_never_shows_the_token() {
         let resolved = Resolved {
-            token: Some(("ghp_secretvalue".into(), TokenSource::Saved)),
-            cli: None,
+            token: Some("ghp_secretvalue".into()),
+            cli: Ok(CliAccount {
+                user: Some("octocat".into()),
+                scopes: None,
+            }),
         };
         let shown = format!("{resolved:?} {resolved:#?}");
-        assert!(shown.contains("Saved"), "{shown}");
+        assert!(shown.contains("octocat"), "{shown}");
         assert!(!shown.contains("ghp_secretvalue"), "{shown}");
     }
 
-    fn gitlab(host: &str, port: Option<u16>) -> Forge {
-        Forge {
-            kind: ForgeKind::GitLab,
-            host: host.into(),
-            port,
-            path: "group/app".into(),
+    /// What builds before ADR 0014 saved is deleted, and nothing else in the folder is touched.
+    #[test]
+    fn the_old_saved_tokens_are_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["tokens.json", "tokens.json.tmp", "settings.json"] {
+            std::fs::write(
+                dir.path().join(name),
+                r#"{"tokens":{"github.com":"ghp_a"}}"#,
+            )
+            .unwrap();
         }
+        remove_saved_tokens_in(dir.path());
+        assert!(!dir.path().join("tokens.json").exists());
+        assert!(!dir.path().join("tokens.json.tmp").exists());
+        assert!(dir.path().join("settings.json").exists());
+        // A folder without them is left alone.
+        remove_saved_tokens_in(dir.path());
+        remove_saved_tokens_in(&dir.path().join("missing"));
     }
 
-    #[test]
-    fn tokens_are_kept_per_port() {
-        let mut store = TokenStore::default();
-        store.put("gitlab.example.com", "glpat-default");
-        store.put("gitlab.example.com:8443", "glpat-other");
-        let default_port = gitlab("gitlab.example.com", None);
-        let other_port = gitlab("gitlab.example.com", Some(8443));
-        assert_eq!(store.get_for(&default_port), Some("glpat-default"));
-        assert_eq!(store.get_for(&other_port), Some("glpat-other"));
-        // A token for the default port never goes to another port.
-        store.put("gitlab.example.com:8443", "");
-        assert_eq!(store.get_for(&other_port), None);
-        assert_eq!(store.get_for(&default_port), Some("glpat-default"));
-        assert_eq!(
-            store.get_for(&gitlab("GitLab.Example.com", None)),
-            Some("glpat-default")
-        );
-    }
+    const CHILD: &str = "CANOPY_TEST_HOSTING_CHILD";
 
+    /// The half of the two tests below that runs in a copy of this test binary they start (the
+    /// environment cannot be changed in-process): a hosting thread for github.com/o/r that lists
+    /// the open pull requests, against the stub whose address the environment names. Does nothing
+    /// in an ordinary run.
     #[test]
-    fn host_only_tokens_from_older_versions_still_load() -> serde_json::Result<()> {
-        let old = br#"{"tokens":{"github.com":"ghp_a","gitlab.example.com":"glpat-b"}}"#;
-        let mut store = TokenStore::parse(old)?;
-        let github = Forge {
+    fn the_child_of_the_environment_tests() {
+        if std::env::var_os(CHILD).is_none() {
+            return;
+        }
+        let forge = Forge {
             kind: ForgeKind::GitHub,
             host: "github.com".into(),
             port: None,
             path: "o/r".into(),
         };
-        assert_eq!(store.get_for(&github), Some("ghp_a"));
-        let other_port = gitlab("gitlab.example.com", Some(8443));
-        // Saved when tokens were kept per host: it served every port, and still does…
-        assert_eq!(store.get_for(&other_port), Some("glpat-b"));
-        // …until the host's token is saved again, which makes it the default port's only.
-        store.put("gitlab.example.com", "glpat-new");
-        assert_eq!(store.get_for(&other_port), None);
-        assert_eq!(
-            store.get_for(&gitlab("gitlab.example.com", None)),
-            Some("glpat-new")
+        let worker = HostWorker::spawn(forge, egui::Context::default());
+        worker.send(HostJob::List(StateFilter::Open.into()));
+        loop {
+            match worker.events.recv_timeout(Duration::from_secs(20)) {
+                Ok(HostEvent::List(..)) => break,
+                Ok(_) => {}
+                Err(e) => panic!("no list answer: {e}"),
+            }
+        }
+    }
+
+    /// Runs the child above with every token variable set to `LEAK`, a `gh` on `PATH` that runs
+    /// `fake_gh`, and the API at a stub; returns the `Authorization` header of each request the
+    /// stub got.
+    #[cfg(unix)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "starts this test binary again with its own environment"
+    )]
+    fn authorizations_with_tokens_in_the_environment(fake_gh: &str) -> Vec<String> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let gh = dir.path().join("gh");
+        std::fs::write(&gh, format!("#!/bin/sh\n{fake_gh}\n")).unwrap();
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (base, _, authorizations) = stub_with_authorizations(Box::new(|target| {
+            if target.starts_with("/repos/o/r/pulls?") {
+                pulls(&[1])
+            } else {
+                "{}".into()
+            }
+        }));
+        let path = format!(
+            "{}:{}",
+            dir.path().display(),
+            std::env::var("PATH").unwrap_or_default()
         );
-        // The upgraded format round-trips without turning new keys into legacy ones.
-        let saved = serde_json::to_vec(&store)?;
-        let reloaded = TokenStore::parse(&saved)?;
-        assert_eq!(reloaded.get_for(&other_port), None);
-        assert_eq!(reloaded.get_for(&github), Some("ghp_a"));
-        Ok(())
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "hosting::tests::the_child_of_the_environment_tests",
+                "--nocapture",
+            ])
+            .env("PATH", path)
+            .env(CHILD, "1")
+            .env("CANOPY_HOSTING_API_BASE", &base);
+        for name in [
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_ENTERPRISE_TOKEN",
+            "GITLAB_TOKEN",
+            "GL_TOKEN",
+        ] {
+            child.env(name, LEAK);
+        }
+        let out = child.output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && text.contains("1 passed"),
+            "{text}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let seen = authorizations.lock().unwrap().clone();
+        assert!(!seen.is_empty(), "no request reached the stub");
+        seen
+    }
+
+    const LEAK: &str = "ghp_FROMTHEENVIRONMENT";
+
+    /// With `gh` signed in, every request carries its token, and the token variables in Canopy's
+    /// environment neither reach the request nor the CLI (a fake `gh` that answers with
+    /// `$GH_TOKEN` when it sees one).
+    #[cfg(unix)]
+    #[test]
+    fn the_cli_token_is_used_and_the_environment_is_not() {
+        let seen = authorizations_with_tokens_in_the_environment(
+            r#"case "$2" in
+status) echo "  ✓ Logged in to github.com account octocat (keyring)"; echo "  - Token scopes: 'repo'";;
+token) if [ -n "$GH_TOKEN" ]; then echo "$GH_TOKEN"; else echo gho_FROMTHECLI; fi;;
+esac"#,
+        );
+        assert!(
+            seen.iter().all(|a| a == "Bearer gho_FROMTHECLI"),
+            "{seen:?}"
+        );
+    }
+
+    /// With `gh` signed out, requests carry no credential at all, whatever the environment holds.
+    #[cfg(unix)]
+    #[test]
+    fn the_environment_alone_sends_no_credential() {
+        let seen = authorizations_with_tokens_in_the_environment(
+            r#"echo "You are not logged into any accounts on github.com" >&2; exit 1"#,
+        );
+        assert!(seen.iter().all(|a| a == "none"), "{seen:?}");
     }
 
     fn rows(numbers: &[u64]) -> Vec<RequestSummary> {
@@ -1237,17 +1053,29 @@ mod tests {
     /// A loopback stand-in for GitHub's API: one request per connection, each connection on a
     /// thread of its own (an answer may wait), answered with 200 and `answer(target)`. Returns its
     /// base URL and the `METHOD target` lines it received, in order of arrival.
-    fn stub(answer: Answer) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    fn stub(answer: Answer) -> (String, Log) {
+        let (base, log, _) = stub_with_authorizations(answer);
+        (base, log)
+    }
+
+    type Log = Arc<std::sync::Mutex<Vec<String>>>;
+
+    /// [`stub`], and the `Authorization` header of each request (`none` without one), in the same
+    /// order as the requests.
+    fn stub_with_authorizations(answer: Answer) -> (String, Log, Log) {
         use std::io::{BufRead, BufReader, Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let base = format!("http://{}", listener.local_addr().expect("address"));
-        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = Log::default();
         let seen = Arc::clone(&log);
+        let authorizations = Log::default();
+        let authorized = Arc::clone(&authorizations);
         let answer: Arc<Answer> = Arc::new(answer);
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { continue };
                 let (seen, answer) = (Arc::clone(&seen), Arc::clone(&answer));
+                let authorized = Arc::clone(&authorized);
                 std::thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
                     let mut line = String::new();
@@ -1255,6 +1083,7 @@ mod tests {
                         return;
                     }
                     let mut length = 0;
+                    let mut authorization = "none".to_owned();
                     loop {
                         let mut header = String::new();
                         if reader.read_line(&mut header).unwrap_or(0) == 0
@@ -1262,16 +1091,19 @@ mod tests {
                         {
                             break;
                         }
-                        if let Some((name, value)) = header.split_once(':')
-                            && name.eq_ignore_ascii_case("content-length")
-                        {
-                            length = value.trim().parse().unwrap_or(0);
+                        if let Some((name, value)) = header.split_once(':') {
+                            if name.eq_ignore_ascii_case("content-length") {
+                                length = value.trim().parse().unwrap_or(0);
+                            } else if name.eq_ignore_ascii_case("authorization") {
+                                value.trim().clone_into(&mut authorization);
+                            }
                         }
                     }
                     let mut body = vec![0; length];
                     let _ = reader.read_exact(&mut body);
                     let mut parts = line.split_whitespace();
                     let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+                    authorized.lock().expect("log").push(authorization);
                     seen.lock().expect("log").push(format!("{method} {target}"));
                     let reply = answer(target);
                     let mut stream = stream;
@@ -1283,7 +1115,7 @@ mod tests {
                 });
             }
         });
-        (base, log)
+        (base, log, authorizations)
     }
 
     fn pull(n: u64) -> serde_json::Value {

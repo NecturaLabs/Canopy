@@ -1023,7 +1023,7 @@ mod tests {
             .expect("list");
         app.tabs[0].poll(&[]);
         assert_eq!(app.tabs[0].requests.comment, "");
-        app.tabs[0].ensure_host(&ctx, None, false);
+        app.tabs[0].ensure_host(&ctx, false);
 
         let (host, events, _) = HostWorker::detached(forge);
         app.tabs[0].host = Some(host);

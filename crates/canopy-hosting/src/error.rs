@@ -9,9 +9,11 @@ pub enum Error {
     /// stream.
     #[error("Could not reach the server: {0}")]
     Network(String),
-    /// HTTP 401, or a 403 that is not a rate limit: the token is missing, invalid, expired or
-    /// lacks the scope for this request.
-    #[error("The server refused the request (check the access token and its scopes): {0}")]
+    /// HTTP 401, or a 403 that is not a rate limit: the CLI's sign-in is missing, invalid,
+    /// expired or lacks the scope for this request.
+    #[error(
+        "The server refused the request (check the sign-in of the GitHub or GitLab CLI and its scopes): {0}"
+    )]
     Unauthorized(String),
     /// HTTP 429, or GitHub's 403 with an exhausted quota. `reset` is when the quota refills, in
     /// unix seconds, when the server said.
@@ -20,9 +22,9 @@ pub enum Error {
         /// When the limit resets, in unix seconds, at most a day ahead of when the answer came.
         reset: Option<i64>,
     },
-    /// HTTP 404. GitHub and GitLab answer 404 rather than 403 for private projects the token
-    /// cannot see.
-    #[error("Not found, or the token cannot see this repository ({0})")]
+    /// HTTP 404. GitHub and GitLab answer 404 rather than 403 for private projects the signed-in
+    /// account cannot see.
+    #[error("Not found, or the signed-in account cannot see this repository ({0})")]
     NotFound(String),
     /// Any other unsuccessful status, with the message from the response's `message`, `error`
     /// or `errors` fields when present.
@@ -96,7 +98,7 @@ mod tests {
         assert!(
             Error::NotFound("Not Found".into())
                 .to_string()
-                .contains("token cannot see this repository")
+                .contains("signed-in account cannot see this repository")
         );
         assert_eq!(
             Error::RateLimited {

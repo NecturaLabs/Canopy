@@ -19,7 +19,7 @@
 #
 # --demo-requests fills the pull/merge requests view with invented requests, with no network:
 # list, list-all, list-closed, list-unchecked, list-overflow, list-more, list-search, filtered, no-match, a request number
-# (428, 427, 425, 422, 420, ...), busy, loading, details-loading, details-error, error, no-token or
+# (428, 427, 425, 422, 420, ...), busy, loading, details-loading, details-error, error, signed-out or
 # empty; prefix gitlab: for merge requests.
 # It implies --view requests and needs a repository without a GitHub or GitLab remote (the
 # fixtures have none).

@@ -548,7 +548,10 @@ fn github_details_main_request_failure_is_an_error() {
     let server = Server::start();
     let err = github(&server, Some(TOKEN)).details(77).expect_err("404");
     assert_eq!(err, Error::NotFound("Not Found".into()));
-    assert!(err.to_string().contains("token cannot see this repository"));
+    assert!(
+        err.to_string()
+            .contains("account cannot see this repository")
+    );
 }
 
 #[test]

@@ -445,11 +445,7 @@ impl CanopyApp {
         // (the Privacy Policy promises this).
         let answered = crate::ui::legal::pending(&self.settings).is_none();
         if let Some(t) = self.tabs.get_mut(self.active).filter(|_| answered) {
-            let saved = t
-                .forge()
-                .and_then(|(_, f)| self.tokens.get_for(f))
-                .map(str::to_owned);
-            t.ensure_host(ctx, saved, self.settings.hosting_api);
+            t.ensure_host(ctx, self.settings.hosting_api);
             t.avatars.set_enabled(pictures);
             if let Some(host) = &t.host {
                 host.set_avatars_enabled(pictures);

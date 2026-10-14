@@ -195,7 +195,7 @@ pub struct Spoken {
 }
 
 impl Spoken {
-    fn of(n: &Node) -> Self {
+    pub fn of(n: &Node) -> Self {
         Self {
             role: n.role(),
             label: n.label().map(str::to_owned),

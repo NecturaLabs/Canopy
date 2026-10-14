@@ -5,8 +5,8 @@
 //! argument list and the host as one argument, a short deadline and no prompt, and reads what it
 //! prints. The token lives in the returned [`CliLogin`] only, which hides it from `Debug`; it is
 //! never logged, written to a file or put in a URL. The CLI is started without the token
-//! environment variables, so it reports only its own stored sign-in and never one that Canopy's
-//! per-host rules for those variables ([`crate::token_from_env_for`]) would have refused.
+//! environment variables, so it reports only its own stored sign-in: the CLI is Canopy's only
+//! source of a credential.
 
 use std::ffi::OsStr;
 use std::io::Read;
@@ -45,18 +45,26 @@ const CREDENTIAL_ENV: [&str; 9] = [
     "GITLAB_HOST",
 ];
 
+/// What the CLI said about its sign-in to one host, without the token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliAccount {
+    /// The account the CLI is signed in as, when it said.
+    pub user: Option<String>,
+    /// The scopes it listed, `None` when it lists none (`glab` does not).
+    pub scopes: Option<Vec<String>>,
+}
+
 /// What the CLI holds for one host. Its token stays in memory.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CliLogin {
     token: String,
-    /// The account the CLI is signed in as, when it said.
-    pub user: Option<String>,
+    pub account: CliAccount,
 }
 
 impl CliLogin {
-    /// The token, to be handed to the HTTP client and nowhere else.
-    pub fn into_token(self) -> String {
-        self.token
+    /// The token, to be handed to the HTTP client and nowhere else, and the account it belongs to.
+    pub fn into_parts(self) -> (String, CliAccount) {
+        (self.token, self.account)
     }
 }
 
@@ -64,12 +72,12 @@ impl std::fmt::Debug for CliLogin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CliLogin")
             .field("token", &"<redacted>")
-            .field("user", &self.user)
+            .field("account", &self.account)
             .finish()
     }
 }
 
-/// Why the CLI gave no token. The text is meant for the user.
+/// Why the CLI's sign-in cannot be used. The text is meant for the user.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CliError {
     /// The program is not on `PATH`: nothing to report, the next credential source applies.
@@ -96,7 +104,7 @@ pub enum CliError {
         scope: &'static str,
     },
     /// It ran and failed, took too long, or printed something Canopy cannot use.
-    #[error("The {} did not give a token: {message}", cli_name(*.kind))]
+    #[error("The {} could not be used: {message}", cli_name(*.kind))]
     Failed { kind: ForgeKind, message: String },
 }
 
@@ -107,6 +115,36 @@ impl CliError {
             Self::MissingScope { user, .. } => user.as_deref(),
             _ => None,
         }
+    }
+
+    /// The command that fixes it, to run in a terminal: signing in, or adding the missing scope.
+    pub fn fix_command(&self) -> Option<String> {
+        match self {
+            Self::SignedOut { kind, host } => Some(login_command(*kind, host)),
+            Self::MissingScope { kind, host, .. } => Some(scope_command(*kind, host)),
+            Self::NotInstalled { .. } | Self::Failed { .. } => None,
+        }
+    }
+}
+
+/// The command that signs the CLI in to `host`.
+pub fn login_command(kind: ForgeKind, host: &str) -> String {
+    format!("{} auth login --hostname {host}", program(kind))
+}
+
+/// The command that gives the CLI's sign-in to `host` the scope Canopy needs.
+fn scope_command(kind: ForgeKind, host: &str) -> String {
+    match kind {
+        ForgeKind::GitHub => format!("gh auth refresh --hostname {host} --scopes repo"),
+        ForgeKind::GitLab => login_command(kind, host),
+    }
+}
+
+/// The CLI's official install page.
+pub fn install_page(kind: ForgeKind) -> &'static str {
+    match kind {
+        ForgeKind::GitHub => "https://cli.github.com",
+        ForgeKind::GitLab => "https://gitlab.com/gitlab-org/cli#installation",
     }
 }
 
@@ -137,13 +175,10 @@ fn as_user(user: Option<&str>) -> String {
 }
 
 fn scope_fix(kind: ForgeKind, host: &str) -> String {
+    let command = scope_command(kind, host);
     match kind {
-        ForgeKind::GitHub => {
-            format!("Run `gh auth refresh --hostname {host} --scopes repo` to add it.")
-        }
-        ForgeKind::GitLab => format!(
-            "Run `glab auth login --hostname {host}` with a token that has the `api` scope."
-        ),
+        ForgeKind::GitHub => format!("Run `{command}` to add it."),
+        ForgeKind::GitLab => format!("Run `{command}` and allow the `api` scope."),
     }
 }
 
@@ -165,7 +200,7 @@ fn login_with(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
             tracing::debug!(cli = self::program(kind), "the CLI is not installed");
         }
         Err(e) => {
-            tracing::info!(host, cli = self::program(kind), problem = %e, "the CLI gave no token");
+            tracing::info!(host, cli = self::program(kind), problem = %e, "the CLI's sign-in cannot be used");
         }
     }
     result
@@ -245,19 +280,24 @@ fn read_login(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
     match token.filter(|t| usable(t)) {
         Some(token) => Ok(CliLogin {
             token,
-            user: report.user,
+            account: CliAccount {
+                user: report.user,
+                scopes: report.scopes,
+            },
         }),
         None => Err(failed("it printed no usable token")),
     }
 }
 
 /// What a CLI says when it is not signed in to a host.
-const SIGNED_OUT_WORDS: [&str; 6] = [
+const SIGNED_OUT_WORDS: [&str; 8] = [
     "not logged",
     "no accounts",
     "no token",
     "no oauth token",
     "not authenticated",
+    "not been authenticated",
+    "have been authenticated",
     "unknown host",
 ];
 
@@ -301,7 +341,7 @@ struct Account {
 ///   - Active account: true
 ///   - Token scopes: 'gist', 'read:org', 'repo'
 ///   ✓ Logged in to gitlab.example.com as octocat (/home/o/.config/glab-cli/config.yml)
-///   ✓ Token found: glpat-…
+///   ✓ Token found in operating system keyring: glpat-…
 /// ```
 ///
 /// Each `Logged in to` line opens an account. Only accounts of exactly `host` (name and port) are
@@ -352,8 +392,11 @@ fn parse_status(text: &str, host: &str) -> StatusReport {
                         .collect();
                     account.report.scopes = (!scopes.is_empty()).then_some(scopes);
                 }
-                "token" | "token found"
-                    if !value.is_empty() && !value.chars().all(|c| c == '*') =>
+                // `glab` words it "Token found: …" (older) or "Token found in <where it is
+                // stored>: …" (newer).
+                key if (key == "token" || key.starts_with("token found"))
+                    && !value.is_empty()
+                    && !value.chars().all(|c| c == '*') =>
                 {
                     account.report.token = Some(value.to_owned());
                 }
@@ -554,8 +597,12 @@ esac"#
     fn github_signed_in() {
         let fake = Fake::new(&gh_signed_in("'gist', 'read:org', 'repo'"));
         let login = fake.login(ForgeKind::GitHub, "github.com").unwrap();
-        assert_eq!(login.user.as_deref(), Some("octocat"));
-        assert_eq!(login.clone().into_token(), TOKEN);
+        assert_eq!(login.account.user.as_deref(), Some("octocat"));
+        assert_eq!(
+            login.account.scopes,
+            Some(vec!["gist".into(), "read:org".into(), "repo".into()])
+        );
+        assert_eq!(login.clone().into_parts().0, TOKEN);
         assert_eq!(
             fake.calls(),
             [
@@ -665,12 +712,114 @@ echo "  ✓ Logged in to gitlab.corp:8443 as tanuki (/home/t/.config/glab-cli/co
 echo "  ✓ Token found: {TOKEN}" >&2"#
         ));
         let login = fake.login(ForgeKind::GitLab, "gitlab.corp:8443").unwrap();
-        assert_eq!(login.user.as_deref(), Some("tanuki"));
-        assert_eq!(login.into_token(), TOKEN);
+        assert_eq!(login.account.user.as_deref(), Some("tanuki"));
+        assert_eq!(login.into_parts().0, TOKEN);
         assert_eq!(
             fake.calls(),
             ["auth status --hostname gitlab.corp:8443 --show-token"]
         );
+    }
+
+    /// What `glab auth status --show-token` prints in the source of its current release
+    /// (`internal/commands/auth/status/status.go`): the report goes to standard error, the token
+    /// line names where the token is stored, and no scopes are listed.
+    #[test]
+    fn gitlab_signed_in_as_the_current_glab_words_it() {
+        let fake = Fake::new(&format!(
+            r#"echo "gitlab.com" >&2
+echo "  ✓ Logged in to gitlab.com as tanuki (keyring)" >&2
+echo "  ✓ Git operations for gitlab.com configured to use ssh protocol." >&2
+echo "  ✓ API calls for gitlab.com are made over https protocol." >&2
+echo "  ✓ REST API Endpoint: https://gitlab.com/api/v4/" >&2
+echo "  ✓ GraphQL Endpoint: https://gitlab.com/api/graphql/" >&2
+echo "  ✓ Token found in operating system keyring: {TOKEN}" >&2"#
+        ));
+        let login = fake.login(ForgeKind::GitLab, "gitlab.com").unwrap();
+        assert_eq!(login.account.user.as_deref(), Some("tanuki"));
+        assert_eq!(login.account.scopes, None);
+        assert_eq!(login.into_parts().0, TOKEN);
+    }
+
+    #[test]
+    fn gitlab_not_signed_in_to_the_host() {
+        for words in [
+            "✗ gitlab.corp has not been authenticated with glab; run `glab auth login --hostname gitlab.corp` to authenticate",
+            "no GitLab instances have been authenticated with glab; run `glab auth login` to authenticate",
+        ] {
+            let fake = Fake::new(&format!("echo '{words}' >&2; exit 1"));
+            let err = fake.login(ForgeKind::GitLab, "gitlab.corp").unwrap_err();
+            assert_eq!(
+                err,
+                CliError::SignedOut {
+                    kind: ForgeKind::GitLab,
+                    host: "gitlab.corp".into()
+                },
+                "{words}"
+            );
+            assert_eq!(
+                err.fix_command().as_deref(),
+                Some("glab auth login --hostname gitlab.corp")
+            );
+        }
+    }
+
+    /// A host whose token the CLI cannot find has a sign-in line but nothing to hand over.
+    #[test]
+    fn gitlab_signed_in_without_a_token_to_hand_over() {
+        let fake = Fake::new(
+            r#"echo "  ✓ Logged in to gitlab.corp as tanuki (keyring)" >&2
+echo "  ! No token found (checked config file, keyring, and environment variables)." >&2"#,
+        );
+        let err = fake.login(ForgeKind::GitLab, "gitlab.corp").unwrap_err();
+        assert!(
+            matches!(&err, CliError::Failed { message, .. } if message.contains("no usable token")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_failing_gitlab_sign_in_is_named_without_its_token() {
+        let fake = Fake::new(&format!(
+            r#"echo "  ✗ gitlab.com: API call failed: 401 Unauthorized" >&2
+echo "  ✓ Token found in configuration file (plaintext): {TOKEN}" >&2
+exit 1"#
+        ));
+        let err = fake.login(ForgeKind::GitLab, "gitlab.com").unwrap_err();
+        let CliError::Failed { message, .. } = &err else {
+            panic!("{err:?}");
+        };
+        assert!(message.contains("API call failed: 401"), "{message}");
+        assert!(!format!("{err} {err:?}").contains("SECRET"), "{err:?}");
+    }
+
+    #[test]
+    fn what_fixes_each_problem() {
+        let (gh, glab) = (ForgeKind::GitHub, ForgeKind::GitLab);
+        let missing = |kind| CliError::MissingScope {
+            kind,
+            host: "h.example".into(),
+            user: None,
+            scope: required_scope(kind),
+        };
+        assert_eq!(
+            missing(gh).fix_command().as_deref(),
+            Some("gh auth refresh --hostname h.example --scopes repo")
+        );
+        assert_eq!(
+            missing(glab).fix_command().as_deref(),
+            Some("glab auth login --hostname h.example")
+        );
+        assert_eq!(CliError::NotInstalled { kind: gh }.fix_command(), None);
+        assert_eq!(
+            CliError::Failed {
+                kind: gh,
+                message: "x".into()
+            }
+            .fix_command(),
+            None
+        );
+        assert_eq!(install_page(gh), "https://cli.github.com");
+        assert!(install_page(glab).starts_with("https://gitlab.com/"));
     }
 
     const GITLAB_CORP: &str =
@@ -723,7 +872,7 @@ token) echo "{TOKEN}";;
 esac"#
         ));
         let login = fake.login(ForgeKind::GitHub, "github.com").unwrap();
-        assert_eq!(login.user.as_deref(), Some("hubot"));
+        assert_eq!(login.account.user.as_deref(), Some("hubot"));
         drop(fake);
         // And the other way round: the active account lacks the scope.
         let fake = Fake::new(
