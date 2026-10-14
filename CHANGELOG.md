@@ -34,6 +34,11 @@ commits since the previous build.
 
 ### Fixed
 
+- Settings → Integrations lists each terminal, editor and file manager once: the program the system
+  starts (kitty behind `xdg-terminal-exec`, Terminal or Finder on macOS, Windows Terminal) is no
+  longer repeated beside its own entry, two entries of one program are one row, and a program's
+  server, daemon and client entries (`foot --server`, `footclient`) are not offered.
+
 - Oversized file-type changes say the diff exceeds the preview limit, not that the file is
   binary. Their type change and whole-file actions remain visible without false zero counts.
 
