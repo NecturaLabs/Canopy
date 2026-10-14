@@ -243,7 +243,7 @@ fn read_login(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
                 host: host.to_owned(),
             }
         } else {
-            let hint = hide(&status.text, report.token.as_deref());
+            let hint = hide(&failure_lines(&status.text), report.token.as_deref());
             failed(if hint.is_empty() {
                 "it printed nothing"
             } else {
@@ -319,6 +319,24 @@ const SIGNED_OUT_WORDS: [&str; 8] = [
     "have been authenticated",
     "unknown host",
 ];
+
+/// The lines of a failing `auth status` that say what failed, when any do: the host's name and the
+/// lines about protocols and endpoints around them only get in the way.
+fn failure_lines(text: &str) -> String {
+    const WORDS: [&str; 6] = ["fail", "error", "denied", "invalid", "expired", "unauthor"];
+    let said: Vec<&str> = text
+        .lines()
+        .filter(|line| {
+            let line = line.to_lowercase();
+            WORDS.iter().any(|w| line.contains(w))
+        })
+        .collect();
+    if said.is_empty() {
+        text.to_owned()
+    } else {
+        said.join("\n")
+    }
+}
 
 /// CLI output made safe to show: no token the CLI printed (a line that names a token has its value
 /// replaced, whoever it belongs to), no known token shapes.
@@ -818,7 +836,7 @@ exit 1"#
         let CliError::Failed { message, .. } = &err else {
             panic!("{err:?}");
         };
-        assert!(message.contains("API call failed: 401"), "{message}");
+        assert_eq!(message, "✗ gitlab.com: API call failed: 401 Unauthorized");
         assert!(!format!("{err} {err:?}").contains("SECRET"), "{err:?}");
     }
 
