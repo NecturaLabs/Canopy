@@ -271,10 +271,27 @@ fn header(
                 d.message.lines().next().unwrap_or("").trim()
             });
             let font = FontId::new(m.body_size, theme::semibold());
-            summary_ui
-                .add(egui::Label::new(RichText::new(summary).font(font).color(p.text)).truncate())
-                .kit_tooltip(summary)
-                .show();
+            let (_, label) =
+                summary_ui.allocate_space(vec2(summary_rect.width(), summary_rect.height()));
+            let galley = widgets::single_line_galley(
+                &summary_ui,
+                summary.to_owned(),
+                font,
+                p.text,
+                label.width(),
+            );
+            summary_ui.painter().galley(
+                pos2(label.left(), label.center().y - galley.size().y / 2.0),
+                galley,
+                p.text,
+            );
+            let band = summary_ui.interact(
+                label,
+                summary_ui.id().with("commit-summary"),
+                egui::Sense::hover(),
+            );
+            band.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, summary));
+            band.kit_tooltip(summary).show();
             if toggle.clicked() {
                 tab.history_layout.expanded = !tab.history_layout.expanded;
                 tab.history_layout.compact_details = true;
@@ -302,17 +319,23 @@ fn facts_width(ui: &Ui, d: &CommitDetails) -> f32 {
                 .x
         };
         let name = width(d.author.name.clone(), m.body_size).min(m.detail_info_width / 3.0);
-        let ids = width(format!("Commit {}", short_id(d.oid)), m.body_size)
+        let ids = width("Commit".to_owned(), m.body_size)
+            + width(short_id(d.oid), m.body_size)
             + m.button_pad_x_sm * 2.0
-            + d.parents
-                .iter()
-                .map(|oid| width(format!("Parent {}", short_id(*oid)), m.sha_size))
-                .sum::<f32>();
+            + if d.parents.is_empty() {
+                0.0
+            } else {
+                width(parents_label(d).to_owned(), m.body_size)
+                    + d.parents
+                        .iter()
+                        .map(|oid| width(short_id(*oid), m.sha_size))
+                        .sum::<f32>()
+            };
         m.avatar_detail
             + name
             + m.icon_md
             + ids
-            + theme::SM * crate::ui::count_f32(d.parents.len() + 4)
+            + theme::SM * crate::ui::count_f32(d.parents.len() + 5)
     })
 }
 
@@ -327,8 +350,12 @@ fn commit_facts(
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = theme::SM;
         person(ui, d, tab, note, actions);
-        let copy = Button::new(format!("Commit {}", short_id(d.oid)))
+        fact_label(ui, "Commit");
+        // The button's own padding, so the id sits as close to its label as the parents' do.
+        ui.add_space(-m.button_pad_x_sm);
+        let copy = Button::new(short_id(d.oid))
             .ghost()
+            .plain_text()
             .size(Size::Xs)
             .show(ui)
             .kit_tooltip("Copy the commit id")
@@ -344,10 +371,13 @@ fn commit_facts(
         if copy.clicked() {
             actions.push(Action::Copy(d.oid.to_string()));
         }
+        if !d.parents.is_empty() {
+            fact_label(ui, parents_label(d));
+        }
         for (i, parent) in d.parents.iter().enumerate() {
             let link = ui
                 .push_id(("parent", i, parent), |ui| {
-                    LinkButton::new(format!("Parent {}", short_id(*parent)))
+                    LinkButton::new(short_id(*parent))
                         .text_size(m.sha_size)
                         .show(ui)
                 })
@@ -370,6 +400,25 @@ fn commit_facts(
     })
     .response
     .rect
+}
+
+/// The word before the parent ids: one label for all of them.
+fn parents_label(d: &CommitDetails) -> &'static str {
+    if d.parents.len() == 1 {
+        "Parent"
+    } else {
+        "Parents"
+    }
+}
+
+/// A muted word naming the value that follows it in the header's facts.
+fn fact_label(ui: &mut Ui, text: &str) {
+    let m = theme::metrics();
+    ui.label(
+        RichText::new(text)
+            .font(FontId::new(m.body_size, theme::medium()))
+            .color(palette(ui.ctx()).text_dim),
+    );
 }
 
 /// Left and right insets of the detail header's content (concept 1's `.dh`).
@@ -1340,6 +1389,36 @@ mod tests {
                 names.iter().any(|(name, _)| name == expected),
                 "{expected}: {names:?}"
             );
+        }
+    }
+
+    #[test]
+    fn several_parents_share_one_label_and_each_is_a_link() {
+        let ctx = ctx(Density::Comfortable);
+        let root = tempfile::tempdir().expect("tab directory");
+        for (parents, label) in [(1, "Parent"), (2, "Parents"), (3, "Parents")] {
+            let mut tab = crate::tab::RepoTab::new(
+                root.path().into(),
+                &ctx,
+                100,
+                crate::settings::DiffPrefs::default(),
+            );
+            let d = details_with("Merge", parents, "Author");
+            let mut actions = Vec::new();
+            let names = spoken(&ctx, |ui| {
+                super::commit_facts(ui, &d, &mut tab, None, &mut actions);
+            });
+            let count = |wanted: &str| names.iter().filter(|(name, _)| name == wanted).count();
+            assert_eq!(count(label), 1, "{parents} parents: {names:?}");
+            assert_eq!(count("Commit"), 1, "{names:?}");
+            for i in 1..=parents {
+                let prefix = format!("Show parent {i} commit ");
+                assert_eq!(
+                    names.iter().filter(|(n, _)| n.starts_with(&prefix)).count(),
+                    1,
+                    "{names:?}"
+                );
+            }
         }
     }
 

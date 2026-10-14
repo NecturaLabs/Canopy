@@ -378,6 +378,7 @@ pub struct Button {
     show_shortcut: bool,
     min_width: f32,
     full_width: bool,
+    plain_text: bool,
     id_salt: Option<Id>,
     force: Option<ForceState>,
 }
@@ -410,6 +411,7 @@ impl Button {
             show_shortcut: false,
             min_width: 0.0,
             full_width: false,
+            plain_text: false,
             id_salt: None,
             force: None,
         }
@@ -491,6 +493,12 @@ impl Button {
     }
     pub fn full_width(mut self) -> Self {
         self.full_width = true;
+        self
+    }
+    /// A ghost button's label in the body text colour, not the dimmed one: a value that can be
+    /// clicked (a commit id) beside a muted label.
+    pub fn plain_text(mut self) -> Self {
+        self.plain_text = true;
         self
     }
     pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
@@ -640,7 +648,11 @@ impl Button {
                         (ground.a() > 0).then_some(Fill::flat(ground)),
                         None,
                         None,
-                        p.text_dim.lerp_to_gamma(p.text, st.hover.max(st.press)),
+                        if self.plain_text {
+                            p.text
+                        } else {
+                            p.text_dim.lerp_to_gamma(p.text, st.hover.max(st.press))
+                        },
                         p.focus,
                     )
                 }
