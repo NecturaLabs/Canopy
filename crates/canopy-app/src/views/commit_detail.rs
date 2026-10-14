@@ -1007,18 +1007,14 @@ const CHANGE_LETTER: f32 = 10.0;
 /// Gap between a file row's badge, name, folder and counts (concept 1's `.frow`).
 pub(crate) const ROW_GAP: f32 = 8.0;
 
-/// `+n −n` as `kit::chip::DiffStat` paints it: mono in `success` and `danger` at 85%.
+/// `+n −n` as `kit::chip::DiffStat` paints it: mono in the diff inks.
 fn diffstat_galley(ui: &Ui, f: &FileEntry) -> std::sync::Arc<egui::Galley> {
     let p = palette(ui.ctx());
     let font = FontId::new(theme::metrics().sha_size, egui::FontFamily::Monospace);
     let mut job = egui::text::LayoutJob::default();
     let fmt = |c| egui::TextFormat::simple(font.clone(), c);
-    job.append(&format!("+{}", f.additions), 0.0, fmt(p.success));
-    job.append(
-        &format!("−{}", f.deletions),
-        6.0,
-        fmt(p.danger.gamma_multiply(0.85)),
-    );
+    job.append(&format!("+{}", f.additions), 0.0, fmt(p.diff_added));
+    job.append(&format!("−{}", f.deletions), 6.0, fmt(p.diff_removed));
     ui.painter().layout_job(job)
 }
 

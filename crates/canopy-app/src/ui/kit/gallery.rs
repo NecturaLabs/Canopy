@@ -223,7 +223,7 @@ fn header(ui: &mut Ui, p: &Palette) {
     );
     ui.add_space(theme::MD);
     let s = p.surfaces(look.style);
-    let shared: [(&str, Color32); 27] = [
+    let shared: [(&str, Color32); 29] = [
         ("text", p.text),
         ("text_dim", p.text_dim),
         ("text_faint", p.text_faint),
@@ -234,6 +234,8 @@ fn header(ui: &mut Ui, p: &Palette) {
         ("success", p.success),
         ("warning", p.warning),
         ("danger", p.danger),
+        ("diff_added", p.diff_added),
+        ("diff_removed", p.diff_removed),
         ("danger_base", p.danger_base),
         ("on_danger", p.on_danger),
         ("control_border", p.control_border),

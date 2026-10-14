@@ -344,6 +344,8 @@ pub fn lift(base: &Palette, reference: &Palette, margin: f64) -> Palette {
         danger: on.color(b.danger, r.danger),
         danger_base: on.color(b.danger_base, r.danger_base),
         on_danger,
+        diff_added: on.color(b.diff_added, r.diff_added),
+        diff_removed: on.color(b.diff_removed, r.diff_removed),
         tones: Tones {
             accent: on.color(b.tones.accent, r.tones.accent),
             success: on.color(b.tones.success, r.tones.success),

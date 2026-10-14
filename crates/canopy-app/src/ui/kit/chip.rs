@@ -828,7 +828,8 @@ fn pulse_alpha(ctx: &egui::Context) -> f32 {
 
 // ----------------------------------------------------------------------------------- DiffStat
 
-/// Lines added and removed: `+12 −3` in `success` and `danger`, with an optional five-block bar.
+/// Lines added and removed: `+12 −3` in the diff inks (`diff_added`, `diff_removed`), with an
+/// optional five-block bar.
 #[derive(Debug, Clone, Copy)]
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct DiffStat {
@@ -857,12 +858,8 @@ impl DiffStat {
         let font = FontId::new(theme::metrics().sha_size, FontFamily::Monospace);
         let mut job = LayoutJob::default();
         let fmt = |c: Color32| TextFormat::simple(font.clone(), c);
-        job.append(&format!("+{}", self.added), 0.0, fmt(p.success));
-        job.append(
-            &format!("−{}", self.removed),
-            STAT_GAP,
-            fmt(p.danger.gamma_multiply(0.85)),
-        );
+        job.append(&format!("+{}", self.added), 0.0, fmt(p.diff_added));
+        job.append(&format!("−{}", self.removed), STAT_GAP, fmt(p.diff_removed));
         painter.layout_job(job)
     }
 
@@ -890,9 +887,9 @@ impl DiffStat {
             let mut x = rect.left() + g.size().x + STAT_GAP;
             for i in 0..5 {
                 let c = if i < green {
-                    p.success
+                    p.diff_added
                 } else if i < green + red {
-                    p.danger
+                    p.diff_removed
                 } else {
                     s.switch_off
                 };
