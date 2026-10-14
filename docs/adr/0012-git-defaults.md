@@ -51,8 +51,8 @@ A pull first fetches its upstream and compares the branch with it in memory
 against uncommitted ones). When the branches diverged under fast-forward only, or the pull would
 likely conflict, it asks first, naming the files. It then brings in the upstream as fetched
 (`Repo::pull_fetched`: `git merge @{upstream}` or `git rebase`), without asking the remote again.
-A pull or rebase that still stops on conflicts, or whose stashed changes conflict when they come
-back, takes the user to Changes with a plain message.
+A pull or rebase that still stops on conflicts, or a pull, rebase or merge whose stashed changes
+conflict when they come back, takes the user to Changes with a plain message.
 
 Settings shows every choice with Canopy's recommendation; where the user's configuration sets
 it, the note names the setting, its value and where it is set. Supported values stay editable:

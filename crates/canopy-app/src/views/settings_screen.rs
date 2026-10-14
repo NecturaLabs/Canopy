@@ -3168,7 +3168,6 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         (Setting::SigningFormat, "openpgp") => "OpenPGP",
         (Setting::SigningFormat, "ssh") => "SSH",
         (Setting::SigningFormat, "x509") => "X.509",
-        (Setting::CommitCleanup, "default") => "Git's default",
         (_, "true") => "On",
         (_, "false") => "Off",
         // Branch names and the diff3 styles are names, not words.
