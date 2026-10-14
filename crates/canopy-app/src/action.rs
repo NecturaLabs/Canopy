@@ -205,6 +205,8 @@ pub enum Action {
     CopyDiagnostics,
     /// Unified or side-by-side diffs.
     SetSplitDiff(bool),
+    /// Comfortable or dense items in the request list.
+    SetRequestDensity(crate::request_view::RequestDensity),
     /// The user accepted the current Terms of Service and Privacy Policy.
     AcceptTerms,
     /// The user's answer about crash reports.

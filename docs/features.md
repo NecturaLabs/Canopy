@@ -220,7 +220,12 @@ Request list icons show lifecycle and draft state. A row leads with the request'
 title (`#154 Title`, `!154` for a merge request), which wraps to a second line before it is cut,
 then the author and when it was last updated with the labels at the right, then the first
 lines of its description as plain text (Markdown, comments and tags flattened, paragraphs
-separated by a middle dot; nothing when it has none). The branches are in the request's header and the row's tooltip. The description comes
+separated by a middle dot; nothing when it has none). The branches are in the request's header and the row's tooltip.
+A button in the list's toolbar (or Settings, Appearance, Request list) switches the items to dense:
+one line per request with the number, title, labels and checks, and no author line or preview. The
+choice is remembered across restarts, defaults to Comfortable and is separate from the whole-app
+density. The number, author, age and labels each have a colour of their own in the list and in the
+request's header, which adds the comment count (a row has none: the list response does not carry it). The description comes
 with the list response, so a row costs no request of its own. The request list shows each
 request's checks (passed, failed, running) and review (approved, changes requested, and on GitHub
 review required) without opening it when Canopy has a token for the host; without a token a row

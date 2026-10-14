@@ -10,6 +10,11 @@ commits since the previous build.
 
 ### Added
 
+- The pull and merge request list has a comfortable / dense toggle in its toolbar (and in Settings,
+  Appearance, Request list). Dense shows one line per request, with the number, title, labels and
+  checks and no preview; the choice is remembered and is separate from the whole-app density.
+  A request's number, author, age and labels each have their own colour in the list, and the
+  request's header adds its comment count in one too, in every theme.
 - Pull and merge requests use the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) as their credential,
   before the environment, a token saved in Canopy and git's credential helper, so no second token is
   needed. Canopy reads the CLI's token when the repository opens, keeps it in memory only and says why
