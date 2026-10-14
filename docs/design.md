@@ -571,6 +571,8 @@ A select can mark one option with the kit's Recommended badge, and then lists it
 accessible description announces the recommendation without repeating the option name. The list reserves room for the
 badge and check, truncating only the painted label while keeping its full accessible name. A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
 
+An option can be unavailable (`unavailable(value, "Not installed")`): its label is dimmed (`disabled_text`) and a neutral badge with the note ends the row where the Recommended badge would; the arrow keys, Home, End and typing pass over it, a click or Enter does nothing, and it is spoken as disabled with the note as its description. It can still be the current value (a saved choice that has gone): the closed control shows the label dimmed with the same badge before the caret, and widens to hold it. The kit gallery shows both states.
+
 Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
 open and closed; app-launcher selects stop at the 280-pixel text-field width. Number fields are
 120 pixels and the first-branch field 160, so a control is never much wider than what it holds.

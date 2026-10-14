@@ -21,3 +21,4 @@ has the template and the test for what earns one.
 | [0011](0011-request-list-rollup-through-graphql.md) | With a token, one GraphQL query per request-list refresh, on the same host, fetches the rows' checks and reviews; GitHub's GraphQL search finds requests not loaded yet | accepted |
 | [0012](0012-git-defaults.md) | Canopy's git defaults are today's recommended practice, passed explicitly; a pull checks for divergence and conflicts before it runs | accepted |
 | [0013](0013-hosting-credentials-from-the-cli-first.md) | Hosting credentials come from the signed-in `gh` / `glab` CLI first, then the environment, the saved token and git's credential helper; the CLI token stays in memory | accepted |
+| [0014](0014-launcher-lists.md) | Launcher lists show the installed programs, then the well-known ones that are not installed (Linux and macOS only), then Custom command…; a saved program that is gone opens the system's and says so | accepted |

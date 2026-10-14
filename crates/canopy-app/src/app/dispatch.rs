@@ -295,11 +295,10 @@ impl CanopyApp {
                 }
                 Action::OpenLogs => match crate::logging::log_dir() {
                     Some(dir) => {
+                        let file_manager = self.file_manager(ctx);
                         let opened = std::fs::create_dir_all(&dir)
                             .map_err(|e| format!("{}: {e}", dir.display()))
-                            .and_then(|()| {
-                                crate::platform::open_folder(&dir, &self.file_manager())
-                            });
+                            .and_then(|()| crate::platform::open_folder(&dir, &file_manager));
                         if let Err(e) = opened {
                             self.toasts.push(
                                 ctx,
@@ -524,7 +523,8 @@ impl CanopyApp {
                     }
                 }
                 Action::OpenPath(dir) => {
-                    if let Err(e) = crate::platform::open_folder(&dir, &self.file_manager()) {
+                    let file_manager = self.file_manager(ctx);
+                    if let Err(e) = crate::platform::open_folder(&dir, &file_manager) {
                         self.toasts.push(
                             ctx,
                             ToastKind::Error,
@@ -535,9 +535,8 @@ impl CanopyApp {
                     }
                 }
                 Action::OpenInEditor(file) => {
-                    if let Err(e) =
-                        crate::platform::open_in_editor(&file, &self.launcher(Kind::Editor))
-                    {
+                    let editor = self.launcher(ctx, Kind::Editor);
+                    if let Err(e) = crate::platform::open_in_editor(&file, &editor) {
                         self.toasts.push(
                             ctx,
                             ToastKind::Error,
@@ -548,9 +547,8 @@ impl CanopyApp {
                     }
                 }
                 Action::OpenTerminal(p) => {
-                    if let Err(e) =
-                        crate::platform::open_terminal(&p, &self.launcher(Kind::Terminal))
-                    {
+                    let terminal = self.launcher(ctx, Kind::Terminal);
+                    if let Err(e) = crate::platform::open_terminal(&p, &terminal) {
                         self.toasts.push(
                             ctx,
                             ToastKind::Error,
@@ -672,18 +670,44 @@ impl CanopyApp {
         }
     }
 
-    /// The command an open action runs: the one chosen in Settings, else the system's.
-    fn launcher(&self, kind: Kind) -> String {
+    /// The command an open action runs: the one chosen in Settings, else the system's. A chosen
+    /// well-known program that is no longer installed is not started: the system's runs instead,
+    /// and a notification says so.
+    fn launcher(&mut self, ctx: &egui::Context, kind: Kind) -> String {
+        let apps = crate::system_apps::get();
+        self.launcher_with(ctx, kind, apps.as_deref())
+    }
+
+    /// [`Self::launcher`] given what was detected.
+    fn launcher_with(
+        &mut self,
+        ctx: &egui::Context,
+        kind: Kind,
+        apps: Option<&crate::system_apps::Apps>,
+    ) -> String {
         let configured = match kind {
             Kind::Editor => &self.settings.editor,
             Kind::Terminal => &self.settings.terminal,
             Kind::FileManager => &self.settings.file_manager,
         };
-        crate::system_apps::command_for(configured, kind)
+        let launch = crate::system_apps::launch(apps, configured, kind);
+        if let Some(fallback) = &launch.fallback {
+            self.toasts.push(
+                ctx,
+                ToastKind::Info,
+                Topic::Attention,
+                format!("{} is not installed", fallback.missing),
+                format!(
+                    "Opened with {} instead. Choose another program in Settings → Integrations.",
+                    fallback.used
+                ),
+            );
+        }
+        launch.command
     }
 
-    fn file_manager(&self) -> String {
-        self.launcher(Kind::FileManager)
+    fn file_manager(&mut self, ctx: &egui::Context) -> String {
+        self.launcher(ctx, Kind::FileManager)
     }
 
     /// Each tab's name, icon, pull choice and git options as the settings say (cheap: runs every
@@ -755,6 +779,43 @@ mod tests {
         app.tabs
             .push(test_tab(canopy_core::RepoSnapshot::default()));
         app
+    }
+
+    /// A saved well-known program that is no longer installed is not started: the system's runs
+    /// and a notification says which program and why; any other command runs as typed, silently.
+    #[test]
+    fn opening_with_a_program_that_is_no_longer_installed_uses_the_systems_and_says_so() {
+        use crate::system_apps::{Apps, Missing, SystemChoice};
+        let ctx = egui::Context::default();
+        let apps = Apps {
+            terminal: Some(SystemChoice {
+                name: "kitty".to_owned(),
+                command: Some("kitty".to_owned()),
+                id: None,
+            }),
+            missing: vec![Missing::new(Kind::Terminal, "Alacritty", ["alacritty"])],
+            ..Apps::default()
+        };
+        let mut app = test_app();
+        app.settings.terminal = "alacritty --working-directory %d".to_owned();
+        assert_eq!(
+            app.launcher_with(&ctx, Kind::Terminal, Some(&apps)),
+            "kitty",
+            "the system's terminal runs, never the missing one"
+        );
+        let toasts = format!("{:?}", app.toasts);
+        assert!(toasts.contains("Alacritty is not installed"), "{toasts}");
+        assert!(toasts.contains("Opened with kitty instead"), "{toasts}");
+
+        let mut app = test_app();
+        app.settings.terminal = "foot".to_owned();
+        assert_eq!(app.launcher_with(&ctx, Kind::Terminal, Some(&apps)), "foot");
+        app.settings.terminal = String::new();
+        assert_eq!(
+            app.launcher_with(&ctx, Kind::Terminal, Some(&apps)),
+            "kitty"
+        );
+        assert!(!format!("{:?}", app.toasts).contains("not installed"));
     }
 
     /// A divergence answered for this repository becomes its own pull strategy; answered for

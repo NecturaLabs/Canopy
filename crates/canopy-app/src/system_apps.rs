@@ -50,6 +50,31 @@ pub struct App {
     pub id: String,
 }
 
+/// A well-known program that is not installed: listed after the installed ones, marked, and never
+/// started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Missing {
+    pub kind: Kind,
+    pub name: String,
+    /// What a saved command for it starts ([`command_key`]): its command names or its bundle.
+    keys: Vec<String>,
+}
+
+impl Missing {
+    pub fn new<'k>(kind: Kind, name: &str, keys: impl IntoIterator<Item = &'k str>) -> Self {
+        Self {
+            kind,
+            name: name.to_owned(),
+            keys: keys.into_iter().map(str::to_ascii_lowercase).collect(),
+        }
+    }
+
+    /// Whether the saved `command` starts this program.
+    pub fn is_started_by(&self, command: &str) -> bool {
+        command_key(command).is_some_and(|key| self.keys.contains(&key))
+    }
+}
+
 /// Everything detected.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Apps {
@@ -58,6 +83,9 @@ pub struct Apps {
     pub file_manager: Option<SystemChoice>,
     /// Installed editors, terminals and file managers, by name.
     pub installed: Vec<App>,
+    /// Well-known ones that are not installed, by name; empty for a kind the platform cannot tell
+    /// reliably (Windows: App Paths misses programs on `PATH` and Explorer).
+    pub missing: Vec<Missing>,
 }
 
 impl Apps {
@@ -72,6 +100,21 @@ impl Apps {
     pub fn installed(&self, kind: Kind) -> impl Iterator<Item = &App> {
         self.installed.iter().filter(move |a| a.kind == kind)
     }
+
+    pub fn missing(&self, kind: Kind) -> impl Iterator<Item = &Missing> {
+        self.missing.iter().filter(move |m| m.kind == kind)
+    }
+}
+
+/// The program a command starts, as [`Missing`] names it: the program's name, or for macOS's
+/// `open -a Name` the application, in lower case.
+fn command_key(command: &str) -> Option<String> {
+    let (program, args) = split_command(command.trim())?;
+    let name = program_name(&program);
+    if name == "open" && args.first().is_some_and(|a| a == "-a") {
+        return args.get(1).map(|app| app.to_ascii_lowercase());
+    }
+    Some(name)
 }
 
 /// `apps` by name, each program once per kind (the first by name when several entries start it).
@@ -85,6 +128,12 @@ fn sorted(mut apps: Vec<App>) -> Vec<App> {
     let mut seen = std::collections::HashSet::new();
     apps.retain(|a| seen.insert((a.kind, a.id.clone())));
     apps
+}
+
+/// `missing` by name.
+fn sorted_missing(mut missing: Vec<Missing>) -> Vec<Missing> {
+    missing.sort_by_cached_key(|m| m.name.to_lowercase());
+    missing
 }
 
 struct Cache {
@@ -134,16 +183,53 @@ pub fn get() -> Option<Arc<Apps>> {
         .clone()
 }
 
-/// The command an open action runs: the one chosen in Settings, else the system's, else empty
-/// (the platform's own opener; also before the first detection ends).
-pub fn command_for(configured: &str, kind: Kind) -> String {
+/// What an open action runs, and why when it is not what Settings chose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Launch {
+    pub command: String,
+    pub fallback: Option<Fallback>,
+}
+
+/// The chosen program is no longer installed: the system's ran instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fallback {
+    /// The well-known program that was chosen.
+    pub missing: String,
+    /// The program that ran instead.
+    pub used: String,
+}
+
+/// The command an open action runs given what was `apps` detected: the one chosen in Settings,
+/// else the system's, else empty (the platform's own opener; also before the first detection
+/// ends). A chosen well-known program that is no longer installed is not started: the system's
+/// runs, and `fallback` says so.
+pub fn launch(apps: Option<&Apps>, configured: &str, kind: Kind) -> Launch {
     let configured = configured.trim();
-    if !configured.is_empty() {
-        return configured.to_owned();
+    let system = apps.and_then(|a| a.system(kind));
+    let system_command = || system.and_then(|c| c.command.clone()).unwrap_or_default();
+    if configured.is_empty() {
+        return Launch {
+            command: system_command(),
+            fallback: None,
+        };
     }
-    get()
-        .and_then(|apps| apps.system(kind).and_then(|c| c.command.clone()))
-        .unwrap_or_default()
+    let missing = apps
+        .into_iter()
+        .flat_map(|a| a.missing(kind))
+        .find(|m| m.is_started_by(configured));
+    match missing {
+        Some(missing) => Launch {
+            command: system_command(),
+            fallback: Some(Fallback {
+                missing: missing.name.clone(),
+                used: system.map_or_else(|| "the system's own".to_owned(), |c| c.name.clone()),
+            }),
+        },
+        None => Launch {
+            command: configured.to_owned(),
+            fallback: None,
+        },
+    }
 }
 
 /// Detects for this computer (blocking: never on the UI thread).
@@ -166,23 +252,20 @@ fn detect() -> Apps {
     }
 }
 
-/// Linux terminals tried in order when neither `$TERMINAL` nor `xdg-terminal-exec` is there.
+/// Linux terminals tried in order when neither `$TERMINAL` nor `xdg-terminal-exec` is there: the
+/// Debian alternative, then the well-known terminals in [`KNOWN`]'s order.
 #[cfg_attr(
     not(any(target_os = "linux", test)),
     expect(dead_code, reason = "the list is Linux's")
 )]
-pub const LINUX_TERMINALS: &[&str] = &[
-    "x-terminal-emulator",
-    "kgx",
-    "gnome-terminal",
-    "konsole",
-    "alacritty",
-    "kitty",
-    "foot",
-    "wezterm",
-    "ghostty",
-    "xterm",
-];
+pub fn linux_terminals() -> impl Iterator<Item = &'static str> {
+    std::iter::once("x-terminal-emulator").chain(
+        KNOWN
+            .iter()
+            .filter(|k| k.kind == Kind::Terminal)
+            .filter_map(|k| k.commands.first().copied()),
+    )
+}
 
 /// Command-line names of graphical editors, for `$VISUAL`/`$EDITOR` where no desktop entry
 /// says what the program is. Anything else there is taken to be a terminal editor, which
@@ -292,33 +375,162 @@ fn listed_gui_editor(program: &str) -> Option<KnownEditor> {
         .then(|| (program.to_owned(), None))
 }
 
-/// macOS applications Settings knows how to start, by bundle name.
-#[cfg_attr(
-    not(any(target_os = "macos", test)),
-    expect(dead_code, reason = "macOS's applications")
-)]
-const MAC_APPS: &[(Kind, &str)] = &[
-    (Kind::Editor, "Visual Studio Code"),
-    (Kind::Editor, "Cursor"),
-    (Kind::Editor, "Zed"),
-    (Kind::Editor, "Sublime Text"),
-    (Kind::Editor, "BBEdit"),
-    (Kind::Editor, "CotEditor"),
-    (Kind::Editor, "Nova"),
-    (Kind::Editor, "TextMate"),
-    (Kind::Editor, "MacVim"),
-    (Kind::Editor, "TextEdit"),
-    (Kind::Terminal, "Terminal"),
-    (Kind::Terminal, "iTerm"),
-    (Kind::Terminal, "Ghostty"),
-    (Kind::Terminal, "WezTerm"),
-    (Kind::Terminal, "Alacritty"),
-    (Kind::Terminal, "kitty"),
-    (Kind::Terminal, "Warp"),
-    (Kind::FileManager, "Finder"),
-    (Kind::FileManager, "Path Finder"),
-    (Kind::FileManager, "ForkLift"),
-    (Kind::FileManager, "Commander One"),
+/// A well-known program Settings looks for, and what each platform calls it. Settings offers the
+/// ones found as installed programs and, where a platform can tell reliably (Linux, macOS), the
+/// others as "Not installed". Graphical editors only: a terminal editor (vim, helix) needs a
+/// terminal, so it is listed only through a desktop entry that a terminal launcher can start.
+/// Sources are in docs/adr/0014-launcher-lists.md.
+struct Known {
+    kind: Kind,
+    name: &'static str,
+    /// Linux: its command names on `PATH`, the usual one first.
+    commands: &'static [&'static str],
+    /// Linux: the ids of the desktop entries that install it.
+    entries: &'static [&'static str],
+    /// macOS: its application bundle's name, without `.app`.
+    bundle: Option<&'static str>,
+    /// Windows: its App Paths key.
+    exe: Option<&'static str>,
+}
+
+impl Known {
+    const fn new(kind: Kind, name: &'static str) -> Self {
+        Self {
+            kind,
+            name,
+            commands: &[],
+            entries: &[],
+            bundle: None,
+            exe: None,
+        }
+    }
+
+    const fn linux(
+        mut self,
+        commands: &'static [&'static str],
+        entries: &'static [&'static str],
+    ) -> Self {
+        self.commands = commands;
+        self.entries = entries;
+        self
+    }
+
+    const fn mac(mut self, bundle: &'static str) -> Self {
+        self.bundle = Some(bundle);
+        self
+    }
+
+    const fn windows(mut self, exe: &'static str) -> Self {
+        self.exe = Some(exe);
+        self
+    }
+}
+
+const KNOWN: &[Known] = &[
+    Known::new(Kind::Editor, "Visual Studio Code")
+        .linux(
+            &["code"],
+            &[
+                "code.desktop",
+                "visual-studio-code.desktop",
+                "com.visualstudio.code.desktop",
+            ],
+        )
+        .mac("Visual Studio Code")
+        .windows("code.exe"),
+    Known::new(Kind::Editor, "VSCodium").linux(
+        &["codium"],
+        &[
+            "codium.desktop",
+            "vscodium.desktop",
+            "com.vscodium.codium.desktop",
+        ],
+    ),
+    Known::new(Kind::Editor, "Cursor")
+        .linux(&["cursor"], &["cursor.desktop"])
+        .mac("Cursor")
+        .windows("cursor.exe"),
+    Known::new(Kind::Editor, "Zed")
+        .linux(&["zed", "zeditor"], &["dev.zed.Zed.desktop", "zed.desktop"])
+        .mac("Zed")
+        .windows("zed.exe"),
+    Known::new(Kind::Editor, "Sublime Text")
+        .linux(
+            &["subl", "sublime_text"],
+            &[
+                "sublime_text.desktop",
+                "sublime-text.desktop",
+                "com.sublimetext.three.desktop",
+            ],
+        )
+        .mac("Sublime Text")
+        .windows("sublime_text.exe"),
+    Known::new(Kind::Editor, "Windsurf")
+        .linux(&["windsurf"], &["windsurf.desktop"])
+        .mac("Windsurf"),
+    Known::new(Kind::Editor, "Kate").linux(&["kate"], &["org.kde.kate.desktop"]),
+    Known::new(Kind::Editor, "Text Editor")
+        .linux(&["gnome-text-editor"], &["org.gnome.TextEditor.desktop"]),
+    Known::new(Kind::Editor, "gedit").linux(&["gedit"], &["org.gnome.gedit.desktop"]),
+    Known::new(Kind::Editor, "Mousepad").linux(&["mousepad"], &["org.xfce.mousepad.desktop"]),
+    Known::new(Kind::Editor, "Geany").linux(&["geany"], &["geany.desktop"]),
+    Known::new(Kind::Editor, "Notepad++").windows("notepad++.exe"),
+    Known::new(Kind::Editor, "BBEdit").mac("BBEdit"),
+    Known::new(Kind::Editor, "CotEditor").mac("CotEditor"),
+    Known::new(Kind::Editor, "Nova").mac("Nova"),
+    Known::new(Kind::Editor, "TextMate").mac("TextMate"),
+    Known::new(Kind::Editor, "MacVim").mac("MacVim"),
+    Known::new(Kind::Editor, "TextEdit").mac("TextEdit"),
+    Known::new(Kind::Terminal, "Terminal").mac("Terminal"),
+    Known::new(Kind::Terminal, "Windows Terminal").windows("wt.exe"),
+    Known::new(Kind::Terminal, "Console").linux(&["kgx"], &["org.gnome.Console.desktop"]),
+    Known::new(Kind::Terminal, "GNOME Terminal")
+        .linux(&["gnome-terminal"], &["org.gnome.Terminal.desktop"]),
+    Known::new(Kind::Terminal, "Ptyxis").linux(&["ptyxis"], &["org.gnome.Ptyxis.desktop"]),
+    Known::new(Kind::Terminal, "Konsole").linux(&["konsole"], &["org.kde.konsole.desktop"]),
+    Known::new(Kind::Terminal, "Xfce Terminal")
+        .linux(&["xfce4-terminal"], &["xfce4-terminal.desktop"]),
+    Known::new(Kind::Terminal, "iTerm").mac("iTerm"),
+    Known::new(Kind::Terminal, "Alacritty")
+        .linux(
+            &["alacritty"],
+            &["Alacritty.desktop", "org.alacritty.Alacritty.desktop"],
+        )
+        .mac("Alacritty")
+        .windows("alacritty.exe"),
+    Known::new(Kind::Terminal, "kitty")
+        .linux(
+            &["kitty"],
+            &["kitty.desktop", "net.kovidgoyal.kitty.desktop"],
+        )
+        .mac("kitty"),
+    Known::new(Kind::Terminal, "Foot").linux(&["foot"], &["foot.desktop"]),
+    Known::new(Kind::Terminal, "WezTerm")
+        .linux(&["wezterm"], &["org.wezfurlong.wezterm.desktop"])
+        .mac("WezTerm")
+        .windows("wezterm-gui.exe"),
+    Known::new(Kind::Terminal, "Ghostty")
+        .linux(&["ghostty"], &["com.mitchellh.ghostty.desktop"])
+        .mac("Ghostty"),
+    Known::new(Kind::Terminal, "Warp").mac("Warp"),
+    Known::new(Kind::Terminal, "Tilix").linux(&["tilix"], &["com.gexperts.Tilix.desktop"]),
+    Known::new(Kind::Terminal, "Terminator").linux(&["terminator"], &["terminator.desktop"]),
+    Known::new(Kind::Terminal, "xterm").linux(&["xterm"], &["xterm.desktop"]),
+    Known::new(Kind::FileManager, "Finder").mac("Finder"),
+    Known::new(Kind::FileManager, "Files").linux(&["nautilus"], &["org.gnome.Nautilus.desktop"]),
+    Known::new(Kind::FileManager, "Dolphin").linux(&["dolphin"], &["org.kde.dolphin.desktop"]),
+    Known::new(Kind::FileManager, "Thunar").linux(&["thunar"], &["thunar.desktop"]),
+    Known::new(Kind::FileManager, "Nemo").linux(&["nemo"], &["nemo.desktop"]),
+    Known::new(Kind::FileManager, "PCManFM").linux(&["pcmanfm"], &["pcmanfm.desktop"]),
+    Known::new(Kind::FileManager, "Caja")
+        .linux(&["caja"], &["org.mate.Caja.desktop", "caja.desktop"]),
+    Known::new(Kind::FileManager, "COSMIC Files")
+        .linux(&["cosmic-files"], &["com.system76.CosmicFiles.desktop"]),
+    Known::new(Kind::FileManager, "Path Finder").mac("Path Finder"),
+    Known::new(Kind::FileManager, "ForkLift").mac("ForkLift"),
+    Known::new(Kind::FileManager, "Commander One").mac("Commander One"),
+    Known::new(Kind::FileManager, "Total Commander").windows("totalcmd64.exe"),
+    Known::new(Kind::FileManager, "Files").windows("files.exe"),
 ];
 
 /// The known applications among `bundles` (names without `.app`), started with `open -a`.
@@ -327,42 +539,40 @@ const MAC_APPS: &[(Kind, &str)] = &[
     expect(dead_code, reason = "macOS's applications")
 )]
 fn mac_apps(bundles: &[String]) -> Vec<App> {
-    let apps = MAC_APPS
+    let apps = KNOWN
         .iter()
-        .filter(|(_, name)| bundles.iter().any(|b| b == name))
-        .map(|&(kind, name)| {
-            let open = format!("open -a {}", crate::platform::quote(name));
+        .filter_map(|k| Some((k, k.bundle?)))
+        .filter(|(_, bundle)| bundles.iter().any(|b| b == bundle))
+        .map(|(k, bundle)| {
+            let open = format!("open -a {}", crate::platform::quote(bundle));
             App {
-                kind,
-                name: name.to_owned(),
-                command: match kind {
+                kind: k.kind,
+                name: k.name.to_owned(),
+                command: match k.kind {
                     Kind::Editor => open,
                     Kind::Terminal | Kind::FileManager => format!("{open} %d"),
                 },
-                id: name.to_owned(),
+                id: bundle.to_owned(),
             }
         })
         .collect();
     sorted(apps)
 }
 
-/// Windows programs Settings knows how to start, by their App Paths name.
+/// The known applications that are not among `bundles`.
 #[cfg_attr(
-    not(any(target_os = "windows", test)),
-    expect(dead_code, reason = "Windows's programs")
+    not(any(target_os = "macos", test)),
+    expect(dead_code, reason = "macOS's applications")
 )]
-const WINDOWS_APPS: &[(Kind, &str, &str)] = &[
-    (Kind::Editor, "code.exe", "Visual Studio Code"),
-    (Kind::Editor, "cursor.exe", "Cursor"),
-    (Kind::Editor, "zed.exe", "Zed"),
-    (Kind::Editor, "sublime_text.exe", "Sublime Text"),
-    (Kind::Editor, "notepad++.exe", "Notepad++"),
-    (Kind::Terminal, "wt.exe", "Windows Terminal"),
-    (Kind::Terminal, "wezterm-gui.exe", "WezTerm"),
-    (Kind::Terminal, "alacritty.exe", "Alacritty"),
-    (Kind::FileManager, "totalcmd64.exe", "Total Commander"),
-    (Kind::FileManager, "files.exe", "Files"),
-];
+fn mac_missing(bundles: &[String]) -> Vec<Missing> {
+    let missing = KNOWN
+        .iter()
+        .filter_map(|k| Some((k, k.bundle?)))
+        .filter(|(_, bundle)| !bundles.iter().any(|b| b == bundle))
+        .map(|(k, bundle)| Missing::new(k.kind, k.name, [bundle]))
+        .collect();
+    sorted_missing(missing)
+}
 
 /// `(program name, path)` from `reg query "…\App Paths" /s`: each key's default value.
 #[cfg_attr(
@@ -399,15 +609,16 @@ fn parse_app_paths(out: &str) -> Vec<(String, String)> {
     expect(dead_code, reason = "Windows's programs")
 )]
 fn windows_apps(paths: &[(String, String)]) -> Vec<App> {
-    let apps = WINDOWS_APPS
+    let apps = KNOWN
         .iter()
-        .filter_map(|&(kind, exe, name)| {
-            let (_, path) = paths.iter().find(|(k, _)| k == exe)?;
+        .filter_map(|k| {
+            let exe = k.exe?;
+            let (_, path) = paths.iter().find(|(key, _)| key == exe)?;
             let program = crate::platform::quote(path);
             Some(App {
-                kind,
-                name: name.to_owned(),
-                command: match (kind, exe) {
+                kind: k.kind,
+                name: k.name.to_owned(),
+                command: match (k.kind, exe) {
                     (Kind::Terminal, "wt.exe") => format!("{program} -d %d"),
                     (Kind::FileManager, _) => format!("{program} %d"),
                     _ => program,
@@ -429,8 +640,8 @@ mod linux {
     use std::process::Command;
 
     use super::{
-        App, Apps, Kind, SystemChoice, editor_from_env, executable_id, listed_gui_editor, on_path,
-        sorted,
+        App, Apps, KNOWN, Kind, Missing, SystemChoice, editor_from_env, executable_id,
+        listed_gui_editor, on_path, sorted, sorted_missing,
     };
     use crate::platform::{program_name, quote};
 
@@ -833,11 +1044,7 @@ mod linux {
             .as_deref()
             .and_then(|t| terminal_named(t.trim()))
             .or_else(|| terminal_named("xdg-terminal-exec"))
-            .or_else(|| {
-                super::LINUX_TERMINALS
-                    .iter()
-                    .find_map(|t| terminal_named(t))
-            });
+            .or_else(|| super::linux_terminals().find_map(terminal_named));
 
         let file_manager = (env.default_for)("inode/directory")
             .and_then(|id| entries.get(&id))
@@ -896,11 +1103,45 @@ mod linux {
             }
         }
 
+        // The well-known programs: one found on PATH that no desktop entry listed is installed
+        // too, and one found nowhere is the "Not installed" row.
+        let mut missing = Vec::new();
+        for known in KNOWN.iter().filter(|k| !k.commands.is_empty()) {
+            let on_path = known.commands.iter().find(|c| on_path(c, &env.path));
+            let mut ids: Vec<String> = known
+                .entries
+                .iter()
+                .filter_map(|id| entries.get(*id))
+                .filter(|e| e.installed(&env.path))
+                .map(|e| e.program_id(&env.path))
+                .collect();
+            ids.extend(on_path.map(|c| executable_id(c, &env.path)));
+            if ids.is_empty() {
+                missing.push(Missing::new(
+                    known.kind,
+                    known.name,
+                    known.commands.iter().copied(),
+                ));
+            } else if let Some(command) = on_path
+                && !installed
+                    .iter()
+                    .any(|a| a.kind == known.kind && ids.contains(&a.id))
+            {
+                installed.push(App {
+                    kind: known.kind,
+                    name: known.name.to_owned(),
+                    command: (*command).to_owned(),
+                    id: executable_id(command, &env.path),
+                });
+            }
+        }
+
         Apps {
             editor,
             terminal,
             file_manager,
             installed: sorted(installed),
+            missing: sorted_missing(missing),
         }
     }
 }
@@ -909,7 +1150,9 @@ mod linux {
 mod macos {
     use std::path::PathBuf;
 
-    use super::{Apps, SystemChoice, editor_from_env, listed_gui_editor, mac_apps, path_dirs};
+    use super::{
+        Apps, SystemChoice, editor_from_env, listed_gui_editor, mac_apps, mac_missing, path_dirs,
+    };
 
     pub(super) fn detect() -> Apps {
         let home = crate::settings::home_dir();
@@ -957,6 +1200,7 @@ mod macos {
                 id: Some("Finder".to_owned()),
             }),
             installed: mac_apps(&bundles),
+            missing: mac_missing(&bundles),
         }
     }
 }
@@ -1026,6 +1270,9 @@ mod windows {
                 id: None,
             }),
             installed: windows_apps(&app_paths()),
+            // App Paths misses programs that are only on PATH (wt.exe is an alias) and Explorer,
+            // so it cannot say that one is not installed.
+            missing: Vec::new(),
         }
     }
 }
@@ -1428,7 +1675,13 @@ mod tests {
 
     #[test]
     fn a_chosen_command_comes_before_the_systems() {
-        assert_eq!(command_for("  zed  ", Kind::Editor), "zed");
+        assert_eq!(
+            launch(None, "  zed  ", Kind::Editor),
+            Launch {
+                command: "zed".to_owned(),
+                fallback: None
+            }
+        );
     }
 
     #[cfg(unix)]
@@ -1688,16 +1941,209 @@ mod tests {
             );
         }
 
-        // The first usual terminal found has an entry too; one without any is not listed.
+        // The first usual terminal found has an entry too; without one, a well-known program on
+        // PATH is still an installed program, so the default is its row.
         let found = detect(&env(root, &defaults));
         assert_eq!(listed_as_default(&found, Kind::Terminal), ["kitty"]);
         std::fs::remove_file(apps.join("kitty.desktop")).unwrap();
         let found = detect(&env(root, &defaults));
         assert_eq!(found.terminal.as_ref().unwrap().name, "kitty");
+        assert_eq!(listed_as_default(&found, Kind::Terminal), ["kitty"]);
+        // A program nobody knows is the default but has no row.
+        program(&root.join("bin"), "obscure-term");
+        let mut e = env(root, &defaults);
+        e.terminal = Some("obscure-term".to_owned());
+        let found = detect(&e);
+        assert_eq!(found.terminal.as_ref().unwrap().name, "obscure-term");
         assert_eq!(
             listed_as_default(&found, Kind::Terminal),
             Vec::<String>::new()
         );
+    }
+
+    fn missing_names(apps: &Apps, kind: Kind) -> Vec<&str> {
+        apps.missing(kind).map(|m| m.name.as_str()).collect()
+    }
+
+    // Installed programs, each once, then the well-known ones that are not installed: found by
+    // entry, by PATH, or both, and never both listed and missing.
+    #[cfg(unix)]
+    #[test]
+    fn well_known_programs_are_installed_or_not_installed_never_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let apps = root.join("usr-share/applications");
+        // kitty: an entry and PATH. Foot: PATH only, no entry. Code: PATH and an entry whose
+        // program is another file (the packages put `code` in /usr/bin and the entry elsewhere).
+        // Konsole: an entry whose program is gone.
+        write(&apps, "kitty.desktop", KITTY);
+        write(
+            &apps,
+            "code.desktop",
+            &CODE.replace(
+                "/opt/code/bin/code",
+                &root.join("opt/code/code").display().to_string(),
+            ),
+        );
+        write(
+            &apps,
+            "org.kde.konsole.desktop",
+            &entry_of(Kind::Terminal, "Konsole", "konsole"),
+        );
+        // Not well known and not installed: not offered either way.
+        write(
+            &apps,
+            "gone.desktop",
+            &entry_of(Kind::Terminal, "Gone term", "gone-term"),
+        );
+        for p in ["kitty", "foot", "code"] {
+            program(&root.join("bin"), p);
+        }
+        program(&root.join("opt/code"), "code");
+        let found = detect(&env(root, &[]));
+        assert_eq!(
+            names(&found, Kind::Terminal),
+            [
+                ("Foot".to_owned(), "foot".to_owned()),
+                ("kitty".to_owned(), "kitty".to_owned())
+            ],
+            "an installed well-known program found only on PATH is listed"
+        );
+        assert_eq!(
+            found
+                .installed(Kind::Editor)
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Visual Studio Code"],
+            "one row for code, though PATH and the entry name different files"
+        );
+        let terminals = missing_names(&found, Kind::Terminal);
+        for installed in ["kitty", "Foot", "Gone term"] {
+            assert!(
+                !terminals.contains(&installed),
+                "{installed}: {terminals:?}"
+            );
+        }
+        for absent in ["Alacritty", "Konsole", "GNOME Terminal", "xterm", "Ghostty"] {
+            assert!(terminals.contains(&absent), "{absent}: {terminals:?}");
+        }
+        let editors = missing_names(&found, Kind::Editor);
+        assert!(!editors.contains(&"Visual Studio Code"), "{editors:?}");
+        assert!(
+            editors.contains(&"Zed") && editors.contains(&"Kate"),
+            "{editors:?}"
+        );
+        assert!(
+            !editors.contains(&"BBEdit") && !editors.contains(&"Notepad++"),
+            "another platform's programs are not offered: {editors:?}"
+        );
+        // Sorted by name, and a saved command is matched to its program by what it starts.
+        let sorted_names: Vec<String> = terminals.iter().map(|n| n.to_lowercase()).collect();
+        assert!(sorted_names.is_sorted(), "{terminals:?}");
+        let zed = found
+            .missing(Kind::Editor)
+            .find(|m| m.name == "Zed")
+            .unwrap();
+        for command in ["zed", "/opt/zed/bin/zed --wait %f", "zeditor", "  ZED  "] {
+            assert!(zed.is_started_by(command), "{command}");
+        }
+        assert!(!zed.is_started_by("zedd") && !zed.is_started_by(""));
+        // Installing it moves it between the lists.
+        program(&root.join("bin"), "zeditor");
+        let found = detect(&env(root, &[]));
+        assert!(!missing_names(&found, Kind::Editor).contains(&"Zed"));
+        assert!(found.installed(Kind::Editor).any(|a| a.name == "Zed"));
+    }
+
+    // Every well-known program has a name, and its identifiers do not collide: one command or
+    // entry belongs to one program, so a saved command names one.
+    #[test]
+    fn the_well_known_table_names_each_program_once() {
+        let mut commands = std::collections::HashSet::new();
+        let mut entries = std::collections::HashSet::new();
+        for k in KNOWN {
+            assert_ne!(k.name, "");
+            for c in k.commands {
+                assert!(commands.insert((k.kind, *c)), "{c} twice");
+                assert_eq!(*c, c.to_ascii_lowercase(), "{c} is a lower-case command");
+            }
+            for e in k.entries {
+                assert!(entries.insert((k.kind, *e)), "{e} twice");
+                assert!(e.ends_with(".desktop"), "{e}");
+            }
+            assert!(
+                !k.commands.is_empty() || k.bundle.is_some() || k.exe.is_some(),
+                "{} is on no platform",
+                k.name
+            );
+        }
+        // Terminals tried as a last resort: the Debian alternative, then the table's order.
+        let terminals: Vec<_> = linux_terminals().collect();
+        assert_eq!(terminals[0], "x-terminal-emulator");
+        assert!(terminals.contains(&"kitty") && terminals.contains(&"xterm"));
+    }
+
+    // A chosen well-known program that is no longer installed is never started: the system's
+    // runs, and the fallback says which and why.
+    #[test]
+    fn a_chosen_program_that_is_not_installed_gives_way_to_the_systems() {
+        let zed = Missing::new(Kind::Editor, "Zed", ["zed", "zeditor"]);
+        let apps = Apps {
+            editor: Some(SystemChoice {
+                name: "Text Editor".to_owned(),
+                command: Some("gnome-text-editor %f".to_owned()),
+                id: None,
+            }),
+            missing: vec![zed],
+            ..Apps::default()
+        };
+        let launch = |apps: Option<&Apps>, configured: &str, kind| launch(apps, configured, kind);
+        assert_eq!(
+            launch(Some(&apps), "zed --wait %f", Kind::Editor),
+            Launch {
+                command: "gnome-text-editor %f".to_owned(),
+                fallback: Some(Fallback {
+                    missing: "Zed".to_owned(),
+                    used: "Text Editor".to_owned()
+                }),
+            }
+        );
+        // Without a system choice the platform's own opener runs (an empty command).
+        let bare = Apps {
+            missing: apps.missing.clone(),
+            ..Apps::default()
+        };
+        let fallback = launch(Some(&bare), "zed", Kind::Editor);
+        assert_eq!(fallback.command, "");
+        assert_eq!(
+            fallback.fallback.map(|f| f.used).as_deref(),
+            Some("the system's own")
+        );
+        // Anything else runs as typed: a program that is installed, one nobody knows, another kind,
+        // and before the first detection ends.
+        for (apps, configured, kind) in [
+            (Some(&apps), "code --wait", Kind::Editor),
+            (Some(&apps), "my-editor %f", Kind::Editor),
+            (Some(&apps), "zed", Kind::Terminal),
+            (None, "zed", Kind::Editor),
+        ] {
+            let ran = launch(apps, configured, kind);
+            assert_eq!(ran.command, configured);
+            assert_eq!(ran.fallback, None, "{configured}");
+        }
+        // Nothing chosen is the system's, with no message.
+        assert_eq!(
+            launch(Some(&apps), "  ", Kind::Editor),
+            Launch {
+                command: "gnome-text-editor %f".to_owned(),
+                fallback: None
+            }
+        );
+        // macOS names its programs by `open -a`.
+        let iterm = Missing::new(Kind::Terminal, "iTerm", ["iTerm"]);
+        assert!(iterm.is_started_by("open -a iTerm %d"));
+        assert!(iterm.is_started_by("open -a \"iTerm\""));
+        assert!(!iterm.is_started_by("open -a Terminal %d"));
     }
 
     #[test]
@@ -1714,6 +2160,22 @@ mod tests {
                 (Kind::Editor, "open -a Zed"),
             ]
         );
+        let missing = mac_missing(&bundles);
+        let names: Vec<_> = missing.iter().map(|m| m.name.as_str()).collect();
+        assert!(names.contains(&"Visual Studio Code") && names.contains(&"Ghostty"));
+        assert!(
+            !names.contains(&"Zed") && !names.contains(&"iTerm") && !names.contains(&"Finder"),
+            "{names:?}"
+        );
+        assert!(
+            !names.contains(&"Notepad++"),
+            "Windows programs are not offered on macOS"
+        );
+        let code = missing
+            .iter()
+            .find(|m| m.name == "Visual Studio Code")
+            .unwrap();
+        assert!(code.is_started_by("open -a \"Visual Studio Code\""));
         let reg = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Code.exe\r\n    (Default)    REG_SZ    C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe\r\n    Path    REG_SZ    C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\r\n\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\wt.exe\r\n    (Default)    REG_EXPAND_SZ    \"%LOCALAPPDATA%\\Microsoft\\WindowsApps\\wt.exe\"\r\n\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\other.exe\r\n";
         let paths = parse_app_paths(reg);
         assert_eq!(paths.len(), 2, "{paths:?}");

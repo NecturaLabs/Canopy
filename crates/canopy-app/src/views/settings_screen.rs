@@ -4779,15 +4779,20 @@ struct Launcher {
 enum LaunchChoice {
     System,
     App(usize),
+    /// A well-known program that is not installed: shown when it is the saved choice, never
+    /// chosen from the list.
+    Missing(usize),
     Custom,
 }
 
 /// What a saved command shows as: the system's when empty, an installed app whose command it
-/// is, else a custom command (also while the user has the command field open).
+/// is, a well-known program that is no longer installed, else a custom command (also while the
+/// user has the command field open).
 fn launch_choice(
     value: &str,
     editing: bool,
     installed: &[&crate::system_apps::App],
+    missing: &[&crate::system_apps::Missing],
 ) -> LaunchChoice {
     let value = value.trim();
     if editing {
@@ -4798,7 +4803,14 @@ fn launch_choice(
         installed
             .iter()
             .position(|a| a.command == value)
-            .map_or(LaunchChoice::Custom, LaunchChoice::App)
+            .map(LaunchChoice::App)
+            .or_else(|| {
+                missing
+                    .iter()
+                    .position(|m| m.is_started_by(value))
+                    .map(LaunchChoice::Missing)
+            })
+            .unwrap_or(LaunchChoice::Custom)
     }
 }
 
@@ -4811,10 +4823,12 @@ fn is_system_choice(
 }
 
 /// The entries of a launcher's list: the system's own program as the Default (named once, so not
-/// again among the installed ones), the other installed programs, then a command of the user's.
+/// again among the installed ones), the other installed programs, the well-known ones that are
+/// not installed, then a command of the user's.
 fn launcher_options(
     system: Option<&crate::system_apps::SystemChoice>,
     installed: &[&crate::system_apps::App],
+    missing: &[&crate::system_apps::Missing],
 ) -> Vec<(LaunchChoice, String)> {
     let mut options = vec![(
         LaunchChoice::System,
@@ -4829,6 +4843,12 @@ fn launcher_options(
             .enumerate()
             .filter(|(_, a)| !is_system_choice(system, a))
             .map(|(i, a)| (LaunchChoice::App(i), a.name.clone())),
+    );
+    options.extend(
+        missing
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (LaunchChoice::Missing(i), m.name.clone())),
     );
     options.push((LaunchChoice::Custom, "Custom command…".to_owned()));
     options
@@ -4853,7 +4873,9 @@ fn launcher_row(
     let installed: Vec<&crate::system_apps::App> = apps
         .map(|a| a.installed(kind).collect())
         .unwrap_or_default();
-    let current = match launch_choice(value, custom.contains(&kind), &installed) {
+    let missing: Vec<&crate::system_apps::Missing> =
+        apps.map(|a| a.missing(kind).collect()).unwrap_or_default();
+    let current = match launch_choice(value, custom.contains(&kind), &installed, &missing) {
         LaunchChoice::App(i)
             if installed
                 .get(i)
@@ -4863,16 +4885,19 @@ fn launcher_row(
         }
         other => other,
     };
-    let labels = launcher_options(system, &installed);
+    let labels = launcher_options(system, &installed, &missing);
     let options: Vec<(LaunchChoice, &str)> = labels.iter().map(|(c, l)| (*c, l.as_str())).collect();
     let mut chosen = current;
     row_more(ui, title, help, "", |ui| {
-        Select::new(&mut chosen, &options)
+        let mut select = Select::new(&mut chosen, &options)
             .described(LaunchChoice::System, "Default")
             .width(select_width(ui, options.iter().map(|(_, l)| *l)).min(FIELD_WIDTH))
             .name(title)
-            .id_salt(("launcher", title))
-            .show(ui);
+            .id_salt(("launcher", title));
+        for i in 0..missing.len() {
+            select = select.unavailable(LaunchChoice::Missing(i), "Not installed");
+        }
+        select.show(ui);
     });
     row_end(ui);
     if chosen != current {
@@ -4887,6 +4912,8 @@ fn launcher_row(
                 }
                 custom.remove(&kind);
             }
+            // A program that is not installed cannot be chosen (the list passes over it).
+            LaunchChoice::Missing(_) => {}
             // The field starts from what was chosen, to adjust.
             LaunchChoice::Custom => {
                 if value.trim().is_empty()
@@ -6909,21 +6936,24 @@ mod tests {
         };
         let (zed, code) = (app("Zed", "zed"), app("Code", "code %f"));
         let installed = [&zed, &code];
-        assert_eq!(launch_choice("  ", false, &installed), LaunchChoice::System);
         assert_eq!(
-            launch_choice("code %f", false, &installed),
+            launch_choice("  ", false, &installed, &[]),
+            LaunchChoice::System
+        );
+        assert_eq!(
+            launch_choice("code %f", false, &installed, &[]),
             LaunchChoice::App(1)
         );
         assert_eq!(
-            launch_choice(" zed ", false, &installed),
+            launch_choice(" zed ", false, &installed, &[]),
             LaunchChoice::App(0)
         );
         assert_eq!(
-            launch_choice("zed --wait", false, &installed),
+            launch_choice("zed --wait", false, &installed, &[]),
             LaunchChoice::Custom
         );
         assert_eq!(
-            launch_choice("zed", true, &installed),
+            launch_choice("zed", true, &installed, &[]),
             LaunchChoice::Custom,
             "an open command field stays open"
         );
@@ -8029,7 +8059,7 @@ mod tests {
             command: Some("xdg-terminal-exec".to_owned()),
             id: Some("/usr/bin/kitty".to_owned()),
         };
-        let detected = launcher_options(Some(&system), &installed);
+        let detected = launcher_options(Some(&system), &installed, &[]);
         assert_eq!(
             labels(&detected),
             ["kitty (Default)", "Foot", "Custom command…"],
@@ -8040,7 +8070,7 @@ mod tests {
             LaunchChoice::App(0),
             "Foot is the first installed"
         );
-        let undetected = launcher_options(None, &installed);
+        let undetected = launcher_options(None, &installed, &[]);
         assert_eq!(
             labels(&undetected),
             ["Default", "Foot", "kitty", "Custom command…"]
@@ -8127,6 +8157,108 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Well-known programs that are not installed follow the installed ones, before Custom
+    /// command…, marked "Not installed" and never chosen; a saved choice that has gone shows as
+    /// one of them.
+    #[test]
+    fn missing_programs_are_listed_marked_and_never_chosen() {
+        use crate::system_apps::{Apps, Missing, SystemChoice};
+        use crate::ui::kit::testkit::{frame, key, spoken};
+        let apps = Apps {
+            terminal: Some(SystemChoice {
+                name: "kitty".to_owned(),
+                command: Some("kitty".to_owned()),
+                id: Some("/usr/bin/kitty".to_owned()),
+            }),
+            installed: vec![
+                terminal("Foot", "foot", "/usr/bin/foot"),
+                terminal("kitty", "kitty", "/usr/bin/kitty"),
+            ],
+            missing: vec![
+                Missing::new(Kind::Terminal, "Alacritty", ["alacritty"]),
+                Missing::new(Kind::Terminal, "Konsole", ["konsole"]),
+            ],
+            ..Apps::default()
+        };
+        let installed: Vec<_> = apps.installed(Kind::Terminal).collect();
+        let missing: Vec<_> = apps.missing(Kind::Terminal).collect();
+        assert_eq!(
+            labels(&launcher_options(
+                apps.terminal.as_ref(),
+                &installed,
+                &missing
+            )),
+            [
+                "kitty (Default)",
+                "Foot",
+                "Alacritty",
+                "Konsole",
+                "Custom command…"
+            ]
+        );
+        // A saved command of a program that is not installed shows as that program, an installed
+        // one as itself, and anything else as a custom command.
+        let shown = |value: &str| launch_choice(value, false, &installed, &missing);
+        assert_eq!(
+            shown("alacritty --working-directory %d"),
+            LaunchChoice::Missing(0)
+        );
+        assert_eq!(shown("konsole"), LaunchChoice::Missing(1));
+        assert_eq!(shown("foot"), LaunchChoice::App(0));
+        assert_eq!(shown("my-terminal"), LaunchChoice::Custom);
+
+        let ctx = crate::ui::kit::testkit::ctx();
+        let (mut value, mut custom) = (
+            "alacritty --working-directory %d".to_owned(),
+            HashSet::new(),
+        );
+        let mut draw = |ui: &mut Ui| {
+            let launcher = Launcher {
+                title: "Terminal",
+                help: "",
+                command_help: "",
+                kind: Kind::Terminal,
+            };
+            launcher_row(ui, launcher, &mut value, Some(&apps), &mut custom);
+        };
+        let closed = spoken(&ctx, &mut draw);
+        let shown_value = closed
+            .iter()
+            .find(|n| n.role == egui::accesskit::Role::ComboBox)
+            .and_then(|n| n.value.as_deref());
+        assert_eq!(
+            shown_value,
+            Some("Alacritty"),
+            "the saved choice, though gone"
+        );
+        // Open the list: the missing programs are disabled with their tag as description.
+        frame(&ctx, Vec::new(), &mut draw);
+        frame(&ctx, key(egui::Key::Tab), &mut draw);
+        frame(&ctx, Vec::new(), &mut draw);
+        frame(&ctx, key(egui::Key::ArrowDown), &mut draw);
+        let open = spoken(&ctx, &mut draw);
+        let mut options: Vec<_> = open
+            .iter()
+            .filter(|n| n.role == egui::accesskit::Role::ListBoxOption)
+            .map(|n| (n.label.as_deref(), n.disabled, n.description.as_deref()))
+            .collect();
+        options.sort_unstable();
+        assert_eq!(
+            options,
+            [
+                (Some("Alacritty"), true, Some("Not installed")),
+                (Some("Custom command…"), false, None),
+                (Some("Foot"), false, None),
+                (Some("Konsole"), true, Some("Not installed")),
+                (Some("kitty (Default)"), false, Some("Default")),
+            ]
+        );
+        assert_eq!(
+            value, "alacritty --working-directory %d",
+            "nothing was chosen"
+        );
     }
 
     /// Each launcher row is found by its kind and by "default <kind>" (its help never says it).

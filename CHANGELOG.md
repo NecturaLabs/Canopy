@@ -10,6 +10,12 @@ commits since the previous build.
 
 ### Added
 
+- Settings → Integrations lists the well-known editors, terminals and file managers that are not
+  installed after the installed ones, dimmed and tagged Not installed, so you see what exists; they
+  cannot be picked, and the keyboard passes over them (Linux and macOS; Windows lists the installed
+  programs only). A program you chose that has since been uninstalled shows the same way, and
+  opening falls back to your system's program and says so. A well-known program found only on `PATH`
+  is now listed as installed.
 - The pull and merge request list has a comfortable / dense toggle in its toolbar (and in Settings,
   Appearance, Request list). Dense shows one line per request, with the number, title, labels and
   checks and no preview; the choice is remembered and is separate from the whole-app density.
