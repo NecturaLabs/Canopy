@@ -111,7 +111,7 @@ Copy link in its context menu (Copy address for an e-mail link). Every link is a
 tall (`theme::MIN_TARGET`), WCAG 2.5.8's 24 CSS pixels read as 24 points at 100% scale.
 
 `LinkButton::max_text_width` elides long labels while retaining the whole accessible name; the
-commit header uses it for long committer names and provides their full text in a tooltip.
+commit header uses it for long author names and provides their full text in a tooltip.
 
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
 syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
@@ -336,13 +336,15 @@ in the density's metrics:
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
-- Commit details keep the summary, copyable commit id, parent links and committer's picture and
-  name in the pane header. The summary elides first, with its full text in a tooltip; facts wrap
-  below it when their controls cannot fit. Dates remain in the History row's tooltip. Compact
+- Commit details keep the author's picture and name, the copyable commit id and the parent links
+  at the left of the pane header, before the summary. The summary takes the remaining width and
+  elides, with its full text in a tooltip; when the ids alone leave the summary too little room,
+  they take their own row and the summary goes below. Dates remain in the History row's tooltip. Compact
   windows move the same facts into the card's top. The name opens the commit identity card with
-  the original author, signature status, profile link and picture explanation.
-- The details card holds only the description and the Changed files section: the description
-  scrolls independently behind a fade, leaving room for the stats and two file rows. A commit
+  the committer (when it differs), signature status, profile link and picture explanation.
+- The details card holds only the description and the centred "N files changed" title with its
+  line counts above the file rows: the description scrolls independently behind a fade, leaving
+  room for the title and two file rows. A commit
   without a body goes directly to its files. File names take precedence over folders and have
   full-path tooltips; status badges and line counts use the kit. Automatic inspector height
   follows the header and card contents; a manual resize takes precedence.
@@ -558,8 +560,8 @@ shared reset that returns both to the app defaults. Help text never types the re
 `Popover` is a small panel anchored to a control (diff options, the commit identity card, the theme
 quick-pick): the overlay surface with `card_pad` inside, 6 pt from the anchor and at least as wide.
 Clicking the anchor toggles it; a click outside or Esc closes it and gives focus back to the
-anchor. One popover is open at a time. The identity card in the commit details is one: the committer's name is a
-link button, the card holds the email with a copy button, the original author, the signature, a profile
+anchor. One popover is open at a time. The identity card in the commit details is one: the author's name is a
+link button, the card holds the email with a copy button, the committer when different, the signature, a profile
 or user-search link and the picture settings; signature results get distinct glyphs and spoken
 names (verified: green seal, invalid: danger X, unavailable: muted question, untrusted or expired:
 warning). The identity card names the result and signer. The same result mark appears beside

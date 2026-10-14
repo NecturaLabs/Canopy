@@ -17,7 +17,7 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{ChangeBadge, DiffStat};
 use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{ListRow, RowKind, SectionHeader};
+use crate::ui::kit::row::{ListRow, RowKind};
 use crate::ui::kit::{Button, IconButton, Size, menu, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
@@ -82,14 +82,9 @@ pub fn show(
                 commit_facts(ui, &d, tab, note.as_ref(), actions);
                 ui.add_space(theme::SM);
             }
-            // Up to two whole file rows, the "N files changed" line above them (as tall as it
-            // was last frame, at first one line of its text) and the gaps between them.
-            let stats_key = ui.id().with("commit-file-stats-height");
-            let stats_h = ui
-                .data(|data| data.get_temp::<f32>(stats_key))
-                .unwrap_or_else(|| text_row(ui, m.meta_size));
+            // Up to two whole file rows, the "N files changed" title above them and the gaps
+            // between them.
             let files_min = file_row_height() * crate::ui::count_f32(d.files.len().min(2))
-                + stats_h
                 + m.section_header_height
                 + theme::XS * 2.0
                 + ui.spacing().item_spacing.y * 3.0;
@@ -112,12 +107,7 @@ pub fn show(
                 message_block(ui, room.max(first_line), |ui| message(ui, &d, summary));
             }
             ui.add_space(theme::XS);
-            SectionHeader::new("Changed files").first(true).show(ui);
-            let measured = file_stats(ui, &d);
-            if (measured - stats_h).abs() > 0.5 {
-                ui.data_mut(|data| data.insert_temp(stats_key, measured));
-                ui.ctx().request_repaint();
-            }
+            file_stats(ui, &d);
             ui.add_space(theme::XS);
             let list = egui::ScrollArea::vertical()
                 .id_salt("commit-file-list")
@@ -159,7 +149,6 @@ pub fn natural_height(ui: &Ui, d: Option<&CommitDetails>) -> f32 {
         + m.detail_pad.y * 2.0
         + body
         + m.section_header_height
-        + text_row(ui, m.meta_size)
         + file_row_height() * crate::ui::count_f32(files)
         + theme::XS * 2.0
         + ui.spacing().item_spacing.y * 3.0
@@ -684,18 +673,20 @@ fn committed_by(d: &CommitDetails) -> Option<String> {
         .then(|| format!("Committed by {} <{}>", d.committer.name, d.committer.email))
 }
 
-/// The "N files changed" line and its line counts; returns the height it took.
-fn file_stats(ui: &mut Ui, d: &CommitDetails) -> f32 {
+/// The section's title, centred: "N files changed" and its line counts, in one band as tall as
+/// a section header.
+fn file_stats(ui: &mut Ui, d: &CommitDetails) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let (adds, dels) = d
         .files
         .iter()
         .fold((0, 0), |(a, r), f| (a + f.additions, r + f.deletions));
-    ui.scope(|ui| {
-        // As tall as its text: the height of a control would only push the files down.
-        ui.spacing_mut().interact_size.y = 0.0;
-        ui.horizontal_wrapped(|ui| {
+    let size = vec2(ui.available_width(), m.section_header_height);
+    ui.allocate_ui_with_layout(
+        size,
+        Layout::left_to_right(Align::Center).with_main_align(Align::Center),
+        |ui| {
             ui.label(
                 RichText::new(format!(
                     "{} file{} changed",
@@ -703,6 +694,7 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) -> f32 {
                     if d.files.len() == 1 { "" } else { "s" }
                 ))
                 .size(m.meta_size)
+                .strong()
                 .color(p.text_dim),
             );
             if d.stats_known {
@@ -721,11 +713,8 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) -> f32 {
                 )
                 .show();
             }
-        })
-    })
-    .response
-    .rect
-    .height()
+        },
+    );
 }
 
 fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab, actions: &mut Vec<Action>) {
@@ -1287,7 +1276,7 @@ mod tests {
     fn the_header_width_follows_the_ids_never_the_subject() {
         let ctx = ctx(Density::Comfortable);
         let mut widths = Vec::new();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let long = "A very long subject line that would never fit beside the ids ".repeat(8);
             let one = super::facts_width(ui, &details_with("Short", 1, "Author"));
             let long_one = super::facts_width(ui, &details_with(&long, 1, "Author"));
@@ -1296,6 +1285,7 @@ mod tests {
             let other = super::facts_width(ui, &details_with("Short", 1, "Someone Else Entirely"));
             widths = vec![one, long_one, merge, other];
         });
+        out.textures_delta.clear();
         let [one, long_one, merge, other] = widths[..] else {
             panic!("measured four widths");
         };
