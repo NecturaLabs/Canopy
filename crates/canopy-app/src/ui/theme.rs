@@ -232,6 +232,12 @@ pub struct Palette {
     pub on_danger: Color32,
     /// Bases of the status washes (banners, callouts, dialog discs, diff lines).
     pub tones: Tones,
+    /// Ink of added and removed lines: the diff's `+` and `−` marks and the counts and blocks of
+    /// every diffstat (file lists, commit cards, request summaries). Richer than `success` and
+    /// `danger`, which also mean a passing or failing check; 4.5:1 on every ground, row state and
+    /// diff row and gutter, and apart in lightness from each other, so the pair reads without hue.
+    pub diff_added: Color32,
+    pub diff_removed: Color32,
     /// Outlines that identify an input: text fields, checkbox and radio rims. 3:1 on every surface
     /// (4.5:1 at high contrast).
     pub control_border: Color32,
@@ -342,10 +348,10 @@ pub const MIDNIGHT: Palette = Palette {
         danger_solid: Fill::flat(hex(0xD63C42)),
         danger_solid_hover: Fill::flat(hex(0xD0353D)),
         danger_solid_pressed: Fill::flat(hex(0xC2353B)),
-        added_bg: hex(0x15211C),
-        removed_bg: hex(0x231517),
-        added_gutter: hex(0x192E26),
-        removed_gutter: hex(0x33191C),
+        added_bg: hex(0x032917),
+        removed_bg: hex(0x411418),
+        added_gutter: hex(0x013820),
+        removed_gutter: hex(0x5A1820),
         deck: Fill::flat(hex(0x151619)),
         deck_edge: hex(0x24262B),
         pane_header: hex(0x0F1012),
@@ -432,10 +438,10 @@ pub const MIDNIGHT: Palette = Palette {
             top: hex(0xC2353B),
             bottom: hex(0xC9363C),
         },
-        added_bg: hex(0x192522),
-        removed_bg: hex(0x27191D),
-        added_gutter: hex(0x1E322B),
-        removed_gutter: hex(0x381D21),
+        added_bg: hex(0x032917),
+        removed_bg: hex(0x411418),
+        added_gutter: hex(0x013820),
+        removed_gutter: hex(0x5A1820),
         deck: Fill {
             top: hex(0x1C1D20),
             bottom: hex(0x17181B),
@@ -468,6 +474,8 @@ pub const MIDNIGHT: Palette = Palette {
         warning: hex(0xD9A54A),
         danger: hex(0xE5484D),
     },
+    diff_added: hex(0x34DE8A),
+    diff_removed: hex(0xFF7076),
     control_border: hex(0x787A81),
     on_tooltip: hex(0xECECEF),
     on_tooltip_dim: hex(0xB6B6BA),
@@ -550,10 +558,10 @@ pub const DAYLIGHT: Palette = Palette {
         danger_solid: Fill::flat(hex(0xD83C41)),
         danger_solid_hover: Fill::flat(hex(0xCC3238)),
         danger_solid_pressed: Fill::flat(hex(0xB92B31)),
-        added_bg: hex(0xEDF7F2),
-        removed_bg: hex(0xFCF0F0),
-        added_gutter: hex(0xDDF0E7),
-        removed_gutter: hex(0xF9E2E3),
+        added_bg: hex(0xDDF6E7),
+        removed_bg: hex(0xFFE9E7),
+        added_gutter: hex(0xBDEDD2),
+        removed_gutter: hex(0xFFD1CE),
         deck: Fill::flat(hex(0xF7F7F8)),
         deck_edge: hex(0xE6E6EA),
         pane_header: hex(0xFFFFFF),
@@ -637,10 +645,10 @@ pub const DAYLIGHT: Palette = Palette {
             top: hex(0xBF3036),
             bottom: hex(0xC9363C),
         },
-        added_bg: hex(0xEDF7F2),
-        removed_bg: hex(0xFCF0F0),
-        added_gutter: hex(0xDDF0E7),
-        removed_gutter: hex(0xF9E2E3),
+        added_bg: hex(0xDDF6E7),
+        removed_bg: hex(0xFFE9E7),
+        added_gutter: hex(0xBDEDD2),
+        removed_gutter: hex(0xFFD1CE),
         deck: Fill {
             top: hex(0xF8FAFD),
             bottom: hex(0xF3F5F8),
@@ -673,6 +681,8 @@ pub const DAYLIGHT: Palette = Palette {
         warning: hex(0xF8AC3D),
         danger: hex(0xF05656),
     },
+    diff_added: hex(0x016B3B),
+    diff_removed: hex(0xAF001A),
     control_border: hex(0x7C7D85),
     on_tooltip: hex(0xF4F4F5),
     on_tooltip_dim: hex(0xB6B6B8),
@@ -756,10 +766,10 @@ pub const OBSERVATORY: Palette = Palette {
         danger_solid: Fill::flat(hex(0xD73E41)),
         danger_solid_hover: Fill::flat(hex(0xD2383D)),
         danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x112023),
-        removed_bg: hex(0x1F141E),
-        added_gutter: hex(0x162D2C),
-        removed_gutter: hex(0x301822),
+        added_bg: hex(0x022C1D),
+        removed_bg: hex(0x41141C),
+        added_gutter: hex(0x003D2A),
+        removed_gutter: hex(0x5A1A27),
         deck: Fill::flat(hex(0x111723)),
         deck_edge: hex(0x1B2233),
         pane_header: hex(0x0B0F19),
@@ -846,10 +856,10 @@ pub const OBSERVATORY: Palette = Palette {
             top: hex(0xC72C34),
             bottom: hex(0xCC3239),
         },
-        added_bg: hex(0x16262B),
-        removed_bg: hex(0x241A26),
-        added_gutter: hex(0x1B3333),
-        removed_gutter: hex(0x351E29),
+        added_bg: hex(0x022C1D),
+        removed_bg: hex(0x41141C),
+        added_gutter: hex(0x003D2A),
+        removed_gutter: hex(0x5A1A27),
         deck: Fill {
             top: hex(0x1D2435),
             bottom: hex(0x171D2C),
@@ -882,6 +892,8 @@ pub const OBSERVATORY: Palette = Palette {
         warning: hex(0xD9A54A),
         danger: hex(0xE5484D),
     },
+    diff_added: hex(0x3FE0A2),
+    diff_removed: hex(0xFF787C),
     control_border: hex(0x798090),
     on_tooltip: hex(0xEAEDF2),
     on_tooltip_dim: hex(0xAEB3BC),
@@ -965,10 +977,10 @@ pub const CONTRAST_REFERENCE: Palette = Palette {
         danger_solid: Fill::flat(hex(0xFF9892)),
         danger_solid_hover: Fill::flat(hex(0xFFACA7)),
         danger_solid_pressed: Fill::flat(hex(0xFF817D)),
-        added_bg: hex(0x15211C),
-        removed_bg: hex(0x231517),
-        added_gutter: hex(0x192E26),
-        removed_gutter: hex(0x33191C),
+        added_bg: hex(0x032917),
+        removed_bg: hex(0x411418),
+        added_gutter: hex(0x013820),
+        removed_gutter: hex(0x5A1820),
         deck: Fill::flat(hex(0x151619)),
         deck_edge: hex(0x7B7D83),
         pane_header: hex(0x0F1012),
@@ -1055,10 +1067,10 @@ pub const CONTRAST_REFERENCE: Palette = Palette {
             top: hex(0xFF7C78),
             bottom: hex(0xFF8580),
         },
-        added_bg: hex(0x192522),
-        removed_bg: hex(0x27191D),
-        added_gutter: hex(0x1E322B),
-        removed_gutter: hex(0x381D21),
+        added_bg: hex(0x032917),
+        removed_bg: hex(0x411418),
+        added_gutter: hex(0x013820),
+        removed_gutter: hex(0x5A1820),
         deck: Fill {
             top: hex(0x1C1D20),
             bottom: hex(0x17181B),
@@ -1091,6 +1103,8 @@ pub const CONTRAST_REFERENCE: Palette = Palette {
         warning: hex(0xE8B459),
         danger: hex(0xFF9691),
     },
+    diff_added: hex(0x4FE59C),
+    diff_removed: hex(0xFF8E91),
     control_border: hex(0xD1D4DB),
     on_tooltip: hex(0xFFFFFF),
     on_tooltip_dim: hex(0xCECED2),
@@ -3921,11 +3935,31 @@ mod tests {
                     gate.need("success", p.success, on, *bg, 4.5);
                     gate.need("warning", p.warning, on, *bg, 4.5);
                     gate.need("danger", p.danger, on, *bg, 4.5);
+                    gate.need("diff_added", p.diff_added, on, *bg, 4.5);
+                    gate.need("diff_removed", p.diff_removed, on, *bg, 4.5);
                 }
-                gate.need("success", p.success, "added_bg", s.added_bg, 4.5);
-                gate.need("danger", p.danger, "removed_bg", s.removed_bg, 4.5);
-                gate.need("success", p.success, "added_gutter", s.added_gutter, 4.5);
-                gate.need("danger", p.danger, "removed_gutter", s.removed_gutter, 4.5);
+                gate.need("diff_added", p.diff_added, "added_bg", s.added_bg, 4.5);
+                gate.need(
+                    "diff_removed",
+                    p.diff_removed,
+                    "removed_bg",
+                    s.removed_bg,
+                    4.5,
+                );
+                gate.need(
+                    "diff_added",
+                    p.diff_added,
+                    "added_gutter",
+                    s.added_gutter,
+                    4.5,
+                );
+                gate.need(
+                    "diff_removed",
+                    p.diff_removed,
+                    "removed_gutter",
+                    s.removed_gutter,
+                    4.5,
+                );
                 gate.need("warning", p.warning, "warning tint", warning_tint, 4.5);
                 let lane_bgs = [
                     ("pane", s.pane),

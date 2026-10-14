@@ -121,6 +121,11 @@ commits since the previous build.
 
 ### Changed
 
+- The commit details header now shows the author, the commit id and the parents before the commit
+  subject, and the subject takes the rest of the row. The commit identity card describes the
+  author and names the committer only when someone else committed.
+- The "Changed files" label is gone from the commit details; the "N files changed" line with its
+  line counts is now the section's centred title.
 - `canopy-core` no longer has `Repo::stage_all` and `Repo::delete_branch`, which only wrapped other
   functions: use `stage_all_except_repositories`, `delete_merged_branch` and `force_delete_branch`
   instead.
