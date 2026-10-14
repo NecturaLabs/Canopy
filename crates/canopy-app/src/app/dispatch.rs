@@ -655,6 +655,12 @@ impl CanopyApp {
                         t.split_diff = split;
                     }
                 }
+                Action::SetRequestDensity(density) => {
+                    self.settings.request_density = density;
+                    for t in &mut self.tabs {
+                        t.request_density = density;
+                    }
+                }
             }
         }
     }

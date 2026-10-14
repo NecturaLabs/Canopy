@@ -73,6 +73,7 @@ fn label_response(response: Response, label: &str, tooltip: Option<&str>) -> Res
 pub struct Badge {
     text: String,
     tone: Tone,
+    hue: Option<Color32>,
     mono: bool,
     strong: bool,
     tooltip: Option<String>,
@@ -83,6 +84,7 @@ impl Badge {
         Self {
             text: text.into(),
             tone: Tone::Neutral,
+            hue: None,
             mono: false,
             strong: false,
             tooltip: None,
@@ -91,6 +93,13 @@ impl Badge {
 
     pub fn tone(mut self, tone: Tone) -> Self {
         self.tone = tone;
+        self
+    }
+
+    /// A tint of `color` (a palette colour that is not a tone's, such as a field's) with text
+    /// worked out to read on it, like a tone's badge. Ignored by a strong badge.
+    pub fn hue(mut self, color: Color32) -> Self {
+        self.hue = Some(color);
         self
     }
 
@@ -130,6 +139,10 @@ impl Badge {
                 Tone::Danger => (s.danger_solid, p.on_danger),
                 _ => (s.primary, p.on_accent),
             };
+        }
+        if let Some(c) = self.hue {
+            let fill = Palette::badge_fill(c);
+            return (Fill::flat(fill), p.ink(c, fill));
         }
         match self.tone {
             Tone::Neutral => (Fill::flat(s.badge), p.text),

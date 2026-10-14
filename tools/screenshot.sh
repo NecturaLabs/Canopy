@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
 #                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|settings-git-pull|settings-git-commits|settings-git-config|clear-identity|update-installed|update-running|trust-prompt|trust-banner|trust-safety-off|privacy-trust-off|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-repository-pull|settings-repository-diffs|settings-search|settings-search-none|about|repository-insights|file-history|file-history-commit|search-changes|clean-stale|author-card|request-filters|request-sort|commit-expanded|commit-compact|amend-commit|toasts|notifications|branch-selected|long-message|gallery|menu-branch|menu-commit|menu-file|blame|<dialog>]
-#                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
+#                            [--style standard|deeper] [--density comfortable|dense] [--request-density comfortable|dense]
+#                            [--translucent on|off]
 #                            [--contrast on|off] [--custom-theme SPEC]
 #                            [--motion system|reduced|full] [--gallery-page N]
 #                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
@@ -59,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --zoom) extra+=(--zoom "${2:?--zoom needs a factor}"); shift 2 ;;
     --style) extra+=(--style "${2:?--style needs standard or deeper}"); shift 2 ;;
     --density) extra+=(--density "${2:?--density needs comfortable or dense}"); shift 2 ;;
+    --request-density) extra+=(--request-density "${2:?--request-density needs comfortable or dense}"); shift 2 ;;
     --translucent) extra+=(--translucent "${2:?--translucent needs on or off}"); shift 2 ;;
     --contrast) extra+=(--contrast "${2:?--contrast needs on or off}"); shift 2 ;;
     --custom-theme) extra+=(--custom-theme "${2:?--custom-theme needs a list, see --help}"); shift 2 ;;

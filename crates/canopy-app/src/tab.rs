@@ -14,7 +14,7 @@ use crate::hosting::CliReport;
 use crate::hosting::{
     HostAction, HostEvent, HostJob, HostWorker, ListKey, TokenSource, rate_limit_pause,
 };
-use crate::request_view::RequestView;
+use crate::request_view::{RequestDensity, RequestView};
 use crate::settings::{DiffPrefs, PullChoice};
 use crate::views::requests::row_standing;
 use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
@@ -1059,6 +1059,8 @@ pub struct RepoTab {
     /// Side-by-side diff and syntax highlighting (from the settings).
     pub split_diff: bool,
     pub highlight_diff: bool,
+    /// Comfortable or dense request list items (from the settings).
+    pub request_density: RequestDensity,
     /// Hint at a commit message that is too wide (from the settings; set each frame the
     /// Changes view is drawn).
     pub check_message: bool,
@@ -1225,6 +1227,7 @@ impl RepoTab {
             resolver: None,
             parked_resolvers: Vec::new(),
             split_diff: false,
+            request_density: RequestDensity::default(),
             highlight_diff: true,
             check_message: true,
             iso_dates: false,

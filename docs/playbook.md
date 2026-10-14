@@ -74,10 +74,12 @@ use Canopy as a user would and fix every finding before releasing. It complement
 screenshot checks and unit tests, which cannot see hover, timing, focus, menus that open and close,
 or how flows feel end to end.
 
-1. `tools/usersim.sh start [--kind showcase|conflict|linear|big] [--size WxH]` builds the release
-   binary and launches it on a private Xvfb display with its own home, XDG folders and Git
+1. `tools/usersim.sh start [--kind showcase|conflict|linear|big] [--size WxH] [--env NAME=VALUE]...`
+   builds the release binary and launches it on a private Xvfb display with its own home, XDG folders and Git
    configuration in a scratch folder, on a fixture with a local bare `origin`: never the owner's
-   repositories, never their Canopy settings, never the desktop session.
+   repositories, never their Canopy settings, never the desktop session. The app gets a clean
+   environment; `--env` adds `TERMINAL`, `VISUAL`, `EDITOR`, `XDG_DATA_DIRS` or `XDG_CONFIG_DIRS` to
+   it, to stage another machine's launcher lists (desktop entries and programs in a scratch folder).
 2. Drive it with `tools/usersim.sh x ...` (xdotool: `x search --name Canopy windowfocus`, then
    `x mousemove X Y click 1`, `x key ctrl+k`, `x type --delay 40 -- TEXT`) and look with
    `tools/usersim.sh shot out.png` after every step that changes the screen.

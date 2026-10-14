@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: tools/usersim.sh start [--kind KIND] [--size WxH]
+# Usage: tools/usersim.sh start [--kind KIND] [--size WxH] [--env NAME=VALUE]...
 #        tools/usersim.sh x XDOTOOL-ARGS...    (e.g. x mousemove 300 140 click 1)
 #        tools/usersim.sh shot OUT.png
 #        tools/usersim.sh restart               (quit with Ctrl+Q and launch again, same state)
@@ -11,7 +11,9 @@
 # $CANOPY_SIM_ROOT, default $TMPDIR/canopy-usersim), a fixture
 # repository with a local bare `origin` (so fetch, pull and push really run), builds the release
 # binary and launches it. The first launch shows the real first-run questions; answer them with
-# `x` like a user. `stop` quits the app, stops Xvfb and deletes the scratch folder.
+# `x` like a user. `stop` quits the app, stops Xvfb and deletes the scratch folder. The app starts
+# with a clean environment; `--env` (repeatable) adds TERMINAL, VISUAL, EDITOR, XDG_DATA_DIRS or
+# XDG_CONFIG_DIRS to it, to stage the launcher lists of another machine.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -22,6 +24,7 @@ TARGET=${CARGO_TARGET_DIR:-target}
 [[ $TARGET == /* ]] || TARGET=$ROOT/$TARGET
 BIN=$TARGET/release/canopy
 STATE=$SIM/state
+SIM_ENV=() # extra variables for the app, from `start --env` (kept in STATE)
 
 die() { echo "usersim: $*" >&2; exit 1; }
 # The scratch folder's state is sourced and its Git configuration used, so it must be a folder of
@@ -43,18 +46,22 @@ launch() {
     XDG_CACHE_HOME="$SIM/home/.cache" XDG_STATE_HOME="$SIM/home/.local/state" \
     TMPDIR="$SIM/tmp" GIT_CONFIG_GLOBAL="$SIM/home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
     DISPLAY="$DISPLAY_NO" LIBGL_ALWAYS_SOFTWARE=1 CANOPY_LOG="${CANOPY_LOG:-canopy=info}" \
-    "$BIN" "$SIM/repo" >"$SIM/app.log" 2>&1 &
+    "${SIM_ENV[@]}" "$BIN" "$SIM/repo" >"$SIM/app.log" 2>&1 &
   echo "APP_PID=$!" >>"$STATE"
 }
 
 case ${1:-} in
 start)
   shift
-  kind=showcase size=1440x900
+  kind=showcase size=1440x900 SIM_ENV=()
   while [[ $# -gt 0 ]]; do
     case $1 in
       --kind) kind=$2; shift 2 ;;
       --size) size=$2; shift 2 ;;
+      --env)
+        [[ ${2:-} =~ ^(TERMINAL|VISUAL|EDITOR|XDG_DATA_DIRS|XDG_CONFIG_DIRS)=. ]] \
+          || die "--env takes TERMINAL, VISUAL, EDITOR, XDG_DATA_DIRS or XDG_CONFIG_DIRS as NAME=VALUE"
+        SIM_ENV+=("$2"); shift 2 ;;
       *) die "unknown option $1" ;;
     esac
   done
@@ -87,6 +94,8 @@ start)
   DISPLAY_NO=:$n
   Xvfb "$DISPLAY_NO" -screen 0 "${size}x24" -nolisten tcp >"$SIM/xvfb.log" 2>&1 &
   printf 'DISPLAY_NO=%s\nXVFB_PID=%s\n' "$DISPLAY_NO" "$!" >"$STATE"
+  # Sourced back by `load`, so each value is quoted for the shell.
+  ((${#SIM_ENV[@]} == 0)) || printf 'SIM_ENV=(%s)\n' "$(printf '%q ' "${SIM_ENV[@]}")" >>"$STATE"
   sleep 1
   launch
   echo "usersim: Canopy on $DISPLAY_NO, scratch $SIM (log: app.log)"
