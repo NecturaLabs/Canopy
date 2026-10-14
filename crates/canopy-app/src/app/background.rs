@@ -5,7 +5,7 @@ use super::*;
 use canopy_core::identity::{Scope, Source};
 
 use crate::identity_worker::Event as IdentityEvent;
-use crate::tab::{REQUESTS_REFRESH_EVERY, RepoTrust};
+use crate::tab::{Delivery, Notice, REQUESTS_REFRESH_EVERY, RepoTrust};
 use crate::views::settings_screen::source_label;
 
 /// What the first-launch identity question should do now.
@@ -18,6 +18,25 @@ enum IdentityStep {
     Settled,
     /// Show the question.
     Ask,
+}
+
+/// The kind and the filter topic a repository [`Notice`](crate::tab::Notice) is announced under.
+fn notice_route(ok: bool, delivery: Delivery) -> (ToastKind, Topic) {
+    match (ok, delivery) {
+        (true, _) => (ToastKind::Success, Topic::Finished),
+        (false, Delivery::Attention) => (ToastKind::Error, Topic::Attention),
+        (false, Delivery::Card | Delivery::Quiet) => (ToastKind::Error, Topic::Error),
+    }
+}
+
+/// Announces a repository notice under the topic and delivery it carries.
+fn announce_notice(toasts: &mut Toasts, ctx: &egui::Context, repo: &std::path::Path, n: Notice) {
+    let (kind, topic) = notice_route(n.ok, n.delivery);
+    if n.delivery == Delivery::Quiet {
+        toasts.push_quiet_for(ctx, kind, topic, n.title, n.body, repo);
+    } else {
+        toasts.push_for(ctx, kind, topic, n.title, n.body, Some(repo));
+    }
 }
 
 #[expect(
@@ -364,13 +383,7 @@ impl CanopyApp {
             tab.requests.refresh.interval =
                 requests_refresh_interval(self.settings.auto_fetch_for(&tab.path));
             for n in tab.poll(&self.gitlab_hosts) {
-                let (kind, topic) = if n.ok {
-                    (ToastKind::Success, Topic::Finished)
-                } else {
-                    (ToastKind::Error, Topic::Error)
-                };
-                self.toasts
-                    .push_for(ctx, kind, topic, n.title, n.body, Some(&tab.path));
+                announce_notice(&mut self.toasts, ctx, &tab.path, n);
             }
             if !tab.sidebar_restored
                 && let Some(key) = tab.sidebar_key()
@@ -652,6 +665,7 @@ mod tests {
     use canopy_core::identity::{Field, Person};
 
     use super::*;
+    use crate::settings::{DiffPrefs, NotificationPrefs};
 
     fn identity(name: &str, email: &str, explicit: bool) -> Identity {
         let field = |value: &str| Field {
@@ -673,6 +687,71 @@ mod tests {
         Identity {
             author: person.clone(),
             committer: person,
+        }
+    }
+
+    /// #234: what waits on the user is an attention notice, a failure is an error, a success is
+    /// finished work, whatever its delivery.
+    #[test]
+    fn notices_are_filed_under_the_topic_that_fits() {
+        assert_eq!(
+            notice_route(true, Delivery::Card),
+            (ToastKind::Success, Topic::Finished)
+        );
+        assert_eq!(
+            notice_route(false, Delivery::Attention),
+            (ToastKind::Error, Topic::Attention)
+        );
+        for delivery in [Delivery::Card, Delivery::Quiet] {
+            assert_eq!(
+                notice_route(false, delivery),
+                (ToastKind::Error, Topic::Error)
+            );
+        }
+    }
+
+    /// #35: a real fetch result goes through `poll` and the card filter. A foreground success is
+    /// a Finished notice that follows its switch and always reaches the center; a timer-driven
+    /// success announces nothing at all, whatever the switch says.
+    #[test]
+    fn a_fetch_result_follows_the_finished_filter() {
+        use crate::worker::{Event, OpKind, Worker};
+        let ctx = egui::Context::default();
+        let repo = PathBuf::from("/work/mote");
+        let fetched = |announce| Event::OpFinished {
+            label: "Fetching".into(),
+            kind: OpKind::Fetch,
+            announce,
+            result: Ok("Nothing new on any remote.".into()),
+        };
+        for finished in [false, true] {
+            let (worker, events, _jobs) = Worker::detached();
+            let mut tab = RepoTab::with_worker(repo.clone(), 100, DiffPrefs::default(), worker);
+            let mut toasts = Toasts::default();
+            toasts.set_prefs(NotificationPrefs {
+                finished,
+                ..NotificationPrefs::default()
+            });
+
+            events.send(fetched(false)).expect("background fetch");
+            for n in tab.poll(&[]) {
+                announce_notice(&mut toasts, &ctx, &repo, n);
+            }
+            assert_eq!(
+                toasts.counts(),
+                (0, 0),
+                "a quiet success is announced nowhere"
+            );
+
+            events.send(fetched(true)).expect("foreground fetch");
+            for n in tab.poll(&[]) {
+                announce_notice(&mut toasts, &ctx, &repo, n);
+            }
+            assert_eq!(
+                toasts.counts(),
+                (usize::from(finished), 1),
+                "Finished operations {finished}: a card only when on, the center either way"
+            );
         }
     }
 

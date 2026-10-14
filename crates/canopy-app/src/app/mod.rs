@@ -69,6 +69,7 @@ pub const OVERLAYS: &[&str] = &[
     "settings-integrations",
     "settings-accounts",
     "settings-updates",
+    "settings-notifications",
     "settings-keyboard",
     "settings-backup",
     "settings-repository",
@@ -439,6 +440,10 @@ impl CanopyApp {
             }
             Some("settings-updates") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates));
+            }
+            Some("settings-notifications") => {
+                app.settings_screen =
+                    Some(SettingsScreen::at(settings_screen::Section::Notifications));
             }
             Some("about") => app.dialogs.open(Dialog::About),
             Some("long-message") => {
