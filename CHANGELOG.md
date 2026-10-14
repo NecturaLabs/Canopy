@@ -95,8 +95,8 @@ commits since the previous build.
   edited.
 - Cancelling a sign-in prompt says "Sign-in was cancelled." instead of showing git's askpass error.
 - Fewer notification cards: a failure that repeats while its card shows raises no second card, an
-  automatic fetch that fails reaches the notification center and the bell but not a card, and a stop
-  on conflicts or a missing program is a Needs your attention notice, not an error.
+  automatic fetch that fails reaches the notification center and the bell but not a card, and a pull,
+  rebase or merge that stops on conflicts, or a missing program, is a Needs your attention notice, not an error.
 
 ### Changed
 

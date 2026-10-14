@@ -1156,6 +1156,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     // A pull or a rebase: it can autostash, and stopping on conflicts is not a
                     // failure.
                     let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_));
+                    // A merge stops on conflicts too, but never autostashes.
+                    let can_stop = integrates || matches!(op, Op::Merge(..));
                     let pull = match op {
                         Op::Pull {
                             strategy,
@@ -1223,9 +1225,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(error = %redacted(&e), "conflicts not checked");
                             false
                         });
-                    let stopped = integrates
-                        && result.is_err()
-                        && repo.stopped_on_conflicts().unwrap_or(false);
+                    let stopped =
+                        can_stop && result.is_err() && repo.stopped_on_conflicts().unwrap_or(false);
                     // Only a fast-forward was allowed and the branches diverged after all: a
                     // choice to make, not a failure (a pull checked beforehand asks first). A
                     // failed fetch brought nothing to combine: its error is the answer.
@@ -2929,6 +2930,46 @@ mod read_tests {
         git(&repo, &["commit", "-q", "-am", "ours"]);
         let worker = worker_with_canopys_choices(repo);
         worker.send(Job::Op(Op::Rebase("other".into())));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
+        });
+        assert!(
+            matches!(events.last(), Some(Event::Conflicted(_))),
+            "{events:?}"
+        );
+    }
+
+    /// #234: a merge that stops on conflicts is the user's to resolve, like a pull or a rebase
+    /// that does, and not a failed operation.
+    #[test]
+    fn a_merge_that_stops_on_conflicts_is_reported_as_stopped() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let repo = root.path().join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["switch", "-q", "-c", "other"]);
+        std::fs::write(repo.join("a.txt"), "theirs\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "theirs"]);
+        git(&repo, &["switch", "-q", "main"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "ours"]);
+        let worker = worker_with_canopys_choices(repo);
+        worker.send(Job::Op(Op::Merge(
+            "other".into(),
+            canopy_core::MergeMode::default(),
+        )));
         let events = events_until(&worker, |e| {
             matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
         });
