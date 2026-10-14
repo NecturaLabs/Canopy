@@ -929,8 +929,12 @@ fn synonyms(title: &str) -> &'static str {
         "File manager" => "folder explorer finder nautilus files dolphin show reveal",
         "Trusted folders" => "trust partial clone security",
         "Send crash reports" => "crash sentry telemetry error report",
-        "Log detail" => "log logging debug verbose diagnostics",
-        "Logs and crash reports" => "log logs diagnostics folder copy",
+        "Log detail" => {
+            "log logging debug verbose trace normal detailed everything canopy_log rust_log environment"
+        }
+        "Logs and crash files" => {
+            "log logs crash crashes diagnostics folder copy clipboard bug report"
+        }
         "Privacy Policy" | "Terms of Service" => {
             "legal privacy terms document consent accepted agreement"
         }
@@ -5266,8 +5270,8 @@ fn privacy(
     row_more(
         ui,
         "Log detail",
-        "Detailed also records every git command and API call with its timing.",
-        "Turn Detailed on while you reproduce a problem. The CANOPY_LOG environment variable overrides this.",
+        "Normal records operations and problems; Detailed adds every git command and API call.",
+        "Normal: start-up, each operation and its outcome, warnings and errors.\nDetailed: also every git command, API call and repository job, with timings.\nEverything: also the libraries' own messages, which Canopy does not filter.\n\nCanopy never logs tokens, passwords or answers to prompts, and removes URL credentials and commit messages from the git commands it logs.\n\nThe CANOPY_LOG or RUST_LOG environment variable overrides this setting.",
         |ui| {
             revert(ui, &mut s.log_level, &DEFAULTS.log_level, "Log detail");
             let before = s.log_level;
@@ -5283,29 +5287,33 @@ fn privacy(
         },
     );
     row_end(ui);
-    row_more(
-        ui,
-        "Logs and crash reports",
-        "Kept on this computer, one log per run, and never uploaded.",
-        "Copy diagnostics puts your versions, this run's log file and its latest warnings on the clipboard, for a bug report.",
-        |ui| {
-            // Right to left.
-            if Button::new("Copy diagnostics")
-                .icon(icon::CLIPBOARD_TEXT)
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::CopyDiagnostics);
-            }
-            if Button::new("Open folder")
-                .icon(icon::FOLDER_OPEN)
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::OpenLogs);
-            }
-        },
+    let logs = format!(
+        "One log file per run on this computer; the newest {} are kept. Nothing is uploaded.",
+        crate::logging::KEEP_RUNS,
     );
+    let more = format!(
+        "Open folder opens the logs folder. Each log stops at {} MB.\n\nCrash files are written when Canopy crashes, whether or not you send reports. They are in the crashes folder beside it, the newest {} kept. Send crash reports above is a separate, opt-in upload.\n\nCopy diagnostics puts this on the clipboard and sends nothing: the Canopy, Git and system versions, the run id, the log file's path, your log detail, theme, contrast and translucency settings, the number of open repositories, your crash-report answer and the last {} warnings and errors, with your home folder shown as ~.",
+        crate::logging::MAX_RUN_BYTES / (1024 * 1024),
+        crate::logging::KEEP_CRASHES,
+        crate::logging::RECENT,
+    );
+    row_more(ui, "Logs and crash files", &logs, &more, |ui| {
+        // Right to left.
+        if Button::new("Copy diagnostics")
+            .icon(icon::CLIPBOARD_TEXT)
+            .show(ui)
+            .clicked()
+        {
+            actions.push(Action::CopyDiagnostics);
+        }
+        if Button::new("Open folder")
+            .icon(icon::FOLDER_OPEN)
+            .show(ui)
+            .clicked()
+        {
+            actions.push(Action::OpenLogs);
+        }
+    });
     row_end(ui);
     open_accounts
 }
@@ -7340,6 +7348,23 @@ mod tests {
         let none = found("theme rebase", &mut settings);
         assert_eq!(none.total(), 0, "{none:?}");
         assert_eq!(found("qqqzzz", &mut settings).total(), 0);
+    }
+
+    /// #229: the Diagnostics rows are found by the words their new copy and synonyms use.
+    #[test]
+    fn a_search_finds_the_diagnostics_rows_by_their_words() {
+        let mut settings = Settings::default();
+        for (query, rows) in [
+            ("RUST_LOG", 1),
+            ("everything libraries", 1),
+            ("crashes folder", 1),
+            ("clipboard", 1),
+            ("log detail", 2),
+            ("crash files", 1),
+        ] {
+            let found = draw_screen(SettingsScreen::searching(query), &mut settings).search;
+            assert_eq!(found.count(Section::Privacy), rows, "{query}: {found:?}");
+        }
     }
 
     #[test]
