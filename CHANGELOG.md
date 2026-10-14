@@ -34,6 +34,11 @@ commits since the previous build.
 
 ### Fixed
 
+- Settings → Integrations marks the program your system would use as "<name> (Default)" instead of
+  "Recommended", and no longer names the `$TERMINAL`, `$VISUAL` or `$EDITOR` it came from. The desktop's
+  default text editor is offered only when it is installed, like the other defaults. Searching
+  Settings for "default terminal", "default editor" or "default file manager" finds the row.
+
 - Settings → Integrations lists each terminal, editor and file manager once: the program the system
   starts (kitty behind `xdg-terminal-exec`, Terminal or Finder on macOS, Windows Terminal) is no
   longer repeated beside its own entry, two entries of one program are one row, and a program's

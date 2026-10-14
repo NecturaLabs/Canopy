@@ -542,7 +542,7 @@ press and release in one frame can leave it there) is raised above it at once.
 
 A select can mark one option with the kit's Recommended badge, and then lists it first; its
 accessible description announces the recommendation without repeating the option name. The list reserves room for the
-badge and check, truncating only the painted label while keeping its full accessible name.
+badge and check, truncating only the painted label while keeping its full accessible name. A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
 
 Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
 open and closed; app-launcher selects stop at the 280-pixel text-field width. Number fields are
