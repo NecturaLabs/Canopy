@@ -2120,6 +2120,11 @@ fn merge_body(
     }
 }
 
+/// The welcome dialog's line on crash reports. True on every path into the dialog: a build without
+/// crash reporting never sends one, and `ui::legal::pending` asks the crash question (once, or
+/// again when reports carry more) after the Terms.
+const CRASH_REPORTS_LINE: &str = "Canopy sends crash reports to NecturaLabs only if you agree.";
+
 /// The first-start consent: the terms, then the crash-report question. Answered only with its
 /// buttons; bare Enter accepts nothing.
 fn consent(
@@ -2181,16 +2186,10 @@ fn consent(
                     "Accept the Terms of Service and the Privacy Policy to start."
                 })
                 .body(|ui| {
-                    // The crash question follows the first Terms; after an update it may be answered.
-                    let crash = if updated {
-                        "Crash reports are sent only if you agree. Change it in Settings → Privacy."
-                    } else {
-                        "Crash reports are sent only if you agree. Canopy asks next; change it later in Settings → Privacy."
-                    };
                     for (glyph, text) in [
                         (icon::LOCK_SIMPLE, "Canopy never sends your repositories or tokens to NecturaLabs. It talks to GitHub and GitLab directly."),
                         (icon::ARROW_CIRCLE_UP, "Canopy checks GitHub for a new version at most once a day. Turn it off in Settings → Updates."),
-                        (icon::FIRST_AID_KIT, crash),
+                        (icon::FIRST_AID_KIT, CRASH_REPORTS_LINE),
                     ] {
                         bullet(ui, glyph, p.accent, text);
                     }
@@ -3063,6 +3062,56 @@ mod tests {
                 .any(|t| t.contains("Remove the user name and password")),
             "{texts:?}"
         );
+    }
+
+    /// The welcome dialog tells, in its first start and updated-terms forms alike, that crash
+    /// reports go out only with the user's agreement, as the Privacy Policy does.
+    #[test]
+    fn the_welcome_dialog_says_crash_reports_need_agreement() {
+        for updated in [false, true] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            let mut dialog = Dialog::Consent {
+                step: Pending::Terms,
+                updated,
+                reading: None,
+            };
+            let mut picker = crate::ui::folder_picker::FolderPicker::default();
+            let mut texts = Vec::new();
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+                    super::show(
+                        &ctx,
+                        &mut dialog,
+                        None,
+                        &mut picker,
+                        false,
+                        &crate::updater::Updater::default(),
+                        "git version 2.55.0",
+                    );
+                });
+                output.textures_delta.clear();
+                texts = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                        _ => None,
+                    })
+                    .collect();
+            }
+            let line = "Canopy sends crash reports to NecturaLabs only if you agree.";
+            assert!(
+                texts.iter().any(|t| t == line),
+                "updated {updated}: {texts:?}"
+            );
+            assert!(
+                Document::Privacy
+                    .body()
+                    .contains("sends crash data to NecturaLabs only if you agree"),
+                "the Privacy Policy says the same"
+            );
+        }
     }
 
     /// The legal documents read in a card that fills most of the room a modal has (O1), at the

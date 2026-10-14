@@ -46,7 +46,7 @@ OPTIONS:
         --view <VIEW>         Initial view: history, changes or requests
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
-                              palette, consent, crash-consent, legal, credential, host-key,
+                              palette, consent, consent-updated, crash-consent, legal, credential, host-key,
                               merge, identity, settings-git, settings-git-pull, settings-git-commits, settings-git-config,
                               clear-identity, update-installed, update-running, trust-folder,
                               diff-options,
