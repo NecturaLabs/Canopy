@@ -30,6 +30,16 @@ pub enum View {
     Requests,
 }
 
+/// Whether Canopy trusts a repository (`trust.rs`). An untrusted one is read-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoTrust {
+    /// The repository thread has not answered yet: nothing is asked or shown, and the thread
+    /// refuses what an untrusted repository may not do all the same.
+    Unknown,
+    Trusted,
+    Untrusted,
+}
+
 /// A sidebar row picked by the user (or, on opening, the checked-out branch): it shows selected
 /// while History shows the commit it points at.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1132,8 +1142,14 @@ pub struct RepoTab {
     /// The promisor remote a read needed but Canopy did not download from, because the
     /// repository is outside every trusted folder; the status bar offers to trust it.
     pub downloads_refused: Option<String>,
-    /// Folders the worker found behind the download gate, including external Git directories.
+    /// Folders the worker found behind trusting this repository, including external Git
+    /// directories.
     pub trust_folders: Vec<PathBuf>,
+    /// Whether Canopy trusts the repository, as the worker last said.
+    pub trust: RepoTrust,
+    /// Whether the tab has asked the user about trust (they may have answered Don't trust, which
+    /// leaves the repository read-only until the banner's Trust).
+    pub trust_asked: bool,
     /// The newest version of the trusted list this tab has been told about: a refusal from an
     /// older one is out of date.
     trust_version: u64,
@@ -1257,6 +1273,8 @@ impl RepoTab {
             request_comments: Vec::new(),
             downloads_refused: None,
             trust_folders: Vec::new(),
+            trust: RepoTrust::Unknown,
+            trust_asked: false,
             trust_version: 0,
             avatars: crate::avatars::Avatars::default(),
             last_fetch: Instant::now(),
@@ -1882,6 +1900,8 @@ impl RepoTab {
     pub fn trust_changed(&mut self, version: u64) {
         self.trust_version = version;
         self.auto_fetch_failure = None;
+        // The worker tells the tab how the change left this repository.
+        self.worker.send(Job::RefreshStatus);
         if self.template_asked && !self.template_loaded {
             self.worker.send(Job::CommitTemplate);
         }
@@ -2371,6 +2391,17 @@ impl RepoTab {
                     }
                 }
                 Event::TrustFolders(folders) => self.trust_folders = folders,
+                Event::Trust { trusted, version } => {
+                    // An answer older than a change this tab knows of is out of date; the worker
+                    // answers the change next.
+                    if version >= self.trust_version {
+                        self.trust = if trusted {
+                            RepoTrust::Trusted
+                        } else {
+                            RepoTrust::Untrusted
+                        };
+                    }
+                }
                 Event::Signature { oid, status } => {
                     if Some(oid) == self.selected_commit {
                         self.signature = status.map(|s| (oid, s));
@@ -4704,6 +4735,53 @@ mod tests {
         tab.poll(&[]);
         assert!(tab.diff_error.is_none());
         assert!(tab.downloads_refused.is_none(), "nothing left to explain");
+        Ok(())
+    }
+
+    /// #228: the repository thread says whether the repository is trusted; an answer given
+    /// before a change of the list this tab already knows of is out of date, and the change
+    /// wakes the thread so that it answers again.
+    #[test]
+    fn a_trust_answer_older_than_a_known_change_is_ignored()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, jobs) = Worker::detached();
+        tab.worker = worker;
+        assert_eq!(
+            tab.trust,
+            RepoTrust::Unknown,
+            "nothing is shown before it answers"
+        );
+        events.send(Event::Trust {
+            trusted: false,
+            version: 1,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.trust, RepoTrust::Untrusted);
+
+        tab.trust_changed(2);
+        assert!(
+            jobs.try_iter().any(|job| matches!(job, Job::RefreshStatus)),
+            "the thread is asked to look again"
+        );
+        events.send(Event::Trust {
+            trusted: false,
+            version: 1,
+        })?;
+        events.send(Event::Trust {
+            trusted: true,
+            version: 2,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.trust, RepoTrust::Trusted);
+        events.send(Event::Trust {
+            trusted: false,
+            version: 1,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.trust, RepoTrust::Trusted, "the older answer is dropped");
         Ok(())
     }
 
