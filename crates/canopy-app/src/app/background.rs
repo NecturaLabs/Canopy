@@ -5,7 +5,7 @@ use super::*;
 use canopy_core::identity::{Scope, Source};
 
 use crate::identity_worker::Event as IdentityEvent;
-use crate::tab::REQUESTS_REFRESH_EVERY;
+use crate::tab::{Delivery, REQUESTS_REFRESH_EVERY};
 use crate::views::settings_screen::source_label;
 
 /// What the first-launch identity question should do now.
@@ -363,13 +363,18 @@ impl CanopyApp {
             tab.requests.refresh.interval =
                 requests_refresh_interval(self.settings.auto_fetch_for(&tab.path));
             for n in tab.poll(&self.gitlab_hosts) {
-                let (kind, topic) = if n.ok {
-                    (ToastKind::Success, Topic::Finished)
-                } else {
-                    (ToastKind::Error, Topic::Error)
+                let (kind, topic) = match (n.ok, n.delivery) {
+                    (true, _) => (ToastKind::Success, Topic::Finished),
+                    (false, Delivery::Attention) => (ToastKind::Error, Topic::Attention),
+                    (false, _) => (ToastKind::Error, Topic::Error),
                 };
-                self.toasts
-                    .push_for(ctx, kind, topic, n.title, n.body, Some(&tab.path));
+                if n.delivery == Delivery::Quiet {
+                    self.toasts
+                        .push_quiet_for(ctx, kind, topic, n.title, n.body, &tab.path);
+                } else {
+                    self.toasts
+                        .push_for(ctx, kind, topic, n.title, n.body, Some(&tab.path));
+                }
             }
             if !tab.sidebar_restored
                 && let Some(key) = tab.sidebar_key()

@@ -337,10 +337,23 @@ fn first_report(program: &str) -> bool {
     true
 }
 
+/// How a [`Notice`] reaches the user; with `ok` it decides the notification's topic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// A card for the outcome: Finished when it worked, Error when it failed.
+    Card,
+    /// Something waits on the user (conflicts to resolve, a program to install), so it is an
+    /// attention notice and not an error.
+    Attention,
+    /// Work the user did not start failed: the center and the bell hold it, no card.
+    Quiet,
+}
+
 /// Outcome of a finished operation, surfaced as a toast by the app.
 #[derive(Debug)]
 pub struct Notice {
     pub ok: bool,
+    pub delivery: Delivery,
     pub title: String,
     pub body: String,
 }
@@ -2493,6 +2506,7 @@ impl RepoTab {
                         Ok(_) => {}
                         Err(body) => notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: "Could not read the commit template".into(),
                             body,
                         }),
@@ -2512,6 +2526,7 @@ impl RepoTab {
                     if let Err(error) = &result {
                         notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: "Could not read the file's history".into(),
                             body: error.clone(),
                         });
@@ -2531,6 +2546,7 @@ impl RepoTab {
                     if let Err(error) = &result {
                         notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: "Could not blame the file".into(),
                             body: error.clone(),
                         });
@@ -2554,6 +2570,7 @@ impl RepoTab {
                     if let Err(error) = &result {
                         notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: "Could not load insights".into(),
                             body: error.clone(),
                         });
@@ -2564,6 +2581,7 @@ impl RepoTab {
                     for tool in tools.into_iter().filter(|t| first_report(&t.program)) {
                         notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Attention,
                             title: format!("{} is not installed", tool.program),
                             body: format!("{}. {}", tool.needed_for, tool.install.join(" ")),
                         });
@@ -2573,6 +2591,7 @@ impl RepoTab {
                     Ok(target) => self.force_push_offer = Some(target),
                     Err(e) => notices.push(Notice {
                         ok: false,
+                        delivery: Delivery::Card,
                         title: "Could not force push".into(),
                         body: e,
                     }),
@@ -2692,6 +2711,7 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: true,
+                                    delivery: Delivery::Card,
                                     title: outcome_title(&label, true),
                                     body: success_body(&kind, &out, &subject, branch.as_deref()),
                                 });
@@ -2720,6 +2740,11 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: false,
+                                    delivery: if announce {
+                                        Delivery::Card
+                                    } else {
+                                        Delivery::Quiet
+                                    },
                                     title: outcome_title(&label, false),
                                     body: e,
                                 });
@@ -2741,6 +2766,7 @@ impl RepoTab {
                     self.view = View::Changes;
                     notices.push(Notice {
                         ok: false,
+                        delivery: Delivery::Attention,
                         title: format!("{label} stopped on conflicts"),
                         body: "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.".into(),
                     });
@@ -2750,6 +2776,7 @@ impl RepoTab {
                     self.view = View::Changes;
                     notices.push(Notice {
                         ok: false,
+                        delivery: Delivery::Attention,
                         title: "Your changes conflict with what came in".into(),
                         body: "Canopy set your uncommitted changes aside for this, and putting them back conflicts with the new commits. Resolve the conflicted files in Changes. Your changes also stay in the stash list until you drop that stash.".into(),
                     });
@@ -2761,6 +2788,7 @@ impl RepoTab {
                     self.clear_obsolete_refusal();
                     notices.push(Notice {
                         ok: false,
+                        delivery: Delivery::Card,
                         title: "Git error".into(),
                         body: e,
                     });
@@ -2871,6 +2899,7 @@ impl RepoTab {
                                 self.requests.more_failed = true;
                                 notices.push(Notice {
                                     ok: false,
+                                    delivery: Delivery::Card,
                                     title: format!(
                                         "Could not load more {}s",
                                         forge.kind.request_noun()
@@ -2960,6 +2989,7 @@ impl RepoTab {
                         Ok(r) => {
                             notices.push(Notice {
                                 ok: true,
+                                delivery: Delivery::Card,
                                 title: format!("{} #{} created", kind.request_abbrev(), r.number),
                                 body: r.title.clone(),
                             });
@@ -2969,6 +2999,7 @@ impl RepoTab {
                         }
                         Err(e) => notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: format!("Could not create the {}", kind.request_noun()),
                             body: e,
                         }),
@@ -3007,6 +3038,7 @@ impl RepoTab {
                             }
                             notices.push(Notice {
                                 ok: true,
+                                delivery: Delivery::Card,
                                 title: outcome_title(&label, true),
                                 body: String::new(),
                             });
@@ -3020,6 +3052,7 @@ impl RepoTab {
                         }
                         Err(e) => notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: outcome_title(&label, false),
                             body: e,
                         }),
@@ -4750,6 +4783,39 @@ mod tests {
         // The fetch the user starts always says how it went.
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
+        Ok(())
+    }
+
+    /// #234: a background failure never interrupts (the center and the bell hold it), while one
+    /// the user started, and one that waits on them, does.
+    #[test]
+    fn notices_say_how_they_reach_the_user() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let fetch = |announce| Event::OpFinished {
+            label: "Fetching".into(),
+            kind: OpKind::Fetch,
+            announce,
+            result: Err("could not resolve host".into()),
+        };
+        let delivery =
+            |tab: &mut RepoTab, e: Event| -> Result<Delivery, Box<dyn std::error::Error>> {
+                events.send(e)?;
+                Ok(tab.poll(&[]).remove(0).delivery)
+            };
+        assert_eq!(delivery(&mut tab, fetch(false))?, Delivery::Quiet);
+        assert_eq!(delivery(&mut tab, fetch(true))?, Delivery::Card);
+        assert_eq!(
+            delivery(&mut tab, Event::Conflicted("Pulling".into()))?,
+            Delivery::Attention
+        );
+        assert_eq!(
+            delivery(&mut tab, Event::AutostashConflict)?,
+            Delivery::Attention
+        );
         Ok(())
     }
 
