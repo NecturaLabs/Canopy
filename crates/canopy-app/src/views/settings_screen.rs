@@ -3030,6 +3030,10 @@ fn git_config_editor(
         help_label(ui, "Saving Git configuration…");
     }
     for setting in Setting::ALL {
+        // Git reads it only to create a repository, never from one that exists.
+        if scope == Scope::Local && setting == Setting::InitialBranch {
+            continue;
+        }
         let value = facts.and_then(|facts| editor_value(facts, setting));
         let recommended = setting.recommendation_for(facts.and_then(|facts| facts.git));
         let invalid = facts.and_then(|facts| {
@@ -3178,6 +3182,17 @@ fn editor_value(facts: &GitFacts, setting: Setting) -> Option<&ConfigValue> {
 }
 
 fn git_value_label(setting: Setting, value: &str) -> String {
+    // A setting that takes a boolean or a word reads `yes` or `1` as `true`, as git does.
+    let value = match setting {
+        Setting::PullRebase | Setting::PullFastForward | Setting::Autocrlf if !value.is_empty() => {
+            match crate::repo_config::git_bool(value) {
+                Some(true) => "true",
+                Some(false) => "false",
+                None => value,
+            }
+        }
+        _ => value,
+    };
     match (setting, value) {
         (Setting::PullRebase, "false") => "Don't rebase",
         (Setting::PullRebase, "true") => "Rebase",
@@ -5906,6 +5921,7 @@ pub(crate) fn against_recommendation(
 mod tests {
     use super::*;
     use crate::repo_config::Signing;
+    use canopy_core::{cli, config};
 
     #[test]
     fn a_cli_token_in_use_is_not_called_saved() {
@@ -7916,6 +7932,22 @@ mod tests {
     }
 
     /// Rows name settings by their labels, never by git's keys.
+    /// A boolean written as `yes` or `1` names the option `true` does, in a row and in a note.
+    #[test]
+    fn a_spelled_out_boolean_has_the_label_of_its_option() {
+        for (setting, written, label) in [
+            (Setting::PullRebase, "1", "Rebase"),
+            (Setting::PullRebase, "off", "Don't rebase"),
+            (Setting::PullRebase, "merges", "Rebase preserving merges"),
+            (Setting::PullFastForward, "yes", "Allow fast-forward"),
+            (Setting::PullFastForward, "only", "Fast-forward only"),
+            (Setting::Autocrlf, "on", "CRLF on checkout"),
+            (Setting::Autocrlf, "input", "LF on commit"),
+        ] {
+            assert_eq!(git_value_label(setting, written), label, "{written}");
+        }
+    }
+
     #[test]
     fn the_git_page_never_shows_a_configuration_key() {
         let facts = GitFacts {
@@ -8012,6 +8044,416 @@ mod tests {
         let local = resets(Scope::Local);
         assert_eq!(local.len(), 1, "{local:?}");
         assert!(!local[0].disabled, "{local:?}");
+    }
+
+    /// Each setting a repository can override, with a global value and a different value for the
+    /// repository. The first branch is global only: [`only_the_global_editor_offers_the_first_branch`].
+    const CASES: [(Setting, &str, &str); 15] = [
+        (Setting::PullRebase, "false", "true"),
+        (Setting::PullFastForward, "true", "only"),
+        (Setting::PullAutostash, "true", "false"),
+        (Setting::FetchPrune, "true", "false"),
+        (Setting::FetchPruneTags, "false", "true"),
+        (Setting::RebaseAutostash, "true", "false"),
+        (Setting::MergeAutostash, "true", "false"),
+        (Setting::PushFollowTags, "true", "false"),
+        (Setting::SubmoduleRecurse, "true", "false"),
+        (Setting::PushDefault, "simple", "current"),
+        (Setting::ConflictStyle, "merge", "diff3"),
+        (Setting::CommitCleanup, "whitespace", "strip"),
+        (Setting::Autocrlf, "false", "input"),
+        (Setting::CommitSigning, "false", "true"),
+        (Setting::SigningFormat, "openpgp", "ssh"),
+    ];
+
+    fn repository() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("repository");
+        cli::run(dir.path(), &["init", "-q", "-b", "main"]).expect("init");
+        dir
+    }
+
+    fn git_output(dir: &Path, args: &[&str]) -> String {
+        cli::run_unchecked(dir, args)
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+            .expect("git runs")
+    }
+
+    /// The Git configuration editor for `repo` (or the global one), drawn from facts read by git now.
+    struct Editor {
+        ctx: egui::Context,
+        screen: SettingsScreen,
+        repo: Option<PathBuf>,
+        scope: Scope,
+        facts: GitFacts,
+    }
+
+    impl Editor {
+        fn open(repo: Option<&Path>) -> Self {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+            let mut editor = Self {
+                ctx,
+                screen: SettingsScreen::default(),
+                repo: repo.map(Path::to_path_buf),
+                scope: repo.map_or(Scope::Global, |_| Scope::Local),
+                facts: GitFacts::default(),
+            };
+            editor.reread();
+            editor
+        }
+
+        fn reread(&mut self) {
+            self.facts = crate::repo_config::read(self.repo.as_deref());
+            assert_eq!(self.facts.error, None, "git's configuration reads cleanly");
+        }
+
+        fn draw(&mut self, events: Vec<egui::Event>, actions: &mut Vec<Action>) {
+            let Self {
+                ctx,
+                screen,
+                repo,
+                scope,
+                facts,
+            } = self;
+            crate::ui::kit::testkit::frame(ctx, events, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    git_config_editor(ui, screen, repo.as_deref(), *scope, Some(facts), actions);
+                });
+            });
+        }
+
+        /// What the editor speaks once its layout has settled.
+        fn nodes(&mut self) -> Vec<crate::ui::kit::testkit::Spoken> {
+            let mut nodes = Vec::new();
+            for _ in 0..3 {
+                let Self {
+                    ctx,
+                    screen,
+                    repo,
+                    scope,
+                    facts,
+                } = self;
+                nodes = crate::ui::kit::testkit::spoken(ctx, |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        git_config_editor(
+                            ui,
+                            screen,
+                            repo.as_deref(),
+                            *scope,
+                            Some(facts),
+                            &mut Vec::new(),
+                        );
+                    });
+                });
+            }
+            nodes
+        }
+
+        /// What the row of `setting` shows now.
+        fn shown(&mut self, setting: Setting) -> Option<String> {
+            let nodes = self.nodes();
+            crate::ui::kit::testkit::find(&nodes, setting.label())
+                .and_then(|node| node.value.clone())
+        }
+
+        /// Presses the control named `name`; the actions it pushed.
+        fn press(&mut self, name: &str) -> Vec<Action> {
+            let nodes = self.nodes();
+            let at = crate::ui::kit::testkit::find(&nodes, name)
+                .unwrap_or_else(|| panic!("{name} is on the page"))
+                .bounds
+                .expect("it is drawn")
+                .center();
+            let mut actions = Vec::new();
+            self.draw(crate::ui::kit::testkit::press(at), &mut actions);
+            self.draw(crate::ui::kit::testkit::release(at), &mut actions);
+            actions
+        }
+
+        fn reset_name(setting: Setting) -> String {
+            format!("Reset {} to the global value", setting.label())
+        }
+
+        fn has_reset(&mut self, setting: Setting) -> bool {
+            let nodes = self.nodes();
+            crate::ui::kit::testkit::find(&nodes, &Self::reset_name(setting)).is_some()
+        }
+    }
+
+    /// The keys the repository's own file holds, with their values, one per line.
+    fn local_entries(dir: &Path) -> String {
+        git_output(dir, &["config", "--local", "--list"])
+    }
+
+    /// A row shows the value git uses, wherever it is set; a choice writes this repository's file and
+    /// nothing else; and the reset control returns the global value, leaving no key behind.
+    #[test]
+    fn every_repository_git_setting_is_shown_written_in_effect_and_reset() {
+        if !crate::repo_config::in_isolated_git_env(
+            "views::settings_screen::tests::every_repository_git_setting_is_shown_written_in_effect_and_reset",
+        ) {
+            return;
+        }
+        let dir = repository();
+        let repo = dir.path();
+        let global_file =
+            PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").expect("private global config"));
+        for (setting, global, local) in CASES {
+            let key = setting.key();
+            let label = |value: &str| git_value_label(setting, value);
+            config::set(repo, Scope::Global, setting, Some(global)).expect("global write");
+            let global_bytes = std::fs::read(&global_file).expect("global file");
+
+            // Set globally only: the repository shows the global value and has nothing to reset.
+            let mut editor = Editor::open(Some(repo));
+            assert_eq!(
+                editor.shown(setting),
+                Some(label(global)),
+                "{key}: inherited"
+            );
+            assert!(
+                !editor.has_reset(setting),
+                "{key}: nothing of its own to reset"
+            );
+            assert_eq!(git_output(repo, &["config", "--get", key]), global, "{key}");
+
+            // Chosen for the repository: one key in its own file, and it is the value in effect.
+            let before = local_entries(repo);
+            config::set(repo, Scope::Local, setting, Some(local)).expect("repository write");
+            let written: Vec<String> = local_entries(repo)
+                .lines()
+                .filter(|line| !before.lines().any(|old| old == *line))
+                .map(str::to_owned)
+                .collect();
+            assert_eq!(
+                written,
+                [format!("{}={local}", key.to_lowercase())],
+                "{key}"
+            );
+            assert_eq!(
+                std::fs::read(&global_file).expect("global file"),
+                global_bytes,
+                "{key}: the global file is untouched"
+            );
+            assert_eq!(git_output(repo, &["config", "--get", key]), local, "{key}");
+            let mut editor = Editor::open(Some(repo));
+            assert_eq!(
+                editor.shown(setting),
+                Some(label(local)),
+                "{key}: own value"
+            );
+
+            // Reset: the control asks for the key to be removed from this repository only.
+            let actions = editor.press(&Editor::reset_name(setting));
+            let [
+                Action::SaveGitConfig {
+                    repo: at,
+                    scope,
+                    setting: chosen,
+                    value: None,
+                },
+            ] = actions.as_slice()
+            else {
+                panic!("{key}: the reset pushes one removal, not {}", actions.len());
+            };
+            assert_eq!(
+                (at.as_deref(), *scope, *chosen),
+                (Some(repo), Scope::Local, setting)
+            );
+            config::set(repo, *scope, *chosen, None).expect("repository reset");
+            assert_eq!(local_entries(repo), before, "{key}: the file is as it was");
+            assert_eq!(git_output(repo, &["config", "--get", key]), global, "{key}");
+            let mut editor = Editor::open(Some(repo));
+            assert_eq!(editor.shown(setting), Some(label(global)), "{key}: back");
+            assert!(!editor.has_reset(setting), "{key}: reset is done");
+            assert_eq!(
+                std::fs::read(&global_file).expect("global file"),
+                global_bytes,
+                "{key}: the global file is untouched"
+            );
+        }
+    }
+
+    /// Git reads `init.defaultBranch` only to create a repository, never from one that exists, so a
+    /// repository's own value would change nothing: its editor leaves the row out (#230).
+    #[test]
+    fn only_the_global_editor_offers_the_first_branch() {
+        if !crate::repo_config::in_isolated_git_env(
+            "views::settings_screen::tests::only_the_global_editor_offers_the_first_branch",
+        ) {
+            return;
+        }
+        let dir = repository();
+        let first_branch = Setting::InitialBranch.label();
+        let repo = Editor::open(Some(dir.path())).nodes();
+        assert!(
+            crate::ui::kit::testkit::find(&repo, first_branch).is_none(),
+            "the repository page offers a setting nothing reads"
+        );
+        assert!(crate::ui::kit::testkit::find(&repo, Setting::PushDefault.label()).is_some());
+        let global = Editor::open(None).nodes();
+        assert!(crate::ui::kit::testkit::find(&global, first_branch).is_some());
+    }
+
+    /// The labels spoken by Settings → This repository for `/work/canopy`, with `facts` as what git's
+    /// configuration says there and `settings` as Canopy's own.
+    fn repository_labels(facts: GitFacts, mut settings: Settings) -> Vec<String> {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        ctx.enable_accesskit();
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let repo = Some(Path::new("/work/canopy"));
+        let mut tokens = TokenStore::default();
+        let mut screen = SettingsScreen::at(Section::Repository);
+        screen.facts.global.asked = true;
+        screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
+        screen.facts.repo.asked = true;
+        screen.facts.repo.path = repo.map(Path::to_path_buf);
+        screen.facts.repo.facts = Some(Arc::new(facts));
+        screen.facts.repo.read_at = Some(Instant::now());
+        let mut last = None;
+        for time in 1..=3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 6000.0))),
+                    time: Some(f64::from(time)),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui.ctx(),
+                        &mut screen,
+                        &mut settings,
+                        &mut tokens,
+                        &SettingsData {
+                            tabs: &[],
+                            update: &UpdateState::Idle,
+                            identity: IdentityView {
+                                repo,
+                                identity: None,
+                                error: None,
+                            },
+                        },
+                        &mut Vec::new(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            last = output.platform_output.accesskit_update;
+        }
+        last.expect("accesskit")
+            .nodes
+            .iter()
+            .filter_map(|(_, n)| n.label().map(str::to_owned))
+            .collect()
+    }
+
+    fn config_value(key: &str, value: &str) -> ConfigValue {
+        ConfigValue {
+            key: key.to_owned(),
+            value: value.to_owned(),
+            scope: "local".to_owned(),
+            origin: "file:/work/canopy/.git/config".to_owned(),
+            file: None,
+        }
+    }
+
+    /// Canopy's Pull strategy follows the repository's own "Follow my git config for pulls" and its
+    /// Prune on fetch the global Follow my git config: a row is offered exactly when Canopy's choice,
+    /// not git's configuration, decides what the operation does (#230).
+    #[test]
+    fn canopys_pull_and_prune_choices_show_only_where_canopy_decides() {
+        use canopy_core::{ConfigScope, ConfigSource, PullConfig, PullStrategy};
+        let pull_set = || PullConfig {
+            strategy: Some(PullStrategy::Rebase),
+            sources: vec![ConfigSource {
+                key: "pull.rebase".into(),
+                value: "true".into(),
+                scope: ConfigScope::Local,
+                origin: "file:/work/canopy/.git/config".into(),
+                file: None,
+            }],
+            invalid: Vec::new(),
+        };
+        let repo = PathBuf::from("/work/canopy");
+        let offered = |facts: GitFacts, global_follow: bool, repo_pull_follow: Option<bool>| {
+            let mut settings = Settings {
+                follow_git_config: global_follow,
+                ..Settings::default()
+            };
+            settings.repo_mut(&repo).pull_follow_config = repo_pull_follow;
+            let labels = repository_labels(facts, settings);
+            let has = |name: &str| labels.iter().any(|label| label == name);
+            (has("Pull strategy"), has("Prune on fetch"))
+        };
+        let nothing = GitFacts::default;
+        let pull = || GitFacts {
+            pull: Some(pull_set()),
+            ..GitFacts::default()
+        };
+        let prune = || GitFacts {
+            fetch_prune: Some(config_value("fetch.prune", "false")),
+            ..GitFacts::default()
+        };
+
+        // Git sets nothing: Canopy's choices decide, whatever the switches say.
+        for (global, own) in [
+            (true, None),
+            (false, None),
+            (true, Some(false)),
+            (false, Some(true)),
+        ] {
+            assert_eq!(
+                offered(nothing(), global, own),
+                (true, true),
+                "{global} {own:?}"
+            );
+        }
+        // A pull strategy in git's configuration: hidden while this repository follows it, whether
+        // that is its own switch or the global one it inherits.
+        assert_eq!(
+            offered(pull(), true, None),
+            (false, true),
+            "inherited follow"
+        );
+        assert_eq!(
+            offered(pull(), false, Some(true)),
+            (false, true),
+            "own follow on"
+        );
+        assert_eq!(
+            offered(pull(), true, Some(false)),
+            (true, true),
+            "own follow off"
+        );
+        assert_eq!(
+            offered(pull(), false, None),
+            (true, true),
+            "global follow off"
+        );
+        // Pruning: only the global switch decides; a repository has no switch of its own for it, so
+        // the pull switch changes nothing here.
+        assert_eq!(
+            offered(prune(), true, None),
+            (true, false),
+            "global follow on"
+        );
+        assert_eq!(
+            offered(prune(), true, Some(false)),
+            (true, false),
+            "pull switch is not prune's"
+        );
+        assert_eq!(
+            offered(prune(), false, None),
+            (true, true),
+            "global follow off"
+        );
+        assert_eq!(
+            offered(prune(), false, Some(true)),
+            (true, true),
+            "pull switch is not prune's"
+        );
     }
 
     /// The system's own program is the Default entry of a launcher's list, and only that.
@@ -8615,60 +9057,7 @@ mod tests {
     #[test]
     fn a_repository_hides_canopys_choice_while_git_decides_it() {
         use canopy_core::{ConfigScope, ConfigSource, PullConfig, PullStrategy};
-        let page = |facts: GitFacts| {
-            let ctx = egui::Context::default();
-            crate::ui::fonts::install(&ctx);
-            ctx.enable_accesskit();
-            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
-            let repo = Some(Path::new("/work/canopy"));
-            let mut settings = Settings::default();
-            let mut tokens = TokenStore::default();
-            let mut screen = SettingsScreen::at(Section::Repository);
-            screen.facts.global.asked = true;
-            screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
-            screen.facts.repo.asked = true;
-            screen.facts.repo.path = repo.map(Path::to_path_buf);
-            screen.facts.repo.facts = Some(Arc::new(facts));
-            screen.facts.repo.read_at = Some(Instant::now());
-            let mut last = None;
-            for time in 1..=3 {
-                let mut output = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            vec2(1440.0, 6000.0),
-                        )),
-                        time: Some(f64::from(time)),
-                        ..Default::default()
-                    },
-                    |ui| {
-                        show(
-                            ui.ctx(),
-                            &mut screen,
-                            &mut settings,
-                            &mut tokens,
-                            &SettingsData {
-                                tabs: &[],
-                                update: &UpdateState::Idle,
-                                identity: IdentityView {
-                                    repo,
-                                    identity: None,
-                                    error: None,
-                                },
-                            },
-                            &mut Vec::new(),
-                        );
-                    },
-                );
-                output.textures_delta.clear();
-                last = output.platform_output.accesskit_update;
-            }
-            last.expect("accesskit")
-                .nodes
-                .iter()
-                .filter_map(|(_, n)| n.label().map(str::to_owned))
-                .collect::<Vec<_>>()
-        };
+        let page = |facts: GitFacts| repository_labels(facts, Settings::default());
         let own = page(GitFacts::default());
         assert!(own.iter().any(|l| l == "Pull strategy"), "{own:?}");
         assert!(own.iter().any(|l| l == "Prune on fetch"), "{own:?}");

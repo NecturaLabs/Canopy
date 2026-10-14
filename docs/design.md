@@ -945,7 +945,8 @@ leaves the choice to Git. Enumerated values have one option each; unsupported co
 remain visible as text. Recommendations are badges, never a reason to lock a control. A global
 value is changed, never cleared; a repository's own value has the reset button, which removes the
 override and leaves includes and higher-priority scopes intact. The
-first-branch field requires Save and validates before writing. Writes temporarily disable the
+first-branch field requires Save and validates before writing; it is on the Git page only, because
+Git reads `init.defaultBranch` to create a repository, never from one that exists. Writes temporarily disable the
 editor, then reread facts and show success or Git's error. Use recommended confirms its global
 scope and preserves signing, hooks, identity and line endings.
 

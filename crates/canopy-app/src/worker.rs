@@ -2170,6 +2170,7 @@ mod read_tests {
     use canopy_core::Error;
 
     use super::*;
+    use crate::repo_config::in_isolated_git_env;
 
     fn oid(n: u8) -> Oid {
         Oid::from_bytes(&[n; 20]).expect("oid")
@@ -2598,37 +2599,6 @@ mod read_tests {
             ..canopy_core::GitOptions::default()
         }));
         worker
-    }
-
-    /// Runs the calling test again in a child process whose git sees no global or system
-    /// configuration, so the developer's own settings (`pull.rebase`, for one) cannot decide the
-    /// result. True in the child, where the test body runs; false in the parent once the child
-    /// has passed.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the test runs itself again in a child process"
-    )]
-    fn in_isolated_git_env(test: &str) -> bool {
-        if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
-            return true;
-        }
-        let home = tempfile::tempdir().expect("tempdir");
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([test, "--exact", "--test-threads=1"])
-            .env("CANOPY_TEST_ISOLATED_GIT", "1")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"))
-            .env("HOME", home.path())
-            .env("XDG_CONFIG_HOME", home.path())
-            .output()
-            .expect("test binary runs");
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(
-            out.status.success() && stdout.contains("1 passed"),
-            "{test} in an isolated git environment:\n{stdout}{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        false
     }
 
     /// A divergence says whether the git configuration asked for fast-forwards only, so the
