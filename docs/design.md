@@ -21,8 +21,8 @@ defined. When a token or component changes, update this document in the same cha
 ## Colour tokens
 
 Every colour is defined in `ui/theme.rs` and nowhere else. A theme is a `Palette`: the colours
-both styles share (text, accents, status, lanes, syntax, focus, selection, shadows, scrim, glass)
-plus two `Surfaces` sets, one per Style. Views read the active set with `theme::surfaces(ctx)` and
+both styles share (text, accents, status, lanes, syntax, request fields, focus, selection, shadows,
+scrim, glass) plus two `Surfaces` sets, one per Style. Views read the active set with `theme::surfaces(ctx)` and
 the shared colours with `theme::palette(ctx)`.
 
 - **Standard** (the default) is round-2 concept 1: flat fills, two-tone chrome (`panel` one step
@@ -113,8 +113,23 @@ tall (`theme::MIN_TARGET`), WCAG 2.5.8's 24 CSS pixels read as 24 points at 100%
 `LinkButton::max_text_width` elides long labels while retaining the whole accessible name; the
 commit header uses it for long author names and provides their full text in a tooltip.
 
+### Request field colours
+
+`Palette::fields` gives each field of a pull or merge request its own colour, so the eye finds the
+number, the author or the age by colour as well as by place: `number` (orange), `author` (teal),
+`time` (olive), `label` (pink; the ink of a label and the base of its 24% tint) and `comments`
+(violet; the details header only, since the list response carries no count). The title is `text` and the state is its tone's colour (`state_style`). The hues avoid
+the indigo accent, the green, amber and red of status, and each other: every token is 4.5:1 on the
+plain grounds, hover states and selected rows, and at least 7 OKLab points (x100) from the other
+fields and 6 from `text`, `text_dim`, `text_faint` and `accent` (`every_theme_keeps_the_request_fields_apart`;
+3 and 2.5 at high contrast, where every colour is pulled toward the ends of the lightness scale).
+Colour never carries a field alone: each keeps its place on the row, the number its `#` or `!`,
+the comment count its icon and tooltip. The tokens are lifted for high contrast and kept by the
+Custom theme like the syntax colours. `Badge::hue(color)` draws a label as a tint of `label` with
+`Palette::ink` text. The semantic pill roles and the Backlog view reuse these tokens.
+
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
-syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
+syntax, request fields, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
 in both styles; `Palette::ink` keeps coloured text readable on its own tint.
 
 ### Lane colours
@@ -358,12 +373,24 @@ in the density's metrics:
   visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
   the full state and branch pair remain available on hover.
-- A request row has no fixed height: the state glyph and `#number title` (medium weight, the
-  number in `text_faint`, up to two lines, an ellipsis only after the second), the checks and
-  review glyphs at the right of the first line, author and age in `small_size` `text_faint` with
-  the label chips right-aligned on that line, and the description in `small_size` `text_dim` (up to
+- A request row has no fixed height. Comfortable (the default): the state glyph and `#number title`
+  (medium weight, the number in `fields.number`, the title in `text`, up to two lines, an ellipsis
+  only after the second), the checks and review glyphs at the right of the first line, the author
+  (`fields.author`) and age (`fields.time`) in `small_size` with the label chips (a tint of
+  `fields.label`) right-aligned on that line, and the description in `small_size` `text_dim` (up to
   two lines). A row is at least `request_row_height` and otherwise as tall as its text plus `SM`
-  above and below; the list virtualises by the measured heights.
+  above and below; the list virtualises by the measured heights. Dense: one line, the state glyph,
+  `#number title` cut with an ellipsis, the label chips (at most 40% of the line, with "+N" or "N
+  labels" when they do not all fit) and the check and review glyphs at the right, no author line
+  and no preview (the tooltip and the row's spoken name keep them); a row is the height of a list
+  row (`row_height`) unless the text is taller.
+- The list's toolbar has a list-dashes `IconButton` ("Show dense items" / "Show comfortable items",
+  active while dense) between Reload and New request. It switches the list items only: the
+  whole-app density (Settings, Appearance, Density) sets metrics, radii and type size for every
+  view and is stored on its own (`Settings::request_density`, `Settings, Appearance, Request list`;
+  default Comfortable), so Dense text in a Comfortable app and the other way round are both valid.
+  The request details header colours its number, author, update time, labels and comment count
+  from the same field tokens.
 - The list's header holds the filter field (`SearchField`, the Filter command's chord as its
   keycap) with a funnel `IconButton` (active while a filter other than the text is set, named
   "Filters: N on") and a sort `IconButton` (a menu with the current choice checked). The funnel's

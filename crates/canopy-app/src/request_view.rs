@@ -11,6 +11,42 @@ use serde::{Deserialize, Serialize};
 
 use crate::settings::{known, known_option};
 
+/// How much of each request the list shows: the comfortable item (title, then the author and age,
+/// then the start of the description) or a dense one-line item. It changes list items only; the
+/// whole-app density in Settings, Appearance is separate and stored on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum RequestDensity {
+    #[default]
+    Comfortable,
+    Dense,
+}
+
+impl RequestDensity {
+    pub const ALL: [Self; 2] = [Self::Comfortable, Self::Dense];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Comfortable => "Comfortable",
+            Self::Dense => "Dense",
+        }
+    }
+
+    /// The density for a `--request-density` argument.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|d| d.label().eq_ignore_ascii_case(name))
+    }
+
+    /// The other one, for the list's toggle.
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Comfortable => Self::Dense,
+            Self::Dense => Self::Comfortable,
+        }
+    }
+}
+
 /// Which drafts the list keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DraftChoice {
