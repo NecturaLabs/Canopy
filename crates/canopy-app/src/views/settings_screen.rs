@@ -5053,7 +5053,11 @@ fn accounts(
         account(ForgeKind::GitHub, "github.com"),
         account(ForgeKind::GitLab, "gitlab.com"),
     ];
-    for h in settings.gitlab_host_list() {
+    for h in settings
+        .gitlab_host_list()
+        .iter()
+        .filter_map(|h| canopy_core::forge::normalise_host(h))
+    {
         hosts.push(account(ForgeKind::GitLab, &h));
     }
     for f in forges {

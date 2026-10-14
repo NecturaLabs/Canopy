@@ -212,11 +212,9 @@ fn read_login(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
         kind,
         message: shorten(message),
     };
-    // A host that could be taken for an option, or hold a second argument, never reaches a CLI.
-    if host.is_empty()
-        || host.starts_with('-')
-        || host.contains(|c: char| c.is_whitespace() || c.is_control())
-    {
+    // Only a host name (and port) ever reaches a CLI or the command Canopy offers to copy: nothing
+    // that could be taken for an option, a second argument or shell syntax.
+    if !is_host_name(host) {
         return Err(failed("the host name is not valid"));
     }
     let deadline = Instant::now() + CLI_TIMEOUT;
@@ -289,6 +287,27 @@ fn read_login(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
     }
 }
 
+/// Whether `host` is `name` or `name:port`, the name made of letters, digits, `.`, `_` and `-` and not
+/// starting with `-` or `.`.
+fn is_host_name(host: &str) -> bool {
+    let (name, port) = host
+        .split_once(':')
+        .map_or((host, None), |(n, p)| (n, Some(p)));
+    !name.is_empty()
+        && !name.starts_with(['-', '.'])
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && port
+            .is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether the key of an `auth status` line, as `glab` and `gh` word it, introduces a token.
+fn names_a_token(key: &str) -> bool {
+    let key = key.to_lowercase();
+    key == "token" || key.starts_with("token found")
+}
+
 /// What a CLI says when it is not signed in to a host.
 const SIGNED_OUT_WORDS: [&str; 8] = [
     "not logged",
@@ -301,13 +320,24 @@ const SIGNED_OUT_WORDS: [&str; 8] = [
     "unknown host",
 ];
 
-/// CLI output made safe to show: no token the CLI printed, no known token shapes.
+/// CLI output made safe to show: no token the CLI printed (a line that names a token has its value
+/// replaced, whoever it belongs to), no known token shapes.
 fn hide(text: &str, token: Option<&str>) -> String {
     let text = match token {
         Some(t) if !t.is_empty() => text.replace(t, "<redacted>"),
         _ => text.to_owned(),
     };
-    shorten(&text)
+    let text: Vec<String> = text
+        .lines()
+        .map(|line| {
+            let bare = line.trim_start_matches(|c: char| !c.is_alphanumeric());
+            match bare.split_once(':') {
+                Some((key, _)) if names_a_token(key) => format!("{key}: <redacted>"),
+                _ => line.to_owned(),
+            }
+        })
+        .collect();
+    shorten(&text.join("\n"))
 }
 
 /// A token is one visible word, no longer than any real one.
@@ -961,6 +991,15 @@ esac"#,
             "a b",
             "a\nb",
             "github.com --hostname evil",
+            "$(id)",
+            "a;b",
+            "a`b`",
+            "a|b",
+            ".hidden",
+            "host:",
+            "host:12ab",
+            "host:123456",
+            "host:80:80",
         ] {
             assert!(
                 matches!(
@@ -971,6 +1010,34 @@ esac"#,
             );
         }
         assert_eq!(fake.calls(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn host_names_with_ports_and_underscores_are_accepted() {
+        for host in [
+            "github.com",
+            "ghe.corp:8443",
+            "git_lab.corp-1.example",
+            "localhost",
+        ] {
+            assert!(is_host_name(host), "{host}");
+        }
+    }
+
+    /// A token the CLI prints in a line that names it never reaches the message, even one without a
+    /// known prefix and one on a line that belongs to no account.
+    #[test]
+    fn a_token_without_a_known_shape_is_hidden_from_a_failure() {
+        const BARE: &str = "0123456789abcdef0123456789abcdef";
+        let fake = Fake::new(&format!(
+            r#"echo "  ✗ gitlab.com: API call failed: 401 Unauthorized" >&2
+echo "  ✓ Token found in configuration file (plaintext): {BARE}" >&2
+exit 1"#
+        ));
+        let err = fake.login(ForgeKind::GitLab, "gitlab.com").unwrap_err();
+        let shown = format!("{err} {err:?}");
+        assert!(shown.contains("API call failed: 401"), "{shown}");
+        assert!(!shown.contains(BARE), "{shown}");
     }
 
     #[test]
