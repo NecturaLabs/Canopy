@@ -55,6 +55,8 @@ struct ListState {
 pub struct Select<'a, T: PartialEq + Clone> {
     value: &'a mut T,
     recommended: Option<T>,
+    /// Accessible descriptions of options, read after the name (a note the label already shows).
+    described: Vec<(T, &'a str)>,
     report_reselection: bool,
     /// In the order listed: the recommended value first.
     options: std::borrow::Cow<'a, [(T, &'a str)]>,
@@ -80,6 +82,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         Self {
             value,
             recommended: None,
+            described: Vec::new(),
             report_reselection: false,
             options: std::borrow::Cow::Borrowed(options),
             label: None,
@@ -108,6 +111,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             self.options.to_mut()[..=at].rotate_right(1);
         }
         self.recommended = Some(value);
+        self
+    }
+    /// Gives `value` an accessible description in the list, read after its name: for a mark the
+    /// label already carries in text ("kitty (Default)").
+    pub fn described(mut self, value: T, description: &'a str) -> Self {
+        self.described.push((value, description));
         self
     }
     /// Reports an explicit selection even when it equals the current value, for pinning an
@@ -713,6 +722,10 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                             n.set_selected(on);
                             if recommended {
                                 n.set_description("Recommended");
+                            } else if let Some((_, note)) =
+                                self.described.iter().find(|(v, _)| v == value)
+                            {
+                                n.set_description(*note);
                             }
                         });
                     }
@@ -1105,6 +1118,42 @@ mod tests {
         });
         let names: Vec<&str> = STRATEGIES.iter().map(|(_, l)| *l).collect();
         assert_eq!(parts, names, "the options are the list's parts");
+    }
+
+    /// An option can carry an accessible description its label already shows in words.
+    #[test]
+    fn a_described_option_is_spoken_with_its_description() {
+        let ctx = testkit::ctx();
+        let options = [(0_u8, "kitty (Default)"), (1, "Foot")];
+        let mut v = 0_u8;
+        let mut draw = |ui: &mut Ui| {
+            Select::new(&mut v, &options)
+                .described(0, "Default")
+                .name("Terminal")
+                .id_salt("d")
+                .show(ui)
+        };
+        let mut id = Id::NULL;
+        frame(&ctx, Vec::new(), |ui| id = draw(ui).id);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| id = draw(ui).id);
+        frame(&ctx, key(Key::ArrowDown), |ui| id = draw(ui).id);
+        let nodes = spoken(&ctx, |ui| {
+            draw(ui);
+        });
+        let mut described: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.role == Role::ListBoxOption)
+            .map(|n| (n.label.as_deref(), n.description.as_deref()))
+            .collect();
+        described.sort_unstable();
+        assert_eq!(
+            described,
+            [
+                (Some("Foot"), None),
+                (Some("kitty (Default)"), Some("Default"))
+            ]
+        );
     }
 
     /// REVIEW-KIT-11: a long list (every branch) builds only the rows in view.

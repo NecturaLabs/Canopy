@@ -925,9 +925,9 @@ fn synonyms(title: &str) -> &'static str {
         "Clone protocol" => "ssh https url remote",
         "Self-hosted GitLab" => "gitlab host enterprise server",
         "Pull and merge requests" => "pr mr github gitlab api hosting offline",
-        "Terminal" => "console shell command line $terminal kitty alacritty",
-        "Editor" => "ide vscode code zed sublime vim open file $editor $visual",
-        "File manager" => "folder explorer finder nautilus files dolphin show reveal",
+        "Terminal" => "default console shell command line $terminal kitty alacritty",
+        "Editor" => "default ide vscode code zed sublime vim open file $editor $visual",
+        "File manager" => "default folder explorer finder nautilus files dolphin show reveal",
         "Trusted folders" => "trust partial clone security",
         "Send crash reports" => "crash sentry telemetry error report",
         "Log detail" => "log logging debug verbose diagnostics",
@@ -4810,8 +4810,32 @@ fn is_system_choice(
     system.is_some_and(|s| s.is(app))
 }
 
-/// An editor, terminal or file manager: the system's (named, with where that comes from), one of
-/// the installed ones, or a command of the user's in a field that opens below.
+/// The entries of a launcher's list: the system's own program as the Default (named once, so not
+/// again among the installed ones), the other installed programs, then a command of the user's.
+fn launcher_options(
+    system: Option<&crate::system_apps::SystemChoice>,
+    installed: &[&crate::system_apps::App],
+) -> Vec<(LaunchChoice, String)> {
+    let mut options = vec![(
+        LaunchChoice::System,
+        system.map_or_else(
+            || "Default".to_owned(),
+            |choice| format!("{} (Default)", choice.name),
+        ),
+    )];
+    options.extend(
+        installed
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| !is_system_choice(system, a))
+            .map(|(i, a)| (LaunchChoice::App(i), a.name.clone())),
+    );
+    options.push((LaunchChoice::Custom, "Custom command…".to_owned()));
+    options
+}
+
+/// An editor, terminal or file manager: the system's (named), one of the installed ones, or a
+/// command of the user's in a field that opens below.
 fn launcher_row(
     ui: &mut Ui,
     launcher: Launcher,
@@ -4829,47 +4853,22 @@ fn launcher_row(
     let installed: Vec<&crate::system_apps::App> = apps
         .map(|a| a.installed(kind).collect())
         .unwrap_or_default();
-    let system_label = match (apps, system) {
-        (Some(_), Some(choice)) => format!("{} (Recommended)", choice.name),
-        _ => "Recommended".to_owned(),
-    };
-    // The system's own choice is listed once, as the recommendation: not again as an installed app.
-    let is_default = |app: &crate::system_apps::App| is_system_choice(system, app);
     let current = match launch_choice(value, custom.contains(&kind), &installed) {
-        LaunchChoice::App(i) if installed.get(i).is_some_and(|a| is_default(a)) => {
+        LaunchChoice::App(i)
+            if installed
+                .get(i)
+                .is_some_and(|a| is_system_choice(system, a)) =>
+        {
             LaunchChoice::System
         }
         other => other,
     };
-    let mut labels = vec![(LaunchChoice::System, system_label)];
-    labels.extend(
-        installed
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| !is_default(a))
-            .map(|(i, a)| (LaunchChoice::App(i), a.name.clone())),
-    );
-    labels.push((LaunchChoice::Custom, "Custom command…".to_owned()));
+    let labels = launcher_options(system, &installed);
     let options: Vec<(LaunchChoice, &str)> = labels.iter().map(|(c, l)| (*c, l.as_str())).collect();
     let mut chosen = current;
-    // An environment variable behind the system's choice, under the help (the control column is
-    // narrow); the select already marks the choice Recommended.
-    let origin = (current == LaunchChoice::System)
-        .then_some(system)
-        .flatten()
-        .filter(|c| matches!(c.origin, crate::system_apps::Origin::Env(_)));
-    let help_text = |ui: &mut Ui| {
-        help_label(ui, help);
-        if let Some(choice) = origin {
-            let tip = choice.command.as_ref().map_or_else(
-                || "Canopy asks the system to open it.".to_owned(),
-                |cmd| format!("Runs: {cmd}"),
-            );
-            Badge::new(choice.origin.tag()).tooltip(tip).show(ui);
-        }
-    };
-    row_layout(ui, title, None, help, &help_text, "", |ui| {
+    row_more(ui, title, help, "", |ui| {
         Select::new(&mut chosen, &options)
+            .described(LaunchChoice::System, "Default")
             .width(select_width(ui, options.iter().map(|(_, l)| *l)).min(FIELD_WIDTH))
             .name(title)
             .id_salt(("launcher", title))
@@ -7966,7 +7965,7 @@ mod tests {
     /// The system's own program is the Default entry of a launcher's list, and only that.
     #[test]
     fn the_system_program_is_listed_once_in_a_launchers_list() {
-        use crate::system_apps::{App, Kind, Origin, SystemChoice};
+        use crate::system_apps::{App, Kind, SystemChoice};
         let app = |name: &str, command: &str, id: &str| App {
             kind: Kind::Terminal,
             name: name.to_owned(),
@@ -7978,7 +7977,6 @@ mod tests {
             name: "kitty".to_owned(),
             command: Some("xdg-terminal-exec".to_owned()),
             id: Some("/usr/bin/kitty".to_owned()),
-            origin: Origin::Desktop,
         };
         assert!(is_system_choice(
             Some(&system),
@@ -8001,6 +7999,156 @@ mod tests {
             Some(&unlisted),
             &app("kitty", "kitty", "/usr/bin/kitty")
         ));
+    }
+
+    fn terminal(name: &str, command: &str, id: &str) -> crate::system_apps::App {
+        crate::system_apps::App {
+            kind: Kind::Terminal,
+            name: name.to_owned(),
+            command: command.to_owned(),
+            id: id.to_owned(),
+        }
+    }
+
+    fn labels(options: &[(LaunchChoice, String)]) -> Vec<&str> {
+        options.iter().map(|(_, l)| l.as_str()).collect()
+    }
+
+    /// The system's own program is "<name> (Default)", or plain "Default" before one is known;
+    /// nothing in a launcher's list says "Recommended" or names an environment variable.
+    #[test]
+    fn a_launchers_list_marks_the_systems_program_default() {
+        use crate::system_apps::SystemChoice;
+        let (foot, kitty) = (
+            terminal("Foot", "foot", "/usr/bin/foot"),
+            terminal("kitty", "kitty", "/usr/bin/kitty"),
+        );
+        let installed = [&foot, &kitty];
+        let system = SystemChoice {
+            name: "kitty".to_owned(),
+            command: Some("xdg-terminal-exec".to_owned()),
+            id: Some("/usr/bin/kitty".to_owned()),
+        };
+        let detected = launcher_options(Some(&system), &installed);
+        assert_eq!(
+            labels(&detected),
+            ["kitty (Default)", "Foot", "Custom command…"],
+            "the default is listed once, under its own name"
+        );
+        assert_eq!(
+            detected[1].0,
+            LaunchChoice::App(0),
+            "Foot is the first installed"
+        );
+        let undetected = launcher_options(None, &installed);
+        assert_eq!(
+            labels(&undetected),
+            ["Default", "Foot", "kitty", "Custom command…"]
+        );
+        for label in labels(&detected).into_iter().chain(labels(&undetected)) {
+            assert!(
+                !label.contains("Recommended") && !label.contains('$'),
+                "{label}"
+            );
+        }
+    }
+
+    /// Every launcher row, closed and open, says Default and never Recommended or `$VARIABLE`; the
+    /// Default entry's description is "Default".
+    #[test]
+    fn the_integrations_launchers_show_default_never_recommended() {
+        use crate::system_apps::{Apps, SystemChoice};
+        use crate::ui::kit::testkit::{frame, key, spoken};
+        let apps = Apps {
+            terminal: Some(SystemChoice {
+                name: "kitty".to_owned(),
+                command: Some("xdg-terminal-exec".to_owned()),
+                id: Some("/usr/bin/kitty".to_owned()),
+            }),
+            installed: vec![
+                terminal("Foot", "foot", "/usr/bin/foot"),
+                terminal("kitty", "kitty", "/usr/bin/kitty"),
+            ],
+            ..Apps::default()
+        };
+        let ctx = crate::ui::kit::testkit::ctx();
+        let (mut value, mut custom) = (String::new(), HashSet::new());
+        let mut draw = |ui: &mut Ui| {
+            for (title, kind) in [
+                ("Terminal", Kind::Terminal),
+                ("Editor", Kind::Editor),
+                ("File manager", Kind::FileManager),
+            ] {
+                let launcher = Launcher {
+                    title,
+                    help: "",
+                    command_help: "",
+                    kind,
+                };
+                launcher_row(ui, launcher, &mut value, Some(&apps), &mut custom);
+            }
+        };
+        let closed = spoken(&ctx, &mut draw);
+        let shown: Vec<_> = closed
+            .iter()
+            .filter(|n| n.role == egui::accesskit::Role::ComboBox)
+            .map(|n| n.value.as_deref())
+            .collect();
+        assert_eq!(
+            shown,
+            [Some("kitty (Default)"), Some("Default"), Some("Default")],
+            "the detected default; plain Default where nothing is detected"
+        );
+        // Tab reaches the terminal's select, and the arrow opens its list.
+        frame(&ctx, Vec::new(), &mut draw);
+        frame(&ctx, key(egui::Key::Tab), &mut draw);
+        frame(&ctx, Vec::new(), &mut draw);
+        frame(&ctx, key(egui::Key::ArrowDown), &mut draw);
+        let open = spoken(&ctx, &mut draw);
+        let mut options: Vec<_> = open
+            .iter()
+            .filter(|n| n.role == egui::accesskit::Role::ListBoxOption)
+            .map(|n| (n.label.as_deref(), n.description.as_deref()))
+            .collect();
+        options.sort_unstable();
+        assert_eq!(
+            options,
+            [
+                (Some("Custom command…"), None),
+                (Some("Foot"), None),
+                (Some("kitty (Default)"), Some("Default")),
+            ]
+        );
+        for n in closed.iter().chain(&open) {
+            for text in [&n.label, &n.value, &n.description].into_iter().flatten() {
+                assert!(
+                    !text.contains("Recommended") && !text.contains('$'),
+                    "{text}"
+                );
+            }
+        }
+    }
+
+    /// Each launcher row is found by its kind and by "default <kind>" (its help never says it).
+    #[test]
+    fn each_launcher_row_is_found_by_its_kind_and_as_the_default() {
+        let mut settings = Settings::default();
+        for query in [
+            "terminal",
+            "default terminal",
+            "editor",
+            "default editor",
+            "file manager",
+            "default file manager",
+        ] {
+            let (found, _) = draw_screen_in(SettingsScreen::searching(query), &mut settings, None);
+            assert_eq!(
+                found.search.count(Section::Integrations),
+                1,
+                "{query}: {:?}",
+                found.search
+            );
+        }
     }
 
     #[test]
