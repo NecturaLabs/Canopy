@@ -150,6 +150,7 @@ pub struct Launch {
     pub split: bool,
     pub style: Option<theme::Style>,
     pub density: Option<theme::Density>,
+    pub request_density: Option<crate::request_view::RequestDensity>,
     pub translucent: Option<bool>,
     pub high_contrast: Option<bool>,
     pub custom_theme: Option<crate::ui::custom_theme::CustomTheme>,
@@ -291,6 +292,9 @@ impl CanopyApp {
         }
         if let Some(density) = launch.density {
             settings.density = density;
+        }
+        if let Some(density) = launch.request_density {
+            settings.request_density = density;
         }
         if let Some(translucent) = launch.translucent {
             settings.translucent = translucent;
@@ -789,6 +793,11 @@ impl CanopyApp {
                 }
             }
         }
+        if s.request_density != before.request_density {
+            for t in &mut self.tabs {
+                t.request_density = s.request_density;
+            }
+        }
         if s.split_diff != before.split_diff || s.syntax_highlight != before.syntax_highlight {
             for t in &mut self.tabs {
                 t.split_diff = s.split_diff;
@@ -825,6 +834,7 @@ struct Watched {
     motion: crate::ui::motion::MotionPref,
     diff: settings::DiffPrefs,
     split_diff: bool,
+    request_density: crate::request_view::RequestDensity,
     syntax_highlight: bool,
     hosting_api: bool,
     /// A hash of the GitLab hosts text.
@@ -837,6 +847,7 @@ impl Watched {
             motion: s.motion,
             diff: s.diff,
             split_diff: s.split_diff,
+            request_density: s.request_density,
             syntax_highlight: s.syntax_highlight,
             hosting_api: s.hosting_api,
             gitlab_hosts: Self::hash(&s.gitlab_hosts),
@@ -1657,6 +1668,21 @@ mod tests {
         app.settings_changed(&ctx, before);
         assert_eq!(app.gitlab_hosts, ["git.example.com"]);
         assert_eq!(app.tabs[0].split_diff, app.settings.split_diff);
+    }
+
+    /// Choosing the request list's density in Settings reaches the open tabs.
+    #[test]
+    fn the_request_list_density_chosen_in_settings_reaches_the_tabs() {
+        use crate::request_view::RequestDensity;
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        assert_eq!(app.tabs[0].request_density, RequestDensity::Comfortable);
+        let before = Watched::of(&app.settings);
+        app.settings.request_density = RequestDensity::Dense;
+        app.settings_changed(&ctx, before);
+        assert_eq!(app.tabs[0].request_density, RequestDensity::Dense);
     }
 
     /// Each mask fans over the part of a card's square corner outside its rounded arc: the arc's
