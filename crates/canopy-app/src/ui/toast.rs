@@ -505,6 +505,12 @@ impl Toasts {
             .retain(|(id, _)| self.items.iter().any(|item| item.id == *id));
     }
 
+    /// How many cards are on screen and how many rows the center holds, for tests elsewhere.
+    #[cfg(test)]
+    pub(crate) fn counts(&self) -> (usize, usize) {
+        (self.items.len(), self.history.len())
+    }
+
     /// Notifies: into the center, and as a card when its topic shows as one.
     pub fn push(
         &mut self,
