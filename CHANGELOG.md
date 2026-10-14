@@ -94,6 +94,9 @@ commits since the previous build.
 - A merge message put into the commit boxes is dropped again when the merge is aborted, unless it was
   edited.
 - Cancelling a sign-in prompt says "Sign-in was cancelled." instead of showing git's askpass error.
+- Fewer notification cards: a failure that repeats while its card shows raises no second card, an
+  automatic fetch that fails reaches the notification center and the bell but not a card, and a stop
+  on conflicts or a missing program is a Needs your attention notice, not an error.
 
 ### Changed
 

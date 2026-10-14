@@ -20,6 +20,15 @@ enum IdentityStep {
     Ask,
 }
 
+/// The kind and the filter topic a repository [`Notice`](crate::tab::Notice) is announced under.
+fn notice_route(ok: bool, delivery: Delivery) -> (ToastKind, Topic) {
+    match (ok, delivery) {
+        (true, _) => (ToastKind::Success, Topic::Finished),
+        (false, Delivery::Attention) => (ToastKind::Error, Topic::Attention),
+        (false, Delivery::Card | Delivery::Quiet) => (ToastKind::Error, Topic::Error),
+    }
+}
+
 #[expect(
     clippy::fn_params_excessive_bools,
     reason = "the step is decided from independent facts about the app's state"
@@ -363,11 +372,7 @@ impl CanopyApp {
             tab.requests.refresh.interval =
                 requests_refresh_interval(self.settings.auto_fetch_for(&tab.path));
             for n in tab.poll(&self.gitlab_hosts) {
-                let (kind, topic) = match (n.ok, n.delivery) {
-                    (true, _) => (ToastKind::Success, Topic::Finished),
-                    (false, Delivery::Attention) => (ToastKind::Error, Topic::Attention),
-                    (false, _) => (ToastKind::Error, Topic::Error),
-                };
+                let (kind, topic) = notice_route(n.ok, n.delivery);
                 if n.delivery == Delivery::Quiet {
                     self.toasts
                         .push_quiet_for(ctx, kind, topic, n.title, n.body, &tab.path);
@@ -644,6 +649,26 @@ mod tests {
         Identity {
             author: person.clone(),
             committer: person,
+        }
+    }
+
+    /// #234: what waits on the user is an attention notice, a failure is an error, a success is
+    /// finished work, whatever its delivery.
+    #[test]
+    fn notices_are_filed_under_the_topic_that_fits() {
+        assert_eq!(
+            notice_route(true, Delivery::Card),
+            (ToastKind::Success, Topic::Finished)
+        );
+        assert_eq!(
+            notice_route(false, Delivery::Attention),
+            (ToastKind::Error, Topic::Attention)
+        );
+        for delivery in [Delivery::Card, Delivery::Quiet] {
+            assert_eq!(
+                notice_route(false, delivery),
+                (ToastKind::Error, Topic::Error)
+            );
         }
     }
 
