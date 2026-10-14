@@ -652,7 +652,7 @@ pub const DAYLIGHT: Palette = Palette {
         warning: hex(0xF8AC3D),
         danger: hex(0xF05656),
     },
-    diff_added: hex(0x02703F),
+    diff_added: hex(0x016B3B),
     diff_removed: hex(0xBB021D),
     control_border: hex(0x7C7D85),
     on_tooltip: hex(0xF4F4F5),
@@ -3880,8 +3880,20 @@ mod tests {
                     gate.need("diff_removed", p.diff_removed, on, *bg, 4.5);
                 }
                 gate.need("diff_added", p.diff_added, "added_bg", s.added_bg, 4.5);
-                gate.need("diff_removed", p.diff_removed, "removed_bg", s.removed_bg, 4.5);
-                gate.need("diff_added", p.diff_added, "added_gutter", s.added_gutter, 4.5);
+                gate.need(
+                    "diff_removed",
+                    p.diff_removed,
+                    "removed_bg",
+                    s.removed_bg,
+                    4.5,
+                );
+                gate.need(
+                    "diff_added",
+                    p.diff_added,
+                    "added_gutter",
+                    s.added_gutter,
+                    4.5,
+                );
                 gate.need(
                     "diff_removed",
                     p.diff_removed,
