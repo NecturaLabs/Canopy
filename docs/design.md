@@ -57,6 +57,21 @@ styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readab
 also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
 (`disabled_actions_read_on_banners`; high contrast 4.5:1 throughout).
 
+Diff colours are their own tokens, so a passing check and an added line do not share a green.
+`added_bg`, `removed_bg` and the line-number gutters `added_gutter`, `removed_gutter` are the row
+and gutter tints, and `diff_added` and `diff_removed` the ink of the `+` and `−` marks and of
+every diffstat (file lists, commit cards, the request summary line, the diffstat blocks); they are
+richer than `success` and `danger`, which keep meaning a passing or failing check and the other
+states. Code text keeps its contrast on the tinted rows (text 7:1, syntax colours 4.5:1) and the inks
+keep 4.5:1 on every ground, row state, diff row and gutter (`every_theme_meets_contrast_targets`). The
+pair is also apart in lightness, green lighter than red in dark themes, so it reads without hue.
+
+| Theme | `added_bg` / `added_gutter` | `removed_bg` / `removed_gutter` | `diff_added` | `diff_removed` |
+|---|---|---|---|---|
+| Midnight | `#032917` / `#013820` | `#411418` / `#5A1820` | `#34DE8A` | `#FF7076` |
+| Daylight | `#DDF6E7` / `#BDEDD2` | `#FFE9E7` / `#FFD1CE` | `#016B3B` | `#AF001A` |
+| Observatory | `#022C1D` / `#003D2A` | `#41141C` / `#5A1A27` | `#3FE0A2` | `#FF787C` |
+
 Three themes. Midnight and Daylight are round-2 concept 1, the look the owner locked: one design
 in dark and in light (`CONCEPT_ONE` in `theme.rs`, `the_default_themes_are_concept_one`).
 Observatory is the Midnight that build 690 shipped, kept as a theme of its own with its navy
