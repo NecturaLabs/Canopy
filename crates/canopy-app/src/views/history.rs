@@ -1374,7 +1374,9 @@ mod tests {
             "author must be readable: {visible:?}"
         );
         assert!(
-            visible.iter().any(|text| text == "1 file changed"),
+            visible
+                .iter()
+                .any(|text| text.eq_ignore_ascii_case("1 file changed")),
             "changed files must be readable: {visible:?}"
         );
         assert!(

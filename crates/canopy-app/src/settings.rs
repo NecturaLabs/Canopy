@@ -533,6 +533,9 @@ pub struct Settings {
     /// The request list's filters and sort, keyed like [`Settings::repo_sidebar`]. A repository
     /// left at the defaults has no entry.
     pub repo_requests: HashMap<PathBuf, crate::request_view::RequestView>,
+    /// Comfortable or dense items in the request list. Separate from [`Settings::density`].
+    #[serde(deserialize_with = "known")]
+    pub request_density: crate::request_view::RequestDensity,
     /// Per-repository choices that differ from the defaults above, keyed by working directory.
     pub repos: HashMap<PathBuf, RepoSettings>,
     /// Show diffs side by side (old left, new right) instead of unified.
@@ -644,6 +647,7 @@ impl Default for Settings {
             repo_diff: HashMap::new(),
             repo_sidebar: HashMap::new(),
             repo_requests: HashMap::new(),
+            request_density: crate::request_view::RequestDensity::Comfortable,
             repos: HashMap::new(),
             split_diff: false,
             syntax_highlight: true,
@@ -1147,6 +1151,35 @@ mod tests {
                 MotionPref::System
             )
         );
+    }
+
+    /// The request list's density is its own setting: Comfortable until chosen, remembered, set
+    /// apart from the whole-app density, and a saved value this build no longer has reads as the
+    /// default.
+    #[test]
+    fn the_request_list_density_is_remembered_apart_from_the_app_density() {
+        use crate::request_view::RequestDensity;
+        let fresh: Settings = serde_json::from_str("{}").expect("parse");
+        assert_eq!(fresh.request_density, RequestDensity::Comfortable);
+        assert_eq!(
+            Settings::default().request_density,
+            RequestDensity::Comfortable
+        );
+        let s = Settings {
+            request_density: RequestDensity::Dense,
+            ..Settings::default()
+        };
+        let back: Settings =
+            serde_json::from_value(serde_json::to_value(&s).expect("serialise")).expect("parse");
+        assert_eq!(back.request_density, RequestDensity::Dense);
+        assert_eq!(
+            back.density,
+            Density::Comfortable,
+            "the app's density is untouched"
+        );
+        let old: Settings =
+            serde_json::from_str(r#"{"request_density": "Spacious"}"#).expect("parse");
+        assert_eq!(old.request_density, RequestDensity::Comfortable);
     }
 
     #[test]

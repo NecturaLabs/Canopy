@@ -21,8 +21,8 @@ defined. When a token or component changes, update this document in the same cha
 ## Colour tokens
 
 Every colour is defined in `ui/theme.rs` and nowhere else. A theme is a `Palette`: the colours
-both styles share (text, accents, status, lanes, syntax, focus, selection, shadows, scrim, glass)
-plus two `Surfaces` sets, one per Style. Views read the active set with `theme::surfaces(ctx)` and
+both styles share (text, accents, status, lanes, syntax, request fields, focus, selection, shadows,
+scrim, glass) plus two `Surfaces` sets, one per Style. Views read the active set with `theme::surfaces(ctx)` and
 the shared colours with `theme::palette(ctx)`.
 
 - **Standard** (the default) is round-2 concept 1: flat fills, two-tone chrome (`panel` one step
@@ -56,6 +56,21 @@ styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readab
 3:1, 4.5:1 at high contrast). A banner's or callout's action can be disabled too, so disabled text
 also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
 (`disabled_actions_read_on_banners`; high contrast 4.5:1 throughout).
+
+Diff colours are their own tokens, so a passing check and an added line do not share a green.
+`added_bg`, `removed_bg` and the line-number gutters `added_gutter`, `removed_gutter` are the row
+and gutter tints, and `diff_added` and `diff_removed` the ink of the `+` and `−` marks and of
+every diffstat (file lists, commit cards, the request summary line, the diffstat blocks); they are
+richer than `success` and `danger`, which keep meaning a passing or failing check and the other
+states. Code text keeps its contrast on the tinted rows (text 7:1, syntax colours 4.5:1) and the inks
+keep 4.5:1 on every ground, row state, diff row and gutter (`every_theme_meets_contrast_targets`). The
+pair is also apart in lightness, green lighter than red in dark themes, so it reads without hue.
+
+| Theme | `added_bg` / `added_gutter` | `removed_bg` / `removed_gutter` | `diff_added` | `diff_removed` |
+|---|---|---|---|---|
+| Midnight | `#032917` / `#013820` | `#411418` / `#5A1820` | `#34DE8A` | `#FF7076` |
+| Daylight | `#DDF6E7` / `#BDEDD2` | `#FFE9E7` / `#FFD1CE` | `#016B3B` | `#AF001A` |
+| Observatory | `#022C1D` / `#003D2A` | `#41141C` / `#5A1A27` | `#3FE0A2` | `#FF787C` |
 
 Three themes. Midnight and Daylight are round-2 concept 1, the look the owner locked: one design
 in dark and in light (`CONCEPT_ONE` in `theme.rs`, `the_default_themes_are_concept_one`).
@@ -111,10 +126,25 @@ Copy link in its context menu (Copy address for an e-mail link). Every link is a
 tall (`theme::MIN_TARGET`), WCAG 2.5.8's 24 CSS pixels read as 24 points at 100% scale.
 
 `LinkButton::max_text_width` elides long labels while retaining the whole accessible name; the
-commit header uses it for long committer names and provides their full text in a tooltip.
+commit header uses it for long author names and provides their full text in a tooltip.
+
+### Request field colours
+
+`Palette::fields` gives each field of a pull or merge request its own colour, so the eye finds the
+number, the author or the age by colour as well as by place: `number` (orange), `author` (teal),
+`time` (olive), `label` (pink; the ink of a label and the base of its 24% tint) and `comments`
+(violet; the details header only, since the list response carries no count). The title is `text` and the state is its tone's colour (`state_style`). The hues avoid
+the indigo accent, the green, amber and red of status, and each other: every token is 4.5:1 on the
+plain grounds, hover states and selected rows, and at least 7 OKLab points (x100) from the other
+fields and 6 from `text`, `text_dim`, `text_faint` and `accent` (`every_theme_keeps_the_request_fields_apart`;
+3 and 2.5 at high contrast, where every colour is pulled toward the ends of the lightness scale).
+Colour never carries a field alone: each keeps its place on the row, the number its `#` or `!`,
+the comment count its icon and tooltip. The tokens are lifted for high contrast and kept by the
+Custom theme like the syntax colours. `Badge::hue(color)` draws a label as a tint of `label` with
+`Palette::ink` text. The semantic pill roles and the Backlog view reuse these tokens.
 
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
-syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
+syntax, request fields, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
 in both styles; `Palette::ink` keeps coloured text readable on its own tint.
 
 ### Lane colours
@@ -336,13 +366,15 @@ in the density's metrics:
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
-- Commit details keep the summary, copyable commit id, parent links and committer's picture and
-  name in the pane header. The summary elides first, with its full text in a tooltip; facts wrap
-  below it when their controls cannot fit. Dates remain in the History row's tooltip. Compact
+- Commit details keep the author's picture and name, the copyable commit id and the parent links
+  at the left of the pane header, before the summary. The summary takes the remaining width and
+  elides, with its full text in a tooltip; when the ids alone leave the summary too little room,
+  they take their own row and the summary goes below. Dates remain in the History row's tooltip. Compact
   windows move the same facts into the card's top. The name opens the commit identity card with
-  the original author, signature status, profile link and picture explanation.
-- The details card holds only the description and the Changed files section: the description
-  scrolls independently behind a fade, leaving room for the stats and two file rows. A commit
+  the committer (when it differs), signature status, profile link and picture explanation.
+- The details card holds only the description and the centred "N files changed" title with its
+  line counts above the file rows: the description scrolls independently behind a fade, leaving
+  room for the title and two file rows. A commit
   without a body goes directly to its files. File names take precedence over folders and have
   full-path tooltips; status badges and line counts use the kit. Automatic inspector height
   follows the header and card contents; a manual resize takes precedence.
@@ -356,12 +388,24 @@ in the density's metrics:
   visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
   the full state and branch pair remain available on hover.
-- A request row has no fixed height: the state glyph and `#number title` (medium weight, the
-  number in `text_faint`, up to two lines, an ellipsis only after the second), the checks and
-  review glyphs at the right of the first line, author and age in `small_size` `text_faint` with
-  the label chips right-aligned on that line, and the description in `small_size` `text_dim` (up to
+- A request row has no fixed height. Comfortable (the default): the state glyph and `#number title`
+  (medium weight, the number in `fields.number`, the title in `text`, up to two lines, an ellipsis
+  only after the second), the checks and review glyphs at the right of the first line, the author
+  (`fields.author`) and age (`fields.time`) in `small_size` with the label chips (a tint of
+  `fields.label`) right-aligned on that line, and the description in `small_size` `text_dim` (up to
   two lines). A row is at least `request_row_height` and otherwise as tall as its text plus `SM`
-  above and below; the list virtualises by the measured heights.
+  above and below; the list virtualises by the measured heights. Dense: one line, the state glyph,
+  `#number title` cut with an ellipsis, the label chips (at most 40% of the line, with "+N" or "N
+  labels" when they do not all fit) and the check and review glyphs at the right, no author line
+  and no preview (the tooltip and the row's spoken name keep them); a row is the height of a list
+  row (`row_height`) unless the text is taller.
+- The list's toolbar has a list-dashes `IconButton` ("Show dense items" / "Show comfortable items",
+  active while dense) between Reload and New request. It switches the list items only: the
+  whole-app density (Settings, Appearance, Density) sets metrics, radii and type size for every
+  view and is stored on its own (`Settings::request_density`, `Settings, Appearance, Request list`;
+  default Comfortable), so Dense text in a Comfortable app and the other way round are both valid.
+  The request details header colours its number, author, update time, labels and comment count
+  from the same field tokens.
 - The list's header holds the filter field (`SearchField`, the Filter command's chord as its
   keycap) with a funnel `IconButton` (active while a filter other than the text is set, named
   "Filters: N on") and a sort `IconButton` (a menu with the current choice checked). The funnel's
@@ -542,7 +586,7 @@ press and release in one frame can leave it there) is raised above it at once.
 
 A select can mark one option with the kit's Recommended badge, and then lists it first; its
 accessible description announces the recommendation without repeating the option name. The list reserves room for the
-badge and check, truncating only the painted label while keeping its full accessible name.
+badge and check, truncating only the painted label while keeping its full accessible name. A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
 
 Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
 open and closed; app-launcher selects stop at the 280-pixel text-field width. Number fields are
@@ -558,8 +602,8 @@ shared reset that returns both to the app defaults. Help text never types the re
 `Popover` is a small panel anchored to a control (diff options, the commit identity card, the theme
 quick-pick): the overlay surface with `card_pad` inside, 6 pt from the anchor and at least as wide.
 Clicking the anchor toggles it; a click outside or Esc closes it and gives focus back to the
-anchor. One popover is open at a time. The identity card in the commit details is one: the committer's name is a
-link button, the card holds the email with a copy button, the original author, the signature, a profile
+anchor. One popover is open at a time. The identity card in the commit details is one: the author's name is a
+link button, the card holds the email with a copy button, the committer when different, the signature, a profile
 or user-search link and the picture settings; signature results get distinct glyphs and spoken
 names (verified: green seal, invalid: danger X, unavailable: muted question, untrusted or expired:
 warning). The identity card names the result and signer. The same result mark appears beside

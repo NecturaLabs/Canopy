@@ -802,8 +802,8 @@ fn line_cell(
             .any(|m| line.text.starts_with(m));
     // The line's ground, its line-number gutter's ground, and the sign's colour.
     let (bg, gutter, fg, sign) = match line.kind {
-        LineKind::Added => (Some(s.added_bg), s.added_gutter, p.success, "+"),
-        LineKind::Removed => (Some(s.removed_bg), s.removed_gutter, p.danger, "−"),
+        LineKind::Added => (Some(s.added_bg), s.added_gutter, p.diff_added, "+"),
+        LineKind::Removed => (Some(s.removed_bg), s.removed_gutter, p.diff_removed, "−"),
         LineKind::Context if marker => {
             let tint = p.warning_tint();
             (Some(tint), tint, p.warning, "!")

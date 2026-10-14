@@ -10,6 +10,11 @@ commits since the previous build.
 
 ### Added
 
+- The pull and merge request list has a comfortable / dense toggle in its toolbar (and in Settings,
+  Appearance, Request list). Dense shows one line per request, with the number, title, labels and
+  checks and no preview; the choice is remembered and is separate from the whole-app density.
+  A request's number, author, age and labels each have their own colour in the list, and the
+  request's header adds its comment count in one too, in every theme.
 - Pull and merge requests use the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) as their credential,
   before the environment, a token saved in Canopy and git's credential helper, so no second token is
   needed. Canopy reads the CLI's token when the repository opens, keeps it in memory only and says why
@@ -33,6 +38,16 @@ commits since the previous build.
   uncommitted work and unmerged commits are protected, with safety checked again before removal.
 
 ### Fixed
+
+- Settings → Integrations marks the program your system would use as "<name> (Default)" instead of
+  "Recommended", and no longer names the `$TERMINAL`, `$VISUAL` or `$EDITOR` it came from. The desktop's
+  default text editor is offered only when it is installed, like the other defaults. Searching
+  Settings for "default terminal", "default editor" or "default file manager" finds the row.
+
+- Settings → Integrations lists each terminal, editor and file manager once: the program the system
+  starts (kitty behind `xdg-terminal-exec`, Terminal or Finder on macOS, Windows Terminal) is no
+  longer repeated beside its own entry, two entries of one program are one row, and a program's
+  server, daemon and client entries (`foot --server`, `footclient`) are not offered.
 
 - Oversized file-type changes say the diff exceeds the preview limit, not that the file is
   binary. Their type change and whole-file actions remain visible without false zero counts.
@@ -100,6 +115,11 @@ commits since the previous build.
 
 ### Changed
 
+- The commit details header now shows the author, the commit id and the parents before the commit
+  subject, and the subject takes the rest of the row. The commit identity card describes the
+  author and names the committer only when someone else committed.
+- The "Changed files" label is gone from the commit details; the "N files changed" line with its
+  line counts is now the section's centred title.
 - `canopy-core` no longer has `Repo::stage_all` and `Repo::delete_branch`, which only wrapped other
   functions: use `stage_all_except_repositories`, `delete_merged_branch` and `force_delete_branch`
   instead.

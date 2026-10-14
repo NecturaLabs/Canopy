@@ -18,33 +18,6 @@ pub enum Kind {
     FileManager,
 }
 
-/// Where the system's choice comes from: the quiet tag beside it in Settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Origin {
-    /// An environment variable (`VISUAL`, `EDITOR`, `TERMINAL`).
-    Env(&'static str),
-    /// The desktop's default application (Linux `xdg-mime`, `xdg-terminal-exec`).
-    Desktop,
-    /// The first of the usual programs found on this computer.
-    Found,
-    /// What the platform itself opens (TextEdit's default, Notepad, Finder, Explorer).
-    #[cfg_attr(
-        not(any(target_os = "macos", target_os = "windows")),
-        expect(dead_code, reason = "Linux names the desktop's choices")
-    )]
-    Platform,
-}
-
-impl Origin {
-    pub fn tag(self) -> String {
-        match self {
-            Self::Env(var) => format!("from ${var}"),
-            Self::Desktop | Self::Platform => "System default".to_owned(),
-            Self::Found => "Found on this computer".to_owned(),
-        }
-    }
-}
-
 /// The program the system would use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemChoice {
@@ -53,7 +26,16 @@ pub struct SystemChoice {
     /// The command to run, in Settings' command syntax ([`crate::platform`]). `None` leaves it to
     /// the platform's own opener.
     pub command: Option<String>,
-    pub origin: Origin,
+    /// Which installed program it is ([`App::id`]), when it is one the list can show.
+    pub id: Option<String>,
+}
+
+impl SystemChoice {
+    /// Whether `app` is this program: the list names the system's choice once, as the default,
+    /// however it is started (`xdg-terminal-exec` and `kitty` are one program).
+    pub fn is(&self, app: &App) -> bool {
+        self.id.as_deref() == Some(app.id.as_str())
+    }
 }
 
 /// An installed program Settings offers.
@@ -63,6 +45,9 @@ pub struct App {
     pub name: String,
     /// What Canopy saves and runs when it is chosen.
     pub command: String,
+    /// What the program is, never what it is called or how it starts: its executable on Linux,
+    /// its bundle on macOS, its App Paths name on Windows. One program found twice has one id.
+    pub id: String,
 }
 
 /// Everything detected.
@@ -89,7 +74,7 @@ impl Apps {
     }
 }
 
-/// `apps` by name, each command once per kind.
+/// `apps` by name, each program once per kind (the first by name when several entries start it).
 fn sorted(mut apps: Vec<App>) -> Vec<App> {
     apps.sort_by(|a, b| {
         a.name
@@ -98,7 +83,7 @@ fn sorted(mut apps: Vec<App>) -> Vec<App> {
             .then_with(|| a.command.cmp(&b.command))
     });
     let mut seen = std::collections::HashSet::new();
-    apps.retain(|a| seen.insert((a.kind, a.command.clone())));
+    apps.retain(|a| seen.insert((a.kind, a.id.clone())));
     apps
 }
 
@@ -227,16 +212,44 @@ const GUI_EDITORS: &[&str] = &[
     "notepad",
 ];
 
-/// The program a command runs, on `PATH` or by its path.
-fn on_path(program: &str, path: &[PathBuf]) -> bool {
+/// The file a command runs, on `PATH` or by its path.
+fn find_program(program: &str, path: &[PathBuf]) -> Option<PathBuf> {
     let candidate = Path::new(program);
     if candidate.components().count() > 1 {
-        return candidate.is_file();
+        return candidate.is_file().then(|| candidate.to_path_buf());
     }
-    path.iter().any(|dir| {
+    path.iter().find_map(|dir| {
         let full = dir.join(program);
-        full.is_file() || (cfg!(windows) && full.with_extension("exe").is_file())
+        if full.is_file() {
+            return Some(full);
+        }
+        let exe = full.with_extension("exe");
+        (cfg!(windows) && exe.is_file()).then_some(exe)
     })
+}
+
+/// Whether the program a command runs is there, on `PATH` or by its path.
+fn on_path(program: &str, path: &[PathBuf]) -> bool {
+    find_program(program, path).is_some()
+}
+
+/// An executable's identity ([`App::id`]): its folder resolved, so `/bin/kitty` and
+/// `/usr/bin/kitty` are one, under its own file name, so a link such as snap's `/snap/bin/code`
+/// stays the program it names rather than the `snap` it leads to.
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(dead_code, reason = "desktop entries are Linux's")
+)]
+fn executable_id(program: &str, path: &[PathBuf]) -> String {
+    let Some(file) = find_program(program, path) else {
+        return program.to_owned();
+    };
+    let resolved = file
+        .parent()
+        .and_then(|dir| std::fs::canonicalize(dir).ok())
+        .zip(file.file_name())
+        .map_or(file.clone(), |(dir, name)| dir.join(name));
+    resolved.to_string_lossy().into_owned()
 }
 
 /// `PATH`, split.
@@ -246,36 +259,37 @@ fn path_dirs() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// What `known` says of a graphical editor: its name, and its [`App::id`] when the list has it.
+type KnownEditor = (String, Option<String>);
+
 /// `$VISUAL`, then `$EDITOR`, when one names a graphical editor that is installed: `known` says
 /// whether a program is one (from desktop entries; the [`GUI_EDITORS`] list otherwise).
 fn editor_from_env(
     visual: Option<&str>,
     editor: Option<&str>,
     path: &[PathBuf],
-    known: &dyn Fn(&str) -> Option<String>,
+    known: &dyn Fn(&str) -> Option<KnownEditor>,
 ) -> Option<SystemChoice> {
-    [("VISUAL", visual), ("EDITOR", editor)]
-        .into_iter()
-        .find_map(|(var, value)| {
-            let value = value?.trim();
-            let (program, _) = split_command(value)?;
-            if !on_path(&program, path) {
-                return None;
-            }
-            let name = known(&program_name(&program))?;
-            Some(SystemChoice {
-                name,
-                command: Some(value.to_owned()),
-                origin: Origin::Env(var),
-            })
+    [visual, editor].into_iter().flatten().find_map(|value| {
+        let value = value.trim();
+        let (program, _) = split_command(value)?;
+        if !on_path(&program, path) {
+            return None;
+        }
+        let (name, id) = known(&program_name(&program))?;
+        Some(SystemChoice {
+            name,
+            command: Some(value.to_owned()),
+            id,
         })
+    })
 }
 
-/// What the [`GUI_EDITORS`] list knows about `program`: its own name.
-fn listed_gui_editor(program: &str) -> Option<String> {
+/// What the [`GUI_EDITORS`] list knows about `program`: its own name, and no list entry.
+fn listed_gui_editor(program: &str) -> Option<KnownEditor> {
     GUI_EDITORS
         .contains(&program.to_ascii_lowercase().as_str())
-        .then(|| program.to_owned())
+        .then(|| (program.to_owned(), None))
 }
 
 /// macOS applications Settings knows how to start, by bundle name.
@@ -325,6 +339,7 @@ fn mac_apps(bundles: &[String]) -> Vec<App> {
                     Kind::Editor => open,
                     Kind::Terminal | Kind::FileManager => format!("{open} %d"),
                 },
+                id: name.to_owned(),
             }
         })
         .collect();
@@ -397,6 +412,7 @@ fn windows_apps(paths: &[(String, String)]) -> Vec<App> {
                     (Kind::FileManager, _) => format!("{program} %d"),
                     _ => program,
                 },
+                id: exe.to_owned(),
             })
         })
         .collect();
@@ -413,9 +429,22 @@ mod linux {
     use std::process::Command;
 
     use super::{
-        App, Apps, Kind, Origin, SystemChoice, editor_from_env, listed_gui_editor, on_path, sorted,
+        App, Apps, Kind, SystemChoice, editor_from_env, executable_id, listed_gui_editor, on_path,
+        sorted,
     };
     use crate::platform::{program_name, quote};
+
+    /// Flags that make an entry a server or daemon of a program, which opens no window to work in
+    /// (`foot --server`); `--flag=value` counts too.
+    const HELPER_FLAGS: &[&str] = &["--server", "--daemon", "--gapplication-service"];
+
+    /// Commands that only reach a program already running (`footclient` needs `foot --server`).
+    const HELPER_COMMANDS: &[&str] = &["footclient", "urxvtc", "emacsclient"];
+
+    /// Programs that only start another one: an entry using one is told apart by its own id.
+    const LAUNCHERS: &[&str] = &[
+        "env", "flatpak", "snap", "sh", "bash", "dash", "zsh", "fish",
+    ];
 
     /// The largest desktop entry or terminal list read; the largest entries (many translations)
     /// are a few tens of kilobytes.
@@ -523,6 +552,25 @@ mod linux {
                 .as_deref()
                 .or_else(|| self.exec.first().map(String::as_str))
                 .is_some_and(|p| on_path(p, path))
+        }
+
+        /// A server, daemon or client of a program rather than a program to work in
+        /// ([`HELPER_FLAGS`], [`HELPER_COMMANDS`]).
+        fn helper(&self) -> bool {
+            let mut words = self.exec.iter();
+            let client = words
+                .next()
+                .is_some_and(|p| HELPER_COMMANDS.contains(&program_name(p).as_str()));
+            client || words.any(|w| HELPER_FLAGS.contains(&w.split('=').next().unwrap_or_default()))
+        }
+
+        /// The program it starts ([`App::id`]): its executable, and for a launcher such as
+        /// `flatpak`, `env` or `sh -c`, which says nothing of what it starts, the entry itself.
+        pub(super) fn program_id(&self, path: &[PathBuf]) -> String {
+            match self.exec.first() {
+                Some(p) if !LAUNCHERS.contains(&program_name(p).as_str()) => executable_id(p, path),
+                _ => self.id.clone(),
+            }
         }
 
         /// The entry as a command: `file_code` (`%f` or `%d`) where the entry takes files or
@@ -696,8 +744,8 @@ mod linux {
     }
 
     /// The terminal `xdg-terminal-exec` starts: the first entry of `xdg-terminals.list` that is
-    /// installed. Its name, for Settings.
-    fn xdg_terminal_name(env: &Env, entries: &HashMap<String, Entry>) -> Option<String> {
+    /// installed.
+    fn xdg_terminal<'e>(env: &Env, entries: &'e HashMap<String, Entry>) -> Option<&'e Entry> {
         env.config_dirs.iter().find_map(|dir| {
             let list = read_small(&dir.join("xdg-terminals.list"))?;
             list.lines()
@@ -705,7 +753,6 @@ mod linux {
                 .filter(|l| !l.is_empty() && !l.starts_with('#'))
                 .filter_map(|id| entries.get(id.trim_start_matches(['+', '-'])))
                 .find(|e| e.installed(&env.path))
-                .map(|e| e.name.clone())
         })
     }
 
@@ -733,13 +780,14 @@ mod linux {
                 .values()
                 .filter(|e| e.exec.first().is_some_and(|p| program_name(p) == program))
                 .collect();
-            matching.sort_by_key(|e| (e.hidden, e.id.clone()));
+            // The program's own entry names it, not its server or client.
+            matching.sort_by_key(|e| (e.hidden, e.helper(), e.id.clone()));
             matching.first().copied()
         };
 
         let known = |program: &str| match by_program(program) {
             Some(entry) if entry.terminal => None,
-            Some(entry) => Some(entry.name.clone()),
+            Some(entry) => Some((entry.name.clone(), Some(entry.program_id(&env.path)))),
             None => listed_gui_editor(program),
         };
         let editor = editor_from_env(
@@ -749,41 +797,46 @@ mod linux {
             &known,
         )
         .or_else(|| {
-            let entry = entries.get(&(env.default_for)("text/plain")?)?;
+            let entry = entries
+                .get(&(env.default_for)("text/plain")?)
+                .filter(|e| e.installed(&env.path))?;
             let (name, command) = editor_command(entry, launcher)?;
             Some(SystemChoice {
                 name,
                 command: Some(command),
-                origin: Origin::Desktop,
+                id: Some(entry.program_id(&env.path)),
             })
         });
 
-        let terminal_named = |command: &str, origin: Origin| {
+        let terminal_named = |command: &str| {
             let (program, _) = crate::platform::split_command(command)?;
             if !on_path(&program, &env.path) {
                 return None;
             }
-            let name = if program_name(&program) == "xdg-terminal-exec" {
-                xdg_terminal_name(env, &entries).unwrap_or_else(|| "xdg-terminal-exec".to_owned())
+            let entry = if program_name(&program) == "xdg-terminal-exec" {
+                xdg_terminal(env, &entries)
             } else {
                 by_program(&program_name(&program))
-                    .map_or_else(|| program.clone(), |e| e.name.clone())
             };
+            let (name, id) = entry.map_or_else(
+                || (program.clone(), executable_id(&program, &env.path)),
+                |e| (e.name.clone(), e.program_id(&env.path)),
+            );
             Some(SystemChoice {
                 name,
                 command: Some(command.to_owned()),
-                origin,
+                id: Some(id),
             })
         };
         let terminal = env
             .terminal
             .as_deref()
-            .and_then(|t| terminal_named(t.trim(), Origin::Env("TERMINAL")))
-            .or_else(|| terminal_named("xdg-terminal-exec", Origin::Desktop))
+            .and_then(|t| terminal_named(t.trim()))
+            .or_else(|| terminal_named("xdg-terminal-exec"))
             .or_else(|| {
                 super::LINUX_TERMINALS
                     .iter()
-                    .find_map(|t| terminal_named(t, Origin::Found))
+                    .find_map(|t| terminal_named(t))
             });
 
         let file_manager = (env.default_for)("inode/directory")
@@ -793,15 +846,16 @@ mod linux {
                 Some(SystemChoice {
                     name: e.name.clone(),
                     command: Some(e.command("%d")?),
-                    origin: Origin::Desktop,
+                    id: Some(e.program_id(&env.path)),
                 })
             });
 
         let mut installed = Vec::new();
         for entry in entries.values() {
-            if entry.hidden || !entry.installed(&env.path) {
+            if entry.hidden || entry.helper() || !entry.installed(&env.path) {
                 continue;
             }
+            let id = entry.program_id(&env.path);
             let has = |c: &str| entry.categories.iter().any(|x| x == c);
             if has("TerminalEmulator")
                 && !entry.terminal
@@ -811,6 +865,7 @@ mod linux {
                     kind: Kind::Terminal,
                     name: entry.name.clone(),
                     command,
+                    id: id.clone(),
                 });
             }
             if has("FileManager")
@@ -821,6 +876,7 @@ mod linux {
                     kind: Kind::FileManager,
                     name: entry.name.clone(),
                     command,
+                    id: id.clone(),
                 });
             }
             // Plain text or source code: a chat app that takes CSV is no editor.
@@ -835,6 +891,7 @@ mod linux {
                     kind: Kind::Editor,
                     name,
                     command,
+                    id,
                 });
             }
         }
@@ -852,9 +909,7 @@ mod linux {
 mod macos {
     use std::path::PathBuf;
 
-    use super::{
-        Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, mac_apps, path_dirs,
-    };
+    use super::{Apps, SystemChoice, editor_from_env, listed_gui_editor, mac_apps, path_dirs};
 
     pub(super) fn detect() -> Apps {
         let home = crate::settings::home_dir();
@@ -887,19 +942,19 @@ mod macos {
         .or(Some(SystemChoice {
             name: "Default text editor".to_owned(),
             command: None,
-            origin: Origin::Platform,
+            id: None,
         }));
         Apps {
             editor,
             terminal: Some(SystemChoice {
                 name: "Terminal".to_owned(),
                 command: None,
-                origin: Origin::Platform,
+                id: Some("Terminal".to_owned()),
             }),
             file_manager: Some(SystemChoice {
                 name: "Finder".to_owned(),
                 command: None,
-                origin: Origin::Platform,
+                id: Some("Finder".to_owned()),
             }),
             installed: mac_apps(&bundles),
         }
@@ -911,7 +966,7 @@ mod windows {
     use std::process::Command;
 
     use super::{
-        Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, on_path, parse_app_paths,
+        Apps, SystemChoice, editor_from_env, listed_gui_editor, on_path, parse_app_paths,
         path_dirs, windows_apps,
     };
 
@@ -947,19 +1002,19 @@ mod windows {
         .or(Some(SystemChoice {
             name: "Notepad".to_owned(),
             command: None,
-            origin: Origin::Platform,
+            id: None,
         }));
         let terminal = if on_path("wt.exe", &path) {
             SystemChoice {
                 name: "Windows Terminal".to_owned(),
                 command: Some("wt -d %d".to_owned()),
-                origin: Origin::Platform,
+                id: Some("wt.exe".to_owned()),
             }
         } else {
             SystemChoice {
                 name: "Command Prompt".to_owned(),
                 command: None,
-                origin: Origin::Platform,
+                id: None,
             }
         };
         Apps {
@@ -968,7 +1023,7 @@ mod windows {
             file_manager: Some(SystemChoice {
                 name: "File Explorer".to_owned(),
                 command: None,
-                origin: Origin::Platform,
+                id: None,
             }),
             installed: windows_apps(&app_paths()),
         }
@@ -989,6 +1044,16 @@ mod tests {
 
     fn program(dir: &Path, name: &str) {
         write(dir, name, "#!/bin/sh\n");
+    }
+
+    /// The id of the program at `relative` under `root` ([`App::id`]).
+    fn exe(root: &Path, relative: &str) -> String {
+        let file = root.join(relative);
+        std::fs::canonicalize(file.parent().unwrap())
+            .unwrap()
+            .join(file.file_name().unwrap())
+            .to_string_lossy()
+            .into_owned()
     }
 
     fn env(root: &Path, defaults: &[(&str, &str)]) -> Env {
@@ -1177,7 +1242,7 @@ mod tests {
             Some(SystemChoice {
                 name: "Neovim in terminal".to_owned(),
                 command: Some("xdg-terminal-exec nvim %f".to_owned()),
-                origin: Origin::Desktop,
+                id: Some(exe(root, "bin/nvim")),
             })
         );
         assert_eq!(
@@ -1185,7 +1250,7 @@ mod tests {
             Some(SystemChoice {
                 name: "kitty".to_owned(),
                 command: Some("xdg-terminal-exec".to_owned()),
-                origin: Origin::Env("TERMINAL"),
+                id: Some(exe(root, "bin/kitty")),
             })
         );
         assert_eq!(
@@ -1193,7 +1258,7 @@ mod tests {
             Some(SystemChoice {
                 name: "Files".to_owned(),
                 command: Some("nautilus --new-window %d".to_owned()),
-                origin: Origin::Desktop,
+                id: Some(exe(root, "bin/nautilus")),
             })
         );
 
@@ -1207,13 +1272,13 @@ mod tests {
         e.editor = Some("nvim".to_owned());
         let found = detect(&e);
         let editor = found.editor.unwrap();
-        assert_eq!(
-            (editor.name.as_str(), editor.origin),
-            ("Visual Studio Code", Origin::Env("VISUAL"))
-        );
+        assert_eq!(editor.name, "Visual Studio Code");
         assert_eq!(editor.command, e.visual);
         // No $TERMINAL: xdg-terminal-exec is the desktop's.
-        assert_eq!(found.terminal.unwrap().origin, Origin::Desktop);
+        assert_eq!(
+            found.terminal.unwrap().command.as_deref(),
+            Some("xdg-terminal-exec")
+        );
 
         // Nothing configured, no launcher: a terminal editor cannot be the default, and the
         // terminal is the first one found.
@@ -1222,17 +1287,143 @@ mod tests {
         assert_eq!(found.editor, None);
         let terminal = found.terminal.unwrap();
         assert_eq!(
-            (
-                terminal.name.as_str(),
-                terminal.command.as_deref(),
-                terminal.origin
-            ),
-            ("kitty", Some("kitty"), Origin::Found)
+            (terminal.name.as_str(), terminal.command.as_deref()),
+            ("kitty", Some("kitty"))
         );
-        // A $TERMINAL that is not installed is passed over.
+    }
+
+    /// The program a missing default names, as a desktop entry and as a command, for `kind`.
+    #[cfg(unix)]
+    fn ghost_entry(kind: Kind) -> String {
+        entry_of(kind, "Ghost", "ghost %F")
+    }
+
+    // Every source of a default: the environment, the desktop's text editor and file manager,
+    // and `xdg-terminal-exec`. A program that is not installed is never the default.
+    #[cfg(unix)]
+    #[test]
+    fn a_default_naming_a_program_that_is_not_installed_is_never_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let apps = root.join("usr-share/applications");
+        write(&apps, "ghost-term.desktop", &ghost_entry(Kind::Terminal));
+        write(&apps, "ghost-edit.desktop", &ghost_entry(Kind::Editor));
+        write(
+            &apps,
+            "ghost-files.desktop",
+            &ghost_entry(Kind::FileManager),
+        );
+        write(
+            &root.join("config"),
+            "xdg-terminals.list",
+            "ghost-term.desktop\n",
+        );
+        let defaults = [
+            ("text/plain", "ghost-edit.desktop"),
+            ("inode/directory", "ghost-files.desktop"),
+        ];
         let mut e = env(root, &defaults);
-        e.terminal = Some("wezterm".to_owned());
-        assert_eq!(detect(&e).terminal.unwrap().origin, Origin::Found);
+        e.terminal = Some("ghost".to_owned());
+        e.visual = Some("ghost --wait".to_owned());
+        e.editor = Some("ghost".to_owned());
+        let found = detect(&e);
+        assert_eq!(found.terminal, None, "$TERMINAL");
+        assert_eq!(
+            found.editor, None,
+            "$VISUAL, $EDITOR and the desktop's text editor"
+        );
+        assert_eq!(found.file_manager, None, "the desktop's file manager");
+
+        // xdg-terminal-exec starts the first terminal of its list that is installed.
+        program(&root.join("bin"), "xdg-terminal-exec");
+        program(&root.join("bin"), "kitty");
+        write(&apps, "kitty.desktop", KITTY);
+        write(
+            &root.join("config"),
+            "xdg-terminals.list",
+            "ghost-term.desktop\nkitty.desktop\n",
+        );
+        e.terminal = None;
+        assert_eq!(detect(&e).terminal.unwrap().name, "kitty");
+
+        // The installed program after a missing one is the default.
+        for p in ["code", "nautilus"] {
+            program(&root.join("bin"), p);
+        }
+        write(
+            &apps,
+            "code.desktop",
+            &CODE.replace("/opt/code/bin/code", "code"),
+        );
+        write(&apps, "org.gnome.Nautilus.desktop", FILES);
+        e.visual = Some("ghost --wait".to_owned());
+        e.editor = Some("code --wait".to_owned());
+        let found = detect(&e);
+        assert_eq!(
+            found.editor.unwrap().command.as_deref(),
+            Some("code --wait")
+        );
+        let mut e = env(root, &[("inode/directory", "org.gnome.Nautilus.desktop")]);
+        e.terminal = Some("ghost".to_owned());
+        assert_eq!(detect(&e).file_manager.unwrap().name, "Files");
+    }
+
+    const FOOT: &str = "[Desktop Entry]\nType=Application\nName=Foot\nExec=foot\nCategories=System;TerminalEmulator;\n";
+    const FOOT_SERVER: &str = "[Desktop Entry]\nType=Application\nName=Foot Server\nExec=foot --server\nCategories=System;TerminalEmulator;\n";
+    const FOOT_CLIENT: &str = "[Desktop Entry]\nType=Application\nName=Foot Client\nExec=footclient\nCategories=System;TerminalEmulator;\n";
+    const GHOSTTY: &str = "[Desktop Entry]\nType=Application\nName=Ghostty\nExec=ghostty\nCategories=System;TerminalEmulator;\n";
+
+    // The maintainer's machine: TERMINAL=xdg-terminal-exec, which resolves to kitty through
+    // xdg-terminals.list, with kitty, foot, footclient and Ghostty installed.
+    #[cfg(unix)]
+    #[test]
+    fn a_terminal_is_listed_once_and_its_helpers_not_at_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let apps = root.join("usr-share/applications");
+        write(&apps, "kitty.desktop", KITTY);
+        write(&apps, "foot.desktop", FOOT);
+        write(&apps, "foot-server.desktop", FOOT_SERVER);
+        write(&apps, "footclient.desktop", FOOT_CLIENT);
+        write(&apps, "com.mitchellh.ghostty.desktop", GHOSTTY);
+        write(
+            &root.join("config"),
+            "xdg-terminals.list",
+            "kitty.desktop\n",
+        );
+        for p in [
+            "kitty",
+            "foot",
+            "footclient",
+            "ghostty",
+            "xdg-terminal-exec",
+        ] {
+            program(&root.join("bin"), p);
+        }
+        let mut e = env(root, &[]);
+        e.terminal = Some("xdg-terminal-exec".to_owned());
+        let found = detect(&e);
+        assert_eq!(
+            names(&found, Kind::Terminal),
+            [
+                ("Foot".to_owned(), "foot".to_owned()),
+                ("Ghostty".to_owned(), "ghostty".to_owned()),
+                ("kitty".to_owned(), "kitty".to_owned()),
+            ]
+        );
+        // The default is kitty under another command, and is one of the rows, not another.
+        let default = found.terminal.as_ref().unwrap();
+        assert_eq!(default.command.as_deref(), Some("xdg-terminal-exec"));
+        assert_eq!(listed_as_default(&found, Kind::Terminal), ["kitty"]);
+
+        // $TERMINAL naming a program with a server and a client entry is the program's own.
+        for (terminal, name) in [("foot", "Foot"), ("footclient", "Foot Client")] {
+            e.terminal = Some(terminal.to_owned());
+            let found = detect(&e);
+            assert_eq!(found.terminal.as_ref().unwrap().name, name);
+        }
+        e.terminal = Some("foot".to_owned());
+        assert_eq!(listed_as_default(&detect(&e), Kind::Terminal), ["Foot"]);
     }
 
     #[test]
@@ -1244,6 +1435,16 @@ mod tests {
     fn names(apps: &Apps, kind: Kind) -> Vec<(String, String)> {
         apps.installed(kind)
             .map(|a| (a.name.clone(), a.command.clone()))
+            .collect()
+    }
+
+    /// The listed programs of `kind` that are the system's choice.
+    #[cfg(unix)]
+    fn listed_as_default(apps: &Apps, kind: Kind) -> Vec<String> {
+        let system = apps.system(kind).unwrap();
+        apps.installed(kind)
+            .filter(|a| system.is(a))
+            .map(|a| a.name.clone())
             .collect()
     }
 
@@ -1317,6 +1518,186 @@ mod tests {
         std::fs::remove_file(root.join("bin/xdg-terminal-exec")).unwrap();
         let found = detect(&env(root, &[]));
         assert_eq!(names(&found, Kind::Editor).len(), 1);
+    }
+
+    /// A desktop entry offering `exec` as a program of `kind`.
+    #[cfg(unix)]
+    fn entry_of(kind: Kind, name: &str, exec: &str) -> String {
+        let category = match kind {
+            Kind::Terminal => "TerminalEmulator",
+            Kind::FileManager => "FileManager",
+            Kind::Editor => "TextEditor",
+        };
+        format!(
+            "[Desktop Entry]\nType=Application\nName={name}\nExec={exec}\nCategories=Utility;{category};\n"
+        )
+    }
+
+    const KINDS: [Kind; 3] = [Kind::Terminal, Kind::Editor, Kind::FileManager];
+
+    #[cfg(unix)]
+    #[test]
+    fn one_program_found_twice_is_one_row_for_every_kind() {
+        for kind in KINDS {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path();
+            let apps = root.join("usr-share/applications");
+            // The same file by its name and by its path, and through a folder that is a link
+            // (`/bin` is `/usr/bin`).
+            write(&apps, "one.desktop", &entry_of(kind, "Tool", "tool"));
+            let by_path = crate::platform::quote(&root.join("bin/tool").display().to_string());
+            write(
+                &apps,
+                "two.desktop",
+                &entry_of(kind, "Tool again", &by_path),
+            );
+            std::os::unix::fs::symlink(root.join("bin"), root.join("sbin")).unwrap();
+            let by_link = crate::platform::quote(&root.join("sbin/tool").display().to_string());
+            write(
+                &apps,
+                "three.desktop",
+                &entry_of(kind, "Tool once more", &by_link),
+            );
+            program(&root.join("bin"), "tool");
+            let mut e = env(root, &[]);
+            e.path.push(root.join("sbin"));
+            let found = detect(&e);
+            assert_eq!(
+                names(&found, kind),
+                [("Tool".to_owned(), "tool".to_owned())],
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn programs_are_told_apart_by_what_they_run_never_by_their_name() {
+        for kind in KINDS {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path();
+            let apps = root.join("usr-share/applications");
+            // Two programs under one name, and two Flatpaks, which share the `flatpak` program.
+            write(&apps, "a.desktop", &entry_of(kind, "Same", "alpha"));
+            write(&apps, "b.desktop", &entry_of(kind, "Same", "beta"));
+            write(
+                &apps,
+                "org.a.A.desktop",
+                &entry_of(kind, "Flat A", "flatpak run org.a.A"),
+            );
+            write(
+                &apps,
+                "org.b.B.desktop",
+                &entry_of(kind, "Flat B", "flatpak run org.b.B"),
+            );
+            for p in ["alpha", "beta", "flatpak"] {
+                program(&root.join("bin"), p);
+            }
+            let found = detect(&env(root, &[]));
+            let listed: Vec<String> = found.installed(kind).map(|a| a.command.clone()).collect();
+            assert_eq!(
+                listed,
+                [
+                    "flatpak run org.a.A",
+                    "flatpak run org.b.B",
+                    "alpha",
+                    "beta"
+                ],
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn servers_daemons_and_clients_are_not_programs_to_open() {
+        // Each helper is its own program, so only the helper rule can leave it out.
+        let helpers = [
+            "termd --server",
+            "termd --server=/run/user/1000/termd.sock",
+            "termd --daemon",
+            "termd --gapplication-service",
+            "footclient",
+            "@ROOT@/bin/urxvtc --no-fork",
+            "emacsclient -c %F",
+        ];
+        for kind in KINDS {
+            for helper in helpers {
+                let dir = tempfile::tempdir().unwrap();
+                let root = dir.path();
+                let apps = root.join("usr-share/applications");
+                let helper = helper.replace("@ROOT@", &root.display().to_string());
+                write(&apps, "foot.desktop", &entry_of(kind, "Foot", "foot"));
+                write(&apps, "helper.desktop", &entry_of(kind, "Helper", &helper));
+                for p in ["foot", "termd", "footclient", "urxvtc", "emacsclient"] {
+                    program(&root.join("bin"), p);
+                }
+                let found = detect(&env(root, &[]));
+                assert_eq!(
+                    names(&found, kind),
+                    [("Foot".to_owned(), "foot".to_owned())],
+                    "{kind:?}: {helper}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_system_choice_is_the_listed_program_it_starts_whatever_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let apps = root.join("usr-share/applications");
+        write(&apps, "kitty.desktop", KITTY);
+        write(&apps, "org.gnome.Nautilus.desktop", FILES);
+        write(
+            &apps,
+            "org.gnome.TextEditor.desktop",
+            &entry_of(Kind::Editor, "Text Editor", "gnome-text-editor %U"),
+        );
+        write(
+            &apps,
+            "code.desktop",
+            &CODE.replace("/opt/code/bin/code", "code"),
+        );
+        for p in ["kitty", "nautilus", "gnome-text-editor", "code"] {
+            program(&root.join("bin"), p);
+        }
+        let defaults = [
+            ("text/plain", "org.gnome.TextEditor.desktop"),
+            ("inode/directory", "org.gnome.Nautilus.desktop"),
+        ];
+
+        // The desktop's choices, and a terminal by its own command.
+        let mut e = env(root, &defaults);
+        e.terminal = Some("kitty".to_owned());
+        let found = detect(&e);
+        assert_eq!(listed_as_default(&found, Kind::Terminal), ["kitty"]);
+        assert_eq!(listed_as_default(&found, Kind::Editor), ["Text Editor"]);
+        assert_eq!(listed_as_default(&found, Kind::FileManager), ["Files"]);
+
+        // $VISUAL and $EDITOR name a program, with flags, that has an entry.
+        for (visual, editor) in [(Some("code --wait"), None), (None, Some("code -w"))] {
+            let mut e = env(root, &defaults);
+            e.visual = visual.map(str::to_owned);
+            e.editor = editor.map(str::to_owned);
+            let found = detect(&e);
+            assert_eq!(
+                listed_as_default(&found, Kind::Editor),
+                ["Visual Studio Code"]
+            );
+        }
+
+        // The first usual terminal found has an entry too; one without any is not listed.
+        let found = detect(&env(root, &defaults));
+        assert_eq!(listed_as_default(&found, Kind::Terminal), ["kitty"]);
+        std::fs::remove_file(apps.join("kitty.desktop")).unwrap();
+        let found = detect(&env(root, &defaults));
+        assert_eq!(found.terminal.as_ref().unwrap().name, "kitty");
+        assert_eq!(
+            listed_as_default(&found, Kind::Terminal),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
