@@ -1318,7 +1318,7 @@ fn git_setting_help(setting: Setting) -> &'static str {
         Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
         Setting::InitialBranch => "The branch a new repository starts on.",
         Setting::CommitCleanup => {
-            "Default drops # lines from an edited message. Whitespace keeps them, git's template too."
+            "Default removes # lines from a message you edit. Whitespace keeps them, git's template included."
         }
         Setting::Autocrlf => "Converts CRLF to LF on commit; CRLF on checkout converts back.",
         Setting::CommitSigning => "Signs every commit with your configured key.",
@@ -1498,21 +1498,7 @@ const DECIDES: &str = "Your git configuration decides";
 /// `key = value (where it is set)`, for a note.
 fn config_phrase(v: &ConfigValue) -> String {
     let source = source_label(Some(&v.source()));
-    let setting = |key: &str| {
-        Setting::ALL
-            .into_iter()
-            .find(|s| s.key().eq_ignore_ascii_case(key))
-    };
-    // A remote's own fetch value, or a branch's own pull value, names the remote or branch.
-    let (setting, owner) = match v.key.split_once('.') {
-        Some(("remote", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
-            (setting(&format!("fetch.{var}")), Some(name))
-        }),
-        Some(("branch", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
-            (setting(&format!("pull.{var}")), Some(name))
-        }),
-        _ => (setting(&v.key), None),
-    };
+    let (setting, owner) = row_of(&v.key);
     let Some(setting) = setting else {
         return format!("{} in {source}", v.value);
     };
@@ -1526,30 +1512,52 @@ fn config_phrase(v: &ConfigValue) -> String {
     )
 }
 
-/// The settings behind a pull strategy, phrased as every other row's: [`config_phrase`].
-fn pull_phrase(config: &canopy_core::PullConfig) -> Option<String> {
+/// The row a configuration key belongs to, and the remote or branch whose own value it is: a
+/// remote's own fetch value, or a branch's own pull value, is its row's setting for that one.
+fn row_of(key: &str) -> (Option<Setting>, Option<&str>) {
+    let row = |key: &str| {
+        Setting::ALL
+            .into_iter()
+            .find(|s| s.key().eq_ignore_ascii_case(key))
+    };
+    match key.split_once('.') {
+        Some(("remote", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
+            (row(&format!("fetch.{var}")), Some(name))
+        }),
+        Some(("branch", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
+            (row(&format!("pull.{var}")), Some(name))
+        }),
+        _ => (row(key), None),
+    }
+}
+
+/// The settings behind a pull strategy as configuration values.
+fn pull_values(config: &canopy_core::PullConfig) -> Vec<ConfigValue> {
     use canopy_core::ConfigScope;
-    let phrases: Vec<String> = config
+    config
         .sources
         .iter()
-        .map(|s| {
-            config_phrase(&ConfigValue {
-                key: s.key.clone(),
-                value: s.value.clone(),
-                scope: match s.scope {
-                    ConfigScope::System => "system",
-                    ConfigScope::Global => "global",
-                    ConfigScope::Local => "local",
-                    ConfigScope::Worktree => "worktree",
-                    ConfigScope::Command => "command",
-                    ConfigScope::Other => "",
-                }
-                .to_owned(),
-                origin: s.origin.clone(),
-                file: s.file.clone(),
-            })
+        .map(|s| ConfigValue {
+            key: s.key.clone(),
+            value: s.value.clone(),
+            scope: match s.scope {
+                ConfigScope::System => "system",
+                ConfigScope::Global => "global",
+                ConfigScope::Local => "local",
+                ConfigScope::Worktree => "worktree",
+                ConfigScope::Command => "command",
+                ConfigScope::Other => "",
+            }
+            .to_owned(),
+            origin: s.origin.clone(),
+            file: s.file.clone(),
         })
-        .collect();
+        .collect()
+}
+
+/// The settings behind a pull strategy, phrased as every other row's: [`config_phrase`].
+fn pull_phrase(config: &canopy_core::PullConfig) -> Option<String> {
+    let phrases: Vec<String> = pull_values(config).iter().map(config_phrase).collect();
     (!phrases.is_empty()).then(|| and_list(&phrases))
 }
 
@@ -5742,25 +5750,20 @@ pub(crate) fn against_recommendation(
         |v| v.as_bool() == Some(settings.follow_tags),
         "pushes",
     );
-    // The pull recommendation is the one the editor marks and Use recommended writes.
-    let pull_recommended = lowercase_label(&git_value_label(
-        Setting::PullFastForward,
-        Setting::PullFastForward.recommendation_for(facts.git),
-    ));
-    let mut lines: Vec<String> = [
+    // A pull setting is judged against its own row's recommendation, as the editor marks it.
+    let mut lines: Vec<String> = facts
+        .pull
+        .iter()
+        .filter(|_| pull.follow_config)
+        .flat_map(pull_values)
+        .filter_map(|value| {
+            let (row, _) = row_of(&value.key);
+            against_line(row?, &value, facts.git)
+        })
+        .collect();
+    for (setting, note) in [
         (
-            "Pull",
-            pull_note(facts, pull).filter(|_| {
-                pull.follow_config
-                    && facts
-                        .pull
-                        .as_ref()
-                        .and_then(|p| p.strategy)
-                        .is_some_and(|s| s != canopy_core::PullStrategy::FastForwardOnly)
-            }),
-        ),
-        (
-            "Prune",
+            Setting::FetchPrune,
             prune_note(facts, settings.prune_on_fetch, follow).filter(|_| {
                 fetch_values(
                     facts,
@@ -5773,7 +5776,7 @@ pub(crate) fn against_recommendation(
             }),
         ),
         (
-            "Prune tags",
+            Setting::FetchPruneTags,
             prune_tags_note(facts, settings.prune_tags, follow).filter(|_| {
                 let (fetch, remote): (Vec<ConfigValue>, Vec<ConfigValue>) = facts
                     .prune_tags
@@ -5786,12 +5789,12 @@ pub(crate) fn against_recommendation(
             }),
         ),
         (
-            "Autostash",
+            Setting::PullAutostash,
             autostash_note(facts, settings.autostash, follow)
                 .filter(|_| facts.autostash.iter().any(|v| v.as_bool() != Some(true))),
         ),
         (
-            "Push tags",
+            Setting::PushFollowTags,
             follow_tags.filter(|_| {
                 facts
                     .follow_tags
@@ -5799,23 +5802,19 @@ pub(crate) fn against_recommendation(
                     .is_some_and(|v| v.as_bool() != Some(true))
             }),
         ),
-    ]
-    .into_iter()
-    .filter_map(|(name, note)| {
-        note.map(|n| {
-            let text = n.text.trim_start_matches(DECIDES).trim_start_matches(": ");
-            format!(
+    ] {
+        if let Some(note) = note {
+            let text = note
+                .text
+                .trim_start_matches(DECIDES)
+                .trim_start_matches(": ");
+            lines.push(format!(
                 "{} Recommended: {}.",
                 upper_first(text),
-                match name {
-                    "Pull" => pull_recommended.as_str(),
-                    "Prune tags" => "off",
-                    _ => "on",
-                }
-            )
-        })
-    })
-    .collect();
+                recommended_label(setting, facts.git)
+            ));
+        }
+    }
     for (setting, value) in [
         (Setting::PushDefault, facts.push_default.as_ref()),
         (Setting::ConflictStyle, facts.conflict_style.as_ref()),
@@ -5823,18 +5822,50 @@ pub(crate) fn against_recommendation(
         (Setting::InitialBranch, facts.initial_branch.as_ref()),
         (Setting::SubmoduleRecurse, facts.submodule_recurse.as_ref()),
     ] {
-        let recommended = setting.recommendation_for(facts.git);
-        if let Some(value) = value
-            && value.value != recommended
-        {
-            lines.push(format!(
-                "{}. Recommended: {}.",
-                upper_first(&config_phrase(value)),
-                git_value_label(setting, recommended)
-            ));
-        }
+        lines.extend(value.and_then(|value| against_line(setting, value, facts.git)));
     }
     lines
+}
+
+/// The recommendation for `setting`, named as its row's list names it.
+fn recommended_label(setting: Setting, git: Option<(u32, u32)>) -> String {
+    git_value_label(setting, setting.recommendation_for(git))
+}
+
+/// What `value` says against `setting`'s recommendation, in the words of the editor's row:
+/// where it is set, then what Canopy recommends for that same row. `None` when it is the
+/// recommendation.
+fn against_line(setting: Setting, value: &ConfigValue, git: Option<(u32, u32)>) -> Option<String> {
+    let recommended = setting.recommendation_for(git);
+    let is_recommended = match recommended {
+        "true" | "false" => value.as_bool() == Some(recommended == "true"),
+        _ => value.value == recommended,
+    };
+    (!is_recommended).then(|| {
+        format!(
+            "{}. Recommended: {}.",
+            upper_first(&config_phrase(value)),
+            recommended_label(setting, git)
+        )
+    })
+}
+
+/// How many findings the notice lists in full; more are cut to the first few and a count.
+const NOTICE_FINDINGS: usize = 4;
+
+/// The notice's text from the findings of [`against_recommendation`]: one paragraph each, so
+/// the card reads as a list, and past [`NOTICE_FINDINGS`] the first few and how many more
+/// the settings screen shows.
+pub(crate) fn notice_body(findings: &[String]) -> String {
+    let mut paragraphs = findings.to_vec();
+    if findings.len() > NOTICE_FINDINGS {
+        paragraphs.truncate(NOTICE_FINDINGS - 1);
+        paragraphs.push(format!(
+            "And {} more.",
+            findings.len() - (NOTICE_FINDINGS - 1)
+        ));
+    }
+    paragraphs.join("\n\n")
 }
 
 #[cfg(test)]
@@ -7768,15 +7799,15 @@ mod tests {
             .filter(|mode| crate::views::dialogs::diverged_label(*mode).contains("(recommended)"))
             .collect::<Vec<_>>();
         assert_eq!(marked, [PullMode::RECOMMENDED_WHEN_DIVERGED]);
-        // The notification center flags every strategy but the recommended one, and names it
-        // as the editor does.
-        let pulls_with = |strategy| {
+        // The notification center judges each pull setting against its own row's recommendation,
+        // named as that row's list names it.
+        let pulls_with = |strategy, key: &str, value: &str| {
             let facts = GitFacts {
                 pull: Some(canopy_core::PullConfig {
                     strategy: Some(strategy),
                     sources: vec![canopy_core::ConfigSource {
-                        key: "pull.rebase".into(),
-                        value: (strategy == PullStrategy::Rebase).to_string(),
+                        key: key.into(),
+                        value: value.into(),
                         scope: canopy_core::ConfigScope::Global,
                         origin: "file:/home/me/.gitconfig".into(),
                         file: None,
@@ -7788,17 +7819,45 @@ mod tests {
             };
             against_recommendation(&facts, &Settings::default(), Path::new("fixture"))
         };
-        assert_eq!(
-            pulls_with(PullStrategy::FastForwardOnly),
-            Vec::<String>::new()
-        );
-        for strategy in [PullStrategy::Merge, PullStrategy::Rebase] {
-            let lines = pulls_with(strategy);
+        for (strategy, key, value) in [
+            (PullStrategy::FastForwardOnly, "pull.ff", "only"),
+            (PullStrategy::Merge, "pull.rebase", "false"),
+            (PullStrategy::Merge, "pull.rebase", "no"),
+        ] {
+            assert_eq!(
+                pulls_with(strategy, key, value),
+                Vec::<String>::new(),
+                "{key}={value} is the recommendation for its row"
+            );
+        }
+        // The path in a line depends on the home folder, so only its ends are compared.
+        for (strategy, key, value, start, end) in [
+            (
+                PullStrategy::Rebase,
+                "pull.rebase",
+                "true",
+                "Rebase when pulling set to rebase in your global git config",
+                "Recommended: Don't rebase.",
+            ),
+            (
+                PullStrategy::Rebase,
+                "branch.main.rebase",
+                "true",
+                "Rebase when pulling for main set to rebase in your global git config",
+                "Recommended: Don't rebase.",
+            ),
+            (
+                PullStrategy::Merge,
+                "pull.ff",
+                "true",
+                "Fast-forward when pulling set to allow fast-forward in your global git config",
+                "Recommended: Fast-forward only.",
+            ),
+        ] {
+            let lines = pulls_with(strategy, key, value);
             assert!(
-                lines
-                    .iter()
-                    .any(|line| line.ends_with("Recommended: fast-forward only.")),
-                "{strategy:?}: {lines:?}"
+                matches!(lines.as_slice(), [line] if line.starts_with(start) && line.ends_with(end)),
+                "{key}={value}: {lines:?}"
             );
         }
     }
@@ -7995,6 +8054,58 @@ mod tests {
                 "missing {key}: {lines:?}"
             );
         }
+    }
+
+    /// A boolean written another way is still the recommendation, and the card names the
+    /// recommendation as the editor's list does (On, Off, Default), the same word everywhere.
+    #[test]
+    fn a_finding_names_the_recommendation_as_the_list_does() {
+        let spelled = GitFacts {
+            submodule_recurse: Some(fact("submodule.recurse", "yes")),
+            git: Some((2, 55)),
+            ..GitFacts::default()
+        };
+        assert_eq!(
+            against_recommendation(&spelled, &Settings::default(), Path::new("fixture")),
+            Vec::<String>::new(),
+            "yes is true"
+        );
+        let facts = GitFacts {
+            fetch_prune: Some(fact("fetch.prune", "false")),
+            cleanup: Some(fact("commit.cleanup", "whitespace")),
+            submodule_recurse: Some(fact("submodule.recurse", "no")),
+            git: Some((2, 55)),
+            ..GitFacts::default()
+        };
+        let lines = against_recommendation(&facts, &Settings::default(), Path::new("fixture"));
+        for (row, name) in [
+            ("Prune remote branches", "On"),
+            ("Commit message cleanup", "Default"),
+            ("Update submodules", "On"),
+        ] {
+            assert!(
+                lines
+                    .iter()
+                    .any(|l| l.starts_with(row) && l.ends_with(&format!("Recommended: {name}."))),
+                "{row}: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_notice_lists_findings_as_paragraphs_and_counts_the_rest() {
+        let findings = |n: usize| (1..=n).map(|i| format!("Finding {i}.")).collect::<Vec<_>>();
+        assert_eq!(notice_body(&findings(1)), "Finding 1.");
+        assert_eq!(
+            notice_body(&findings(4)),
+            "Finding 1.\n\nFinding 2.\n\nFinding 3.\n\nFinding 4.",
+            "four fit"
+        );
+        assert_eq!(
+            notice_body(&findings(6)),
+            "Finding 1.\n\nFinding 2.\n\nFinding 3.\n\nAnd 3 more.",
+            "more than four: the first three and the count of the rest"
+        );
     }
 
     /// #42: the notification center lists what the git configuration decides against the

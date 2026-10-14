@@ -25,7 +25,7 @@ use super::kit::Tone;
 use super::kit::button::IconButton;
 use super::kit::chip::Badge;
 use super::kit::overlay::{self, Popover, TooltipExt};
-use super::kit::toast::{ACTIONS_GAP, BODY_LEADING, COLUMN_GAP, Choice, TITLE_GAP, ToastCard};
+use super::kit::toast::{ACTIONS_GAP, COLUMN_GAP, Choice, TITLE_GAP, ToastCard, body_text};
 use super::kit::{Button, KitResponse, Size, paint};
 use super::motion;
 use super::theme;
@@ -1142,25 +1142,9 @@ impl Toasts {
                                 let said = card_text(e.kind, &e.body, e.help);
                                 let text = said.body.map_or("", str::trim);
                                 if !text.is_empty() {
-                                    let lines: Vec<&str> = text.lines().collect();
-                                    let shown = lines
-                                        .iter()
-                                        .take(CENTER_BODY_LINES)
-                                        .copied()
-                                        .collect::<Vec<_>>()
-                                        .join("\n");
-                                    let label = ui.add(
-                                        egui::Label::new(
-                                            RichText::new(shown)
-                                                .size(m.meta_size)
-                                                .line_height(Some(
-                                                    (m.meta_size * BODY_LEADING).round(),
-                                                ))
-                                                .color(p.text_dim),
-                                        )
-                                        .wrap(),
-                                    );
-                                    if lines.len() > CENTER_BODY_LINES || said.details.is_some() {
+                                    let (shown, cut) = first_lines(text, CENTER_BODY_LINES);
+                                    let label = body_text(ui, &shown);
+                                    if cut || said.details.is_some() {
                                         label.kit_tooltip(body).show();
                                     }
                                 }
@@ -1231,6 +1215,23 @@ impl Toasts {
     }
 }
 
+/// The first `limit` lines of `text` that say something, with the blank lines between them,
+/// and whether more followed.
+fn first_lines(text: &str, limit: usize) -> (String, bool) {
+    let mut kept = Vec::new();
+    let mut said = 0;
+    for line in text.lines() {
+        if !line.trim().is_empty() {
+            if said == limit {
+                return (kept.join("\n").trim_end().to_owned(), true);
+            }
+            said += 1;
+        }
+        kept.push(line);
+    }
+    (kept.join("\n"), false)
+}
+
 /// The local zone's offset from UTC at `seconds`, in minutes.
 fn local_offset_minutes(seconds: i64) -> i32 {
     use chrono::Offset;
@@ -1246,6 +1247,21 @@ fn local_offset_minutes(seconds: i64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_center_cuts_a_body_by_the_lines_that_say_something() {
+        assert_eq!(first_lines("a\nb", 4), ("a\nb".to_owned(), false));
+        assert_eq!(
+            first_lines("a\n\nb\n\nc", 3),
+            ("a\n\nb\n\nc".to_owned(), false),
+            "blank lines between paragraphs do not count"
+        );
+        assert_eq!(
+            first_lines("a\n\nb\n\nc\n\nd", 3),
+            ("a\n\nb\n\nc".to_owned(), true)
+        );
+        assert_eq!(first_lines("a\nb\nc", 2), ("a\nb".to_owned(), true));
+    }
 
     #[test]
     fn cancelling_a_sign_in_prompt_is_not_reported_as_git_failing() {
