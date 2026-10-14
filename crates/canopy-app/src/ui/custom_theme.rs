@@ -302,6 +302,8 @@ fn clear_text(p: &Palette) -> Palette {
         success: colour(p.success),
         warning: colour(p.warning),
         danger: colour(p.danger),
+        diff_added: colour(p.diff_added),
+        diff_removed: colour(p.diff_removed),
         ..*p
     }
 }

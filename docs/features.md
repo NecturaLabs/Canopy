@@ -81,7 +81,7 @@ git would run on every `git status`.
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
 | Author avatars | Done (GitHub/GitLab pictures, initials fallback) | Yes | Yes | Yes |
 | On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
-| Commit details: summary, copyable commit id, parent links and committer picture/name in the header; scrolling description and changed-file card, per-file diff, expand/return and compact full view | Done | Yes | Yes | Yes |
+| Commit details: summary, copyable commit id, parent links and author picture/name in the header; scrolling description and changed-file card, per-file diff, expand/return and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search the history for changed text (Shift+F in History, or the palette): the commits and files whose change added or removed a string (`git log -S`) or touched lines matching a regular expression (`-G`), newest first, up to 300 commits; a result opens that commit with the file's diff; reads blobs through the git CLI with lazy fetch off and no textconv or external diff, so a partial clone downloads nothing (an object it lacks fails the search with git's message) and a repository's own diff programs never run; the searched text is not logged | Done | Yes | ? | ? |
 | File history: the commits that changed a file, followed back through renames (`git log --follow`), from the Changes file menu, a commit's file menu or the command palette; choosing one opens that commit's diff of the file, leaving the working tree alone; each row keeps its author and date whole (the summary is cut first), a merge commit that lists no change to the file shows a merge glyph instead of a status, and the dialog says when it lists only the commits up to the one it was opened from | Done | Yes | Yes | Yes |
@@ -90,7 +90,7 @@ git would run on every `git status`.
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |
 | Signature verification badges | Done: distinct verified, invalid, unavailable, untrusted and expired/revoked marks in commit details and the author card; only verified signatures use the trusted mark; checked by git in trusted folders only | ? | Yes | ? |
-| Commit identity card and parent links in commit details | Done: the committer name opens a card (email, original author, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
+| Commit identity card and parent links in commit details | Done: the author name opens a card (email, committer when different, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
 
 Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.
 The merge composer names the conclusion and prefills Git's merge message without replacing a draft.
