@@ -10,6 +10,15 @@ commits since the previous build.
 
 ### Added
 
+- Canopy asks before it acts on a repository it does not trust: opening one outside every trusted
+  folder shows a prompt that says a repository can run programs on this computer through its hooks
+  and settings, with Trust and Don't trust. Don't trust opens it read-only: history and diffs show,
+  every action is refused with a toast that says why, background fetches skip it, and a banner offers
+  Trust…. A trusted folder
+  trusts everything inside it, linked worktrees included, and the list in Settings → Privacy keeps
+  only the outer folders. Trust safety can be turned off there, after a confirmation; a settings file
+  never changes the list or the switch. Folders are compared by what they are on disk, so
+  capitalization and links never decide.
 - The pull and merge request list has a comfortable / dense toggle in its toolbar (and in Settings,
   Appearance, Request list). Dense shows one line per request, with the number, title, labels and
   checks and no preview; the choice is remembered and is separate from the whole-app density.

@@ -61,7 +61,10 @@ pub const OVERLAYS: &[&str] = &[
     "clear-identity",
     "update-installed",
     "update-running",
-    "trust-folder",
+    "trust-prompt",
+    "trust-banner",
+    "trust-safety-off",
+    "privacy-trust-off",
     "diff-options",
     "settings-integrations",
     "settings-accounts",
@@ -161,6 +164,22 @@ pub struct Launch {
     /// `--glass-soak N` (debug builds): paint floating layers, glass when Translucent surfaces is
     /// on, for a warm-up and then N measured frames, then report and exit.
     pub glass_soak: Option<u64>,
+}
+
+/// The folders a screenshot trusts: the repositories it opens, so that a picture of the Changes
+/// view is not a picture of the prompt, and `CANOPY_SCREENSHOT_TRUSTED`'s folder. Nothing for
+/// `--overlay trust-banner`, which shows a repository that is not.
+fn screenshot_trusted(launch: &Launch) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    let opened = launch
+        .paths
+        .iter()
+        .filter(|_| launch.overlay.as_deref() != Some("trust-banner"));
+    let named = std::env::var_os("CANOPY_SCREENSHOT_TRUSTED").map(PathBuf::from);
+    for folder in opened.chain(named.iter()) {
+        crate::trust::add(&mut folders, folder);
+    }
+    folders
 }
 
 /// Rows a Page Down / Ctrl+D moves in a list.
@@ -265,11 +284,12 @@ impl CanopyApp {
                 accepted_privacy: crate::ui::legal::PRIVACY_VERSION.to_owned(),
                 crash_reports: Some(false),
                 crash_reports_version: crate::crash_reports::DATA_VERSION,
-                // A picture of what a trusted folder shows (a signature, say) names the folder.
-                trusted_folders: std::env::var_os("CANOPY_SCREENSHOT_TRUSTED")
-                    .map(PathBuf::from)
-                    .into_iter()
-                    .collect(),
+                // A repository is trusted, so the picture shows the view and not the prompt that
+                // asks, unless the overlay is about trust (`--overlay trust-banner`).
+                // CANOPY_SCREENSHOT_TRUSTED names another folder; a picture of what a trusted
+                // folder shows (a signature, say) names the folder.
+                trusted_folders: screenshot_trusted(&launch),
+                trust_safety: launch.overlay.as_deref() != Some("privacy-trust-off"),
                 ..Settings::default()
             };
         }
@@ -284,7 +304,7 @@ impl CanopyApp {
         }
         crate::logging::set_level(settings.log_level);
         // Before any tab opens, so a repository thread never sees an empty list.
-        crate::trust::set(&settings.trusted_folders);
+        crate::trust::publish(&settings);
         crate::trust::install_gate();
         crate::ui::fonts::install(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -518,7 +538,7 @@ impl CanopyApp {
             }
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),
-            Some("privacy") => {
+            Some("privacy" | "privacy-trust-off") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy));
             }
             Some("consent") => {
@@ -589,11 +609,14 @@ impl CanopyApp {
                 app.dialogs.open(Dialog::Update(Box::new(available)));
             }
             // A fixed illustrative path, so the screenshot never shows the fixture's temporary one.
-            Some("trust-folder") => app.dialogs.open(Dialog::TrustFolder {
+            Some("trust-prompt") => app.dialogs.open(Dialog::Trust {
                 repo: PathBuf::from("/home/ada/src/tidepool"),
-                folders: vec![PathBuf::from("/home/ada/src/tidepool-main/.git")],
-                remote: "origin".into(),
+                folders: vec![
+                    PathBuf::from("/home/ada/src/tidepool"),
+                    PathBuf::from("/home/ada/src/tidepool-main/.git"),
+                ],
             }),
+            Some("trust-safety-off") => app.dialogs.open(Dialog::ConfirmTrustSafetyOff),
             Some("clear-identity") => app.dialogs.open(Dialog::ConfirmClearIdentity {
                 repo: None,
                 scope: canopy_core::identity::Scope::Global,

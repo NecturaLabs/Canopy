@@ -83,7 +83,9 @@ or how flows feel end to end.
 2. Drive it with `tools/usersim.sh x ...` (xdotool: `x search --name Canopy windowfocus`, then
    `x mousemove X Y click 1`, `x key ctrl+k`, `x type --delay 40 -- TEXT`) and look with
    `tools/usersim.sh shot out.png` after every step that changes the screen.
-3. Walk the first launch (terms, crash question, identity), then every change in the release, then
+3. Walk the first launch (terms, crash question, identity). The fixture is outside every trusted
+   folder, so its repository asks "Trust this repository?": answer Trust before the flows below, or
+   Don't trust to see the read-only banner. Then every change in the release, then
    the core flows around it: browse and select in History and the sidebar, context menus and
    their submenus, stage and commit, fetch, pull and push against the bare `origin`, a conflict
    (`--kind conflict`), Settings changes taking effect, notifications and the notification center,

@@ -54,13 +54,27 @@ in the error text. A diff that could not be downloaded keeps its message with a 
 is not asked for again by the status refreshes; its file row carries a "not downloaded" mark
 until a read succeeds.
 
-Downloads run on their own only for repositories inside a folder trusted in Settings (Privacy,
-Trusted folders), because git then follows the repository's own configuration, which can run
-programs and contact servers. Elsewhere Canopy shows what is on disk, says why a read needs a
-download, and the status bar offers "Downloads off · Trust…" with the repository's folder or its
-parent. Linked worktrees also list the external Git folders they use; confirmation trusts those
-folders too. The chip disappears when its refused details are no longer visible. Nothing is
-trusted by default (ADR 0009).
+Downloads run on their own only for a trusted repository (see Trust below), because git then
+follows the repository's own configuration, which can run programs and contact servers. Elsewhere
+Canopy shows what is on disk, says why a read needs a download, and the status bar offers
+"Downloads off · Trust…", which opens the same Trust prompt. The chip disappears when its refused
+details are no longer visible (ADR 0009).
+
+### Trust
+
+A repository's hooks, configuration and filters can run programs on this computer whenever `git`
+runs in it, so Canopy trusts a location before it acts on it (ADR 0014). A repository is trusted
+when it lies inside a folder in Settings → Privacy → Trusted folders, at any depth, linked
+worktrees and their Git folders included; nothing is trusted by default.
+
+| Feature | Status | Linux | macOS | Windows |
+|---|---|---|---|---|
+| Opening a repository that is not trusted asks first (Trust or Don't trust), for the active tab; the other restored tabs ask when first active. Trust adds the repository's folders (and a linked worktree's outside Git folders) to the list | Unreleased (#228) | Yes | ? | ? |
+| An untrusted repository is read-only: History, diffs and blame still show, every action (stage, commit, checkout, fetch, pull, push, ...) is refused with a toast that says why, background fetches skip it, and a banner above History, Changes and Pull requests offers Trust… | Unreleased (#228) | Yes | ? | ? |
+| The trusted list keeps only outer folders: adding a parent replaces the folders below it and a covered folder is not added; Settings explains it behind the help mark | Unreleased (#228) | Yes | ? | ? |
+| Folders are compared by what they are on disk, not by spelling, so capitalization and links never decide (a volume that ignores capitalization recognises `SRC` as `src`; one that does not does not) | Unreleased (#228) | Yes | Not verified | Not verified |
+| Trust safety switch (Settings → Privacy): off asks for confirmation and stops all prompts and refusals; Settings shows a notice on every page while it is off and keeps the list; a settings file never sets the list or the switch | Unreleased (#228) | Yes | ? | ? |
+
 
 A download of the working tree status that failed (server unreachable) is remembered: the
 refreshes the file watcher makes show the same message without trying the network again, until
@@ -179,7 +193,7 @@ The git-flow UI remains planned.
 | Fetch (all remotes, prune) | Done | Yes | Yes | Yes |
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
 | Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Done | ? | ? | ? |
-| Git configuration: editable supported values in Settings → Git (global) and This repository (local), with values, scopes, files and recommendations; Use recommended writes the non-sensitive recommendations globally after confirmation; a repository's reset button removes only its own override (a global value is changed, never cleared), preserving included configuration and repository choices; canonical Git booleans and configuration errors are displayed accurately: a value Git refuses is shown as written, with the problem, on its own row; where a value is set reads by scope ("your global git config", "this repository"), with a path only for an included file, never Git's raw `file:` origin; a search shows rows only, never the editor's captions. Every setting has a recommendation, and a row the configuration leaves unset shows the recommended value, or the value Git uses for line endings and signing, which Canopy leaves to Git. Line endings follow GitHub's guidance (LF on commit; on Windows also CRLF on checkout), signing stays off and signs with SSH once on; Use recommended leaves line endings and signing alone. The pull recommendation is fast-forward only (`pull.ff = only`, with `pull.rebase = false` so it takes effect), and the diverged-pull dialog's "Rebase (recommended)" is the recommended way to combine when branches did diverge | Unreleased | ? | ? | ? |
+| Git configuration: editable supported values in Settings → Git (global) and This repository (local), with values, scopes, files and recommendations; Use recommended writes the non-sensitive recommendations globally after confirmation; a repository's reset button removes only its own override (a global value is changed, never cleared), preserving included configuration and repository choices; the first branch is global only, since Git reads `init.defaultBranch` only to create a repository; canonical Git booleans and configuration errors are displayed accurately: a value Git refuses is shown as written, with the problem, on its own row; where a value is set reads by scope ("your global git config", "this repository"), with a path only for an included file, never Git's raw `file:` origin; a search shows rows only, never the editor's captions. Every setting has a recommendation, and a row the configuration leaves unset shows the recommended value, or the value Git uses for line endings and signing, which Canopy leaves to Git. Line endings follow GitHub's guidance (LF on commit; on Windows also CRLF on checkout), signing stays off and signs with SSH once on; Use recommended leaves line endings and signing alone. The pull recommendation is fast-forward only (`pull.ff = only`, with `pull.rebase = false` so it takes effect), and the diverged-pull dialog's "Rebase (recommended)" is the recommended way to combine when branches did diverge | Unreleased | ? | ? | ? |
 | Repository and Git settings selects show each value once, mark recommended options in their lists (no "Recommended:" sentence in the help text), and distinguish a pinned value from an inherited one with Overridden and a named reset; Settings → Integrations lists the system's own editor, terminal or file manager once, as "<name> (Default)" (plain "Default" when none is detected; never "Recommended", and no environment variable named), picked only among programs installed on this computer, and every other program once, merged by what it runs, never by its name, with a program's server, daemon and client entries (`foot --server`, `footclient`) left out; context lines and whitespace pin and reset together | Done | ? | ? | ? |
 | Settings → This repository → Commit signing states what git will do (signs or not) with the format (OpenPGP, SSH, X.509), the key's id or file name (an inline SSH key is never shown), the program and where `commit.gpgsign` is set, and warns with its fix when signing would fail: the program is not installed, an SSH key is not set or its file is missing, or `gpg.format` is unknown; read from the configuration and `PATH` only, never by running the program; a button opens the file that sets it, preserving non-UTF-8 file names; identity, pull and repository settings share absolute, unquoted configuration origins | Done | ? | ? | ? |
 | Settings → This repository → Hosting states the outcome first for the tab's GitHub or GitLab remote: requests off (opens Integrations), credential refused, rate limited, loading with the credential in use and where it comes from (saved, environment, git credential helper), no credential (add a token) or not requested yet; it names the remote and host it is about and lists the other GitHub or GitLab remotes, which are not loaded | Done | Yes | ? | ? |

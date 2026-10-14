@@ -478,6 +478,13 @@ in the density's metrics:
   too long for the card is cut back to a word or number boundary before its ellipsis, so a number
   is never cut in two, unless that would lose more than a quarter of what fits. A file both sides
   deleted offers one "Delete it", not one per side.
+- A repository that is not trusted leads History, Changes and Requests with the kit warning
+  `Banner` "Read-only: this repository is not trusted" and a Trust… ghost action at its right end
+  (`views/state_banner.rs`); it stacks above the operation banner. Settings shows the kit `Callout`
+  in the danger tone, "Trust safety is off" with Turn on, at the top of every page while the
+  switch is off. The Trust prompt is a form-width dialog (shield icon, what a repository can do, what
+  Don't trust means, the folders it trusts in monospace); turning the switch off is a danger
+  confirmation.
 - The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests,
   drawn the same way in all three (`views/state_banner.rs`): the kit warning `Banner` with
   Continue and Abort as ghost buttons at its right end.
@@ -938,7 +945,8 @@ leaves the choice to Git. Enumerated values have one option each; unsupported co
 remain visible as text. Recommendations are badges, never a reason to lock a control. A global
 value is changed, never cleared; a repository's own value has the reset button, which removes the
 override and leaves includes and higher-priority scopes intact. The
-first-branch field requires Save and validates before writing. Writes temporarily disable the
+first-branch field requires Save and validates before writing; it is on the Git page only, because
+Git reads `init.defaultBranch` to create a repository, never from one that exists. Writes temporarily disable the
 editor, then reread facts and show success or Git's error. Use recommended confirms its global
 scope and preserves signing, hooks, identity and line endings.
 

@@ -39,6 +39,7 @@ pub const NOT_PREFERENCES: &[&str] = &[
     "crash_reports",
     "crash_reports_version",
     "trusted_folders",
+    "trust_safety",
     "identity_asked",
     "last_update_check",
     "skipped_version",
@@ -390,6 +391,7 @@ mod tests {
             accepted_privacy: "2026-10-03".to_owned(),
             crash_reports: Some(false),
             trusted_folders: vec![PathBuf::from("/srv/trusted")],
+            trust_safety: false,
             recent: vec![PathBuf::from("/srv/repo")],
             ..Settings::default()
         }
@@ -403,6 +405,7 @@ mod tests {
             "accepted_terms",
             "crash_reports",
             "trusted_folders",
+            "trust_safety",
             "recent",
             "/srv/",
         ] {
@@ -422,6 +425,7 @@ mod tests {
         assert_eq!(back.accepted_terms, fresh.accepted_terms);
         assert_eq!(back.crash_reports, None);
         assert_eq!(back.trusted_folders, Vec::<PathBuf>::new());
+        assert!(back.trust_safety, "the switch is this computer's own");
     }
 
     #[test]
@@ -429,12 +433,31 @@ mod tests {
         let fresh = Settings::default();
         let text = r#"{"format": "canopy-settings", "version": 1, "settings": {
             "accepted_terms": "2026-10-03", "accepted_privacy": "2026-10-03",
-            "crash_reports": true, "trusted_folders": ["/"], "zoom": 1.2}}"#;
+            "crash_reports": true, "trusted_folders": ["/"], "trust_safety": false,
+            "zoom": 1.2}}"#;
         let back = import(&fresh, text).unwrap().settings;
         assert_eq!(back.accepted_terms, fresh.accepted_terms);
         assert_eq!(back.crash_reports, None);
         assert_eq!(back.trusted_folders, Vec::<PathBuf>::new());
+        assert!(back.trust_safety, "a file cannot turn trust safety off");
         assert!((back.zoom - 1.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_file_cannot_turn_trust_safety_on_either() {
+        let off = Settings {
+            trust_safety: false,
+            trusted_folders: vec![PathBuf::from("/srv/trusted")],
+            ..Settings::default()
+        };
+        let text = r#"{"format": "canopy-settings", "version": 1, "settings": {
+            "trust_safety": true, "trusted_folders": []}}"#;
+        let back = import(&off, text).unwrap().settings;
+        assert!(!back.trust_safety, "the choice stays the one made here");
+        assert_eq!(back.trusted_folders, off.trusted_folders);
+        let reset = reset(&off).unwrap();
+        assert!(!reset.trust_safety, "resetting preferences keeps it");
+        assert_eq!(reset.trusted_folders, off.trusted_folders);
     }
 
     #[test]

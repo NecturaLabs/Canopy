@@ -5,7 +5,7 @@ use super::*;
 use canopy_core::identity::{Scope, Source};
 
 use crate::identity_worker::Event as IdentityEvent;
-use crate::tab::{Delivery, Notice, REQUESTS_REFRESH_EVERY};
+use crate::tab::{Delivery, Notice, REQUESTS_REFRESH_EVERY, RepoTrust};
 use crate::views::settings_screen::source_label;
 
 /// What the first-launch identity question should do now.
@@ -357,7 +357,7 @@ impl CanopyApp {
             ctx.all_styles_mut(|s| s.interaction.tooltip_delay = delay);
         }
         // Also a backstop for any path that changed the list without publishing it.
-        crate::trust::set(&self.settings.trusted_folders);
+        crate::trust::publish(&self.settings);
         let changes = crate::trust::changes();
         if changes != self.trust_seen {
             self.trust_seen = changes;
@@ -365,6 +365,7 @@ impl CanopyApp {
                 tab.trust_changed(changes);
             }
         }
+        self.ask_about_trust();
         let pictures = crate::ui::legal::pending(&self.settings).is_none()
             && self.settings.hosting_api
             && self.settings.download_avatars
@@ -574,7 +575,40 @@ impl CanopyApp {
         }
     }
 
-    /// Queues background fetches for tabs whose auto-fetch interval has passed.
+    /// Asks whether to trust the active tab's repository, once, as soon as its thread says it is
+    /// not trusted. Other tabs ask when they are first active; each is read-only meanwhile, with
+    /// the banner. A prompt for a repository that has become trusted since (a parent folder was
+    /// added in Settings, say) goes away.
+    pub(super) fn ask_about_trust(&mut self) {
+        let tabs = &self.tabs;
+        self.dialogs.close_where(|dialog| {
+            matches!(dialog, Dialog::Trust { folders, .. }
+                if tabs.iter().any(|t| t.trust == RepoTrust::Trusted && t.trust_folders == *folders))
+        });
+        if self
+            .dialogs
+            .any(|dialog| matches!(dialog, Dialog::Trust { .. }))
+        {
+            return;
+        }
+        let declines = self.screenshot.as_ref().is_some_and(|s| s.declines_trust);
+        let Some(tab) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        if tab.trust != RepoTrust::Untrusted || tab.trust_asked {
+            return;
+        }
+        tab.trust_asked = true;
+        if !declines {
+            self.dialogs.open(Dialog::Trust {
+                repo: tab.trust_folders.first().unwrap_or(&tab.path).clone(),
+                folders: tab.trust_folders.clone(),
+            });
+        }
+    }
+
+    /// Queues background fetches for tabs whose auto-fetch interval has passed. A repository
+    /// that is not trusted is read-only, so it is not fetched.
     pub(super) fn auto_fetch(&mut self, ctx: &egui::Context) {
         if self.screenshot.is_some() {
             return;
@@ -587,7 +621,7 @@ impl CanopyApp {
             }
             any = true;
             let every = Duration::from_secs(u64::from(minutes) * 60);
-            let idle = t.running.is_none();
+            let idle = t.running.is_none() && t.trust != RepoTrust::Untrusted;
             let has_remote = t.snap.as_ref().is_some_and(|s| !s.remotes.is_empty());
             if idle && has_remote && t.last_fetch.elapsed() >= every {
                 t.last_fetch = Instant::now();
@@ -719,6 +753,113 @@ mod tests {
                 "Finished operations {finished}: a card only when on, the center either way"
             );
         }
+    }
+
+    /// A tab on a repository that is not trusted, on a worker that answers nothing.
+    fn untrusted_tab(name: &str) -> RepoTab {
+        let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+        tab.path = PathBuf::from(name);
+        tab.trust = RepoTrust::Untrusted;
+        tab.trust_folders = vec![PathBuf::from(name)];
+        tab
+    }
+
+    fn trust_prompt(app: &CanopyApp) -> Option<Vec<PathBuf>> {
+        match app.dialogs.current() {
+            Some(Dialog::Trust { folders, .. }) => Some(folders.clone()),
+            _ => None,
+        }
+    }
+
+    /// #228: the active tab is asked once; the others are read-only until they are active, and a
+    /// tab that was asked and declined is not asked again.
+    #[test]
+    fn only_the_active_untrusted_tab_is_asked_about_trust_and_only_once() {
+        let mut app = test_app();
+        app.tabs = vec![untrusted_tab("/src/one"), untrusted_tab("/src/two")];
+        app.ask_about_trust();
+        assert_eq!(trust_prompt(&app), Some(vec![PathBuf::from("/src/one")]));
+        assert!(app.tabs[0].trust_asked && !app.tabs[1].trust_asked);
+
+        app.ask_about_trust();
+        assert!(app.dialogs.any(|d| matches!(d, Dialog::Trust { .. })));
+        app.dialogs.close();
+        app.ask_about_trust();
+        assert!(
+            trust_prompt(&app).is_none(),
+            "declined: the banner stays, no prompt"
+        );
+
+        app.active = 1;
+        app.ask_about_trust();
+        assert_eq!(trust_prompt(&app), Some(vec![PathBuf::from("/src/two")]));
+    }
+
+    #[test]
+    fn nothing_is_asked_while_the_thread_has_not_answered_or_the_repository_is_trusted() {
+        let mut app = test_app();
+        let mut waiting = untrusted_tab("/src/one");
+        waiting.trust = RepoTrust::Unknown;
+        let mut trusted = untrusted_tab("/src/two");
+        trusted.trust = RepoTrust::Trusted;
+        app.tabs = vec![waiting, trusted];
+        app.ask_about_trust();
+        assert!(trust_prompt(&app).is_none());
+        app.active = 1;
+        app.ask_about_trust();
+        assert!(trust_prompt(&app).is_none());
+        assert!(!app.tabs[0].trust_asked && !app.tabs[1].trust_asked);
+    }
+
+    /// A prompt that waits behind another dialog goes away once its repository is trusted by
+    /// other means (a parent folder added in Settings).
+    #[test]
+    fn a_prompt_goes_away_when_its_repository_becomes_trusted() {
+        let mut app = test_app();
+        app.tabs = vec![untrusted_tab("/src/one")];
+        app.ask_about_trust();
+        assert!(trust_prompt(&app).is_some());
+        app.tabs[0].trust = RepoTrust::Trusted;
+        app.ask_about_trust();
+        assert!(app.dialogs.current().is_none());
+    }
+
+    /// Background fetches are not sent to a repository that is read-only.
+    #[test]
+    fn a_background_fetch_skips_a_repository_that_is_not_trusted() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.settings.auto_fetch_minutes = 1;
+        let mut tabs = Vec::new();
+        let mut queues = Vec::new();
+        for trust in [RepoTrust::Untrusted, RepoTrust::Trusted] {
+            let (worker, _events, jobs) = crate::worker::Worker::detached();
+            let snap = canopy_core::RepoSnapshot {
+                remotes: vec![canopy_core::RemoteInfo {
+                    name: "origin".into(),
+                    url: None,
+                    default_branch: None,
+                }],
+                ..canopy_core::RepoSnapshot::default()
+            };
+            let mut tab = test_tab(snap);
+            tab.worker = worker;
+            tab.trust = trust;
+            tab.last_fetch = Instant::now()
+                .checked_sub(Duration::from_secs(3600))
+                .expect("an hour ago");
+            tabs.push(tab);
+            queues.push(jobs);
+        }
+        app.tabs = tabs;
+        app.auto_fetch(&ctx);
+        assert!(queues[0].is_empty(), "read-only: no fetch");
+        assert!(
+            queues[1]
+                .try_iter()
+                .any(|job| matches!(job, Job::Op(Op::Fetch { quiet: true, .. }))),
+            "trusted: fetched"
+        );
     }
 
     #[test]
