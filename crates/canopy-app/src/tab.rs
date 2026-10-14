@@ -4812,7 +4812,7 @@ mod tests {
         assert_eq!(delivery(&mut tab, fetch(true))?, Delivery::Card);
         let stage = Event::OpFinished {
             label: "Staging".into(),
-            kind: OpKind::Stage,
+            kind: OpKind::Other,
             announce: false,
             result: Err("fatal: Unable to create index.lock".into()),
         };
