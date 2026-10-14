@@ -17,7 +17,7 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{ChangeBadge, DiffStat};
 use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{ListRow, RowKind, SectionHeader};
+use crate::ui::kit::row::{ListRow, RowKind, caps_galley};
 use crate::ui::kit::{Button, IconButton, Size, menu, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
@@ -82,14 +82,9 @@ pub fn show(
                 commit_facts(ui, &d, tab, note.as_ref(), actions);
                 ui.add_space(theme::SM);
             }
-            // Up to two whole file rows, the "N files changed" line above them (as tall as it
-            // was last frame, at first one line of its text) and the gaps between them.
-            let stats_key = ui.id().with("commit-file-stats-height");
-            let stats_h = ui
-                .data(|data| data.get_temp::<f32>(stats_key))
-                .unwrap_or_else(|| text_row(ui, m.meta_size));
+            // Up to two whole file rows, the "N files changed" title above them and the gaps
+            // between them.
             let files_min = file_row_height() * crate::ui::count_f32(d.files.len().min(2))
-                + stats_h
                 + m.section_header_height
                 + theme::XS * 2.0
                 + ui.spacing().item_spacing.y * 3.0;
@@ -112,12 +107,7 @@ pub fn show(
                 message_block(ui, room.max(first_line), |ui| message(ui, &d, summary));
             }
             ui.add_space(theme::XS);
-            SectionHeader::new("Changed files").first(true).show(ui);
-            let measured = file_stats(ui, &d);
-            if (measured - stats_h).abs() > 0.5 {
-                ui.data_mut(|data| data.insert_temp(stats_key, measured));
-                ui.ctx().request_repaint();
-            }
+            file_stats(ui, &d);
             ui.add_space(theme::XS);
             let list = egui::ScrollArea::vertical()
                 .id_salt("commit-file-list")
@@ -159,7 +149,6 @@ pub fn natural_height(ui: &Ui, d: Option<&CommitDetails>) -> f32 {
         + m.detail_pad.y * 2.0
         + body
         + m.section_header_height
-        + text_row(ui, m.meta_size)
         + file_row_height() * crate::ui::count_f32(files)
         + theme::XS * 2.0
         + ui.spacing().item_spacing.y * 3.0
@@ -227,21 +216,24 @@ fn header(
                 .id_salt("commit-pane-expand")
                 .enabled(tab.selected_commit.is_some())
                 .show(&mut buttons);
-            let mut summary_end = toggle.rect.left() - theme::SM;
+            let mut summary = Rect::from_min_max(
+                top.min,
+                pos2(
+                    (toggle.rect.left() - theme::SM).max(top.left()),
+                    top.bottom(),
+                ),
+            );
             let mut measured = m.pane_header_height;
             if let Some(d) = details.as_deref() {
                 let width = facts_width(ui, d);
-                let inline = width + m.body_size * 4.0 <= summary_end - top.left();
+                let available = summary.width();
+                let inline = facts_fit_inline(width, available, m.body_size * 4.0);
                 let facts = if inline {
-                    summary_end -= width + theme::SM;
-                    Rect::from_min_max(
-                        pos2(summary_end + theme::SM, top.top()),
-                        pos2(toggle.rect.left() - theme::SM, top.bottom()),
-                    )
+                    Rect::from_min_size(top.min, vec2(width, top.height()))
                 } else {
                     Rect::from_min_max(
-                        pos2(top.left(), top.bottom()),
-                        pos2(top.right(), row.bottom().max(top.bottom())),
+                        top.min,
+                        pos2(summary.right(), row.bottom().max(top.bottom())),
                     )
                 };
                 let mut facts_ui = ui.new_child(
@@ -251,8 +243,16 @@ fn header(
                 );
                 let note = crate::avatars::explain_tab(settings, tab).map(PictureNote::from);
                 let used = commit_facts(&mut facts_ui, d, tab, note.as_ref(), actions);
-                if !inline {
-                    measured += used.height() + theme::XS;
+                if inline {
+                    summary.min.x = facts.right() + theme::SM;
+                } else {
+                    // The ids take the first row; the subject follows below them.
+                    let below = used.height().max(m.pane_header_height) + theme::XS;
+                    summary = Rect::from_min_max(
+                        pos2(top.left(), top.top() + below),
+                        pos2(top.right(), top.top() + below + m.pane_header_height),
+                    );
+                    measured = below + m.pane_header_height;
                 }
                 let id = egui::Id::new(("commit-header-height", d.oid));
                 if (measured - height).abs() > 0.5 {
@@ -260,8 +260,7 @@ fn header(
                     ui.ctx().request_repaint();
                 }
             }
-            let summary_rect =
-                Rect::from_min_max(top.min, pos2(summary_end.max(top.left()), top.bottom()));
+            let summary_rect = summary;
             let mut summary_ui = ui.new_child(
                 UiBuilder::new()
                     .max_rect(summary_rect)
@@ -272,10 +271,27 @@ fn header(
                 d.message.lines().next().unwrap_or("").trim()
             });
             let font = FontId::new(m.body_size, theme::semibold());
-            summary_ui
-                .add(egui::Label::new(RichText::new(summary).font(font).color(p.text)).truncate())
-                .kit_tooltip(summary)
-                .show();
+            let (_, label) =
+                summary_ui.allocate_space(vec2(summary_rect.width(), summary_rect.height()));
+            let galley = widgets::single_line_galley(
+                &summary_ui,
+                summary.to_owned(),
+                font,
+                p.text,
+                label.width(),
+            );
+            summary_ui.painter().galley(
+                pos2(label.left(), label.center().y - galley.size().y / 2.0),
+                galley,
+                p.text,
+            );
+            let band = summary_ui.interact(
+                label,
+                summary_ui.id().with("commit-summary"),
+                egui::Sense::hover(),
+            );
+            band.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, summary));
+            band.kit_tooltip(summary).show();
             if toggle.clicked() {
                 tab.history_layout.expanded = !tab.history_layout.expanded;
                 tab.history_layout.compact_details = true;
@@ -284,6 +300,14 @@ fn header(
     details.is_some()
 }
 
+/// Whether the person and ids share the header's row with the subject: they do when the subject
+/// keeps at least `min_summary` of the `available` width after them. Otherwise they take the row
+/// and the subject the one below; the ids never shrink, only the subject truncates.
+fn facts_fit_inline(facts: f32, available: f32, min_summary: f32) -> bool {
+    facts + min_summary <= available
+}
+
+/// The width of the author, commit id and parents (they never truncate; the subject does).
 fn facts_width(ui: &Ui, d: &CommitDetails) -> f32 {
     let m = theme::metrics();
     let ink = palette(ui.ctx()).text;
@@ -294,18 +318,24 @@ fn facts_width(ui: &Ui, d: &CommitDetails) -> f32 {
                 .size()
                 .x
         };
-        let name = width(d.committer.name.clone(), m.body_size).min(m.detail_info_width / 3.0);
-        let ids = width(format!("Commit {}", short_id(d.oid)), m.body_size)
+        let name = width(d.author.name.clone(), m.body_size).min(m.detail_info_width / 3.0);
+        let ids = width("Commit".to_owned(), m.body_size)
+            + width(short_id(d.oid), m.body_size)
             + m.button_pad_x_sm * 2.0
-            + d.parents
-                .iter()
-                .map(|oid| width(format!("Parent {}", short_id(*oid)), m.sha_size))
-                .sum::<f32>();
+            + if d.parents.is_empty() {
+                0.0
+            } else {
+                width(parents_label(d).to_owned(), m.body_size)
+                    + d.parents
+                        .iter()
+                        .map(|oid| width(short_id(*oid), m.sha_size))
+                        .sum::<f32>()
+            };
         m.avatar_detail
             + name
             + m.icon_md
             + ids
-            + theme::SM * crate::ui::count_f32(d.parents.len() + 4)
+            + theme::SM * crate::ui::count_f32(d.parents.len() + 5)
     })
 }
 
@@ -319,9 +349,13 @@ fn commit_facts(
     let m = theme::metrics();
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = theme::SM;
-        committer(ui, d, tab, note, actions);
-        let copy = Button::new(format!("Commit {}", short_id(d.oid)))
+        person(ui, d, tab, note, actions);
+        fact_label(ui, "Commit");
+        // The button's own padding, so the id sits as close to its label as the parents' do.
+        ui.add_space(-m.button_pad_x_sm);
+        let copy = Button::new(short_id(d.oid))
             .ghost()
+            .plain_text()
             .size(Size::Xs)
             .show(ui)
             .kit_tooltip("Copy the commit id")
@@ -337,10 +371,13 @@ fn commit_facts(
         if copy.clicked() {
             actions.push(Action::Copy(d.oid.to_string()));
         }
+        if !d.parents.is_empty() {
+            fact_label(ui, parents_label(d));
+        }
         for (i, parent) in d.parents.iter().enumerate() {
             let link = ui
                 .push_id(("parent", i, parent), |ui| {
-                    LinkButton::new(format!("Parent {}", short_id(*parent)))
+                    LinkButton::new(short_id(*parent))
                         .text_size(m.sha_size)
                         .show(ui)
                 })
@@ -363,6 +400,25 @@ fn commit_facts(
     })
     .response
     .rect
+}
+
+/// The word before the parent ids: one label for all of them.
+fn parents_label(d: &CommitDetails) -> &'static str {
+    if d.parents.len() == 1 {
+        "Parent"
+    } else {
+        "Parents"
+    }
+}
+
+/// A muted word naming the value that follows it in the header's facts.
+fn fact_label(ui: &mut Ui, text: &str) {
+    let m = theme::metrics();
+    ui.label(
+        RichText::new(text)
+            .font(FontId::new(m.body_size, theme::medium()))
+            .color(palette(ui.ctx()).text_dim),
+    );
 }
 
 /// Left and right insets of the detail header's content (concept 1's `.dh`).
@@ -470,7 +526,9 @@ impl From<crate::avatars::Explanation> for PictureNote {
     }
 }
 
-fn committer(
+/// The commit's author, who opens the identity card; the committer joins the card and the
+/// tooltip only when someone else committed.
+fn person(
     ui: &mut Ui,
     d: &CommitDetails,
     tab: &mut RepoTab,
@@ -478,44 +536,45 @@ fn committer(
     actions: &mut Vec<Action>,
 ) {
     let forge = tab.forge().map(|(_, forge)| forge.clone());
-    {
-        tab.request_avatar(d.oid, &d.committer.email);
-        let picture = tab
-            .avatars
-            .get(&d.committer.email)
-            .map(egui::TextureHandle::id);
-        Avatar::new(Person::new(&d.committer.name, &d.committer.email).picture(picture))
-            .size(AvatarSize::Detail)
-            .id_salt(("commit-committer", &d.committer.email))
-            .show(ui);
-        let name = LinkButton::new(&d.committer.name)
-            .max_text_width(theme::metrics().detail_info_width / 3.0)
-            .show(ui)
-            .kit_tooltip(&d.committer.name)
-            .show();
-        name.widget_info(|| {
-            egui::WidgetInfo::labeled(
-                egui::WidgetType::Button,
-                true,
-                format!("{} (commit identity card)", d.committer.name),
-            )
-        });
-        let status = tab
-            .signature
-            .as_ref()
-            .filter(|(oid, _)| *oid == d.oid)
-            .map(|(_, status)| status.clone());
-        if let Some(status) = &status {
-            signature_mark(ui, status, false);
-        }
-        Popover::new("commit-identity", &name)
-            .width(IDENTITY_CARD_WIDTH)
-            .show(|ui| identity_card(ui, d, forge.as_ref(), status.as_ref(), note, actions));
+    tab.request_avatar(d.oid, &d.author.email);
+    let picture = tab
+        .avatars
+        .get(&d.author.email)
+        .map(egui::TextureHandle::id);
+    Avatar::new(Person::new(&d.author.name, &d.author.email).picture(picture))
+        .size(AvatarSize::Detail)
+        .id_salt(("commit-author", &d.author.email))
+        .show(ui);
+    let name = LinkButton::new(&d.author.name)
+        .max_text_width(theme::metrics().detail_info_width / 3.0)
+        .show(ui);
+    let mut tip = name.kit_tooltip(&d.author.name);
+    if let Some(by) = committed_by(d) {
+        tip = tip.detail(by);
     }
+    let name = tip.show();
+    name.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("{} (commit identity card)", d.author.name),
+        )
+    });
+    let status = tab
+        .signature
+        .as_ref()
+        .filter(|(oid, _)| *oid == d.oid)
+        .map(|(_, status)| status.clone());
+    if let Some(status) = &status {
+        signature_mark(ui, status, false);
+    }
+    Popover::new("commit-identity", &name)
+        .width(IDENTITY_CARD_WIDTH)
+        .show(|ui| identity_card(ui, d, forge.as_ref(), status.as_ref(), note, actions));
 }
 
-/// The committer's identity, the original author when different, signature verification and
-/// profile link, plus the explanation and settings action when pictures are kept away.
+/// The author's identity, the committer when different, signature verification and profile link,
+/// plus the explanation and settings action when pictures are kept away.
 fn identity_card(
     ui: &mut Ui,
     d: &CommitDetails,
@@ -529,14 +588,14 @@ fn identity_card(
     ui.spacing_mut().item_spacing.y = theme::XS;
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(&d.committer.name)
+            RichText::new(&d.author.name)
                 .font(FontId::new(m.body_size, theme::semibold()))
                 .color(p.text),
         );
     });
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(&d.committer.email)
+            RichText::new(&d.author.email)
                 .size(m.meta_size)
                 .color(p.text_dim),
         );
@@ -545,17 +604,17 @@ fn identity_card(
             .show(ui)
             .clicked()
         {
-            actions.push(Action::Copy(d.committer.email.clone()));
+            actions.push(Action::Copy(d.author.email.clone()));
         }
     });
-    if let Some(by) = authored_by(d) {
+    if let Some(by) = committed_by(d) {
         ui.label(RichText::new(by).size(m.meta_size).color(p.text_dim));
     }
     if let Some(status) = status {
         signature_mark(ui, status, true);
     }
     if let Some(forge) = forge {
-        let page = forge.author_page(&d.committer.email);
+        let page = forge.author_page(&d.author.email);
         let name = if matches!(forge.host.as_str(), "github.com" | "gitlab.com") {
             forge.kind.name().to_owned()
         } else {
@@ -657,54 +716,80 @@ fn signature_mark(ui: &mut Ui, status: &SignatureStatus, text: bool) {
 /// The width of the commit identity card.
 const IDENTITY_CARD_WIDTH: f32 = 280.0;
 
-/// The author when someone else committed their work.
-fn authored_by(d: &CommitDetails) -> Option<String> {
+/// The committer when someone other than the author committed the work.
+fn committed_by(d: &CommitDetails) -> Option<String> {
     (d.committer.email != d.author.email || d.committer.name != d.author.name)
-        .then(|| format!("Authored by {} <{}>", d.author.name, d.author.email))
+        .then(|| format!("Committed by {} <{}>", d.committer.name, d.committer.email))
 }
 
-/// The "N files changed" line and its line counts; returns the height it took.
-fn file_stats(ui: &mut Ui, d: &CommitDetails) -> f32 {
+/// The section's title, centred: "N files changed" in the section-header label style and its
+/// line counts, in one band as tall as a section header. A partial clone that has not downloaded
+/// the file contents says so in the band's tooltip, and in the band while the words fit.
+fn file_stats(ui: &mut Ui, d: &CommitDetails) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let (adds, dels) = d
         .files
         .iter()
         .fold((0, 0), |(a, r), f| (a + f.additions, r + f.deletions));
-    ui.scope(|ui| {
-        // As tall as its text: the height of a control would only push the files down.
-        ui.spacing_mut().interact_size.y = 0.0;
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(format!(
-                    "{} file{} changed",
-                    d.files.len(),
-                    if d.files.len() == 1 { "" } else { "s" }
-                ))
-                .size(m.meta_size)
-                .color(p.text_dim),
-            );
-            if d.stats_known {
-                DiffStat::new(adds, dels).show(ui);
-            } else {
-                // A partial clone that has not downloaded the file contents.
-                ui.label(
-                    RichText::new("line counts not downloaded")
-                        .color(p.text_faint)
-                        .size(m.small_size),
-                )
-                .kit_tooltip(
-                    "This is a partial clone: the line counts and renamed files \
-                 need file contents that were not downloaded. Open a file \
-                 to download it.",
-                )
-                .show();
-            }
-        })
-    })
-    .response
-    .rect
-    .height()
+    let text = format!(
+        "{} file{} changed",
+        d.files.len(),
+        if d.files.len() == 1 { "" } else { "s" }
+    );
+    let (_, rect) = ui.allocate_space(vec2(ui.available_width(), m.section_header_height));
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let title = caps_galley(ui, &text, p.text_dim);
+    let stat = DiffStat::new(adds, dels);
+    let words = (!d.stats_known).then(|| {
+        painter.layout_no_wrap(
+            "line counts not downloaded".to_owned(),
+            FontId::proportional(m.small_size),
+            p.text_faint,
+        )
+    });
+    let after = if d.stats_known {
+        stat.size(&painter).x
+    } else {
+        words.as_ref().map_or(0.0, |w| w.size().x)
+    };
+    let title_w = title.size().x;
+    let mut total = title_w + theme::SM + after;
+    // Too narrow for both: the title alone, centred; the tooltip keeps the explanation.
+    let show_after = total <= rect.width() || d.stats_known;
+    if !show_after {
+        total = title_w;
+    }
+    let left = (rect.center().x - total / 2.0).max(rect.left());
+    let cy = rect.center().y;
+    painter.galley(pos2(left, cy - title.size().y / 2.0), title, p.text_dim);
+    let at = left + title_w + theme::SM;
+    if d.stats_known {
+        stat.paint(&painter, pos2(at, cy - stat.size(&painter).y / 2.0));
+    } else if let (Some(words), true) = (words, show_after) {
+        painter.galley(pos2(at, cy - words.size().y / 2.0), words, p.text_faint);
+    }
+    let band = ui.interact(
+        rect,
+        ui.id().with("commit-files-title"),
+        egui::Sense::hover(),
+    );
+    let name = if d.stats_known {
+        format!("{text}, {adds} added, {dels} removed")
+    } else {
+        format!("{text}, line counts not downloaded")
+    };
+    band.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &name));
+    if !d.stats_known {
+        // A partial clone: the line counts and renamed files need file contents that were not
+        // downloaded.
+        band.kit_tooltip(
+            "This is a partial clone: the line counts and renamed files \
+             need file contents that were not downloaded. Open a file \
+             to download it.",
+        )
+        .show();
+    }
 }
 
 fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab, actions: &mut Vec<Action>) {
@@ -1088,6 +1173,7 @@ mod tests {
                     .iter()
                     .filter_map(|(_, n)| {
                         n.label()
+                            .or_else(|| n.value())
                             .map(|l| (l.to_owned(), n.is_selected().unwrap_or(false)))
                     })
                     .collect()
@@ -1177,7 +1263,7 @@ mod tests {
             for name in [
                 format!("Copy commit {oid}"),
                 format!("Show parent 1 commit {parent}"),
-                "Committer (commit identity card)".into(),
+                "Author (commit identity card)".into(),
             ] {
                 let matching: Vec<_> = nodes
                     .iter()
@@ -1235,6 +1321,115 @@ mod tests {
         }
         assert!(actions.iter().any(|action| matches!(action, crate::action::Action::Copy(value) if value == &oid.to_string())));
         assert_eq!(tab.selected_commit, Some(parent));
+    }
+
+    fn details_with(message: &str, parents: usize, committer: &str) -> canopy_core::CommitDetails {
+        let sig = |name: &str, email: &str| canopy_core::Signature {
+            name: name.into(),
+            email: email.into(),
+            time: 0,
+            offset_minutes: 0,
+        };
+        canopy_core::CommitDetails {
+            oid: canopy_core::Oid::from_bytes(&[1; 20]).expect("oid"),
+            message: message.into(),
+            author: sig("Author", "author@example.com"),
+            committer: sig(committer, "committer@example.com"),
+            parents: (0..parents)
+                .map(|i| canopy_core::Oid::from_bytes(&[2 + u8::try_from(i).expect("small"); 20]))
+                .collect::<Result<_, _>>()
+                .expect("parents"),
+            files: Vec::new(),
+            stats_known: true,
+        }
+    }
+
+    #[test]
+    fn the_header_width_follows_the_ids_never_the_subject() {
+        let ctx = ctx(Density::Comfortable);
+        let mut widths = Vec::new();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let long = "A very long subject line that would never fit beside the ids ".repeat(8);
+            let one = super::facts_width(ui, &details_with("Short", 1, "Author"));
+            let long_one = super::facts_width(ui, &details_with(&long, 1, "Author"));
+            let merge = super::facts_width(ui, &details_with("Merge", 3, "Author"));
+            // The committer is not shown in the row, so only the author sets the name's width.
+            let other = super::facts_width(ui, &details_with("Short", 1, "Someone Else Entirely"));
+            widths = vec![one, long_one, merge, other];
+        });
+        out.textures_delta.clear();
+        let [one, long_one, merge, other] = widths[..] else {
+            panic!("measured four widths");
+        };
+        assert!(
+            (one - long_one).abs() < 0.01,
+            "a long subject adds no width"
+        );
+        assert!((one - other).abs() < 0.01, "the committer adds no width");
+        assert!(merge > one, "every parent adds width: {merge} vs {one}");
+    }
+
+    #[test]
+    fn the_files_title_speaks_its_counts_or_that_they_are_missing() {
+        let ctx = ctx(Density::Comfortable);
+        for (known, files, expected) in [
+            (true, 1, "1 file changed, 12 added, 3 removed"),
+            (true, 3, "3 files changed, 36 added, 9 removed"),
+            (false, 3, "3 files changed, line counts not downloaded"),
+        ] {
+            let mut d = details_with("Subject", 1, "Author");
+            d.stats_known = known;
+            d.files = vec![entry(); files];
+            let names = spoken(&ctx, |ui| super::file_stats(ui, &d));
+            assert!(
+                names.iter().any(|(name, _)| name == expected),
+                "{expected}: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn several_parents_share_one_label_and_each_is_a_link() {
+        let ctx = ctx(Density::Comfortable);
+        let root = tempfile::tempdir().expect("tab directory");
+        for (parents, label) in [(1, "Parent"), (2, "Parents"), (3, "Parents")] {
+            let mut tab = crate::tab::RepoTab::new(
+                root.path().into(),
+                &ctx,
+                100,
+                crate::settings::DiffPrefs::default(),
+            );
+            let d = details_with("Merge", parents, "Author");
+            let mut actions = Vec::new();
+            let names = spoken(&ctx, |ui| {
+                super::commit_facts(ui, &d, &mut tab, None, &mut actions);
+            });
+            let count = |wanted: &str| names.iter().filter(|(name, _)| name == wanted).count();
+            assert_eq!(count(label), 1, "{parents} parents: {names:?}");
+            assert_eq!(count("Commit"), 1, "{names:?}");
+            for i in 1..=parents {
+                let prefix = format!("Show parent {i} commit ");
+                assert_eq!(
+                    names.iter().filter(|(n, _)| n.starts_with(&prefix)).count(),
+                    1,
+                    "{names:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_ids_share_the_row_only_while_the_subject_keeps_room() {
+        let (one, merge) = (300.0, 480.0);
+        let room = 120.0;
+        // A wide header keeps everything on one row, merge commit included.
+        assert!(super::facts_fit_inline(merge, 900.0, room));
+        // As it narrows the merge commit's ids wrap below first; a single parent still fits.
+        assert!(super::facts_fit_inline(one, 440.0, room));
+        assert!(!super::facts_fit_inline(merge, 440.0, room));
+        // The subject keeps its minimum room, and not a point less.
+        assert!(super::facts_fit_inline(one, one + room, room));
+        assert!(!super::facts_fit_inline(one, one + room - 1.0, room));
     }
 
     #[test]
@@ -1313,7 +1508,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    ui.horizontal(|ui| super::committer(ui, &d, &mut tab, note, &mut actions));
+                    ui.horizontal(|ui| super::person(ui, &d, &mut tab, note, &mut actions));
                 },
             );
             out.textures_delta.clear();
