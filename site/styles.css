@@ -7,7 +7,7 @@
 @font-face { font-family: "Inter"; src: url("fonts/Inter-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
 @font-face { font-family: "Inter"; src: url("fonts/Inter-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
 @font-face { font-family: "JetBrains Mono"; src: url("fonts/JetBrainsMonoNL-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "Phosphor"; src: url("fonts/Phosphor-2.woff2") format("woff2"); font-display: block; }
+@font-face { font-family: "Phosphor"; src: url("fonts/Phosphor-3.woff2") format("woff2"); font-display: block; }
 
 /* Dark */
 :root {
@@ -240,7 +240,7 @@ kbd + kbd { margin-left: 3px; }
 .theme-switch .ph { font-size: 15px; }
 
 /* Hero: the words on the left, the live palette on the right, the window below */
-.hero { padding-top: clamp(56px, 8vw, 112px); background: linear-gradient(var(--ground-2), var(--ground) 640px); }
+.hero { padding-top: clamp(48px, 5.5vw, 80px); background: linear-gradient(var(--ground-2), var(--ground) 640px); }
 .hero-grid {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 440px); gap: 40px clamp(32px, 6vw, 88px);
   grid-template-areas: "copy pal" "stage stage"; align-items: center;
@@ -264,6 +264,13 @@ kbd + kbd { margin-left: 3px; }
 .stage { grid-area: stage; position: relative; margin-top: clamp(24px, 3vw, 40px); padding-bottom: clamp(80px, 10vw, 144px); }
 .window { position: relative; border-radius: var(--r-lg); overflow: hidden; background: var(--pane); box-shadow: var(--sh-window); }
 
+/* The hero window: one render per palette row, crossfading as the active row changes. History
+   stays in the flow and sizes the frame; the others lie over it. */
+.hero-shot { isolation: isolate; }
+.hero-shot .view { transition: opacity 520ms var(--ease), filter 520ms var(--ease), transform 760ms var(--ease); }
+.hero-shot .view + .view { position: absolute; inset: 0; }
+.hero-shot .view:not(.is-on) { opacity: 0; filter: blur(5px); transform: scale(1.012); pointer-events: none; }
+
 /* The palette: a live command palette on desktop, a list of the page's sections on touch screens */
 .palette {
   grid-area: pal; position: relative; z-index: 2; align-self: center;
@@ -279,7 +286,7 @@ kbd + kbd { margin-left: 3px; }
 .pal-search kbd { color: var(--dim); font-size: 11px; }
 .pal-shortcut { display: inline-flex; gap: 3px; }
 .pal-shortcut kbd + kbd { margin-left: 0; }
-.pal-list { padding: 6px; max-height: 372px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.pal-list { padding: 6px; max-height: 420px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .pal-group { padding: 10px 10px 4px; font-size: 12px; font-weight: 500; color: var(--faint); }
 .pal-list a, .pal-list [role="option"] {
   display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 10px; border-radius: var(--r);
@@ -292,6 +299,13 @@ kbd + kbd { margin-left: 3px; }
 .pal-list mark { background: none; color: var(--ink); font-weight: 600; }
 .pal-keys kbd { font-size: 11px; color: var(--dim); }
 .pal-empty { padding: 14px 10px; color: var(--dim); font-size: 14px; }
+/* While the palette steps through the views by itself, the active row fills until the next step */
+.is-touring [aria-selected="true"] { position: relative; }
+.is-touring [aria-selected="true"]::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; border-radius: 2px;
+  background: var(--accent); transform-origin: left; animation: tour var(--tour, 4200ms) linear both;
+}
+@keyframes tour { from { transform: scaleX(0); } }
 .pal-foot { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 11px 16px; border-top: 1px solid var(--seam); background: var(--hover); color: var(--dim); font-size: 12.5px; }
 .pal-foot span { display: inline-flex; align-items: center; gap: 6px; }
 .pal-foot kbd { font-size: 11px; }
@@ -307,6 +321,8 @@ kbd + kbd { margin-left: 3px; }
 .sec .text p, .sec-head p { margin-top: 20px; color: var(--dim); font-size: 17.5px; max-width: 34em; text-wrap: pretty; }
 .sec .text p + p { margin-top: 12px; }
 .sec-head { max-width: 46rem; }
+.doc-links { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+.sec-head .doc-links { margin-top: 18px; font-size: 15.5px; }
 .sec-head.center { margin-inline: auto; display: flex; flex-direction: column; align-items: center; text-align: center; }
 
 .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(36px, 6vw, 96px); align-items: center; }

@@ -255,7 +255,7 @@ const list = $("#pal-list");
 const search = $("[data-pal-search]");
 const foot = $("[data-pal-foot]");
 const body = $("[data-pal-body]");
-const sectionLinks = $$("a", list).map((a) => ({ href: a.getAttribute("href"), label: a.textContent.trim(), icon: $(".ph", a).textContent }));
+const sectionLinks = $$("a", list).map((a) => ({ href: a.getAttribute("href"), label: a.textContent.trim(), icon: $(".ph", a).textContent, view: a.dataset.view }));
 const staticList = list.innerHTML;
 const go = (href) => () => {
   const target = $(href);
@@ -264,7 +264,7 @@ const go = (href) => () => {
   target.focus({ preventScroll: true });
 };
 const commands = [
-  ...sectionLinks.map((s) => ({ group: "Go to", label: s.label, icon: s.icon, keys: s.href === "#download" ? ["Ctrl", "Enter"] : [], run: go(s.href) })),
+  ...sectionLinks.map((s) => ({ group: "Go to", label: s.label, icon: s.icon, view: s.view, keys: s.href === "#download" ? ["Ctrl", "Enter"] : [], run: go(s.href) })),
   { group: "Actions", label: "Copy the Linux install command", icon: "", keys: [], run: () => { setOs("sh"); copyCommand("sh", $("[data-install] [data-copy-cmd]")); } },
   { group: "Actions", label: "Copy the Windows install command", icon: "", keys: [], run: () => { setOs("ps"); copyCommand("ps", $("[data-install] [data-copy-cmd]")); } },
   { group: "Actions", label: "Theme: Midnight", icon: "", keys: [], run: () => setTheme("dark") },
@@ -273,6 +273,44 @@ const commands = [
 ];
 let shown = [];
 let active = 0;
+
+/* The window under the headline shows the view of the palette's active row, one real render per
+   section. Until the visitor reaches for the palette, it steps through them by itself. */
+const stage = $("[data-stage]");
+const views = $$(".view", stage);
+let shownView = "history";
+function showView(name) {
+  const next = views.find((v) => v.dataset.view === name);
+  if (!next || name === shownView) return;
+  views.forEach((v) => {
+    v.classList.toggle("is-on", v === next);
+    v.setAttribute("aria-hidden", String(v !== next));
+  });
+  shownView = name;
+}
+const TOUR_MS = 4200;
+const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
+let tourTimer = 0;
+let tourOff = false;
+let heroInView = true;
+palette.style.setProperty("--tour", TOUR_MS + "ms");
+function tourStep() {
+  const stops = shown.map((c, i) => (c.view ? i : -1)).filter((i) => i >= 0);
+  if (!stops.length) return;
+  active = stops.find((i) => i > active) ?? stops[0];
+  render();
+}
+function tourSync() {
+  const run = !tourOff && !calm.matches && !search.hidden && heroInView && !document.hidden && !input.value;
+  palette.classList.toggle("is-touring", run);
+  if (run && !tourTimer) tourTimer = setInterval(tourStep, TOUR_MS);
+  if (!run && tourTimer) { clearInterval(tourTimer); tourTimer = 0; }
+}
+function stopTour() {
+  if (tourOff) return;
+  tourOff = true;
+  tourSync();
+}
 
 function fuzzy(label, q) {
   let i = 0;
@@ -341,6 +379,7 @@ function render() {
     list.append(li);
   });
   input.setAttribute("aria-activedescendant", "pal-opt-" + active);
+  showView(shown[active].view);
   const el = document.getElementById("pal-opt-" + active);
   if (el && list.scrollHeight > list.clientHeight) {
     const top = el.offsetTop - list.offsetTop;
@@ -372,6 +411,8 @@ function paletteMode() {
   const on = desktop.matches && !root.classList.contains("is-phone");
   search.hidden = !on;
   foot.hidden = !on;
+  views.forEach((v) => { v.hidden = !on && v.dataset.view !== "history"; });
+  if (!on) showView("history");
   if (on) {
     body.removeAttribute("aria-label");
     body.setAttribute("role", "presentation");
@@ -389,7 +430,16 @@ function paletteMode() {
   }
 }
 paletteMode();
-desktop.addEventListener("change", paletteMode);
+desktop.addEventListener("change", () => { paletteMode(); tourSync(); });
+
+palette.addEventListener("pointerenter", stopTour);
+palette.addEventListener("focusin", stopTour);
+calm.addEventListener("change", tourSync);
+document.addEventListener("visibilitychange", tourSync);
+if ("IntersectionObserver" in window) {
+  new IntersectionObserver(([entry]) => { heroInView = entry.isIntersecting; tourSync(); }, { threshold: 0.3 }).observe($(".hero"));
+}
+tourSync();
 
 /* Keys: Ctrl+K the palette, Ctrl+Enter downloads, J and K between sections */
 const sections = $$("main > section");
