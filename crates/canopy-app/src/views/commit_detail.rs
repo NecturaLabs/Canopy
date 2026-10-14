@@ -17,7 +17,7 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{ChangeBadge, DiffStat};
 use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{ListRow, RowKind};
+use crate::ui::kit::row::{ListRow, RowKind, caps_galley};
 use crate::ui::kit::{Button, IconButton, Size, menu, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
@@ -673,8 +673,9 @@ fn committed_by(d: &CommitDetails) -> Option<String> {
         .then(|| format!("Committed by {} <{}>", d.committer.name, d.committer.email))
 }
 
-/// The section's title, centred: "N files changed" and its line counts, in one band as tall as
-/// a section header.
+/// The section's title, centred: "N files changed" in the section-header label style and its
+/// line counts, in one band as tall as a section header. A partial clone that has not downloaded
+/// the file contents says so in the band's tooltip, and in the band while the words fit.
 fn file_stats(ui: &mut Ui, d: &CommitDetails) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
@@ -682,39 +683,64 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) {
         .files
         .iter()
         .fold((0, 0), |(a, r), f| (a + f.additions, r + f.deletions));
-    let size = vec2(ui.available_width(), m.section_header_height);
-    ui.allocate_ui_with_layout(
-        size,
-        Layout::left_to_right(Align::Center).with_main_align(Align::Center),
-        |ui| {
-            ui.label(
-                RichText::new(format!(
-                    "{} file{} changed",
-                    d.files.len(),
-                    if d.files.len() == 1 { "" } else { "s" }
-                ))
-                .size(m.meta_size)
-                .strong()
-                .color(p.text_dim),
-            );
-            if d.stats_known {
-                DiffStat::new(adds, dels).show(ui);
-            } else {
-                // A partial clone that has not downloaded the file contents.
-                ui.label(
-                    RichText::new("line counts not downloaded")
-                        .color(p.text_faint)
-                        .size(m.small_size),
-                )
-                .kit_tooltip(
-                    "This is a partial clone: the line counts and renamed files \
-                 need file contents that were not downloaded. Open a file \
-                 to download it.",
-                )
-                .show();
-            }
-        },
+    let text = format!(
+        "{} file{} changed",
+        d.files.len(),
+        if d.files.len() == 1 { "" } else { "s" }
     );
+    let (_, rect) = ui.allocate_space(vec2(ui.available_width(), m.section_header_height));
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let title = caps_galley(ui, &text, p.text_dim);
+    let stat = DiffStat::new(adds, dels);
+    let words = (!d.stats_known).then(|| {
+        painter.layout_no_wrap(
+            "line counts not downloaded".to_owned(),
+            FontId::proportional(m.small_size),
+            p.text_faint,
+        )
+    });
+    let after = if d.stats_known {
+        stat.size(&painter).x
+    } else {
+        words.as_ref().map_or(0.0, |w| w.size().x)
+    };
+    let title_w = title.size().x;
+    let mut total = title_w + theme::SM + after;
+    // Too narrow for both: the title alone, centred; the tooltip keeps the explanation.
+    let show_after = total <= rect.width() || d.stats_known;
+    if !show_after {
+        total = title_w;
+    }
+    let left = (rect.center().x - total / 2.0).max(rect.left());
+    let cy = rect.center().y;
+    painter.galley(pos2(left, cy - title.size().y / 2.0), title, p.text_dim);
+    let at = left + title_w + theme::SM;
+    if d.stats_known {
+        stat.paint(&painter, pos2(at, cy - stat.size(&painter).y / 2.0));
+    } else if let (Some(words), true) = (words, show_after) {
+        painter.galley(pos2(at, cy - words.size().y / 2.0), words, p.text_faint);
+    }
+    let band = ui.interact(
+        rect,
+        ui.id().with("commit-files-title"),
+        egui::Sense::hover(),
+    );
+    let name = if d.stats_known {
+        format!("{text}, {adds} added, {dels} removed")
+    } else {
+        format!("{text}, line counts not downloaded")
+    };
+    band.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &name));
+    if !d.stats_known {
+        // A partial clone: the line counts and renamed files need file contents that were not
+        // downloaded.
+        band.kit_tooltip(
+            "This is a partial clone: the line counts and renamed files \
+             need file contents that were not downloaded. Open a file \
+             to download it.",
+        )
+        .show();
+    }
 }
 
 fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab, actions: &mut Vec<Action>) {
@@ -1102,6 +1128,7 @@ mod tests {
                     .iter()
                     .filter_map(|(_, n)| {
                         n.label()
+                            .or_else(|| n.value())
                             .map(|l| (l.to_owned(), n.is_selected().unwrap_or(false)))
                     })
                     .collect()
@@ -1295,6 +1322,25 @@ mod tests {
         );
         assert!((one - other).abs() < 0.01, "the committer adds no width");
         assert!(merge > one, "every parent adds width: {merge} vs {one}");
+    }
+
+    #[test]
+    fn the_files_title_speaks_its_counts_or_that_they_are_missing() {
+        let ctx = ctx(Density::Comfortable);
+        for (known, files, expected) in [
+            (true, 1, "1 file changed, 12 added, 3 removed"),
+            (true, 3, "3 files changed, 36 added, 9 removed"),
+            (false, 3, "3 files changed, line counts not downloaded"),
+        ] {
+            let mut d = details_with("Subject", 1, "Author");
+            d.stats_known = known;
+            d.files = vec![entry(); files];
+            let names = spoken(&ctx, |ui| super::file_stats(ui, &d));
+            assert!(
+                names.iter().any(|(name, _)| name == expected),
+                "{expected}: {names:?}"
+            );
+        }
     }
 
     #[test]
