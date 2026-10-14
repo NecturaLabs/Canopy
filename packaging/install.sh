@@ -59,10 +59,9 @@ purge_targets() {
     esac
 }
 
-# Whether eframe folder $1 is recognisably Canopy's: its settings key, saved tokens, or logs and
-# crash reports named the way Canopy names them.
+# Whether eframe folder $1 is recognisably Canopy's: its settings key, or logs and crash reports
+# named the way Canopy names them.
 is_eframe_canopy() {
-    [ -f "$1/tokens.json" ] && return 0
     if [ -f "$1/app.ron" ] && grep -q 'canopy-settings-v1' "$1/app.ron" 2>/dev/null; then return 0; fi
     for f in "$1"/logs/canopy-*.jsonl "$1"/crashes/crash-*.txt; do
         if [ -f "$f" ]; then return 0; fi
@@ -577,9 +576,6 @@ purge() {
             esac
         done
     fi
-    say ""
-    say "Tokens saved in Settings -> Accounts live in tokens.json in Canopy's data folder, so a"
-    say "folder removed above took them with it; Canopy does not use the system keychain yet."
 }
 
 # ---------------------------------------------------------------------------------------------
