@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 13 October 2026
+Last updated: 14 October 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -84,20 +84,15 @@ Canopy checks the archive against the SHA-256 checksum in the update file before
 
 ## GitHub and GitLab
 
-When you open a repository whose remote is on GitHub (github.com) or GitLab (gitlab.com or a self-hosted GitLab server), Canopy loads its pull or merge requests from that service's API. When you comment, review, merge or create a request in Canopy, it sends that to the same API. When Canopy has a token for that server, each time it loads the list of requests it also asks the same server, in one request, where each listed request's checks and reviews stand; that request names the project and the request numbers and carries your token like the others. Without a token, Canopy does not send it. When a repository has more requests than the first page of the list and you type in the request filter or choose a draft, author or sort filter, Canopy sends those words and choices to the same server to search the requests that are not loaded yet. To stop all of this, turn off Pull and merge requests in the Integrations section of Settings.
+When you open a repository whose remote is on GitHub (github.com) or GitLab (gitlab.com or a self-hosted GitLab server), Canopy loads its pull or merge requests from that service's API. When you comment, review, merge or create a request in Canopy, it sends that to the same API. When Canopy has a sign-in for that server, each time it loads the list of requests it also asks the same server, in one request, where each listed request's checks and reviews stand; that request names the project and the request numbers and carries your token like the others. Without a sign-in, Canopy does not send it. When a repository has more requests than the first page of the list and you type in the request filter or choose a draft, author or sort filter, Canopy sends those words and choices to the same server to search the requests that are not loaded yet. To stop all of this, turn off Pull and merge requests in the Integrations section of Settings.
 
-To sign in to the API, Canopy uses the first of these that it finds:
+To sign in to the API, Canopy uses only the account that the GitHub CLI (gh) or GitLab CLI (glab) is signed in with on your computer. Canopy runs gh or glab to read which account is signed in to that server and the token the CLI holds for it: when a repository's requests start loading, when you open the Accounts section of Settings (for github.com, gitlab.com and each GitLab server you listed or have a repository open for) and when you choose Check again there. Canopy keeps the token in memory only; it never saves it, logs it or asks you to type or paste one. The CLI may contact that server itself to check the token. Canopy does not use tokens from your environment (GH_TOKEN, GITLAB_TOKEN and similar) or from your Git credential helper, and while Pull and merge requests are turned off it does not run gh or glab at all.
 
-- the account the GitHub CLI (gh) or GitLab CLI (glab) is signed in with, if you have one installed: Canopy runs gh or glab on your computer to read the signed-in token for that server, keeps it in memory only and never saves or logs it. The CLI may contact that server itself to check the token
-- a token in your environment: GH_TOKEN or GITHUB_TOKEN for github.com, and GITLAB_TOKEN or GL_TOKEN for gitlab.com, for the server named in GITLAB_HOST or for a GitLab server you listed in the Integrations section of Settings
-- a token you saved for that server in the Accounts section of Settings
-- the password your Git credential helper stores for that server, which for GitHub and GitLab is usually a token
-
-Without any of these, Canopy reads public projects without signing in. A token is only sent to the server it belongs to.
+Without a CLI signed in to that server, Canopy reads public projects without signing in. The token is only sent to the server it belongs to.
 
 These requests go directly between your computer and that server, which receives your IP address, your token and your Canopy version. NecturaLabs receives none of it. The service's own privacy policy applies.
 
-Tokens you save in Canopy are stored in the file tokens.json in Canopy's data folder. The file is not encrypted. On Linux and macOS, Canopy makes it readable only by your user account. On Windows, it is protected by the permissions of your user profile. To delete a saved token, use Remove in the Accounts section of Settings.
+Canopy saves no token. Earlier versions kept the tokens you entered in a file named tokens.json in Canopy's data folder; Canopy deletes that file when it starts. The deletion does not erase the disk blocks the file used.
 
 ## Commit author and committer profile pictures
 
@@ -122,7 +117,6 @@ In a partial clone (a repository cloned with a filter such as --filter=blob:none
 Canopy keeps its data in one folder: ~/.local/share/canopy on Linux (or canopy inside XDG_DATA_HOME, if you set it), ~/Library/Application Support/canopy on macOS and %APPDATA%\canopy\data on Windows. It contains:
 
 - app.ron: your settings and window layout, the repositories you opened recently or left open, the GitLab servers you listed, the versions of these documents you accepted and your answer about crash reports, and the last 100 notifications Canopy showed you (their titles, the folder name of the repository and Git's error messages, with any user name and password in a URL removed)
-- tokens.json: the access tokens you saved in Canopy
 - logs: one log file for each time Canopy runs. A log records what Canopy did and when, and can contain file paths, branch names, server names, the Git commands Canopy ran (without passwords, tokens or commit messages) and Git's error messages. The ten newest are kept, and each stops growing at 20 MB. Log detail in the Privacy section of Settings controls how much is recorded.
 - crashes: a text file for each crash, written whether or not you send crash reports. The ten newest are kept.
 

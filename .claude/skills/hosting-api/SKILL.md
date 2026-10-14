@@ -7,8 +7,8 @@ license: Proprietary (NecturaLabs); see LICENSE
 # Add a hosting API call
 
 `crates/canopy-hosting` is Canopy's only HTTP client (plus Sentry's transport in
-`crash_reports.rs`). It is security-sensitive: it holds the user's token. Read ADR 0003 (what may
-be contacted) and ADR 0004 (tokens) in `docs/adr/` before the first change in a session. Work
+`crash_reports.rs`). It is security-sensitive: it holds the CLI's token in memory. Read ADR 0003 (what may
+be contacted) and ADR 0014 (the only credential is the `gh`/`glab` sign-in) in `docs/adr/` before the first change in a session. Work
 through the steps in order; a pull or merge request feature touches both providers.
 
 ## 0. Is it allowed?
@@ -90,10 +90,11 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
   add one. A change that keeps a request alive after the setting is turned off is a defect:
   the thread's `Client` carries the worker's switch (`Client::with_switch`), which every request
   checks right before it is sent.
-- Tokens come from `hosting::resolve_token` (the `gh`/`glab` CLI's sign-in, held in memory only, then the host-matched
-  environment variable, then the token saved in `tokens.json`, then git's credential helper; ADR 0013); the requests view shows an "Add a token…"
-  prompt when the server refuses without one. Do not read tokens anywhere else, and do not hand
-  one to any code outside the hosting thread.
+- The only credential is `hosting::resolve_token`: the `gh`/`glab` CLI's sign-in for the repository's host,
+  held in memory only (ADR 0014). Canopy saves no token and reads none from the environment or
+  git's credential helper; the requests view and Settings → Accounts say what the CLI reported
+  (`CliState`) and offer Open Accounts when the server refuses without one. Do not read tokens
+  anywhere else, and do not hand one to any code outside the hosting thread.
 - Destructive or hard-to-undo actions (merge, close) confirm first, like any other
   (AGENTS.md, Conventions).
 
@@ -119,7 +120,7 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
 ## 7. Privacy, docs and release
 
 - If the call sends or reads anything the Privacy Policy does not already describe (its "GitHub
-  and GitLab" section lists what is sent, to whom, and where tokens are stored), update
+  and GitLab" section lists what is sent, to whom, and that no token is stored), update
   `docs/legal/privacy-policy.md` and, when the terms change, `terms-of-service.md`; change the
   `Last updated` line and `ui::legal::PRIVACY_VERSION`/`TERMS_VERSION` together (the
   `versions_match_the_documents` test checks it), which asks users again.
@@ -131,6 +132,6 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
 ## Done when
 
 Both providers are implemented and tested against the fake server, including the error and
-no-token cases; nothing outside `HostWorker` calls the client; the setting off or the consent
+signed-out cases; nothing outside `HostWorker` calls the client; the setting off or the consent
 unanswered sends nothing; the legal documents are accurate; and the security pass and review are
 clean.

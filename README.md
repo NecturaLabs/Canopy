@@ -63,7 +63,7 @@ Screenshots are rendered by Canopy itself from the deterministic fixture reposit
 - **GitHub and GitLab**: open a commit, branch or remote on its host, and list, read, create,
   check out, comment on, approve, merge and close pull and merge requests (self-hosted GitLab
   included) through the host's API (REST, and one GraphQL query for the list's checks and
-  reviews) with a token you provide. Requests and the update check are the only network use
+  reviews) with the sign-in of the GitHub CLI (`gh`) or GitLab CLI (`glab`); Canopy stores no token. Requests and the update check are the only network use
   besides `git`, and each has an off switch; see the
   [privacy policy](docs/legal/privacy-policy.md).
 - **Credentials**: git and ssh ask for passwords, passphrases and host-key confirmation in Canopy's
@@ -233,7 +233,7 @@ Three crates:
   GitLab remote URLs (`forge.rs`, offline).
 - **`canopy-hosting`**: the GitHub and GitLab API client (pull and merge requests through REST
   and one GraphQL query, `ureq` with rustls) and the update-manifest fetch. It contacts only the
-  host a repository's own remote points at, with a token the user supplied; author images use the
+  host a repository's own remote points at, with the token the `gh` or `glab` CLI holds, in memory only; author images use the
   restricted picture hosts listed in the Privacy Policy, without credentials.
 - **`canopy-app`**: the GUI, built on `eframe`/`egui` with the glow (OpenGL) renderer. Each open
   repository has a background worker thread; the UI thread sends it jobs and never calls git.

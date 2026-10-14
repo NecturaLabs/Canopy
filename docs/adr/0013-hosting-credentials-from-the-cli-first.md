@@ -1,6 +1,6 @@
 # ADR 0013: Hosting credentials come from the GitHub or GitLab CLI first
 
-**Status:** accepted
+**Status:** accepted; steps 2 to 4 of its order (environment, saved token, git's credential helper) are superseded by [ADR 0014](0014-hosting-access-only-through-the-cli-sign-in.md)
 **Date:** 2026-10-12
 
 ## Context

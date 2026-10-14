@@ -182,7 +182,8 @@ The git-flow UI remains planned.
 | Git configuration: editable supported values in Settings → Git (global) and This repository (local), with values, scopes, files and recommendations; Use recommended writes the non-sensitive recommendations globally after confirmation; a repository's reset button removes only its own override (a global value is changed, never cleared), preserving included configuration and repository choices; canonical Git booleans and configuration errors are displayed accurately: a value Git refuses is shown as written, with the problem, on its own row; where a value is set reads by scope ("your global git config", "this repository"), with a path only for an included file, never Git's raw `file:` origin; a search shows rows only, never the editor's captions. Every setting has a recommendation, and a row the configuration leaves unset shows the recommended value, or the value Git uses for line endings and signing, which Canopy leaves to Git. Line endings follow GitHub's guidance (LF on commit; on Windows also CRLF on checkout), signing stays off and signs with SSH once on; Use recommended leaves line endings and signing alone. The pull recommendation is fast-forward only (`pull.ff = only`, with `pull.rebase = false` so it takes effect), and the diverged-pull dialog's "Rebase (recommended)" is the recommended way to combine when branches did diverge | Unreleased | ? | ? | ? |
 | Repository and Git settings selects show each value once, mark recommended options in their lists (no "Recommended:" sentence in the help text), and distinguish a pinned value from an inherited one with Overridden and a named reset; Settings → Integrations lists the system's own editor, terminal or file manager once, as the Default entry; context lines and whitespace pin and reset together | Done | ? | ? | ? |
 | Settings → This repository → Commit signing states what git will do (signs or not) with the format (OpenPGP, SSH, X.509), the key's id or file name (an inline SSH key is never shown), the program and where `commit.gpgsign` is set, and warns with its fix when signing would fail: the program is not installed, an SSH key is not set or its file is missing, or `gpg.format` is unknown; read from the configuration and `PATH` only, never by running the program; a button opens the file that sets it, preserving non-UTF-8 file names; identity, pull and repository settings share absolute, unquoted configuration origins | Done | ? | ? | ? |
-| Settings → This repository → Hosting states the outcome first for the tab's GitHub or GitLab remote: requests off (opens Integrations), credential refused, rate limited, loading with the credential in use and where it comes from (saved, environment, git credential helper), no credential (add a token) or not requested yet; it names the remote and host it is about and lists the other GitHub or GitLab remotes, which are not loaded | Done | Yes | ? | ? |
+| Settings → This repository → Hosting states the outcome first for the tab's GitHub or GitLab remote: requests off (opens Integrations), the CLI's sign-in refused, rate limited, loading with the GitHub or GitLab CLI's sign-in and its account, no credential (the CLI is not installed, signed out, short of a scope or failing; public repositories still load) or not requested yet; it names the remote and host it is about and lists the other GitHub or GitLab remotes, which are not loaded | Done | Yes | ? | ? |
+| Settings → Accounts is the only place hosting access is set up, and it holds no token: Canopy uses the sign-in of the GitHub CLI (`gh`) and GitLab CLI (`glab`), read into memory and sent only to its own host. A card for github.com, gitlab.com, each GitLab host listed in Integrations and each host of an open repository checks when the page opens (and on Check again, also after installing or signing in) and says: the CLI is not installed (Install GitHub CLI or GitLab CLI opens the official install page); signed out, or short of a scope (the exact command, `gh auth login --hostname <host>` or `gh auth refresh --hostname <host> --scopes repo`, with a button that copies it; Canopy never runs the interactive login or opens a terminal prompt); signed in (the account and the scopes the CLI lists); or the CLI failed (its words). Nothing runs while Pull and merge requests are off or before the start-up questions are answered. A tab whose sign-in changed asks again. A `tokens.json` saved by an earlier build is deleted at start, and `GH_TOKEN`, `GITLAB_TOKEN` and git's credential helper are no longer used (ADR 0014) | Done | ? | ? | ? |
 | A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Done | ? | ? | ? |
 | A rebase that stops on conflicts takes you to Changes, like a pull | Done | ? | ? | ? |
 | A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Done | ? | ? | ? |
@@ -223,7 +224,7 @@ lines of its description as plain text (Markdown, comments and tags flattened, p
 separated by a middle dot; nothing when it has none). The branches are in the request's header and the row's tooltip. The description comes
 with the list response, so a row costs no request of its own. The request list shows each
 request's checks (passed, failed, running) and review (approved, changes requested, and on GitHub
-review required) without opening it when Canopy has a token for the host; without a token a row
+review required) without opening it when the CLI gave Canopy a credential for the host; without one a row
 shows them once the request was opened in the session, and until then a faint question mark says
 they are not loaded (a request with no checks shows nothing).
 
@@ -250,13 +251,13 @@ carry up to twice as many rows. A reload drops the extra pages; the timed refres
 
 When the host holds more than the first page, the field's text, the draft choice, the author and
 the newest or oldest sort go to the host after a short pause in typing, so they reach requests that
-are not loaded (GitHub: its search, which needs a token; GitLab: the list's own search, author and
+are not loaded (GitHub: its search, which needs a sign-in; GitLab: the list's own search, author and
 draft parameters). The text matches titles and descriptions of the first eight words, not authors
 or numbers, and GitHub's search holds at most 1,000 results. The checks and review filters and the
 number, title and author sorts the host cannot do, so they cover the rows loaded: the line under the
 field says "found" instead of "shown", and the note under the last row says the host holds more.
 The list stays on screen while a search is on its way, and a result that comes after the text
-changed again is dropped. Without a token (GitHub) everything stays on the loaded rows.
+changed again is dropped. Without a sign-in (GitHub) everything stays on the loaded rows.
 
 The list starts at 45% of the pane (320 to 560 points) and follows the window until its width is
 dragged or set with the arrow keys; it can be dragged to 60% of the pane or 800 points, and
@@ -264,9 +265,9 @@ double-clicking the handle makes it follow the window again.
 
 A request's header actions are one group of buttons of the same size: the primary for its state
 (Check out while it is open, Open on GitHub or GitLab otherwise), then the other, Copy link and
-More. Nothing says where the token came from while it works (Settings → Hosting does); a missing
-token, or one the host refused (expired, revoked or short of scope), shows as a warning under the
-actions with Add a token… or Replace the token…, which opens Settings. The credential comes from the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) first, then the environment, the token saved in Canopy and git's credential helper; a CLI that is signed out, short of the `repo` (GitHub) or `api` (GitLab) scope or failing is passed over and the warning says why, with the command that fixes it. A CLI's token is held in memory only (ADR 0013).
+More. Nothing says which sign-in is in use while it works (Settings → Hosting does); a missing
+sign-in, or one the host refused (expired, revoked or short of scope), shows as a warning under the
+actions with Open Accounts, which opens Settings → Accounts. The only credential is the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`); when it is not installed, signed out, short of the `repo` (GitHub) or `api` (GitLab) scope or failing, the warning says why, with the command that fixes it. The CLI's token is held in memory only (ADR 0014).
 
 A request's details start with its summary line (commits, files changed, lines, conflict
 state) with the lines in the added and removed colours, as the commit and file diffs show them.
@@ -277,9 +278,9 @@ list, selection and open request stay on screen, and a failed refresh keeps them
 the Requests view reloads a list older than a minute, and while the view stays open and the window
 is focused the list refreshes on a timer: at the background fetch's interval when that is on,
 every minute when it is off, doubling after a failed refresh (up to fifteen minutes) and back to
-normal once one succeeds. The timer needs a hosting token: without one the requests would spend
+normal once one succeeds. The timer needs a CLI sign-in: without one the requests would spend
 the host's small anonymous rate limit, which Reload, actions and author pictures share, so
-without a token the list refreshes only on Reload, when the Requests view opens on a stale list
+without a sign-in the list refreshes only on Reload, when the Requests view opens on a stale list
 and after a fetch, pull or push. The timer pauses while another view is shown or the window is
 unfocused, and while a fetch, pull or push runs (that one refreshes the list when it ends); a
 Settings page or a dialog over the Requests view does not pause it. A rate limit holds it until
@@ -292,7 +293,7 @@ Going back to a request opened within the last minute (A, then B, then A again) 
 at once from a small cache of the last 16 loads, without asking the host again. The cache is keyed
 by forge host, project and request number, so equal numbers in different projects never share an
 entry. A Reload, an automatic refresh of the list, the result of an action (merge, close,
-approve, comment and so on) and a change of token empty it, and a failed load is never kept.
+approve, comment and so on) and a change of sign-in empty it, and a failed load is never kept.
 Unsent comments are kept apart from it.
 
 Hosting error messages hide the client token after normalizing invisible characters. Profile
