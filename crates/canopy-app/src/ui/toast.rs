@@ -77,10 +77,10 @@ impl Topic {
     pub fn help(self) -> &'static str {
         match self {
             Self::Error => {
-                "An operation, the host or opening something failed, with the reason it gave."
+                "A Git operation, a hosting request, an update check or opening a program failed, with the reason it gave."
             }
             Self::Attention => {
-                "Git stopped on conflicts or a missing program, SSH waits for a key, or an update needs a restart."
+                "Conflicts, a missing program, a security key to touch, Git settings to review or an update to restart."
             }
             Self::Update => "A new Canopy build is out, or the result of checking for one.",
             Self::Finished => "A commit, push, pull, fetch, clone or other Git work finished.",
