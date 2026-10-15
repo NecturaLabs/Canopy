@@ -87,6 +87,8 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
       - name: Name the build
         id: name
         run: |
@@ -227,6 +229,8 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
           persist-credentials: false
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
       # It takes under a minute and a half; a stalled download once held it for the job's whole
       # hour (#144). A step that runs out of time fails rather than cancels the job.
       - uses: ./.github/actions/setup-rust

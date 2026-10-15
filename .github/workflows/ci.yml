@@ -128,6 +128,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy
@@ -157,6 +159,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
       - uses: ./.github/actions/setup-rust
       # A job-local global config: self-hosted runners share one home, whose
       # ~/.gitconfig is the machine's own.
@@ -203,6 +207,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
       # Only the cargo steps need Rust, and a documentation-only change runs none of them.
       - id: rust
         if: needs.changes.outputs.code == 'true'

@@ -23,6 +23,8 @@ jobs:
         with:
           ref: ${{ inputs.commit }}
           persist-credentials: false
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
       - uses: ./.github/actions/setup-rust
       - name: Configure git for tests
         run: |
