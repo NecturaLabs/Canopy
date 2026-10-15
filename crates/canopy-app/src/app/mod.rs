@@ -1264,7 +1264,7 @@ impl eframe::App for CanopyApp {
             }
         }
         if let Some(page) = self.gallery {
-            crate::ui::kit::gallery::show(&ctx, page);
+            crate::ui::kit::gallery::show(&ctx, page, crate::ui::kit::GALLERY_SECTIONS);
         }
         if let Some(soak) = &mut self.glass_soak
             && soak.frame(&ctx)

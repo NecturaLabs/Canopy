@@ -48,6 +48,9 @@ def check() -> int:
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "crates"],
         cwd=ROOT, check=True, stdout=subprocess.PIPE,
     ).stdout.decode("utf-8").split("\0")
+    # crates/nectura-ui is a submodule: git ls-files lists only its link, not its files.
+    library = ROOT / "crates" / "nectura-ui"
+    files += [p.relative_to(ROOT).as_posix() for p in library.rglob("*.rs") if "target" not in p.parts]
     missing = [
         name for name in sorted(set(files))
         if is_source(name)
