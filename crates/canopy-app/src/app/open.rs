@@ -342,6 +342,7 @@ impl CanopyApp {
         let mut tab = RepoTab::new(root, ctx, self.settings.commit_page, prefs);
         restore_draft(ctx, &mut tab);
         tab.split_diff = self.settings.split_diff;
+        tab.request_density = self.settings.request_density;
         tab.highlight_diff = self.settings.syntax_highlight;
         if let Some(v) = self.initial_view {
             tab.view = v;

@@ -5,6 +5,15 @@ const ASSET = /^https:\/\/github\.com\/NecturaLabs\/app-updates\/releases\/downl
 const root = document.documentElement;
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+// A box that scrolls fades out at the edge where more waits (CSS: .has-more)
+function edgeFade(el, sideways) {
+  const more = sideways
+    ? el.scrollWidth - el.scrollLeft - el.clientWidth > 2
+    : el.scrollHeight - el.scrollTop - el.clientHeight > 2;
+  el.classList.toggle("has-more", more);
+}
 
 function store(key, value) {
   try {
@@ -93,13 +102,9 @@ function setOs(os) {
       b.tabIndex = on ? 0 : -1;
     });
     const code = $("[data-cmd]", box);
-    code.replaceChildren();
-    // Let a narrow screen break the address after a slash or a dot, never inside a word.
-    c.text.split(/(?<=[/.])/).forEach((part, i) => {
-      if (i) code.append(document.createElement("wbr"));
-      code.append(part);
-    });
+    code.textContent = c.text;
     $("[data-prompt]", box).textContent = c.prompt;
+    edgeFade(code, true);
     $("[data-copy-cmd]", box).setAttribute("aria-label", "Copy the " + c.name + " install command");
   });
   setOs.current = os;
@@ -126,6 +131,9 @@ async function copyCommand(os, button) {
   copyCommand.timer = setTimeout(() => { copyStatus.textContent = ""; }, 5000);
 }
 $$("[data-install]").forEach((box) => {
+  const code = $("[data-cmd]", box);
+  code.addEventListener("scroll", () => edgeFade(code, true), { passive: true });
+  window.addEventListener("resize", () => edgeFade(code, true), { passive: true });
   const radios = $$("[data-os]", box);
   radios.forEach((b, i) => {
     b.addEventListener("click", () => setOs(b.dataset.os));
@@ -255,7 +263,7 @@ const list = $("#pal-list");
 const search = $("[data-pal-search]");
 const foot = $("[data-pal-foot]");
 const body = $("[data-pal-body]");
-const sectionLinks = $$("a", list).map((a) => ({ href: a.getAttribute("href"), label: a.textContent.trim(), icon: $(".ph", a).textContent }));
+const sectionLinks = $$("a", list).map((a) => ({ href: a.getAttribute("href"), label: a.textContent.trim(), icon: $(".ph", a).textContent, view: a.dataset.view }));
 const staticList = list.innerHTML;
 const go = (href) => () => {
   const target = $(href);
@@ -264,7 +272,7 @@ const go = (href) => () => {
   target.focus({ preventScroll: true });
 };
 const commands = [
-  ...sectionLinks.map((s) => ({ group: "Go to", label: s.label, icon: s.icon, keys: s.href === "#download" ? ["Ctrl", "Enter"] : [], run: go(s.href) })),
+  ...sectionLinks.map((s) => ({ group: "Go to", label: s.label, icon: s.icon, view: s.view, keys: s.href === "#download" ? ["Ctrl", "Enter"] : [], run: go(s.href) })),
   { group: "Actions", label: "Copy the Linux install command", icon: "", keys: [], run: () => { setOs("sh"); copyCommand("sh", $("[data-install] [data-copy-cmd]")); } },
   { group: "Actions", label: "Copy the Windows install command", icon: "", keys: [], run: () => { setOs("ps"); copyCommand("ps", $("[data-install] [data-copy-cmd]")); } },
   { group: "Actions", label: "Theme: Midnight", icon: "", keys: [], run: () => setTheme("dark") },
@@ -273,6 +281,43 @@ const commands = [
 ];
 let shown = [];
 let active = 0;
+
+/* The window under the headline shows the view of the palette's active row, one real render per
+   section. Until the visitor reaches for the palette, it steps through them by itself. */
+const stage = $("[data-stage]");
+const views = $$(".view", stage);
+let shownView = "history";
+function showView(name) {
+  const next = views.find((v) => v.dataset.view === name);
+  if (!next || name === shownView) return;
+  views.forEach((v) => {
+    v.classList.toggle("is-on", v === next);
+    v.setAttribute("aria-hidden", String(v !== next));
+  });
+  shownView = name;
+}
+const TOUR_MS = 4200;
+let tourTimer = 0;
+let tourOff = false;
+let heroInView = true;
+palette.style.setProperty("--tour", TOUR_MS + "ms");
+function tourStep() {
+  const stops = shown.map((c, i) => (c.view ? i : -1)).filter((i) => i >= 0);
+  if (!stops.length) return;
+  active = stops.find((i) => i > active) ?? stops[0];
+  render();
+}
+function tourSync() {
+  const run = !tourOff && !calm.matches && !search.hidden && heroInView && !document.hidden && !input.value;
+  palette.classList.toggle("is-touring", run);
+  if (run && !tourTimer) tourTimer = setInterval(tourStep, TOUR_MS);
+  if (!run && tourTimer) { clearInterval(tourTimer); tourTimer = 0; }
+}
+function stopTour() {
+  if (tourOff) return;
+  tourOff = true;
+  tourSync();
+}
 
 function fuzzy(label, q) {
   let i = 0;
@@ -341,6 +386,8 @@ function render() {
     list.append(li);
   });
   input.setAttribute("aria-activedescendant", "pal-opt-" + active);
+  showView(shown[active].view);
+  edgeFade(list);
   const el = document.getElementById("pal-opt-" + active);
   if (el && list.scrollHeight > list.clientHeight) {
     const top = el.offsetTop - list.offsetTop;
@@ -372,6 +419,9 @@ function paletteMode() {
   const on = desktop.matches && !root.classList.contains("is-phone");
   search.hidden = !on;
   foot.hidden = !on;
+  views.forEach((v) => { v.hidden = !on && v.dataset.view !== "history"; });
+  $("[data-pal-title]").hidden = on;
+  if (!on) showView("history");
   if (on) {
     body.removeAttribute("aria-label");
     body.setAttribute("role", "presentation");
@@ -387,9 +437,20 @@ function paletteMode() {
     list.removeAttribute("tabindex");
     list.innerHTML = staticList;
   }
+  edgeFade(list);
 }
 paletteMode();
-desktop.addEventListener("change", paletteMode);
+desktop.addEventListener("change", () => { paletteMode(); tourSync(); });
+
+list.addEventListener("scroll", () => edgeFade(list), { passive: true });
+palette.addEventListener("pointerenter", stopTour);
+palette.addEventListener("focusin", stopTour);
+calm.addEventListener("change", tourSync);
+document.addEventListener("visibilitychange", tourSync);
+if ("IntersectionObserver" in window) {
+  new IntersectionObserver(([entry]) => { heroInView = entry.isIntersecting; tourSync(); }, { threshold: 0.3 }).observe($(".hero"));
+}
+tourSync();
 
 /* Keys: Ctrl+K the palette, Ctrl+Enter downloads, J and K between sections */
 const sections = $$("main > section");
@@ -422,3 +483,39 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "j" || e.key === "J") stepSection(1);
   else if (e.key === "k" || e.key === "K") stepSection(-1);
 });
+
+/* The rail: each section's lane draws in as it scrolls into view, and its commit lights when the
+   line reaches the heading. Sections and pictures rise into place once. Neither with reduced motion. */
+const railSections = $$("main > .sec");
+let railFrame = 0;
+function drawRail() {
+  railFrame = 0;
+  const reach = window.innerHeight * 0.82;
+  railSections.forEach((sec) => {
+    const box = sec.getBoundingClientRect();
+    const heading = $("h2", sec).getBoundingClientRect();
+    sec.style.setProperty("--draw", Math.min(1, Math.max(0, (reach - box.top) / box.height)).toFixed(3));
+    sec.classList.toggle("is-lit", reach > heading.top);
+  });
+}
+function motionSync() {
+  const on = !calm.matches;
+  root.classList.toggle("rail-on", on);
+  root.classList.toggle("reveal-on", on && "IntersectionObserver" in window);
+  if (on) drawRail();
+  else railSections.forEach((sec) => sec.style.removeProperty("--draw"));
+}
+window.addEventListener("scroll", () => { if (!calm.matches && !railFrame) railFrame = requestAnimationFrame(drawRail); }, { passive: true });
+window.addEventListener("resize", () => { if (!calm.matches) drawRail(); }, { passive: true });
+calm.addEventListener("change", motionSync);
+if ("IntersectionObserver" in window) {
+  const reveal = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (!e.isIntersecting) return;
+      e.target.classList.add("is-in");
+      reveal.unobserve(e.target);
+    });
+  }, { rootMargin: "0px 0px -8% 0px", threshold: 0.12 });
+  $$("[data-reveal]").forEach((el) => reveal.observe(el));
+}
+motionSync();

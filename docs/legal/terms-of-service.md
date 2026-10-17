@@ -1,6 +1,6 @@
 # Terms of Service
 
-Last updated: 14 October 2026
+Last updated: 17 October 2026
 
 These terms are an agreement between you and NecturaLabs about Canopy (the "software"). You accept them by choosing I agree in Canopy. If you do not accept them, choose Quit and do not use the software.
 

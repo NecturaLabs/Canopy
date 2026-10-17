@@ -13,7 +13,7 @@ use crate::highlight::Highlights;
 use crate::hosting::{
     CliState, HostAction, HostEvent, HostJob, HostWorker, ListKey, rate_limit_pause,
 };
-use crate::request_view::RequestView;
+use crate::request_view::{RequestDensity, RequestView};
 use crate::settings::{DiffPrefs, PullChoice};
 use crate::views::requests::row_standing;
 use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
@@ -27,6 +27,16 @@ pub enum View {
     Changes,
     /// Pull requests (GitHub) or merge requests (GitLab).
     Requests,
+}
+
+/// Whether Canopy trusts a repository (`trust.rs`). An untrusted one is read-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoTrust {
+    /// The repository thread has not answered yet: nothing is asked or shown, and the thread
+    /// refuses what an untrusted repository may not do all the same.
+    Unknown,
+    Trusted,
+    Untrusted,
 }
 
 /// A sidebar row picked by the user (or, on opening, the checked-out branch): it shows selected
@@ -336,10 +346,23 @@ fn first_report(program: &str) -> bool {
     true
 }
 
+/// How a [`Notice`] reaches the user; with `ok` it decides the notification's topic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// A card for the outcome: Finished when it worked, Error when it failed.
+    Card,
+    /// Something waits on the user (conflicts to resolve, a program to install), so it is an
+    /// attention notice and not an error.
+    Attention,
+    /// Work the user did not start failed: the center and the bell hold it, no card.
+    Quiet,
+}
+
 /// Outcome of a finished operation, surfaced as a toast by the app.
 #[derive(Debug)]
 pub struct Notice {
     pub ok: bool,
+    pub delivery: Delivery,
     pub title: String,
     pub body: String,
 }
@@ -1046,6 +1069,8 @@ pub struct RepoTab {
     /// Side-by-side diff and syntax highlighting (from the settings).
     pub split_diff: bool,
     pub highlight_diff: bool,
+    /// Comfortable or dense request list items (from the settings).
+    pub request_density: RequestDensity,
     /// Hint at a commit message that is too wide (from the settings; set each frame the
     /// Changes view is drawn).
     pub check_message: bool,
@@ -1126,8 +1151,14 @@ pub struct RepoTab {
     /// The promisor remote a read needed but Canopy did not download from, because the
     /// repository is outside every trusted folder; the status bar offers to trust it.
     pub downloads_refused: Option<String>,
-    /// Folders the worker found behind the download gate, including external Git directories.
+    /// Folders the worker found behind trusting this repository, including external Git
+    /// directories.
     pub trust_folders: Vec<PathBuf>,
+    /// Whether Canopy trusts the repository, as the worker last said.
+    pub trust: RepoTrust,
+    /// Whether the tab has asked the user about trust (they may have answered Don't trust, which
+    /// leaves the repository read-only until the banner's Trust).
+    pub trust_asked: bool,
     /// The newest version of the trusted list this tab has been told about: a refusal from an
     /// older one is out of date.
     trust_version: u64,
@@ -1205,6 +1236,7 @@ impl RepoTab {
             resolver: None,
             parked_resolvers: Vec::new(),
             split_diff: false,
+            request_density: RequestDensity::default(),
             highlight_diff: true,
             check_message: true,
             iso_dates: false,
@@ -1249,6 +1281,8 @@ impl RepoTab {
             request_comments: Vec::new(),
             downloads_refused: None,
             trust_folders: Vec::new(),
+            trust: RepoTrust::Unknown,
+            trust_asked: false,
             trust_version: 0,
             avatars: crate::avatars::Avatars::default(),
             last_fetch: Instant::now(),
@@ -1867,6 +1901,8 @@ impl RepoTab {
     pub fn trust_changed(&mut self, version: u64) {
         self.trust_version = version;
         self.auto_fetch_failure = None;
+        // The worker tells the tab how the change left this repository.
+        self.worker.send(Job::RefreshStatus);
         if self.template_asked && !self.template_loaded {
             self.worker.send(Job::CommitTemplate);
         }
@@ -2356,6 +2392,17 @@ impl RepoTab {
                     }
                 }
                 Event::TrustFolders(folders) => self.trust_folders = folders,
+                Event::Trust { trusted, version } => {
+                    // An answer older than a change this tab knows of is out of date; the worker
+                    // answers the change next.
+                    if version >= self.trust_version {
+                        self.trust = if trusted {
+                            RepoTrust::Trusted
+                        } else {
+                            RepoTrust::Untrusted
+                        };
+                    }
+                }
                 Event::Signature { oid, status } => {
                     if Some(oid) == self.selected_commit {
                         self.signature = status.map(|s| (oid, s));
@@ -2481,6 +2528,7 @@ impl RepoTab {
                         Ok(_) => {}
                         Err(body) => notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: "Could not read the commit template".into(),
                             body,
                         }),
@@ -2500,6 +2548,7 @@ impl RepoTab {
                     if let Err(error) = &result {
                         notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: "Could not read the file's history".into(),
                             body: error.clone(),
                         });
@@ -2519,6 +2568,7 @@ impl RepoTab {
                     if let Err(error) = &result {
                         notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: "Could not blame the file".into(),
                             body: error.clone(),
                         });
@@ -2542,6 +2592,7 @@ impl RepoTab {
                     if let Err(error) = &result {
                         notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: "Could not load insights".into(),
                             body: error.clone(),
                         });
@@ -2552,6 +2603,7 @@ impl RepoTab {
                     for tool in tools.into_iter().filter(|t| first_report(&t.program)) {
                         notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Attention,
                             title: format!("{} is not installed", tool.program),
                             body: format!("{}. {}", tool.needed_for, tool.install.join(" ")),
                         });
@@ -2561,6 +2613,7 @@ impl RepoTab {
                     Ok(target) => self.force_push_offer = Some(target),
                     Err(e) => notices.push(Notice {
                         ok: false,
+                        delivery: Delivery::Card,
                         title: "Could not force push".into(),
                         body: e,
                     }),
@@ -2680,6 +2733,7 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: true,
+                                    delivery: Delivery::Card,
                                     title: outcome_title(&label, true),
                                     body: success_body(&kind, &out, &subject, branch.as_deref()),
                                 });
@@ -2708,6 +2762,13 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: false,
+                                    // Only a fetch nobody asked for is quiet; a failed
+                                    // stage or resolve is the user's own action.
+                                    delivery: if announce || kind != OpKind::Fetch {
+                                        Delivery::Card
+                                    } else {
+                                        Delivery::Quiet
+                                    },
                                     title: outcome_title(&label, false),
                                     body: e,
                                 });
@@ -2729,6 +2790,7 @@ impl RepoTab {
                     self.view = View::Changes;
                     notices.push(Notice {
                         ok: false,
+                        delivery: Delivery::Attention,
                         title: format!("{label} stopped on conflicts"),
                         body: "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.".into(),
                     });
@@ -2738,6 +2800,7 @@ impl RepoTab {
                     self.view = View::Changes;
                     notices.push(Notice {
                         ok: false,
+                        delivery: Delivery::Attention,
                         title: "Your changes conflict with what came in".into(),
                         body: "Canopy set your uncommitted changes aside for this, and putting them back conflicts with the new commits. Resolve the conflicted files in Changes. Your changes also stay in the stash list until you drop that stash.".into(),
                     });
@@ -2749,6 +2812,7 @@ impl RepoTab {
                     self.clear_obsolete_refusal();
                     notices.push(Notice {
                         ok: false,
+                        delivery: Delivery::Card,
                         title: "Git error".into(),
                         body: e,
                     });
@@ -2858,6 +2922,7 @@ impl RepoTab {
                                 self.requests.more_failed = true;
                                 notices.push(Notice {
                                     ok: false,
+                                    delivery: Delivery::Card,
                                     title: format!(
                                         "Could not load more {}s",
                                         forge.kind.request_noun()
@@ -2947,6 +3012,7 @@ impl RepoTab {
                         Ok(r) => {
                             notices.push(Notice {
                                 ok: true,
+                                delivery: Delivery::Card,
                                 title: format!("{} #{} created", kind.request_abbrev(), r.number),
                                 body: r.title.clone(),
                             });
@@ -2956,6 +3022,7 @@ impl RepoTab {
                         }
                         Err(e) => notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: format!("Could not create the {}", kind.request_noun()),
                             body: e,
                         }),
@@ -2994,6 +3061,7 @@ impl RepoTab {
                             }
                             notices.push(Notice {
                                 ok: true,
+                                delivery: Delivery::Card,
                                 title: outcome_title(&label, true),
                                 body: String::new(),
                             });
@@ -3007,6 +3075,7 @@ impl RepoTab {
                         }
                         Err(e) => notices.push(Notice {
                             ok: false,
+                            delivery: Delivery::Card,
                             title: outcome_title(&label, false),
                             body: e,
                         }),
@@ -4691,6 +4760,53 @@ mod tests {
         Ok(())
     }
 
+    /// #228: the repository thread says whether the repository is trusted; an answer given
+    /// before a change of the list this tab already knows of is out of date, and the change
+    /// wakes the thread so that it answers again.
+    #[test]
+    fn a_trust_answer_older_than_a_known_change_is_ignored()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, jobs) = Worker::detached();
+        tab.worker = worker;
+        assert_eq!(
+            tab.trust,
+            RepoTrust::Unknown,
+            "nothing is shown before it answers"
+        );
+        events.send(Event::Trust {
+            trusted: false,
+            version: 1,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.trust, RepoTrust::Untrusted);
+
+        tab.trust_changed(2);
+        assert!(
+            jobs.try_iter().any(|job| matches!(job, Job::RefreshStatus)),
+            "the thread is asked to look again"
+        );
+        events.send(Event::Trust {
+            trusted: false,
+            version: 1,
+        })?;
+        events.send(Event::Trust {
+            trusted: true,
+            version: 2,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.trust, RepoTrust::Trusted);
+        events.send(Event::Trust {
+            trusted: false,
+            version: 1,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.trust, RepoTrust::Trusted, "the older answer is dropped");
+        Ok(())
+    }
+
     /// An automatic fetch that fails the same way every interval (an untrusted folder's guard,
     /// a server that is down) is shown once; a different failure, or a fetch that works, shows
     /// again.
@@ -4737,6 +4853,46 @@ mod tests {
         // The fetch the user starts always says how it went.
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
+        Ok(())
+    }
+
+    /// #234: a background failure never interrupts (the center and the bell hold it), while one
+    /// the user started, and one that waits on them, does.
+    #[test]
+    fn notices_say_how_they_reach_the_user() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let fetch = |announce| Event::OpFinished {
+            label: "Fetching".into(),
+            kind: OpKind::Fetch,
+            announce,
+            result: Err("could not resolve host".into()),
+        };
+        let delivery =
+            |tab: &mut RepoTab, e: Event| -> Result<Delivery, Box<dyn std::error::Error>> {
+                events.send(e)?;
+                Ok(tab.poll(&[]).remove(0).delivery)
+            };
+        assert_eq!(delivery(&mut tab, fetch(false))?, Delivery::Quiet);
+        assert_eq!(delivery(&mut tab, fetch(true))?, Delivery::Card);
+        let stage = Event::OpFinished {
+            label: "Staging".into(),
+            kind: OpKind::Other,
+            announce: false,
+            result: Err("fatal: Unable to create index.lock".into()),
+        };
+        assert_eq!(delivery(&mut tab, stage)?, Delivery::Card, "the user's own");
+        assert_eq!(
+            delivery(&mut tab, Event::Conflicted("Pulling".into()))?,
+            Delivery::Attention
+        );
+        assert_eq!(
+            delivery(&mut tab, Event::AutostashConflict)?,
+            Delivery::Attention
+        );
         Ok(())
     }
 

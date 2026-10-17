@@ -1,7 +1,7 @@
 //! Pull and merge requests: a background thread per repository tab that talks to the GitHub or
 //! GitLab API through `canopy-hosting`, plus the lookup of the credential.
 //!
-//! The only credential is the sign-in of the provider's CLI (`gh`, `glab`; ADR 0014): its token is
+//! The only credential is the sign-in of the provider's CLI (`gh`, `glab`; ADR 0017): its token is
 //! read when the thread starts, held in memory and sent only to the host it belongs to. Canopy
 //! saves no token and takes none from the environment or git's credential helpers.
 
@@ -19,7 +19,7 @@ use canopy_hosting::{
     RequestSummary, StateFilter,
 };
 
-/// Deletes what builds before ADR 0014 saved: a `tokens.json` of plaintext tokens (and a leftover
+/// Deletes what builds before ADR 0017 saved: a `tokens.json` of plaintext tokens (and a leftover
 /// temporary copy). Best effort and off the calling thread; nothing reads those files any more.
 pub fn remove_saved_tokens() {
     let Some(dir) = eframe::storage_dir("canopy") else {
@@ -795,7 +795,7 @@ mod tests {
         assert!(!shown.contains("ghp_secretvalue"), "{shown}");
     }
 
-    /// What builds before ADR 0014 saved is deleted, and nothing else in the folder is touched.
+    /// What builds before ADR 0017 saved is deleted, and nothing else in the folder is touched.
     #[test]
     fn the_old_saved_tokens_are_removed() {
         let dir = tempfile::tempdir().unwrap();

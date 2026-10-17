@@ -74,14 +74,18 @@ use Canopy as a user would and fix every finding before releasing. It complement
 screenshot checks and unit tests, which cannot see hover, timing, focus, menus that open and close,
 or how flows feel end to end.
 
-1. `tools/usersim.sh start [--kind showcase|conflict|linear|big] [--size WxH]` builds the release
-   binary and launches it on a private Xvfb display with its own home, XDG folders and Git
+1. `tools/usersim.sh start [--kind showcase|conflict|linear|big] [--size WxH] [--env NAME=VALUE]...`
+   builds the release binary and launches it on a private Xvfb display with its own home, XDG folders and Git
    configuration in a scratch folder, on a fixture with a local bare `origin`: never the owner's
-   repositories, never their Canopy settings, never the desktop session.
+   repositories, never their Canopy settings, never the desktop session. The app gets a clean
+   environment; `--env` adds `TERMINAL`, `VISUAL`, `EDITOR`, `XDG_DATA_DIRS` or `XDG_CONFIG_DIRS` to
+   it, to stage another machine's launcher lists (desktop entries and programs in a scratch folder).
 2. Drive it with `tools/usersim.sh x ...` (xdotool: `x search --name Canopy windowfocus`, then
    `x mousemove X Y click 1`, `x key ctrl+k`, `x type --delay 40 -- TEXT`) and look with
    `tools/usersim.sh shot out.png` after every step that changes the screen.
-3. Walk the first launch (terms, crash question, identity), then every change in the release, then
+3. Walk the first launch (terms, crash question, identity). The fixture is outside every trusted
+   folder, so its repository asks "Trust this repository?": answer Trust before the flows below, or
+   Don't trust to see the read-only banner. Then every change in the release, then
    the core flows around it: browse and select in History and the sidebar, context menus and
    their submenus, stage and commit, fetch, pull and push against the bare `origin`, a conflict
    (`--kind conflict`), Settings changes taking effect, notifications and the notification center,

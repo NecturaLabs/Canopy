@@ -8,7 +8,7 @@ license: Proprietary (NecturaLabs); see LICENSE
 
 `crates/canopy-hosting` is Canopy's only HTTP client (plus Sentry's transport in
 `crash_reports.rs`). It is security-sensitive: it holds the CLI's token in memory. Read ADR 0003 (what may
-be contacted) and ADR 0014 (the only credential is the `gh`/`glab` sign-in) in `docs/adr/` before the first change in a session. Work
+be contacted) and ADR 0017 (the only credential is the `gh`/`glab` sign-in) in `docs/adr/` before the first change in a session. Work
 through the steps in order; a pull or merge request feature touches both providers.
 
 ## 0. Is it allowed?
@@ -91,7 +91,7 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
   the thread's `Client` carries the worker's switch (`Client::with_switch`), which every request
   checks right before it is sent.
 - The only credential is `hosting::resolve_token`: the `gh`/`glab` CLI's sign-in for the repository's host,
-  held in memory only (ADR 0014). Canopy saves no token and reads none from the environment or
+  held in memory only (ADR 0017). Canopy saves no token and reads none from the environment or
   git's credential helper; the requests view and Settings → Accounts say what the CLI reported
   (`CliState`) and offer Open Accounts when the server refuses without one. Do not read tokens
   anywhere else, and do not hand one to any code outside the hosting thread.

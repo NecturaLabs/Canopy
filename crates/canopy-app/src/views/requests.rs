@@ -22,15 +22,17 @@ use crate::action::Action;
 use crate::hosting::HostJob;
 use crate::keymap::Command;
 use crate::request_view::{
-    self, ChecksChoice, DraftChoice, RequestSort, RequestView, ReviewChoice, Standing,
+    self, ChecksChoice, DraftChoice, RequestDensity, RequestSort, RequestView, ReviewChoice,
+    Standing,
 };
 use crate::tab::{RepoTab, host_unreachable};
 use crate::ui::art;
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::{LinkButton, icon_button_side};
-use crate::ui::kit::chip::{Badge, DiffStat, RefPill};
+use crate::ui::kit::chip::{Badge, DiffStat};
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::{SearchField, TextArea};
+use crate::ui::kit::git::RefPill;
 use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::{Skeleton, Spinner};
 use crate::ui::kit::row::{self, Disclosure, ListRow, Roving, RowKind, SectionHeader};
@@ -38,7 +40,7 @@ use crate::ui::kit::select::{self, Select};
 use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
 use crate::ui::kit::surface::{Callout, EmptyAction, EmptyState, InsetBox, NoticeAction};
 use crate::ui::kit::{self, Button, IconButton, Size, Tone, a11y, paint};
-use crate::ui::theme::{self, Style, palette};
+use crate::ui::theme::{self, Palette, Style, palette};
 use crate::ui::widgets::{self, forge_icon};
 use crate::views::dialogs::Dialog;
 use crate::views::state_banner;
@@ -540,6 +542,23 @@ fn list(
                     {
                         tab.load_requests();
                     }
+                    let dense = tab.request_density == RequestDensity::Dense;
+                    if IconButton::new(
+                        icon::LIST_DASHES,
+                        if dense {
+                            "Show comfortable items"
+                        } else {
+                            "Show dense items"
+                        },
+                    )
+                    .size(Size::Sm)
+                    .active(dense)
+                    .id_salt("request-density-button")
+                    .show(ui)
+                    .clicked()
+                    {
+                        actions.push(Action::SetRequestDensity(tab.request_density.other()));
+                    }
                     let current = tab
                         .snap
                         .as_ref()
@@ -583,7 +602,10 @@ fn list(
                 ))
                 .show(ui, |ui| {
                     Skeleton::rows(LOADING_ROWS)
-                        .row_height(RowKind::Request.height())
+                        .row_height(match tab.request_density {
+                            RequestDensity::Comfortable => RowKind::Request.height(),
+                            RequestDensity::Dense => RowKind::List.height(),
+                        })
                         .id_salt("requests-skeleton")
                         .show(ui);
                 });
@@ -895,7 +917,15 @@ fn rows(
                                     let r = &items[i];
                                     let glyphs =
                                         row_signals(&ctx, tab, r).map_or(1, |s| s.glyphs().len());
-                                    RowLayout::new(ui.painter(), r, kind, glyphs, content, now)
+                                    RowLayout::new(
+                                        ui.painter(),
+                                        r,
+                                        kind,
+                                        glyphs,
+                                        content,
+                                        now,
+                                        tab.request_density,
+                                    )
                                 })
                                 .collect();
                             let heights: Vec<f32> = laid.iter().map(|l| l.height).collect();
@@ -1029,31 +1059,31 @@ fn visible_span(heights: &[f32], top: f32, y: egui::Rangef) -> Span {
     }
 }
 
-/// `text` on one line, cut at `width`.
-fn line_galley(
-    painter: &Painter,
-    text: String,
-    font: FontId,
-    color: Color32,
-    width: f32,
-) -> Arc<Galley> {
-    let mut job = LayoutJob::simple(text, font, color, width.max(0.0));
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    painter.layout_job(job)
-}
+/// The least of a dense row's text width (after the checks and review glyphs) the number and title
+/// keep; the label chips take what is left above it.
+const DENSE_TITLE_SHARE: f32 = 0.7;
 
-/// A request's text laid out for the width its row has: the number and title (up to
-/// [`TITLE_ROWS`] lines), the author and age, and the description (up to [`DESCRIPTION_ROWS`]),
-/// and the height they make.
+/// The least a dense row gives the number and title, in body-size ems (about 24 characters), when
+/// the line is wide enough for it.
+const DENSE_TITLE_EMS: f32 = 12.0;
+
+/// A request's text laid out for the width its row has. Comfortable: the number and title (up to
+/// [`TITLE_ROWS`] lines), the author and age with the labels at the right, and the description
+/// (up to [`DESCRIPTION_ROWS`]). Dense: the number and title on one line with the labels at the
+/// right of it. Also the height they make.
 struct RowLayout {
     title: Arc<Galley>,
-    meta: Arc<Galley>,
+    /// The author and age; none in a dense row (the tooltip has them).
+    meta: Option<Arc<Galley>>,
     description: Option<Arc<Galley>>,
+    labels: LabelChips,
+    /// Width kept at the right end of the title line for the checks and review glyphs.
+    signals: f32,
     /// The text's height, blocks and the gaps between them.
     text_height: f32,
     /// The row's height: the text's with its padding, never less than a row of the kind.
     height: f32,
+    density: RequestDensity,
 }
 
 impl RowLayout {
@@ -1066,6 +1096,7 @@ impl RowLayout {
         glyphs: usize,
         content: f32,
         now: i64,
+        density: RequestDensity,
     ) -> Self {
         let p = palette(painter.ctx());
         let m = theme::metrics();
@@ -1075,13 +1106,30 @@ impl RowLayout {
         } else {
             crate::ui::count_f32(glyphs) * (m.icon_md + theme::XS) + theme::XS
         };
-        let title_width = (text_width - signals).max(0.0);
+        let small = FontId::proportional(m.small_size);
+        let dense = density == RequestDensity::Dense;
+        let after_signals = (text_width - signals).max(0.0);
+        // A dense row shares its line between the title and the labels, and the title is the
+        // row's content: it keeps at least `DENSE_TITLE_SHARE` of the line and `DENSE_TITLE_EMS`
+        // of text, and the labels yield first (fewer chips, then a count, then none).
+        let (labels, title_width) = if dense {
+            let title_least = (after_signals * DENSE_TITLE_SHARE)
+                .max(DENSE_TITLE_EMS * m.body_size)
+                .min(after_signals);
+            let room = (after_signals - title_least - theme::MD).max(0.0);
+            let labels = LabelChips::fit(painter, &r.labels, &small, room);
+            let gap = if labels.used > 0.0 { theme::MD } else { 0.0 };
+            let title_width = (after_signals - labels.used - gap).max(0.0);
+            (labels, title_width)
+        } else {
+            (LabelChips::default(), after_signals)
+        };
         let font = FontId::new(m.body_size, theme::medium());
         let mut job = LayoutJob::default();
         job.wrap.max_width = title_width;
-        job.wrap.max_rows = TITLE_ROWS;
+        job.wrap.max_rows = if dense { 1 } else { TITLE_ROWS };
         for (text, color) in [
-            (number_text(kind, r.number), p.text_faint),
+            (number_text(kind, r.number), p.fields.number),
             (format!(" {}", r.title), Color32::PLACEHOLDER),
         ] {
             job.append(
@@ -1094,18 +1142,46 @@ impl RowLayout {
                 },
             );
         }
-        let title = painter.layout_job(job);
-        let small = FontId::proportional(m.small_size);
-        let meta = line_galley(
+        let title = widgets::layout_tidy(painter, job);
+        if dense {
+            let text_height = title.size().y;
+            return Self {
+                title,
+                meta: None,
+                description: None,
+                labels,
+                signals,
+                text_height,
+                height: (text_height + 2.0 * theme::XS).max(RowKind::List.height()),
+                density,
+            };
+        }
+        let mut meta_job = LayoutJob::default();
+        meta_job.wrap.max_width = text_width;
+        meta_job.wrap.max_rows = 1;
+        meta_job.wrap.break_anywhere = true;
+        for (text, color) in [
+            (r.author.clone(), p.fields.author),
+            ("  ·  ".to_owned(), p.text_faint),
+            (widgets::relative_time(r.updated_at, now), p.fields.time),
+        ] {
+            meta_job.append(
+                &text,
+                0.0,
+                egui::TextFormat {
+                    font_id: small.clone(),
+                    color,
+                    ..Default::default()
+                },
+            );
+        }
+        let meta = painter.layout_job(meta_job);
+        // Labels take what the author and age leave.
+        let labels = LabelChips::fit(
             painter,
-            format!(
-                "{}  ·  {}",
-                r.author,
-                widgets::relative_time(r.updated_at, now)
-            ),
-            small.clone(),
-            p.text_faint,
-            text_width,
+            &r.labels,
+            &small,
+            (text_width - meta.size().x - theme::MD).max(0.0),
         );
         let description = (!r.description.is_empty()).then(|| {
             let mut job = LayoutJob::simple(r.description.clone(), small, p.text_dim, text_width);
@@ -1118,10 +1194,13 @@ impl RowLayout {
             + description.as_ref().map_or(0.0, |d| theme::XS + d.size().y);
         Self {
             title,
-            meta,
+            meta: Some(meta),
             description,
+            labels,
+            signals,
             text_height,
             height: (text_height + 2.0 * theme::SM).max(RowKind::Request.height()),
+            density,
         }
     }
 }
@@ -1139,9 +1218,10 @@ struct RowDraw<'a> {
     now: i64,
 }
 
-/// A request in the list: state glyph, number and title, author and age with its labels at the
-/// right, the start of its description, and at the right of the title the checks and reviews when
-/// they are known.
+/// A request in the list: state glyph, number and title, and at the right of the title the checks
+/// and reviews when they are known. Comfortable rows add the author and age with the labels at
+/// the right of them, and the start of the description; dense rows put the labels at the right of
+/// the title instead.
 fn row(ui: &mut Ui, r: &RequestSummary, d: RowDraw<'_>) -> Response {
     let RowDraw {
         kind,
@@ -1228,21 +1308,21 @@ fn row(ui: &mut Ui, r: &RequestSummary, d: RowDraw<'_>) -> Response {
             }
             let title_height = layout.title.size().y;
             painter.galley(pos2(x, y), Arc::clone(&layout.title), rc.text);
+            if layout.density == RequestDensity::Dense {
+                // The labels at the right of the title, before the glyphs.
+                layout
+                    .labels
+                    .paint(painter, c.right() - layout.signals, title_y);
+                return;
+            }
             y += title_height + theme::XS;
-            let meta_height = layout.meta.size().y;
-            painter.galley(pos2(x, y), Arc::clone(&layout.meta), p.text_faint);
-            // Labels take what the author and age leave.
-            let small = FontId::proportional(m.small_size);
-            let used = layout.meta.size().x + theme::MD;
-            paint_labels(
-                painter,
-                &r.labels,
-                &small,
-                (c.right() - x - used).max(0.0),
-                c.right(),
-                y + meta_height / 2.0,
-            );
-            y += meta_height + theme::XS;
+            if let Some(meta) = &layout.meta {
+                painter.galley(pos2(x, y), Arc::clone(meta), p.text_faint);
+                layout
+                    .labels
+                    .paint(painter, c.right(), y + meta.size().y / 2.0);
+                y += meta.size().y + theme::XS;
+            }
             if let Some(description) = &layout.description {
                 painter.galley(pos2(x, y), Arc::clone(description), p.text_dim);
             }
@@ -1251,61 +1331,72 @@ fn row(ui: &mut Ui, r: &RequestSummary, d: RowDraw<'_>) -> Response {
     response
 }
 
-/// The labels that fit in `room`, as small chips whose right end is at `right`; a last chip says
-/// how many more there are.
-fn paint_labels(
-    painter: &Painter,
-    labels: &[String],
-    font: &FontId,
-    room: f32,
-    right: f32,
-    y: f32,
-) {
-    let p = palette(painter.ctx());
-    let pad = theme::XS + 2.0;
-    let chip = |text: String| {
-        let galley = painter.layout_no_wrap(text, font.clone(), p.text_dim);
-        let width = galley.size().x + 2.0 * pad;
-        (galley, width)
-    };
-    let mut fits = Vec::new();
-    let mut used = 0.0;
-    for label in labels {
-        let (galley, width) = chip(label.clone());
-        let gap = if fits.is_empty() { 0.0 } else { theme::XS };
-        if used + gap + width > room {
-            break;
-        }
-        used += gap + width;
-        fits.push((galley, width));
-    }
-    let hidden = labels.len() - fits.len();
-    if hidden > 0 {
-        // A lone "+3" says nothing: when no label fits, the chip counts them instead.
-        let (galley, width) = chip(if fits.is_empty() {
-            format!("{hidden} label{}", if hidden == 1 { "" } else { "s" })
-        } else {
-            format!("+{hidden}")
-        });
-        let gap = if fits.is_empty() { 0.0 } else { theme::XS };
-        if used + gap + width <= room {
-            fits.push((galley, width));
+/// The labels that fit in a room, as small chips tinted with the label field's colour; a last
+/// chip says how many more there are.
+#[derive(Default)]
+struct LabelChips {
+    /// Each chip's text and width.
+    chips: Vec<(Arc<Galley>, f32)>,
+    /// Their width together, with the gaps.
+    used: f32,
+}
+
+impl LabelChips {
+    fn fit(painter: &Painter, labels: &[String], font: &FontId, room: f32) -> Self {
+        let pad = theme::XS + 2.0;
+        let chip = |text: String| {
+            let galley = painter.layout_no_wrap(text, font.clone(), Color32::PLACEHOLDER);
+            let width = galley.size().x + 2.0 * pad;
+            (galley, width)
+        };
+        let mut fits = Vec::new();
+        let mut used = 0.0;
+        for label in labels {
+            let (galley, width) = chip(label.clone());
+            let gap = if fits.is_empty() { 0.0 } else { theme::XS };
+            if used + gap + width > room {
+                break;
+            }
             used += gap + width;
-        } else if fits.is_empty() {
-            return;
+            fits.push((galley, width));
         }
+        let hidden = labels.len() - fits.len();
+        if hidden > 0 {
+            // A lone "+3" says nothing: when no label fits, the chip counts them instead.
+            let (galley, width) = chip(if fits.is_empty() {
+                format!("{hidden} label{}", if hidden == 1 { "" } else { "s" })
+            } else {
+                format!("+{hidden}")
+            });
+            let gap = if fits.is_empty() { 0.0 } else { theme::XS };
+            if used + gap + width <= room {
+                fits.push((galley, width));
+                used += gap + width;
+            } else if fits.is_empty() {
+                return Self::default();
+            }
+        }
+        Self { chips: fits, used }
     }
-    let mut x = right - used;
-    for (galley, width) in fits {
-        let height = galley.size().y + 2.0;
-        let rect = Rect::from_min_size(pos2(x, y - height / 2.0), vec2(width, height));
-        painter.rect_filled(
-            rect,
-            CornerRadius::same(theme::metrics().radius_sm),
-            Tone::Neutral.tint(p),
-        );
-        painter.galley(pos2(x + pad, y - galley.size().y / 2.0), galley, p.text_dim);
-        x += width + theme::XS;
+
+    /// The chips with their right end at `right`, centred on `y`.
+    fn paint(&self, painter: &Painter, right: f32, y: f32) {
+        let p = palette(painter.ctx());
+        let pad = theme::XS + 2.0;
+        let fill = Palette::badge_fill(p.fields.label);
+        let ink = p.ink(p.fields.label, fill);
+        let mut x = right - self.used;
+        for (galley, width) in &self.chips {
+            let height = galley.size().y + 2.0;
+            let rect = Rect::from_min_size(pos2(x, y - height / 2.0), vec2(*width, height));
+            painter.rect_filled(rect, CornerRadius::same(theme::metrics().radius_sm), fill);
+            painter.galley(
+                pos2(x + pad, y - galley.size().y / 2.0),
+                Arc::clone(galley),
+                ink,
+            );
+            x += width + theme::XS;
+        }
     }
 }
 
@@ -1418,8 +1509,18 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                         ui.label(
                             RichText::new(number_text(kind, summary.number))
                                 .size(m.subtitle_size)
-                                .color(p.text_faint),
+                                .color(p.fields.number),
                         );
+                        if let Some(d) = &details {
+                            let n = d.comments.len();
+                            ui.label(
+                                RichText::new(format!("{} {n}", icon::CHATS))
+                                    .size(m.body_size)
+                                    .color(p.fields.comments),
+                            )
+                            .kit_tooltip(format!("{n} comment{}", if n == 1 { "" } else { "s" }))
+                            .show();
+                        }
                     });
                     ui.add_space(theme::XS);
                     ui.label(
@@ -1432,7 +1533,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                         ui.label(
                             RichText::new(&summary.author)
                                 .font(FontId::new(m.body_size, theme::semibold()))
-                                .color(p.text),
+                                .color(p.fields.author),
                         );
                         ui.label(
                             RichText::new("wants to merge")
@@ -1447,7 +1548,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                                 "· updated {}",
                                 widgets::relative_time(summary.updated_at, now)
                             ))
-                            .color(p.text_faint)
+                            .color(p.fields.time)
                             .size(m.meta_size),
                         );
                     });
@@ -1455,7 +1556,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                         ui.add_space(theme::XS);
                         ui.horizontal_wrapped(|ui| {
                             for l in &summary.labels {
-                                Badge::new(l.clone()).show(ui);
+                                Badge::new(l.clone()).hue(p.fields.label).show(ui);
                             }
                         });
                     }
@@ -2396,7 +2497,7 @@ mod tests {
             };
             assert_eq!(
                 colours("+607\u{2212}98"),
-                [p.success, p.danger.gamma_multiply(0.85)],
+                [p.diff_added, p.diff_removed],
                 "{theme_id:?}"
             );
             assert_eq!(colours("8 commits"), [p.text_dim], "{theme_id:?}");
@@ -3464,7 +3565,15 @@ mod tests {
             let mut out = None;
             let r = request(12, title, "ann", description);
             kit::testkit::frame(&ctx, Vec::new(), |ui| {
-                out = Some(RowLayout::new(ui.painter(), &r, kinds, 2, width, 0));
+                out = Some(RowLayout::new(
+                    ui.painter(),
+                    &r,
+                    kinds,
+                    2,
+                    width,
+                    0,
+                    RequestDensity::Comfortable,
+                ));
             });
             out.expect("laid out")
         };
@@ -3945,8 +4054,12 @@ mod tests {
         let solid = theme::solid_scroll();
         // The handle at its widest (hovered), its margin and a gutter: the least a row may leave.
         let clear = solid.bar_width + solid.bar_inner_margin + theme::XS;
-        for size in [vec2(420.0, 600.0), vec2(320.0, 480.0), vec2(800.0, 900.0)] {
+        for (size, density) in [vec2(420.0, 600.0), vec2(320.0, 480.0), vec2(800.0, 900.0)]
+            .into_iter()
+            .flat_map(|size| RequestDensity::ALL.map(|density| (size, density)))
+        {
             let mut tab = overflowing(40);
+            tab.request_density = density;
             let (shapes, right) = list_painted(&mut tab, size, false);
             let lane = right - solid.floating_allocated_width;
             let (fills, inks) = kit::testkit::painted_colors(&shapes);
@@ -3954,7 +4067,9 @@ mod tests {
                 .iter()
                 .map(|(rect, _)| *rect)
                 .find(|r| r.left() >= lane - 0.5 && r.width() <= solid.bar_width + 0.5)
-                .unwrap_or_else(|| panic!("no scroll bar handle in the lane at {size:?}"));
+                .unwrap_or_else(|| {
+                    panic!("no scroll bar handle in the lane at {size:?} ({density:?})")
+                });
             assert!(
                 handle.height() >= theme::SCROLL_HANDLE_MIN,
                 "{size:?}: a handle of {} is hard to grab",
@@ -4085,5 +4200,331 @@ mod tests {
         assert!((own.width() - wanted).abs() < 1.0, "{own:?}");
         let (smaller, _) = frame(1000.0, Vec::new(), &mut tab);
         assert!((smaller.width() - wanted).abs() < 1.0, "{smaller:?}");
+    }
+
+    /// The laid-out text of one request in `density` at `width`.
+    fn laid_out(r: &RequestSummary, width: f32, density: RequestDensity) -> RowLayout {
+        let ctx = kit::testkit::ctx();
+        let mut out = None;
+        kit::testkit::frame(&ctx, Vec::new(), |ui| {
+            out = Some(RowLayout::new(
+                ui.painter(),
+                r,
+                ForgeKind::GitHub,
+                2,
+                width,
+                0,
+                density,
+            ));
+        });
+        out.expect("laid out")
+    }
+
+    /// The colour a piece of text was laid out in (`RichText` colours live in the galley, not in
+    /// the shape's fallback), falling back to the shape's own where the galley takes the default.
+    fn laid_ink(shapes: &[egui::epaint::ClippedShape], text: &str) -> Color32 {
+        fn find(shape: &egui::Shape, text: &str) -> Option<Color32> {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                egui::Shape::Text(t) if t.galley.text() == text => {
+                    let laid = t.galley.job.sections.first().map(|s| s.format.color);
+                    Some(match laid {
+                        Some(c) if c != Color32::PLACEHOLDER => c,
+                        _ => t.override_text_color.unwrap_or(t.fallback_color),
+                    })
+                }
+                _ => None,
+            }
+        }
+        shapes
+            .iter()
+            .find_map(|c| find(&c.shape, text))
+            .unwrap_or_else(|| panic!("{text:?} not painted"))
+    }
+
+    /// The colour of each run of text in a galley, in order.
+    fn runs(galley: &Galley) -> Vec<(String, Color32)> {
+        galley
+            .job
+            .sections
+            .iter()
+            .map(|s| {
+                (
+                    galley
+                        .job
+                        .text
+                        .get(s.byte_range.start.0..s.byte_range.end.0)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    s.format.color,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_list_density_toggle_is_named_by_what_it_does_and_is_reachable() {
+        let mut tab = tab_with(vec![request(7, "Add keyboard help", "ann", "")]);
+        assert_eq!(
+            tab.request_density,
+            RequestDensity::Comfortable,
+            "comfortable until chosen"
+        );
+        let ctx = kit::testkit::ctx();
+        for (density, name) in [
+            (RequestDensity::Comfortable, "Show dense items"),
+            (RequestDensity::Dense, "Show comfortable items"),
+        ] {
+            tab.request_density = density;
+            let nodes = kit::testkit::spoken(&ctx, |ui| {
+                list(
+                    ui,
+                    &mut tab,
+                    ForgeKind::GitHub,
+                    Color32::BLACK,
+                    &mut Vec::new(),
+                );
+            });
+            assert!(
+                nodes
+                    .iter()
+                    .any(|n| n.label.as_deref() == Some(name)
+                        && n.role == egui::accesskit::Role::Button),
+                "{density:?}: a button named {name:?}: {nodes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dense_row_is_one_line_without_a_preview_and_the_comfortable_row_is_unchanged() {
+        let mut tab = tab_with(vec![
+            RequestSummary {
+                labels: vec!["bug".into()],
+                ..request(
+                    7,
+                    "Add keyboard help",
+                    "ann",
+                    "Explains the single-key shortcuts.",
+                )
+            },
+            request(8, "Tidy settings", "bob", ""),
+        ]);
+        tab.request_density = RequestDensity::Dense;
+        let frame = render(theme::ThemeId::Midnight, SCREEN, |ui| {
+            list(
+                ui,
+                &mut tab,
+                ForgeKind::GitHub,
+                Color32::BLACK,
+                &mut Vec::new(),
+            );
+        });
+        assert!(frame.has("#7 Add keyboard help"), "{:?}", frame.texts);
+        assert!(frame.has("#8 Tidy settings"), "{:?}", frame.texts);
+        assert!(frame.has("bug"), "the label stays: {:?}", frame.texts);
+        assert!(
+            !frame.mentions("Explains the single-key") && !frame.mentions("ann  ·  "),
+            "no preview and no author line: {:?}",
+            frame.texts
+        );
+        // What the dense row leaves out, a screen reader and the tooltip still have.
+        let described = frame
+            .nodes
+            .iter()
+            .find(|(name, _)| name.starts_with("Open request #7 Add keyboard help by ann"))
+            .unwrap_or_else(|| panic!("no row named for #7: {:?}", frame.nodes));
+        assert!(described.0.contains("Explains the single-key shortcuts."));
+
+        let r = request(9, "Fix it", "ann", "Explains why.");
+        let dense = laid_out(&r, 480.0, RequestDensity::Dense);
+        let comfortable = laid_out(&r, 480.0, RequestDensity::Comfortable);
+        assert!(dense.meta.is_none() && dense.description.is_none());
+        assert!(comfortable.meta.is_some() && comfortable.description.is_some());
+        assert!(
+            dense.height < comfortable.height,
+            "{} against {}",
+            dense.height,
+            comfortable.height
+        );
+        assert!(
+            (dense.height - RowKind::List.height()).abs() < f32::EPSILON,
+            "a plain dense row is a row of the list"
+        );
+    }
+
+    /// A dense row shares one line between the title and the labels; whatever the title and the
+    /// labels, the number and the start of the title show and the labels yield first: the title
+    /// keeps its share of the line and its least width, then the chips shrink to a count or go.
+    #[test]
+    fn a_dense_row_never_clips_the_number_or_the_start_of_the_title() {
+        let titles = [
+            "Fix it".to_owned(),
+            "Stream large diffs through the virtual list without materialising every hunk"
+                .to_owned(),
+            "word ".repeat(80),
+        ];
+        let many = || -> Vec<String> {
+            [
+                "bug",
+                "accessibility",
+                "needs design",
+                "good first issue",
+                "backend",
+            ]
+            .map(String::from)
+            .to_vec()
+        };
+        for title in &titles {
+            for labels in [Vec::new(), vec!["bug".to_owned()], many()] {
+                for width in [160.0, 240.0, 320.0, 480.0, 800.0] {
+                    let r = RequestSummary {
+                        labels: labels.clone(),
+                        ..request(1234, title, "maya-chen", "")
+                    };
+                    let row = laid_out(&r, width, RequestDensity::Dense);
+                    let at = format!("{} labels, {width} wide, {title:?}", labels.len());
+                    assert_eq!(row.title.rows.len(), 1, "one line: {at}");
+                    assert!(
+                        row.title.text().starts_with("#1234 "),
+                        "the number leads: {at}: {}",
+                        row.title.text()
+                    );
+                    let m = theme::metrics();
+                    let text_width = width - m.icon_md - theme::SM;
+                    let after_signals = text_width - row.signals;
+                    let title_least = (after_signals * DENSE_TITLE_SHARE)
+                        .max(DENSE_TITLE_EMS * m.body_size)
+                        .min(after_signals);
+                    assert!(
+                        row.labels.used + theme::MD <= after_signals - title_least + 0.5
+                            || row.labels.used == 0.0,
+                        "the labels leave the title its share: {at}: {} of {after_signals}",
+                        row.labels.used
+                    );
+                    let gap = if row.labels.used > 0.0 {
+                        theme::MD
+                    } else {
+                        0.0
+                    };
+                    assert!(
+                        row.title.size().x + row.labels.used + gap + row.signals
+                            <= text_width + 0.5,
+                        "the title, labels and glyphs fit one line: {at}: {} of {text_width}",
+                        row.title.size().x + row.labels.used + gap + row.signals
+                    );
+                    // A title that fills its line is cut with an ellipsis, but never to nothing:
+                    // at least the number and a few letters of it remain.
+                    if width >= 240.0 {
+                        assert!(
+                            row.title.size().x >= 60.0_f32.min(title_least),
+                            "the start of the title shows: {at}: {}",
+                            row.title.size().x
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A title that is cut ends in an ellipsis right after a word, never after a space.
+    #[test]
+    fn a_cut_title_has_no_space_before_its_ellipsis() {
+        for density in RequestDensity::ALL {
+            for step in 0..46_u16 {
+                let width = 200.0 + f32::from(step) * 7.0;
+                let r = request(
+                    491,
+                    "Make the lane allocator reuse a freed column before it opens another one",
+                    "ann",
+                    "",
+                );
+                let row = laid_out(&r, width, density);
+                let text: String = row.title.rows.iter().map(|r| r.text()).collect();
+                assert!(
+                    !text.contains(" …") && !text.contains(" \u{2026}"),
+                    "{density:?} at {width}: {text:?}"
+                );
+            }
+        }
+    }
+
+    /// Every field of a row is painted in its own token: the number, the author and the age in the
+    /// list, and in the details header those, the labels and the comment count.
+    #[test]
+    fn every_field_of_a_row_and_of_the_header_has_its_own_colour() {
+        for theme_id in theme::ThemeId::ALL {
+            let ctx =
+                kit::testkit::ctx_with(theme_id, Style::Standard, theme::Density::Comfortable);
+            let p = palette(&ctx);
+            let r = RequestSummary {
+                labels: vec!["bug".into()],
+                updated_at: 100,
+                ..request(7, "Add keyboard help", "ann", "")
+            };
+            let mut laid = None;
+            kit::testkit::frame(&ctx, Vec::new(), |ui| {
+                laid = Some(RowLayout::new(
+                    ui.painter(),
+                    &r,
+                    ForgeKind::GitHub,
+                    2,
+                    480.0,
+                    100,
+                    RequestDensity::Comfortable,
+                ));
+            });
+            let laid = laid.expect("laid out");
+            let title = runs(&laid.title);
+            assert_eq!(title[0], ("#7".to_owned(), p.fields.number), "{theme_id:?}");
+            assert_eq!(
+                title[1].1,
+                Color32::PLACEHOLDER,
+                "the title takes the row's text"
+            );
+            let meta = runs(laid.meta.as_ref().expect("a meta line"));
+            assert_eq!(meta[0], ("ann".to_owned(), p.fields.author), "{theme_id:?}");
+            assert_eq!(meta[2].1, p.fields.time, "{theme_id:?}");
+
+            let mut tab = loaded_tab(RequestState::Open);
+            tab.requests.details = Some(Ok(Arc::new(RequestDetails {
+                summary: RequestSummary {
+                    labels: vec!["bug".into()],
+                    ..summary(RequestState::Open)
+                },
+                comments: vec![
+                    canopy_hosting::Comment {
+                        author: "bob".into(),
+                        body: "hi".into(),
+                        created_at: 0,
+                    },
+                    canopy_hosting::Comment {
+                        author: "bob".into(),
+                        body: "again".into(),
+                        created_at: 0,
+                    },
+                ],
+                ..details(RequestState::Open)
+            })));
+            let shapes = painted(theme_id, vec2(900.0, 700.0), |ui| {
+                detail(ui, &mut tab, ForgeKind::GitHub, &mut Vec::new());
+            });
+            assert_eq!(laid_ink(&shapes, "#7"), p.fields.number, "{theme_id:?}");
+            assert_eq!(
+                laid_ink(&shapes, "Reviewer"),
+                p.fields.author,
+                "{theme_id:?}"
+            );
+            assert_eq!(
+                laid_ink(&shapes, &format!("{} 2", icon::CHATS)),
+                p.fields.comments,
+                "{theme_id:?}"
+            );
+            let fill = Palette::badge_fill(p.fields.label);
+            assert_eq!(
+                ink(&shapes, "bug").0,
+                p.ink(p.fields.label, fill),
+                "{theme_id:?}: the label's ink on the tint of the label colour"
+            );
+        }
     }
 }

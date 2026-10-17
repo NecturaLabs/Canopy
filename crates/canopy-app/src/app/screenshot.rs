@@ -18,6 +18,9 @@ pub(super) struct Screenshot {
     /// `--overlay long-message`: a commit draft with a too-long summary and description line
     /// is typed into the first tab, once.
     pub(super) long_message: bool,
+    /// `--overlay trust-banner`: the prompt about the first tab's repository counts as answered
+    /// with Don't trust, which leaves the banner.
+    pub(super) declines_trust: bool,
 }
 
 impl Screenshot {
@@ -33,6 +36,7 @@ impl Screenshot {
                 .then(|| egui::Id::new(crate::views::diff::OPTIONS_POPUP)),
             menu: overlay.and_then(MenuShot::of),
             long_message: overlay == Some("long-message"),
+            declines_trust: overlay == Some("trust-banner"),
         }
     }
 }

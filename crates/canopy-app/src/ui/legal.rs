@@ -25,9 +25,9 @@ pub const TERMS: &str = include_str!("../../../../docs/legal/terms-of-service.md
 pub const PRIVACY: &str = include_str!("../../../../docs/legal/privacy-policy.md");
 
 /// "Last updated" of the Terms of Service, as `YYYY-MM-DD`.
-pub const TERMS_VERSION: &str = "2026-10-14";
+pub const TERMS_VERSION: &str = "2026-10-17";
 /// "Last updated" of the Privacy Policy, as `YYYY-MM-DD`.
-pub const PRIVACY_VERSION: &str = "2026-10-14";
+pub const PRIVACY_VERSION: &str = "2026-10-17";
 
 /// A list item's dot, and how far below the line's middle its x-height sits.
 const BULLET_RADIUS: f32 = 2.5;
@@ -69,7 +69,7 @@ impl Document {
         text.split_once('\n').map_or(text, |(_, rest)| rest).trim()
     }
 
-    /// The "Last updated" date as the document writes it ("14 October 2026").
+    /// The "Last updated" date as the document writes it ("17 October 2026").
     pub fn updated(self) -> &'static str {
         self.text()
             .lines()
@@ -479,7 +479,7 @@ mod tests {
         assert_eq!(last_updated(TERMS), TERMS_VERSION);
         assert_eq!(last_updated(PRIVACY), PRIVACY_VERSION);
         assert!(Document::Terms.body().starts_with("Last updated"));
-        assert_eq!(Document::Terms.updated(), "14 October 2026");
+        assert_eq!(Document::Terms.updated(), "17 October 2026");
     }
 
     #[test]

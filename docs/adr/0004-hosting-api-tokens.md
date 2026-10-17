@@ -1,6 +1,6 @@
 # ADR 0004: Where hosting API tokens come from, where they are kept and where they may go
 
-**Status:** superseded by [ADR 0014](0014-hosting-access-only-through-the-cli-sign-in.md) (tokens are gone; the order of its sources was already superseded by [ADR 0013](0013-hosting-credentials-from-the-cli-first.md))
+**Status:** superseded by [ADR 0017](0017-hosting-access-only-through-the-cli-sign-in.md) (tokens are gone; the order of its sources was already superseded by [ADR 0013](0013-hosting-credentials-from-the-cli-first.md))
 **Date:** 2026-10-01
 
 Reconstructed from the shipped code and the Privacy Policy on the day the hosting API landed; the
