@@ -26,7 +26,11 @@ order, and a missing program cannot be picked.
   its name and what each platform calls it: the command names on `PATH` and the desktop entry
   ids (Linux), the application bundle (macOS) and the App Paths key (Windows). It replaces the
   per-platform allowlists `MAC_APPS` and `WINDOWS_APPS` and the terminal list `LINUX_TERMINALS`
-  (now `linux_terminals()`, in the table's order after `x-terminal-emulator`). `GUI_EDITORS`
+  (now `linux_terminals()`, in the table's order after `x-terminal-emulator`). The terminal
+  tried when neither `$TERMINAL` nor `xdg-terminal-exec` is there therefore follows `KNOWN`
+  (kgx, gnome-terminal, ptyxis, konsole, xfce4-terminal, alacritty, kitty, foot, wezterm,
+  ghostty, tilix, terminator, xterm) and adds ptyxis, xfce4-terminal, tilix and terminator to
+  what the old list tried. `GUI_EDITORS`
   stays: it tells a graphical editor from a terminal editor in `$VISUAL`/`$EDITOR`, which is not a
   list of rows. An install page is not recorded: nothing would read it, and offering to open it
   is not required (#45 covers missing required tools).
@@ -35,8 +39,8 @@ order, and a missing program cannot be picked.
 
   | Platform | Editors | Terminals | File managers | How a program counts as installed |
   |---|---|---|---|---|
-  | Linux | rows | rows | rows | an installed desktop entry with one of its ids (so Flatpak and Snap exports in `XDG_DATA_DIRS` count), or one of its commands on `PATH` |
-  | macOS | rows | rows | rows | its `.app` folder in `/Applications`, `/Applications/Utilities`, `/System/Applications`, `/System/Applications/Utilities`, `/System/Library/CoreServices` or `~/Applications` |
+  | Linux | rows | rows | rows | an installed desktop entry with one of its ids, or one of its commands on `PATH` |
+  | macOS | rows | rows | rows | its `.app` folder in `/Applications`, `/Applications/Utilities`, `/System/Applications`, `/System/Applications/Utilities`, `/System/Library/CoreServices` or `~/Applications`, or anywhere Spotlight (`mdfind`) lists it, or one of its commands on `PATH` |
   | Windows | none | none | none | App Paths only; it misses programs that are only on `PATH` (`wt.exe` is an alias) and Explorer is always there, so it cannot say a program is missing |
 
   A kind or platform without rows lists the installed programs and Custom command…. Windows
@@ -48,13 +52,22 @@ order, and a missing program cannot be picked.
 - **A saved choice that is gone shows as missing and runs nothing.** A saved command that starts
   a well-known program that is not installed shows as that program, selected, dimmed and tagged.
   Opening runs the system's program instead and a notification says which program is missing and
-  what ran. Any other saved command (a program nobody knows, or an installed one) runs as typed;
-  a failure keeps today's error message with the operating system's reason.
+  what ran. Only a bare command name (or, on macOS, `open -a Name`) counts: a command that names
+  its program by a path (`/opt/alacritty/bin/alacritty`) is the user's own program and, like any
+  other saved command (a program nobody knows, or an installed one), runs as typed; a failure
+  keeps today's error message with the operating system's reason. The closed select of a gone
+  choice carries "Not installed" as its accessible description, as the list rows do.
 - **Installed means found, not just categorised.** A well-known program on `PATH` that no desktop
   entry lists is an installed program too (its command is the program's name), so it is never
   shown as "Not installed". One program found through its entry and `PATH` is one row (#243: a
   program's id is its executable, and a launcher entry such as `flatpak run` is told apart by the
   entry).
+- **Flatpak and Snap.** A Flatpak or Snap program counts as installed only when its desktop
+  entry id is in `KNOWN`'s `entries` and the directory holding the entry (Flatpak's `exports/share`,
+  Snap's `/var/lib/snapd/desktop`) is in `XDG_DATA_DIRS`, as the usual profile scripts set it;
+  Canopy does not add those directories itself. One whose entry id `KNOWN` does not list, in a
+  directory not searched, shows as "Not installed" although it is installed, and a saved command
+  for it falls back to the system's program. Adding the id to `KNOWN` fixes a program.
 - **Editors that need a terminal** (vim, Neovim, Helix, nano) are not in the table. A desktop
   entry for one is listed only where a terminal launcher can start it ("Neovim in terminal"),
   as before.
@@ -93,5 +106,9 @@ consulted on 2026-10-14 and can be extended with a row in `KNOWN`.
   command…; the table is a convenience, not a gate.
 - Opening with a stale choice no longer fails with an operating-system error for the well-known
   programs: it opens with the default and says so.
+- "Not installed" is as fresh as the last detection: Canopy detects at startup and whenever
+  Settings opens, not while it runs. A program installed or removed meanwhile shows as before
+  until Settings is reopened (accepted limitation), and the saved-choice fallback uses the same
+  result.
 - The detection runs on its own thread, as before, and reads the same places (desktop entries,
   `PATH`, the macOS application folders, the Windows registry): no new access and no new host.

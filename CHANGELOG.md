@@ -15,7 +15,7 @@ commits since the previous build.
   cannot be picked, and the keyboard passes over them (Linux and macOS; Windows lists the installed
   programs only). A program you chose that has since been uninstalled shows the same way, and
   opening falls back to your system's program and says so. A well-known program found only on `PATH`
-  is now listed as installed.
+  is now listed as installed (Linux and macOS).
 - Canopy asks before it acts on a repository it does not trust: opening one outside every trusted
   folder shows a prompt that says a repository can run programs on this computer through its hooks
   and settings, with Trust and Don't trust. Don't trust opens it read-only: history and diffs show,
