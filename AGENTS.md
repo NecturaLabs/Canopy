@@ -1,11 +1,15 @@
 # Canopy
 
 A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written in Rust (edition
-2024, MSRV 1.91). Three crates: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
+2024, MSRV 1.91). Three crates and the component library, a submodule that is also a workspace member: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
 `git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
 `crates/canopy-hosting`, the GitHub/GitLab API client (REST, plus one GraphQL query for the
 request list; `ureq`, rustls); `crates/canopy-app`, the GUI (`eframe`/`egui` 0.36, glow), binary
-`canopy`. Docs: `docs/README.md` maps them (architecture, decisions in `docs/adr/`, design,
+`canopy`; `crates/nectura-ui`, a submodule of the private repository `NecturaLabs/nectura-ui`: the
+component library (theme tokens, fonts, motion, the component kit) that other NecturaLabs
+applications use too, with no Git or Canopy knowledge (`git submodule update --init` after a clone;
+change it in its own repository, then bump the pointer here; `ui::kit`, `ui::theme`, `ui::motion`
+and `ui::fonts` re-export it). Docs: `docs/README.md` maps them (architecture, decisions in `docs/adr/`, design,
 features, playbook) and says which can lag.
 
 ## Product rules
@@ -52,9 +56,9 @@ These come from the owner and override anything else in the repository.
   Git configuration after confirmation and preserve signing, hooks, identity and line endings. A pull
   checks first and asks before it would diverge or conflict.
 - **Toolkit**: egui stays (the owner chose it over React).
-- **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,
+- **Art**: in-app illustrations are drawn in code from the active theme (`nectura-ui/src/art.rs`,
   `docs/art-prompts.md`), never shipped as SVG; the app icon is PNG only (`assets/icon-*.png`).
-- **Themes**: a handful of well-designed themes, all in `ui/theme.rs` (`add-theme` skill), and a
+- **Themes**: a handful of well-designed themes, all in `nectura-ui/src/theme.rs` (`add-theme` skill), and a
   settings screen covering every needed option. Every setting must change behaviour.
 - **Keybindings** follow the spirit of Omarchy: keyboard-first, a launcher-style palette, a
   cheatsheet, vim motions and single-key lazygit-style actions, from one table in `keymap.rs`
@@ -69,10 +73,12 @@ opening and running the chosen editor, terminal and file manager in `platform.rs
 only; a file name only ever as a whole argument); settings import and export (`settings_file.rs`:
 a file never sets consent, trust, the programs Canopy runs or the hosts a token goes to);
 installed-app discovery (`system_apps.rs`); git configuration reading (`repo_config.rs`); log
-redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; `ui/kit/glass/gl.rs` (the only
-`unsafe` code); the update feed; `Cargo.toml`, `Cargo.lock`, `deny.toml`; `.github/`
-(self-hosted runners run code). A change there gets a security pass (`/security-review`) before
-the general review. Ask the owner before storing a token anywhere new, contacting a new host or
+redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; `nectura-ui/src/kit/glass/gl.rs` (the only
+`unsafe` code); the update feed; `Cargo.toml`, `Cargo.lock`, `deny.toml`; `.gitmodules` and the `crates/nectura-ui`
+pointer; `.github/` (self-hosted runners run code; `.github/actions/fetch-ui` handles the library's
+deploy key). A change there gets a security pass (`/security-review`) before the general review. A
+pointer bump shows only a hash, so review it as the library's own diff (`git -C crates/nectura-ui
+diff <old>..<new>`), and a change to the library's `gl.rs` gets the security pass too. Ask the owner before storing a token anywhere new, contacting a new host or
 adding a dependency.
 
 ## Commands
@@ -155,7 +161,7 @@ adding a dependency.
   `canopy_core::cli`, which sets `GIT_TERMINAL_PROMPT=0` and `GIT_EDITOR=true`. Arguments are
   separate argv entries, with `--` before user-supplied paths and refs. HTTP happens only in
   `crates/canopy-hosting` (plus Sentry's transport).
-- Colours, spacing and radii come only from `crates/canopy-app/src/ui/theme.rs`. No hex literals
+- Colours, spacing and radii come only from `crates/nectura-ui/src/theme.rs`. No hex literals
   or `Color32::from_rgb` in views. Icons come from `egui-phosphor`.
 - Destructive operations (discard, hard reset, delete branch or tag, drop stash, force push) go
   through a confirmation dialog. Never force-push without `--force-with-lease`.
@@ -166,7 +172,7 @@ adding a dependency.
   git, libgit2 and colour rules in this section. Silence a finding only with
   `#[expect(lint, reason = "...")]` at the narrowest scope, never `allow`.
 - Propagate `canopy_core::Result`; clippy rejects `unwrap`/`expect` outside tests. No `unsafe`
-  except in `crates/canopy-app/src/ui/kit/glass/gl.rs` (the backdrop-blur OpenGL calls, approved
+  except in `crates/nectura-ui/src/kit/glass/gl.rs` (the backdrop-blur OpenGL calls, approved
   by the owner): one operation per `unsafe` block, each with a `// SAFETY:` comment;
   `tools/check.sh` fails on `unsafe` anywhere else.
 - Paths are `Path`/`PathBuf`, joined with `join`, never concatenated with `/`; not assumed UTF-8.
@@ -174,7 +180,7 @@ adding a dependency.
   released, `CHANGELOG.md` (Unreleased; afterwards the commit subject is the release note); a
   module, `docs/architecture.md`; a token or component, `docs/design.md`. A consequential,
   hard-to-reverse decision gets an ADR in `docs/adr/` (`project-docs` skill).
-- Bundled fonts and assets need a licence row (fonts: `crates/canopy-app/assets/fonts/README.md`)
+- Bundled fonts and assets need a licence row (fonts: `crates/nectura-ui/assets/fonts/README.md`)
   and text in the same change; only OFL, MIT, Apache-2.0, CC0 or similar.
 - Commit messages follow Conventional Commits (`feat(graph): ...`); a `feat`, `fix`, `perf`,
   `revert` or `build(deps)` commit makes a build releasable and its subject becomes the release

@@ -516,8 +516,15 @@ pub enum Event {
         remote: String,
         trust: u64,
     },
-    /// The working and Git folders a download's trust gate covers, read off the UI thread.
+    /// The working and Git folders trusting this repository covers, read off the UI thread.
     TrustFolders(Vec<PathBuf>),
+    /// Whether Canopy trusts this repository, as of the version of the trusted list
+    /// (`trust::changes()`) that said so; sent when either changes. An untrusted repository is
+    /// read-only (`READ_ONLY`).
+    Trust {
+        trusted: bool,
+        version: u64,
+    },
     /// Syntax highlighting for the diff (sent before with the same key). It comes from the
     /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
     Highlight(DiffKey, Arc<FileDiff>, Arc<crate::highlight::Highlights>),
@@ -855,6 +862,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     // of trying the network again, until the user retries.
     let mut status_failure: Option<canopy_core::StatusUnavailable> = None;
     let mut trust_folders = Vec::new();
+    // The last (trusted, version of the list) this thread told the tab.
+    let mut told_trust: Option<(bool, u64)> = None;
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -883,7 +892,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             }
         };
         repo.set_options(options);
-        let folders = crate::trust::download_folders(
+        let folders = crate::trust::repository_folders(
             repo.workdir(),
             repo.git().commondir(),
             repo.git().path(),
@@ -891,6 +900,15 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         if folders != trust_folders {
             trust_folders.clone_from(&folders);
             emit(Event::TrustFolders(folders));
+        }
+        let trusted = trusted_now(&repo);
+        let trust = (trusted, TRUST_VERSION.get());
+        if told_trust != Some(trust) {
+            told_trust = Some(trust);
+            emit(Event::Trust {
+                trusted: trust.0,
+                version: trust.1,
+            });
         }
 
         // Whether a partial clone may download on its own here; asked only when one needs to.
@@ -1151,13 +1169,23 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 Job::Op(mut op) => {
                     let label = op.label();
                     let kind = op.kind();
+                    // Asked again now: trust may have been withdrawn since the batch began.
+                    if !allowed() {
+                        tracing::info!(operation = %label, "operation refused: repository not trusted");
+                        let announce = op.announce();
+                        emit(Event::OpFinished {
+                            label,
+                            kind,
+                            announce,
+                            result: Err(READ_ONLY.to_owned()),
+                        });
+                        continue;
+                    }
                     let stage_all = matches!(op, Op::StageAll);
                     let announce = op.announce();
-                    // A pull or a rebase: it can autostash, and stopping on conflicts is not a
-                    // failure.
-                    let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_));
-                    // A merge autostashes too; one stopped on conflicts has its own banner.
-                    let autostashes = integrates || matches!(op, Op::Merge(..));
+                    // A pull, a rebase or a merge: it can autostash, and stopping on conflicts is
+                    // not a failure.
+                    let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_) | Op::Merge(..));
                     let pull = match op {
                         Op::Pull {
                             strategy,
@@ -1219,15 +1247,14 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed");
                         }
                     }
-                    let stash_conflict = autostashes
+                    let stash_conflict = integrates
                         && result.is_ok()
                         && repo.autostash_conflicted().unwrap_or_else(|e| {
                             tracing::warn!(error = %redacted(&e), "conflicts not checked");
                             false
                         });
-                    let stopped = integrates
-                        && result.is_err()
-                        && repo.stopped_on_conflicts().unwrap_or(false);
+                    let stopped =
+                        integrates && result.is_err() && repo.stopped_on_conflicts().unwrap_or(false);
                     // Only a fast-forward was allowed and the branches diverged after all: a
                     // choice to make, not a failure (a pull checked beforehand asks first). A
                     // failed fetch brought nothing to combine: its error is the answer.
@@ -1380,11 +1407,12 @@ thread_local! {
     static TRUST_VERSION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Whether `repo` is inside a trusted folder now, noting which version of the list said so.
+/// Whether Canopy trusts `repo` now (it is inside a trusted folder, or trust safety is off),
+/// noting which version of the list said so.
 fn trusted_now(repo: &Repo) -> bool {
-    let (version, folders) = crate::trust::snapshot();
-    TRUST_VERSION.set(version);
-    repo.is_in_trusted_folder(&folders)
+    let trust = crate::trust::snapshot();
+    TRUST_VERSION.set(trust.version);
+    !trust.safety || repo.is_in_trusted_folder(&trust.folders)
 }
 
 /// The most commits of one file's history a read returns; the dialog says when there are more.
@@ -1394,9 +1422,14 @@ const FILE_HISTORY_LIMIT: usize = 500;
 const CHANGE_SEARCH_LIMIT: usize = 300;
 
 /// Why a download did not run in a repository outside every trusted folder.
-pub(crate) const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a trusted folder. \
-                           Choose Trust… in the status bar to allow it for this one. A linked \
-                           worktree also needs the folder of its main repository trusted.";
+pub(crate) const NOT_TRUSTED: &str = "Canopy downloads it only for a trusted repository. \
+                           Choose Trust… in the status bar to allow it for this one.";
+
+/// Why an action did not run in a repository that is not trusted: every action runs `git`, which
+/// follows the repository's own hooks and configuration.
+pub(crate) const READ_ONLY: &str = "This repository is not trusted, so it is read-only: its hooks \
+                           and settings can run programs on this computer. Choose Trust… in the \
+                           banner above it to allow changes.";
 
 /// Reports a download that was not run because the repository is not in a trusted folder, and
 /// returns the error the read ends with. `can_download()` is false for it: trying again cannot
@@ -2136,6 +2169,7 @@ mod read_tests {
     use canopy_core::Error;
 
     use super::*;
+    use crate::repo_config::in_isolated_git_env;
 
     fn oid(n: u8) -> Oid {
         Oid::from_bytes(&[n; 20]).expect("oid")
@@ -2548,6 +2582,13 @@ mod read_tests {
         copy
     }
 
+    /// `folder`, trusted for the rest of the test run: an untrusted repository refuses every
+    /// operation.
+    fn trusted(folder: PathBuf) -> PathBuf {
+        crate::trust::add_for_tests(folder.clone());
+        folder
+    }
+
     /// A worker on `repo` making Canopy's own git choices, whatever the developer's git
     /// configuration sets.
     fn worker_with_canopys_choices(repo: PathBuf) -> Worker {
@@ -2557,37 +2598,6 @@ mod read_tests {
             ..canopy_core::GitOptions::default()
         }));
         worker
-    }
-
-    /// Runs the calling test again in a child process whose git sees no global or system
-    /// configuration, so the developer's own settings (`pull.rebase`, for one) cannot decide the
-    /// result. True in the child, where the test body runs; false in the parent once the child
-    /// has passed.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the test runs itself again in a child process"
-    )]
-    fn in_isolated_git_env(test: &str) -> bool {
-        if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
-            return true;
-        }
-        let home = tempfile::tempdir().expect("tempdir");
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([test, "--exact", "--test-threads=1"])
-            .env("CANOPY_TEST_ISOLATED_GIT", "1")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"))
-            .env("HOME", home.path())
-            .env("XDG_CONFIG_HOME", home.path())
-            .output()
-            .expect("test binary runs");
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(
-            out.status.success() && stdout.contains("1 passed"),
-            "{test} in an isolated git environment:\n{stdout}{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        false
     }
 
     /// A divergence says whether the git configuration asked for fast-forwards only, so the
@@ -2609,7 +2619,7 @@ mod read_tests {
             if configured {
                 git(&copy, &["config", "pull.ff", "only"]);
             }
-            let worker = worker_with_canopys_choices(copy);
+            let worker = worker_with_canopys_choices(trusted(copy));
             worker.send(Job::Op(Op::Pull {
                 strategy: PullStrategy::FastForwardOnly,
                 follow_config: follow,
@@ -2635,7 +2645,7 @@ mod read_tests {
     #[test]
     fn dropping_a_worker_ends_its_threads() {
         let root = tempfile::tempdir().expect("tempdir");
-        let worker = worker_with_canopys_choices(diverged_clone(root.path()));
+        let worker = worker_with_canopys_choices(trusted(diverged_clone(root.path())));
         let ended = worker.ended.clone();
         drop(worker);
         assert_eq!(
@@ -2678,7 +2688,7 @@ mod read_tests {
             &copy,
             &["remote", "set-url", "origin", &gone.to_string_lossy()],
         );
-        let worker = worker_with_canopys_choices(copy);
+        let worker = worker_with_canopys_choices(trusted(copy));
         worker.send(Job::Op(Op::Pull {
             strategy: PullStrategy::FastForwardOnly,
             follow_config: false,
@@ -2705,7 +2715,7 @@ mod read_tests {
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         let seen = Oid::from_str(&git(&copy, &["rev-parse", "origin/main"])).expect("oid");
-        let worker = worker_with_canopys_choices(copy);
+        let worker = worker_with_canopys_choices(trusted(copy));
         worker.send(Job::Op(Op::Pull {
             strategy: PullStrategy::FastForwardOnly,
             follow_config: false,
@@ -2729,7 +2739,7 @@ mod read_tests {
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         let up = root.path().join("up");
-        let worker = worker_with_canopys_choices(copy.clone());
+        let worker = worker_with_canopys_choices(trusted(copy.clone()));
         worker.send(Job::Op(Op::Pull {
             strategy: PullStrategy::FastForwardOnly,
             follow_config: false,
@@ -2799,7 +2809,7 @@ mod read_tests {
         git(&up, &["reset", "-q", "--hard", "HEAD~1"]);
         git(&copy, &["fetch", "-q"]);
         let before = git(&copy, &["rev-parse", "HEAD"]);
-        let worker = worker_with_canopys_choices(copy.clone());
+        let worker = worker_with_canopys_choices(trusted(copy.clone()));
         worker.send(Job::Op(Op::Pull {
             strategy: PullStrategy::Merge,
             follow_config: false,
@@ -2822,7 +2832,7 @@ mod read_tests {
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         let seen = Oid::from_str(&git(&copy, &["rev-parse", "origin/main"])).expect("oid");
-        let worker = worker_with_canopys_choices(copy.clone());
+        let worker = worker_with_canopys_choices(trusted(copy.clone()));
         worker.send(Job::Op(Op::Pull {
             strategy: PullStrategy::Merge,
             follow_config: false,
@@ -2855,7 +2865,7 @@ mod read_tests {
         let copy = root.path().join("copy");
         let up = root.path().join("up.git");
         git(&copy, &["commit", "-q", "--allow-empty", "-m", "local"]);
-        let worker = worker_with_canopys_choices(copy.clone());
+        let worker = worker_with_canopys_choices(trusted(copy.clone()));
         worker.send(Job::PushTarget);
         let events = events_until(&worker, |e| matches!(e, Event::PushTarget(_)));
         let Some(Event::PushTarget(Ok(asked))) = events.last() else {
@@ -2929,8 +2939,48 @@ mod read_tests {
         git(&repo, &["switch", "-q", "main"]);
         std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
         git(&repo, &["commit", "-q", "-am", "ours"]);
-        let worker = worker_with_canopys_choices(repo);
+        let worker = worker_with_canopys_choices(trusted(repo));
         worker.send(Job::Op(Op::Rebase("other".into())));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
+        });
+        assert!(
+            matches!(events.last(), Some(Event::Conflicted(_))),
+            "{events:?}"
+        );
+    }
+
+    /// #234: a merge that stops on conflicts is the user's to resolve, like a pull or a rebase
+    /// that does, and not a failed operation.
+    #[test]
+    fn a_merge_that_stops_on_conflicts_is_reported_as_stopped() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let repo = root.path().join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["switch", "-q", "-c", "other"]);
+        std::fs::write(repo.join("a.txt"), "theirs\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "theirs"]);
+        git(&repo, &["switch", "-q", "main"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "ours"]);
+        let worker = worker_with_canopys_choices(trusted(repo));
+        worker.send(Job::Op(Op::Merge(
+            "other".into(),
+            canopy_core::MergeMode::default(),
+        )));
         let events = events_until(&worker, |e| {
             matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
         });
@@ -3003,6 +3053,169 @@ mod read_tests {
         );
     }
 
+    /// A repository whose own files would run programs: a `pre-commit` hook and a
+    /// `core.fsmonitor` command that each leave a marker file, and a change to commit.
+    #[cfg(unix)]
+    fn hostile_repository(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn script(path: &Path, marker: &Path) {
+            std::fs::write(path, format!("#!/bin/sh\ntouch '{}'\n", marker.display()))
+                .expect("script");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("mode");
+        }
+        std::fs::create_dir_all(root.join("home")).expect("home");
+        std::fs::write(root.join("home").join("gitconfig"), "").expect("config");
+        let repo = root.join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        let hook = root.join("hook-ran");
+        let fsmonitor = root.join("fsmonitor-ran");
+        script(&repo.join(".git").join("hooks").join("pre-commit"), &hook);
+        let program = root.join("fsmonitor");
+        script(&program, &fsmonitor);
+        git(
+            &repo,
+            &["config", "core.fsmonitor", &program.to_string_lossy()],
+        );
+        std::fs::write(repo.join("a.txt"), "changed\n").expect("write");
+        (repo, hook, fsmonitor)
+    }
+
+    /// An operation sent to a repository that is not trusted ends in this refusal.
+    fn refusal_of(worker: &Worker, op: Op) -> Option<String> {
+        worker.send(Job::Op(op));
+        let events = events_until(worker, |e| matches!(e, Event::OpFinished { .. }));
+        match events.last() {
+            Some(Event::OpFinished { result, .. }) => result.as_ref().err().cloned(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// #228: opening a repository whose own files name programs starts none of them, and every
+    /// action in it is refused until its folder is trusted; trusted, the hook runs as in a
+    /// terminal and `core.fsmonitor` stays off.
+    #[cfg(unix)]
+    #[test]
+    fn an_untrusted_repository_is_read_only_and_starts_no_program() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (repo, hook, fsmonitor) = hostile_repository(root.path());
+        let worker = Worker::spawn(repo.clone(), &egui::Context::default());
+        worker.send(Job::Refresh(100));
+        let events = events_until(&worker, |e| matches!(e, Event::Trust { .. }));
+        assert!(
+            matches!(events.last(), Some(Event::Trust { trusted: false, .. })),
+            "the tab is told it is read-only: {events:?}"
+        );
+        for op in [
+            Op::StageAll,
+            Op::Commit {
+                message: "no".into(),
+                amend: false,
+                signoff: false,
+            },
+            Op::Fetch {
+                prune: false,
+                quiet: true,
+            },
+            Op::CreateBranch {
+                name: "topic".into(),
+                start: None,
+                checkout: true,
+            },
+        ] {
+            let label = op.label();
+            assert_eq!(
+                refusal_of(&worker, op).as_deref(),
+                Some(READ_ONLY),
+                "{label} is refused and says why"
+            );
+        }
+        assert!(!hook.exists(), "the pre-commit hook did not run");
+        assert!(!fsmonitor.exists(), "core.fsmonitor did not run");
+        assert!(
+            git(&repo, &["branch", "--list", "topic"]).is_empty(),
+            "nothing was created"
+        );
+
+        // Trusted: the same commit goes through, and git runs the hook as it would in a
+        // terminal. The fsmonitor program is off however the repository names it.
+        trusted(repo);
+        assert_eq!(refusal_of(&worker, Op::StageAll), None);
+        let commit = Op::Commit {
+            message: "yes".into(),
+            amend: false,
+            signoff: false,
+        };
+        assert_eq!(refusal_of(&worker, commit), None);
+        assert!(hook.exists(), "the hook is the user's once they trust it");
+        assert!(!fsmonitor.exists(), "core.fsmonitor is never run");
+    }
+
+    /// #228: with trust safety off nothing is refused or told to be read-only, the trusted list
+    /// is kept meanwhile, and turning it on restores every gate. Runs in a child process: the
+    /// switch and the list are process-wide, and other tests rely on them.
+    #[cfg(unix)]
+    #[test]
+    fn trust_safety_off_trusts_everything_and_on_again_restores_the_gates() {
+        if !in_isolated_git_env(
+            "worker::read_tests::trust_safety_off_trusts_everything_and_on_again_restores_the_gates",
+        ) {
+            return;
+        }
+        let root = tempfile::tempdir().expect("tempdir");
+        let (repo, _hook, _fsmonitor) = hostile_repository(root.path());
+        let settings = |safety: bool, folders: &[&Path]| crate::settings::Settings {
+            trust_safety: safety,
+            trusted_folders: folders.iter().map(|folder| folder.to_path_buf()).collect(),
+            ..crate::settings::Settings::default()
+        };
+        let told = |worker: &Worker| {
+            worker.send(Job::RefreshStatus);
+            let events = events_until(worker, |e| matches!(e, Event::Trust { .. }));
+            matches!(events.last(), Some(Event::Trust { trusted: true, .. }))
+        };
+        crate::trust::publish(&settings(true, &[]));
+        let worker = Worker::spawn(repo.clone(), &egui::Context::default());
+        assert!(!told(&worker), "untrusted to begin with");
+        assert_eq!(
+            refusal_of(&worker, Op::StageAll).as_deref(),
+            Some(READ_ONLY)
+        );
+
+        crate::trust::publish(&settings(false, &[]));
+        assert!(told(&worker), "off: the tab is told it is trusted");
+        assert_eq!(
+            refusal_of(&worker, Op::StageAll),
+            None,
+            "off: nothing refused"
+        );
+
+        crate::trust::publish(&settings(true, &[]));
+        assert!(!told(&worker), "on again: read-only again");
+        assert_eq!(
+            refusal_of(&worker, Op::UnstageAll).as_deref(),
+            Some(READ_ONLY),
+            "on again: refused again"
+        );
+
+        // The list was kept while the switch was off; here it is put back with the switch.
+        crate::trust::publish(&settings(false, &[&repo]));
+        crate::trust::publish(&settings(true, &[&repo]));
+        assert!(told(&worker), "the folder is trusted, not merely unchecked");
+        assert_eq!(refusal_of(&worker, Op::UnstageAll), None);
+    }
+
     #[test]
     fn an_untrusted_partial_clone_downloads_nothing_and_says_why() {
         // Blobless: the file list is offline, the line counts would need a download.
@@ -3039,7 +3252,7 @@ mod read_tests {
             !can_download,
             "retrying cannot help until the folder is trusted"
         );
-        assert!(message.contains("trusted folder"), "{message}");
+        assert!(message.contains(NOT_TRUSTED), "{message}");
         assert!(
             events
                 .iter()
@@ -3705,7 +3918,7 @@ mod read_tests {
         };
         assert_eq!(*modes.borrow(), [MissingObjects::Fail]);
         assert!(!e.can_download(), "{e}");
-        assert!(e.to_string().contains("trusted folder"), "{e}");
+        assert!(e.to_string().contains(NOT_TRUSTED), "{e}");
         assert_eq!(*refused.borrow(), ["origin".to_owned()]);
         assert!(lines.borrow().is_empty());
 

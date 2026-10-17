@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 canopy-core.workspace = true
 canopy-hosting.workspace = true
+nectura-ui.workspace = true
 git2.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
@@ -45,6 +46,7 @@ tar = { version = "0.4.46", default-features = false }
 flate2 = "1.1"
 
 [dev-dependencies]
+nectura-ui = { workspace = true, features = ["testkit"] }
 tempfile.workspace = true
 
 [lints]

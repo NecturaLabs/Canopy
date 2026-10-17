@@ -1,70 +1,13 @@
 //! Small reusable widgets drawn with the design tokens.
 
-use egui::{Color32, FontId, Ui};
+use egui::Color32;
 use egui_phosphor::regular as icon;
 
 use canopy_core::ChangeKind;
 
 use super::theme::Palette;
 
-/// A painted one-line label that ends in an ellipsis instead of cutting through a glyph.
-pub fn single_line_galley(
-    ui: &Ui,
-    text: String,
-    font: FontId,
-    color: Color32,
-    width: f32,
-) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::simple(text, font, color, width.max(0.0));
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    ui.painter().layout_job(job)
-}
-
-/// Removes tooltips from content below a newly drawn blocking overlay.
-/// egui can keep an existing tooltip open while the pointer stays over its old widget.
-pub fn dismiss_underlying_tooltips(ctx: &egui::Context) {
-    let layers = ctx.memory(|memory| {
-        memory
-            .layer_ids()
-            .filter(|layer| layer.order == egui::Order::Tooltip)
-            .collect::<Vec<_>>()
-    });
-    ctx.graphics_mut(|graphics| {
-        for layer in layers {
-            if let Some(list) = graphics.get_mut(layer) {
-                *list = egui::layers::PaintList::default();
-            }
-        }
-    });
-}
-
-/// A stable colour for a displayed identity, shared by names and matching host handles.
-pub fn person_color(p: &Palette, identity: &str) -> Color32 {
-    let mut h: u32 = 2_166_136_261;
-    let key: String = identity
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect();
-    for b in key.bytes() {
-        h = (h ^ u32::from(b)).wrapping_mul(16_777_619);
-    }
-    p.lanes[(h as usize) % p.lanes.len()]
-}
-
-/// Up to two initials of a name.
-pub fn initials(name: &str) -> String {
-    let mut out: String = name
-        .split_whitespace()
-        .filter_map(|w| w.chars().next())
-        .take(2)
-        .collect();
-    if out.is_empty() {
-        out.push('?');
-    }
-    out.to_uppercase()
-}
+pub use nectura_ui::text::{dismiss_underlying_tooltips, layout_tidy, single_line_galley};
 
 /// Colour and letter of a change kind.
 pub fn change_style(p: &Palette, kind: ChangeKind) -> Color32 {
@@ -147,162 +90,9 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::kit;
-    use crate::ui::theme::{self, palette};
 
     #[test]
-    fn controls_keep_keyboard_activation_and_disabled_guards() {
-        for kind in 0..4 {
-            for enabled in [false, true] {
-                let ctx = egui::Context::default();
-                crate::ui::fonts::install(&ctx);
-                theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
-                let mut checked = false;
-                let mut activated = false;
-                let mut focused = false;
-                for frame in 0..5 {
-                    let events = if frame == 2 {
-                        vec![egui::Event::Key {
-                            key: egui::Key::Space,
-                            physical_key: None,
-                            pressed: true,
-                            repeat: false,
-                            modifiers: egui::Modifiers::default(),
-                        }]
-                    } else {
-                        Vec::new()
-                    };
-                    ctx.run_ui(
-                        egui::RawInput {
-                            events,
-                            ..Default::default()
-                        },
-                        |ui| {
-                            ui.add_enabled_ui(enabled, |ui| {
-                                let response = match kind {
-                                    0 => kit::toggle::Checkbox::new(&mut checked, "Checkbox")
-                                        .show(ui),
-                                    1 => kit::Button::new("Primary")
-                                        .primary()
-                                        .min_width(120.0)
-                                        .show(ui),
-                                    2 => kit::ToolButton::new(icon::CHECK, "Tool")
-                                        .tooltip("Tool action")
-                                        .show(ui),
-                                    _ => kit::IconButton::new(icon::CHECK, "Icon action").show(ui),
-                                };
-                                if frame == 0 && enabled {
-                                    response.request_focus();
-                                }
-                                activated |= response.clicked();
-                                focused |= response.has_focus();
-                            });
-                        },
-                    )
-                    .drop_without_applying_deltas();
-                }
-                assert_eq!(activated, enabled, "control {kind}, enabled {enabled}");
-                assert_eq!(focused, enabled, "control {kind}, enabled {enabled}");
-                if kind == 0 {
-                    assert_eq!(checked, enabled);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn blocking_overlay_hides_underlying_tooltips_and_keeps_its_own() {
-        let ctx = egui::Context::default();
-        for frame in 0..3 {
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                egui::Tooltip::always_open(
-                    ctx.clone(),
-                    ui.layer_id(),
-                    egui::Id::new("underlying"),
-                    egui::pos2(20.0, 20.0),
-                )
-                .show(|ui| {
-                    ui.label("Underlying tooltip");
-                });
-                dismiss_underlying_tooltips(&ctx);
-                egui::Modal::new(egui::Id::new("blocking-overlay")).show(&ctx, |ui| {
-                    ui.label("Overlay content");
-                    egui::Tooltip::always_open(
-                        ctx.clone(),
-                        ui.layer_id(),
-                        egui::Id::new("overlay-tooltip"),
-                        egui::pos2(100.0, 100.0),
-                    )
-                    .show(|ui| {
-                        ui.label("Overlay tooltip");
-                    });
-                });
-            });
-            output.textures_delta.clear();
-            if frame < 2 {
-                continue;
-            }
-            let text: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| {
-                    if let egui::Shape::Text(text) = &shape.shape {
-                        Some(text.galley.text())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            assert!(text.contains(&"Overlay content"));
-            assert!(text.contains(&"Overlay tooltip"));
-            assert!(
-                !text.contains(&"Underlying tooltip"),
-                "background tooltip painted above overlay"
-            );
-        }
-    }
-
-    #[test]
-    fn segmented_dims_the_options_that_are_not_selected() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        let mut value = 0;
-        for frame in 0..2 {
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                kit::choice::Segmented::new(&mut value, &[(0, "One"), (1, "Two")]).show(ui);
-            });
-            output.textures_delta.clear();
-            if frame == 0 {
-                continue;
-            }
-            let ink = |label: &str| {
-                output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        egui::Shape::Text(t) if t.galley.text() == label => {
-                            let own = t.galley.job.sections[0].format.color;
-                            Some(if own == Color32::PLACEHOLDER {
-                                t.fallback_color
-                            } else {
-                                own
-                            })
-                        }
-                        _ => None,
-                    })
-                    .expect(label)
-            };
-            let p = palette(&ctx);
-            assert_eq!(ink("One"), p.text);
-            assert_eq!(ink("Two"), p.text_dim);
-        }
-    }
-
-    #[test]
-    fn initials_and_paths() {
-        assert_eq!(initials("ada lovelace"), "AL");
-        assert_eq!(initials("Linus"), "L");
-        assert_eq!(initials(""), "?");
+    fn paths() {
         assert_eq!(split_path("src/ui/mod.rs"), ("mod.rs", "src/ui"));
         assert_eq!(split_path("README.md"), ("README.md", ""));
     }

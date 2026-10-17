@@ -1,6 +1,6 @@
 # Art
 
-Canopy's in-app illustrations are drawn in code, not shipped as image files: `ui/art.rs` holds
+Canopy's in-app illustrations are drawn in code, not shipped as image files: `nectura-ui/src/art.rs` holds
 each one as a small scene of strokes, fills and nodes and paints it with the active theme's
 colours, so every theme gets art in its own palette and nothing blurs at any zoom. The app icon is
 the one image file: `assets/icon-512.png`, scaled to `assets/icon-*.png` and copied to
@@ -38,7 +38,7 @@ The scenes' geometry and the icon follow the briefs below and were checked on ev
 
 ## Changing or adding one
 
-1. Edit or add its scene in `ui/art.rs`: path data in absolute `M L H V C Z` syntax inside the
+1. Edit or add its scene in `nectura-ui/src/art.rs`: path data in absolute `M L H V C Z` syntax inside the
    scene box, a role per part, and its timing. `every_scene_has_drawable_parts_inside_its_box`
    checks the geometry.
 2. Render it in a dark and a light theme and at its smallest size (`tools/screenshot.sh`, the

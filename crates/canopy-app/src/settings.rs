@@ -533,6 +533,9 @@ pub struct Settings {
     /// The request list's filters and sort, keyed like [`Settings::repo_sidebar`]. A repository
     /// left at the defaults has no entry.
     pub repo_requests: HashMap<PathBuf, crate::request_view::RequestView>,
+    /// Comfortable or dense items in the request list. Separate from [`Settings::density`].
+    #[serde(deserialize_with = "known")]
+    pub request_density: crate::request_view::RequestDensity,
     /// Per-repository choices that differ from the defaults above, keyed by working directory.
     pub repos: HashMap<PathBuf, RepoSettings>,
     /// Show diffs side by side (old left, new right) instead of unified.
@@ -558,9 +561,13 @@ pub struct Settings {
     pub file_manager: String,
     /// Load pull/merge requests from GitHub and GitLab.
     pub hosting_api: bool,
-    /// Folders whose repositories may download missing objects in a partial clone without being
-    /// asked, because git then runs the repository's own configuration (see `trust.rs`).
+    /// Folders whose repositories Canopy trusts, and everything inside them: a repository outside
+    /// them is read-only and downloads nothing on its own, because git runs the repository's own
+    /// configuration and hooks (see `trust.rs`).
     pub trusted_folders: Vec<PathBuf>,
+    /// Whether trust is checked at all. Off, no location is asked about or refused, and
+    /// `trusted_folders` is kept for when it is turned on again.
+    pub trust_safety: bool,
 
     // Updates.
     pub check_updates: bool,
@@ -644,6 +651,7 @@ impl Default for Settings {
             repo_diff: HashMap::new(),
             repo_sidebar: HashMap::new(),
             repo_requests: HashMap::new(),
+            request_density: crate::request_view::RequestDensity::Comfortable,
             repos: HashMap::new(),
             split_diff: false,
             syntax_highlight: true,
@@ -655,6 +663,7 @@ impl Default for Settings {
             file_manager: String::new(),
             hosting_api: true,
             trusted_folders: Vec::new(),
+            trust_safety: true,
             check_updates: true,
             include_prereleases: false,
             last_update_check: 0,
@@ -699,9 +708,13 @@ impl Settings {
         self.zoom = self.zoom.clamp(0.8, 1.6);
         self.commit_page = self.commit_page.clamp(200, 50_000);
         self.diff.context = self.diff.context.min(25);
-        let mut seen = Vec::new();
-        self.trusted_folders
-            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f));
+        let mut kept = Vec::new();
+        for folder in std::mem::take(&mut self.trusted_folders) {
+            if folder.is_absolute() {
+                crate::trust::add(&mut kept, &folder);
+            }
+        }
+        self.trusted_folders = kept;
         for repo in self.repos.values_mut() {
             repo.display_name = repo
                 .display_name
@@ -1149,6 +1162,35 @@ mod tests {
         );
     }
 
+    /// The request list's density is its own setting: Comfortable until chosen, remembered, set
+    /// apart from the whole-app density, and a saved value this build no longer has reads as the
+    /// default.
+    #[test]
+    fn the_request_list_density_is_remembered_apart_from_the_app_density() {
+        use crate::request_view::RequestDensity;
+        let fresh: Settings = serde_json::from_str("{}").expect("parse");
+        assert_eq!(fresh.request_density, RequestDensity::Comfortable);
+        assert_eq!(
+            Settings::default().request_density,
+            RequestDensity::Comfortable
+        );
+        let s = Settings {
+            request_density: RequestDensity::Dense,
+            ..Settings::default()
+        };
+        let back: Settings =
+            serde_json::from_value(serde_json::to_value(&s).expect("serialise")).expect("parse");
+        assert_eq!(back.request_density, RequestDensity::Dense);
+        assert_eq!(
+            back.density,
+            Density::Comfortable,
+            "the app's density is untouched"
+        );
+        let old: Settings =
+            serde_json::from_str(r#"{"request_density": "Spacious"}"#).expect("parse");
+        assert_eq!(old.request_density, RequestDensity::Comfortable);
+    }
+
     #[test]
     fn message_checks_are_on_by_default_and_survive_a_round_trip() {
         assert!(Settings::default().check_message);
@@ -1535,6 +1577,29 @@ mod tests {
             Settings::default().trusted_folders.is_empty(),
             "nothing is trusted until the user says so"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_trusted_list_read_from_settings_keeps_only_the_parents() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"trusted_folders": ["/home/ada/src/tide", "/home/ada/src", "/srv/git", "/home/ada/src/reef"]}"#,
+        )
+        .expect("parse");
+        s.migrate();
+        assert_eq!(
+            s.trusted_folders,
+            [PathBuf::from("/home/ada/src"), PathBuf::from("/srv/git")]
+        );
+    }
+
+    #[test]
+    fn trust_safety_is_on_unless_the_user_turned_it_off() {
+        assert!(Settings::default().trust_safety);
+        let off: Settings = serde_json::from_str(r#"{"trust_safety": false}"#).expect("parse");
+        assert!(!off.trust_safety);
+        let none: Settings = serde_json::from_str("{}").expect("parse");
+        assert!(none.trust_safety, "a settings file from before the switch");
     }
 
     #[test]

@@ -15,7 +15,7 @@ use egui::{Color32, CornerRadius, Painter, Pos2, Rect, Shape, Stroke, StrokeKind
 
 use canopy_core::{GraphRow, LineEnd};
 
-use crate::ui::theme::{self, Curve, GraphStyle, NodeShape, Palette};
+use nectura_ui::theme::{self, Curve, GraphStyle, NodeShape, Palette};
 
 /// The graph column never grows past this; more lanes than fit share the width.
 pub const MAX_WIDTH: f32 = 220.0;
@@ -458,7 +458,7 @@ pub(crate) fn gallery(ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::theme::{Density, Style};
+    use nectura_ui::theme::{Density, Style};
 
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();

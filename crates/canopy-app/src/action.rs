@@ -157,9 +157,11 @@ pub enum Action {
         value: Option<String>,
     },
     UseRecommendedGitConfig,
-    /// Let repositories in this folder download missing objects in partial clones (Settings,
-    /// `trusted_folders`).
+    /// Trust this folder and everything inside it (Settings, `trusted_folders`).
     TrustFolder(PathBuf),
+    /// Turn trust checks on or off (Settings, `trust_safety`); the confirmation for off comes
+    /// first.
+    SetTrustSafety(bool),
     Copy(String),
     /// Open a file, folder or web page with the system's default handler.
     /// A web page (http or https only: API data and the update feed reach this).
@@ -205,6 +207,8 @@ pub enum Action {
     CopyDiagnostics,
     /// Unified or side-by-side diffs.
     SetSplitDiff(bool),
+    /// Comfortable or dense items in the request list.
+    SetRequestDensity(crate::request_view::RequestDensity),
     /// The user accepted the current Terms of Service and Privacy Policy.
     AcceptTerms,
     /// The user's answer about crash reports.

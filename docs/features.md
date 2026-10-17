@@ -54,13 +54,27 @@ in the error text. A diff that could not be downloaded keeps its message with a 
 is not asked for again by the status refreshes; its file row carries a "not downloaded" mark
 until a read succeeds.
 
-Downloads run on their own only for repositories inside a folder trusted in Settings (Privacy,
-Trusted folders), because git then follows the repository's own configuration, which can run
-programs and contact servers. Elsewhere Canopy shows what is on disk, says why a read needs a
-download, and the status bar offers "Downloads off · Trust…" with the repository's folder or its
-parent. Linked worktrees also list the external Git folders they use; confirmation trusts those
-folders too. The chip disappears when its refused details are no longer visible. Nothing is
-trusted by default (ADR 0009).
+Downloads run on their own only for a trusted repository (see Trust below), because git then
+follows the repository's own configuration, which can run programs and contact servers. Elsewhere
+Canopy shows what is on disk, says why a read needs a download, and the status bar offers
+"Downloads off · Trust…", which opens the same Trust prompt. The chip disappears when its refused
+details are no longer visible (ADR 0009).
+
+### Trust
+
+A repository's hooks, configuration and filters can run programs on this computer whenever `git`
+runs in it, so Canopy trusts a location before it acts on it (ADR 0014). A repository is trusted
+when it lies inside a folder in Settings → Privacy → Trusted folders, at any depth, linked
+worktrees and their Git folders included; nothing is trusted by default.
+
+| Feature | Status | Linux | macOS | Windows |
+|---|---|---|---|---|
+| Opening a repository that is not trusted asks first (Trust or Don't trust), for the active tab; the other restored tabs ask when first active. Trust adds the repository's folders (and a linked worktree's outside Git folders) to the list | Unreleased (#228) | Yes | ? | ? |
+| An untrusted repository is read-only: History, diffs and blame still show, every action (stage, commit, checkout, fetch, pull, push, ...) is refused with a toast that says why, background fetches skip it, and a banner above History, Changes and Pull requests offers Trust… | Unreleased (#228) | Yes | ? | ? |
+| The trusted list keeps only outer folders: adding a parent replaces the folders below it and a covered folder is not added; Settings explains it behind the help mark | Unreleased (#228) | Yes | ? | ? |
+| Folders are compared by what they are on disk, not by spelling, so capitalization and links never decide (a volume that ignores capitalization recognises `SRC` as `src`; one that does not does not) | Unreleased (#228) | Yes | Not verified | Not verified |
+| Trust safety switch (Settings → Privacy): off asks for confirmation and stops all prompts and refusals; Settings shows a notice on every page while it is off and keeps the list; a settings file never sets the list or the switch | Unreleased (#228) | Yes | ? | ? |
+
 
 A download of the working tree status that failed (server unreachable) is remembered: the
 refreshes the file watcher makes show the same message without trying the network again, until
@@ -81,7 +95,7 @@ git would run on every `git status`.
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
 | Author avatars | Done (GitHub/GitLab pictures, initials fallback) | Yes | Yes | Yes |
 | On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
-| Commit details: summary, copyable commit id, parent links and committer picture/name in the header; scrolling description and changed-file card, per-file diff, expand/return and compact full view | Done | Yes | Yes | Yes |
+| Commit details: summary, copyable commit id, parent links and author picture/name in the header; scrolling description and changed-file card, per-file diff, expand/return and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search the history for changed text (Shift+F in History, or the palette): the commits and files whose change added or removed a string (`git log -S`) or touched lines matching a regular expression (`-G`), newest first, up to 300 commits; a result opens that commit with the file's diff; reads blobs through the git CLI with lazy fetch off and no textconv or external diff, so a partial clone downloads nothing (an object it lacks fails the search with git's message) and a repository's own diff programs never run; the searched text is not logged | Done | Yes | ? | ? |
 | File history: the commits that changed a file, followed back through renames (`git log --follow`), from the Changes file menu, a commit's file menu or the command palette; choosing one opens that commit's diff of the file, leaving the working tree alone; each row keeps its author and date whole (the summary is cut first), a merge commit that lists no change to the file shows a merge glyph instead of a status, and the dialog says when it lists only the commits up to the one it was opened from | Done | Yes | Yes | Yes |
@@ -90,7 +104,7 @@ git would run on every `git status`.
 | Undo last operation | Planned | ? | Yes | No |
 | Graph minimap | Planned | No | ? | No |
 | Signature verification badges | Done: distinct verified, invalid, unavailable, untrusted and expired/revoked marks in commit details and the author card; only verified signatures use the trusted mark; checked by git in trusted folders only | ? | Yes | ? |
-| Commit identity card and parent links in commit details | Done: the committer name opens a card (email, original author, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
+| Commit identity card and parent links in commit details | Done: the author name opens a card (email, committer when different, signature, profile or forge search link, picture hint); parents select their commit | ? | Yes |
 
 Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.
 The merge composer names the conclusion and prefills Git's merge message without replacing a draft.
@@ -179,8 +193,8 @@ The git-flow UI remains planned.
 | Fetch (all remotes, prune) | Done | Yes | Yes | Yes |
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
 | Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Done | ? | ? | ? |
-| Git configuration: editable supported values in Settings → Git (global) and This repository (local), with values, scopes, files and recommendations; Use recommended writes the non-sensitive recommendations globally after confirmation; a repository's reset button removes only its own override (a global value is changed, never cleared), preserving included configuration and repository choices; canonical Git booleans and configuration errors are displayed accurately: a value Git refuses is shown as written, with the problem, on its own row; where a value is set reads by scope ("your global git config", "this repository"), with a path only for an included file, never Git's raw `file:` origin; a search shows rows only, never the editor's captions. Every setting has a recommendation, and a row the configuration leaves unset shows the recommended value, or the value Git uses for line endings and signing, which Canopy leaves to Git. Line endings follow GitHub's guidance (LF on commit; on Windows also CRLF on checkout), signing stays off and signs with SSH once on; Use recommended leaves line endings and signing alone. The pull recommendation is fast-forward only (`pull.ff = only`, with `pull.rebase = false` beside it), and the diverged-pull dialog's "Rebase (recommended)" is the recommended way to combine when branches did diverge. Every recommendation has its reason, Git's own default and its source in ADR 0012's audit, checked against Git's documentation on 2026-10-14; commit cleanup is git's own `default`, which keeps a `#` line typed in Canopy and strips git's template from a message written in an editor, and a merge stashes uncommitted changes as Autostash says | Unreleased | ? | ? | ? |
-| Repository and Git settings selects show each value once, mark recommended options in their lists (no "Recommended:" sentence in the help text), and distinguish a pinned value from an inherited one with Overridden and a named reset; Settings → Integrations lists the system's own editor, terminal or file manager once, as the Default entry; context lines and whitespace pin and reset together | Done | ? | ? | ? |
+| Git configuration: editable supported values in Settings → Git (global) and This repository (local), with values, scopes, files and recommendations; Use recommended writes the non-sensitive recommendations globally after confirmation; a repository's reset button removes only its own override (a global value is changed, never cleared), preserving included configuration and repository choices; the first branch is global only, since Git reads `init.defaultBranch` only to create a repository; canonical Git booleans and configuration errors are displayed accurately: a value Git refuses is shown as written, with the problem, on its own row; where a value is set reads by scope ("your global git config", "this repository"), with a path only for an included file, never Git's raw `file:` origin; a search shows rows only, never the editor's captions. Every setting has a recommendation, and a row the configuration leaves unset shows the recommended value, or the value Git uses for line endings and signing, which Canopy leaves to Git. Line endings follow GitHub's guidance (LF on commit; on Windows also CRLF on checkout), signing stays off and signs with SSH once on; Use recommended leaves line endings and signing alone. The pull recommendation is fast-forward only (`pull.ff = only`, with `pull.rebase = false` beside it), and the diverged-pull dialog's "Rebase (recommended)" is the recommended way to combine when branches did diverge. Every recommendation has its reason, Git's own default and its source in ADR 0012's audit, checked against Git's documentation on 2026-10-14; commit cleanup is git's own `default`, which keeps a `#` line typed in Canopy and strips git's template from a message written in an editor, and a merge stashes uncommitted changes as Autostash says | Unreleased | ? | ? | ? |
+| Repository and Git settings selects show each value once, mark recommended options in their lists (no "Recommended:" sentence in the help text), and distinguish a pinned value from an inherited one with Overridden and a named reset; Settings → Integrations lists the system's own editor, terminal or file manager once, as "<name> (Default)" (plain "Default" when none is detected; never "Recommended", and no environment variable named), picked only among programs installed on this computer, and every other program once, merged by what it runs, never by its name, with a program's server, daemon and client entries (`foot --server`, `footclient`) left out; context lines and whitespace pin and reset together | Done | ? | ? | ? |
 | Settings → This repository → Commit signing states what git will do (signs or not) with the format (OpenPGP, SSH, X.509), the key's id or file name (an inline SSH key is never shown), the program and where `commit.gpgsign` is set, and warns with its fix when signing would fail: the program is not installed, an SSH key is not set or its file is missing, or `gpg.format` is unknown; read from the configuration and `PATH` only, never by running the program; a button opens the file that sets it, preserving non-UTF-8 file names; identity, pull and repository settings share absolute, unquoted configuration origins | Done | ? | ? | ? |
 | Settings → This repository → Hosting states the outcome first for the tab's GitHub or GitLab remote: requests off (opens Integrations), credential refused, rate limited, loading with the credential in use and where it comes from (saved, environment, git credential helper), no credential (add a token) or not requested yet; it names the remote and host it is about and lists the other GitHub or GitLab remotes, which are not loaded | Done | Yes | ? | ? |
 | A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Done | ? | ? | ? |
@@ -220,7 +234,12 @@ Request list icons show lifecycle and draft state. A row leads with the request'
 title (`#154 Title`, `!154` for a merge request), which wraps to a second line before it is cut,
 then the author and when it was last updated with the labels at the right, then the first
 lines of its description as plain text (Markdown, comments and tags flattened, paragraphs
-separated by a middle dot; nothing when it has none). The branches are in the request's header and the row's tooltip. The description comes
+separated by a middle dot; nothing when it has none). The branches are in the request's header and the row's tooltip.
+A button in the list's toolbar (or Settings, Appearance, Request list) switches the items to dense:
+one line per request with the number, title, labels and checks, and no author line or preview. The
+choice is remembered across restarts, defaults to Comfortable and is separate from the whole-app
+density. The number, author, age and labels each have a colour of their own in the list and in the
+request's header, which adds the comment count (a row has none: the list response does not carry it). The description comes
 with the list response, so a row costs no request of its own. The request list shows each
 request's checks (passed, failed, running) and review (approved, changes requested, and on GitHub
 review required) without opening it when Canopy has a token for the host; without a token a row
@@ -327,7 +346,7 @@ A response with the wrong JSON shape reports its failure location without quotin
 | Tooltip settings (Appearance → Tooltips): Helpful (default; only what the screen does not show), All, or Off (only why a control is unavailable), and a Quick, Normal or Slow delay | Done | ? | ? | ? |
 | Links: a web link shows its address and offers Copy link; links in text are underlined; a cut-off field value shows whole in a tooltip | Unreleased | ? | ? | ? |
 | A settings file cannot turn on tag pruning, automatic fetching or beta builds, fetch more often, stop following your git configuration or choose where a push goes | Unreleased | ? | ? | ? |
-| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, git settings, review or restart into an update); entries, dismissals and unread counts kept across restarts, each row names its repository and dismisses on its own; the same notice again straight after itself from one repository (a fetch that found nothing, ten times) is one row with a count and the latest time; a repository whose git configuration decides against the recommendation is listed once, one paragraph per setting naming where it is set and that same row's recommendation as its list names it (On, Off, Default, Don't rebase), the first three and a count past four | Done | ? | Yes | ? |
+| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, git settings, review or restart into an update); entries, dismissals and unread counts kept across restarts, each row names its repository and dismisses on its own; the same notice again straight after itself from one repository (a fetch that found nothing, ten times) is one row with a count and the latest time, and a failure that repeats raises one card while that card is on screen, not one per attempt, and the row counts the rest (once the card is dismissed or has expired, a retry raises a new one); a stop that waits on you (a pull, rebase or merge that stopped on conflicts to resolve, a program to install) is a Needs your attention notice, and an automatic fetch that fails reaches the center and the bell but never a card; a repository whose git configuration decides against the recommendation is listed once, one paragraph per setting naming where it is set and that same row's recommendation as its list names it (On, Off, Default, Don't rebase), the first three and a count past four | Done | ? | Yes | ? |
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Done | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Done | ? | ? | ? |
