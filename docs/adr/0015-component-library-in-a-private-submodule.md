@@ -18,9 +18,13 @@ not about Git, and the owner's other applications need the same look. Keeping th
   ref pills, the history graph) in `ui/kit`.
 - **A change to the library is made in its own repository**, then the submodule pointer here is
   updated in a Canopy commit.
-- **CI and releases fetch it with the `SUBMODULE_TOKEN` secret**, a token that can read
-  `nectura-ui`. A workflow's own token reads only the repository it runs in, even inside the same
-  organization. Without the secret every job that builds or checks Canopy fails at checkout.
+- **CI and releases fetch it over SSH with a read-only deploy key** on `nectura-ui`, kept as the
+  `SUBMODULE_DEPLOY_KEY` secret (Actions and Dependabot stores) and used by the composite action
+  `.github/actions/fetch-ui` after checkout, with GitHub's host key pinned. A workflow's own token
+  reads only the repository it runs in, even inside the same organization (a probe on 2026-10-15
+  got "Repository not found"), and a personal access token would tie CI to one account. Deploy keys
+  are enabled for the organization for this. Without the secret every job that builds or checks
+  Canopy fails at the fetch step.
 - **Checks read the submodule's files**: colours, source headers, numeric literals, docs, the
   unsafe-code policy and the third-party notices.
 

@@ -14,8 +14,9 @@ agent; [AGENTS.md](AGENTS.md) has the full conventions.
 3. Fetch the component library: `crates/nectura-ui` is a submodule of the private repository
    `NecturaLabs/nectura-ui` (`git clone --recurse-submodules`, or `git submodule update --init` in
    an existing clone). Change it in its own repository, then commit the new submodule pointer
-   here. CI fetches it with the `SUBMODULE_TOKEN` secret (a token that can read that repository)
-   and falls back to the workflow's own token.
+   here. CI fetches it over SSH with a read-only deploy key on that repository
+   (the `SUBMODULE_DEPLOY_KEY` secret, in the Actions and Dependabot stores; `.github/actions/fetch-ui`),
+   since a workflow's own token reads only Canopy.
 4. Optional: `cargo install cargo-deny` to run the licence and advisory checks locally, and
    `xvfb` to take headless screenshots.
 

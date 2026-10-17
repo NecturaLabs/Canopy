@@ -1,0 +1,28 @@
+name: Fetch the component library
+description: >-
+  Fetches the crates/nectura-ui submodule, a private repository of this organisation, over SSH
+  with a read-only deploy key. A workflow's own token reads only the repository it runs in.
+  Run it after actions/checkout.
+
+inputs:
+  key:
+    description: The private key of the read-only deploy key on NecturaLabs/nectura-ui
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch crates/nectura-ui
+      run: |
+        dir="${RUNNER_TEMP//\\//}"
+        trap 'rm -f "$dir/nectura-ui-key" "$dir/nectura-ui-hosts"' EXIT
+        (umask 077; printf '%s\n' "$KEY" > "$dir/nectura-ui-key")
+        # GitHub's published ed25519 host key (api.github.com/meta), so no first-use trust.
+        echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$dir/nectura-ui-hosts"
+        git \
+          -c "core.sshCommand=ssh -i $dir/nectura-ui-key -o IdentitiesOnly=yes -o UserKnownHostsFile=$dir/nectura-ui-hosts -o StrictHostKeyChecking=yes" \
+          -c "url.git@github.com:NecturaLabs/nectura-ui.git.insteadOf=https://github.com/NecturaLabs/nectura-ui.git" \
+          submodule update --init --recursive -- crates/nectura-ui
+      env:
+        KEY: ${{ inputs.key }}
+      shell: bash
