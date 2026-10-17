@@ -140,15 +140,14 @@ pub fn show(
                         .id_salt("status-trust")
                         .tooltip(format!(
                             "This partial clone needs files from {remote}. Canopy downloads them \
-                             only for repositories in a trusted folder. Click to choose."
+                             only for a trusted repository. Click to choose."
                         )),
-                    "Downloads off, trust this folder",
+                    "Downloads off, trust this repository",
                 );
                 if resp.clicked() {
-                    actions.push(Action::OpenDialog(Dialog::TrustFolder {
+                    actions.push(Action::OpenDialog(Dialog::Trust {
                         repo: tab.trust_folders.first().unwrap_or(&tab.path).clone(),
                         folders: tab.trust_folders.clone(),
-                        remote: remote.clone(),
                     }));
                 }
             }

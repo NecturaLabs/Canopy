@@ -163,10 +163,11 @@ sudo dnf install gcc pkgconf-pkg-config libxkbcommon libxkbcommon-x11 mesa-libGL
 sudo pacman -S --needed base-devel libxkbcommon libxkbcommon-x11 libglvnd mesa git
 ```
 
-Build and run:
+Build and run (the component library, `crates/nectura-ui`, is a private submodule: you need access to
+`NecturaLabs/nectura-ui`, and `git submodule update --init` fetches it in an existing clone):
 
 ```sh
-git clone https://github.com/NecturaLabs/Canopy.git
+git clone --recurse-submodules https://github.com/NecturaLabs/Canopy.git
 cd Canopy
 cargo run --release -p canopy-app -- /path/to/repo
 ```

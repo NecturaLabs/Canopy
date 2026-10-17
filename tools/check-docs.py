@@ -96,9 +96,16 @@ def project_files() -> list[str]:
         capture_output=True,
         text=True,
     ).stdout
-    return sorted(
-        f for f in out.splitlines() if f and "__pycache__/" not in f and (ROOT / f).exists()
-    )
+    files = [f for f in out.splitlines() if f and "__pycache__/" not in f and (ROOT / f).exists()]
+    # crates/nectura-ui is a submodule: the files it holds count as part of the project.
+    library = ROOT / "crates" / "nectura-ui"
+    if (library / ".git").exists():
+        inner = subprocess.run(
+            ["git", "ls-files"], cwd=library, check=True, capture_output=True, text=True
+        ).stdout
+        files = [f for f in files if f != "crates/nectura-ui"]
+        files += [f"crates/nectura-ui/{f}" for f in inner.splitlines() if f]
+    return sorted(files)
 
 
 def read(path: str) -> str:

@@ -62,11 +62,15 @@ pub const OVERLAYS: &[&str] = &[
     "clear-identity",
     "update-installed",
     "update-running",
-    "trust-folder",
+    "trust-prompt",
+    "trust-banner",
+    "trust-safety-off",
+    "privacy-trust-off",
     "diff-options",
     "settings-integrations",
     "settings-accounts",
     "settings-updates",
+    "settings-notifications",
     "settings-keyboard",
     "settings-backup",
     "settings-repository",
@@ -151,6 +155,7 @@ pub struct Launch {
     pub split: bool,
     pub style: Option<theme::Style>,
     pub density: Option<theme::Density>,
+    pub request_density: Option<crate::request_view::RequestDensity>,
     pub translucent: Option<bool>,
     pub high_contrast: Option<bool>,
     pub custom_theme: Option<crate::ui::custom_theme::CustomTheme>,
@@ -160,6 +165,22 @@ pub struct Launch {
     /// `--glass-soak N` (debug builds): paint floating layers, glass when Translucent surfaces is
     /// on, for a warm-up and then N measured frames, then report and exit.
     pub glass_soak: Option<u64>,
+}
+
+/// The folders a screenshot trusts: the repositories it opens, so that a picture of the Changes
+/// view is not a picture of the prompt, and `CANOPY_SCREENSHOT_TRUSTED`'s folder. Nothing for
+/// `--overlay trust-banner`, which shows a repository that is not.
+fn screenshot_trusted(launch: &Launch) -> Vec<PathBuf> {
+    let mut folders = Vec::new();
+    let opened = launch
+        .paths
+        .iter()
+        .filter(|_| launch.overlay.as_deref() != Some("trust-banner"));
+    let named = std::env::var_os("CANOPY_SCREENSHOT_TRUSTED").map(PathBuf::from);
+    for folder in opened.chain(named.iter()) {
+        crate::trust::add(&mut folders, folder);
+    }
+    folders
 }
 
 /// Rows a Page Down / Ctrl+D moves in a list.
@@ -264,11 +285,12 @@ impl CanopyApp {
                 accepted_privacy: crate::ui::legal::PRIVACY_VERSION.to_owned(),
                 crash_reports: Some(false),
                 crash_reports_version: crate::crash_reports::DATA_VERSION,
-                // A picture of what a trusted folder shows (a signature, say) names the folder.
-                trusted_folders: std::env::var_os("CANOPY_SCREENSHOT_TRUSTED")
-                    .map(PathBuf::from)
-                    .into_iter()
-                    .collect(),
+                // A repository is trusted, so the picture shows the view and not the prompt that
+                // asks, unless the overlay is about trust (`--overlay trust-banner`).
+                // CANOPY_SCREENSHOT_TRUSTED names another folder; a picture of what a trusted
+                // folder shows (a signature, say) names the folder.
+                trusted_folders: screenshot_trusted(&launch),
+                trust_safety: launch.overlay.as_deref() != Some("privacy-trust-off"),
                 ..Settings::default()
             };
         }
@@ -283,7 +305,7 @@ impl CanopyApp {
         }
         crate::logging::set_level(settings.log_level);
         // Before any tab opens, so a repository thread never sees an empty list.
-        crate::trust::set(&settings.trusted_folders);
+        crate::trust::publish(&settings);
         crate::trust::install_gate();
         crate::ui::fonts::install(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -292,6 +314,9 @@ impl CanopyApp {
         }
         if let Some(density) = launch.density {
             settings.density = density;
+        }
+        if let Some(density) = launch.request_density {
+            settings.request_density = density;
         }
         if let Some(translucent) = launch.translucent {
             settings.translucent = translucent;
@@ -417,6 +442,10 @@ impl CanopyApp {
             Some("settings-updates") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates));
             }
+            Some("settings-notifications") => {
+                app.settings_screen =
+                    Some(SettingsScreen::at(settings_screen::Section::Notifications));
+            }
             Some("about") => app.dialogs.open(Dialog::About),
             Some("long-message") => {
                 app.initial_view.get_or_insert(View::Changes);
@@ -510,7 +539,7 @@ impl CanopyApp {
             }
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),
-            Some("privacy") => {
+            Some("privacy" | "privacy-trust-off") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy));
             }
             Some(name @ ("consent" | "consent-updated")) => {
@@ -581,11 +610,14 @@ impl CanopyApp {
                 app.dialogs.open(Dialog::Update(Box::new(available)));
             }
             // A fixed illustrative path, so the screenshot never shows the fixture's temporary one.
-            Some("trust-folder") => app.dialogs.open(Dialog::TrustFolder {
+            Some("trust-prompt") => app.dialogs.open(Dialog::Trust {
                 repo: PathBuf::from("/home/ada/src/tidepool"),
-                folders: vec![PathBuf::from("/home/ada/src/tidepool-main/.git")],
-                remote: "origin".into(),
+                folders: vec![
+                    PathBuf::from("/home/ada/src/tidepool"),
+                    PathBuf::from("/home/ada/src/tidepool-main/.git"),
+                ],
             }),
+            Some("trust-safety-off") => app.dialogs.open(Dialog::ConfirmTrustSafetyOff),
             Some("clear-identity") => app.dialogs.open(Dialog::ConfirmClearIdentity {
                 repo: None,
                 scope: canopy_core::identity::Scope::Global,
@@ -790,6 +822,11 @@ impl CanopyApp {
                 }
             }
         }
+        if s.request_density != before.request_density {
+            for t in &mut self.tabs {
+                t.request_density = s.request_density;
+            }
+        }
         if s.split_diff != before.split_diff || s.syntax_highlight != before.syntax_highlight {
             for t in &mut self.tabs {
                 t.split_diff = s.split_diff;
@@ -826,6 +863,7 @@ struct Watched {
     motion: crate::ui::motion::MotionPref,
     diff: settings::DiffPrefs,
     split_diff: bool,
+    request_density: crate::request_view::RequestDensity,
     syntax_highlight: bool,
     hosting_api: bool,
     /// A hash of the GitLab hosts text.
@@ -838,6 +876,7 @@ impl Watched {
             motion: s.motion,
             diff: s.diff,
             split_diff: s.split_diff,
+            request_density: s.request_density,
             syntax_highlight: s.syntax_highlight,
             hosting_api: s.hosting_api,
             gitlab_hosts: Self::hash(&s.gitlab_hosts),
@@ -1226,7 +1265,7 @@ impl eframe::App for CanopyApp {
             }
         }
         if let Some(page) = self.gallery {
-            crate::ui::kit::gallery::show(&ctx, page);
+            crate::ui::kit::gallery::show(&ctx, page, crate::ui::kit::GALLERY_SECTIONS);
         }
         if let Some(soak) = &mut self.glass_soak
             && soak.frame(&ctx)
@@ -1658,6 +1697,21 @@ mod tests {
         app.settings_changed(&ctx, before);
         assert_eq!(app.gitlab_hosts, ["git.example.com"]);
         assert_eq!(app.tabs[0].split_diff, app.settings.split_diff);
+    }
+
+    /// Choosing the request list's density in Settings reaches the open tabs.
+    #[test]
+    fn the_request_list_density_chosen_in_settings_reaches_the_tabs() {
+        use crate::request_view::RequestDensity;
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        assert_eq!(app.tabs[0].request_density, RequestDensity::Comfortable);
+        let before = Watched::of(&app.settings);
+        app.settings.request_density = RequestDensity::Dense;
+        app.settings_changed(&ctx, before);
+        assert_eq!(app.tabs[0].request_density, RequestDensity::Dense);
     }
 
     /// Each mask fans over the part of a card's square corner outside its rounded arc: the arc's

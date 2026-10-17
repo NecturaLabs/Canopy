@@ -1,5 +1,5 @@
 //! Canopy's policy on `unsafe` (AGENTS.md; design spec 7.3): the backdrop blur's OpenGL calls in
-//! `crates/canopy-app/src/ui/kit/glass/gl.rs` are the only unsafe code. The workspace denies the
+//! `crates/nectura-ui/src/kit/glass/gl.rs` are the only unsafe code. The workspace denies the
 //! `unsafe_code` lint and that file alone explicitly expects it; these tests fail when unsafe code, or an
 //! attribute naming the lint, appears in any other Rust file under `crates/`, and when the
 //! workspace or a crate stops denying it. Comments and string literals are ignored, so messages
@@ -27,7 +27,7 @@
 use std::path::{Path, PathBuf};
 
 /// The one file allowed to contain unsafe code, relative to the repository root.
-const ALLOWED: &str = "crates/canopy-app/src/ui/kit/glass/gl.rs";
+const ALLOWED: &str = "crates/nectura-ui/src/kit/glass/gl.rs";
 /// Its first attribute, as the design spec words it (rustfmt may wrap it).
 const EXPECT_LINE: &str = r#"#![expect(unsafe_code, reason = "OpenGL calls for the backdrop blur; owner-approved 2026-10-05")]"#;
 
@@ -512,9 +512,31 @@ fn the_workspace_denies_unsafe_code() {
             .nth(1)
             .and_then(|rest| rest.split("\n[").next())
             .unwrap_or_default();
+        // A crate inherits the workspace lints, or (the shared component library, which other
+        // workspaces use too) carries the same unsafe-related ones in its own manifest.
+        let lint_lines = |name: &str| {
+            manifest
+                .split(&format!("[lints.{name}]"))
+                .nth(1)
+                .and_then(|rest| rest.split("\n[").next())
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| !line.trim_start().starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let (rust, clippy) = (lint_lines("rust"), lint_lines("clippy"));
+        let own = rust.contains("unsafe_code = \"deny\"")
+            && [
+                "undocumented_unsafe_blocks = \"deny\"",
+                "multiple_unsafe_ops_per_block = \"deny\"",
+                "unnecessary_safety_comment = \"warn\"",
+            ]
+            .iter()
+            .all(|lint| clippy.contains(lint));
         assert!(
-            lints.contains("workspace = true"),
-            "{} does not inherit the workspace lints",
+            lints.contains("workspace = true") || own,
+            "{} neither inherits the workspace lints nor denies unsafe code itself",
             krate.path().display()
         );
         checked += 1;

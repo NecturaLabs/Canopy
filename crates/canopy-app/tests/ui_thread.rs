@@ -1,8 +1,8 @@
 //! AGENTS.md, "Conventions": the UI thread never calls git, libgit2, the hosting API, the network
-//! or the filesystem for repository data. Views and the toolkit under `src/views` and `src/ui`
-//! render from tab state; anything that reads a repository or the disk goes through a worker job.
+//! or the filesystem for repository data. Views and the toolkit under `src/views`, `src/ui` and
+//! the `nectura-ui` crate render from tab state; anything that reads a repository or the disk goes through a worker job.
 //!
-//! These tests fail when the production code of those two folders (everything before a file's
+//! These tests fail when the production code of those folders (everything before a file's
 //! `#[cfg(test)] mod tests`) names a filesystem, process, network, libgit2 or git-CLI API. The
 //! scan is textual: it cannot see a call made through a helper in another module, which is why it
 //! covers the folders that hold the drawing code, not the whole crate. Comments are skipped.
@@ -34,12 +34,25 @@ const FORBIDDEN: &[&str] = &[
     "canonicalize(",
 ];
 
-/// Reviewed exceptions: file (relative to `src`), a text of the line, and why it is fine.
+/// Reviewed exceptions: file (relative to `src`; `nectura-ui/` names the library), a text of the line, and why it is fine.
 const ALLOWED: &[(&str, &str, &str)] = &[(
-    "ui/kit/glass/mod.rs",
+    "nectura-ui/kit/glass/mod.rs",
     "std::fs::read_to_string(\"/proc/self/status\")",
     "the glass soak diagnostic reads its own memory use; it runs only under --glass-soak",
 )];
+
+/// The library's `src`, which holds the toolkit.
+fn library_src() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../nectura-ui/src")
+}
+
+/// The file an `ALLOWED` or scanned name stands for.
+fn locate(file: &str) -> PathBuf {
+    file.strip_prefix("nectura-ui/").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(file),
+        |rest| library_src().join(rest),
+    )
+}
 
 fn source_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("source folder").flatten() {
@@ -84,6 +97,8 @@ fn views_and_the_toolkit_never_touch_the_disk_the_network_or_git() {
     for folder in ["views", "ui"] {
         source_files(&src.join(folder), &mut files);
     }
+    let library = library_src();
+    source_files(&library, &mut files);
     assert!(
         files.len() > 20,
         "the scan found only {} files",
@@ -93,8 +108,13 @@ fn views_and_the_toolkit_never_touch_the_disk_the_network_or_git() {
     for path in files {
         let relative = path
             .strip_prefix(&src)
-            .expect("inside src")
-            .to_string_lossy()
+            .map_or_else(
+                |_| {
+                    let inside = path.strip_prefix(&library).expect("inside a source folder");
+                    format!("nectura-ui/{}", inside.to_string_lossy())
+                },
+                |inside| inside.to_string_lossy().into_owned(),
+            )
             .replace('\\', "/");
         let text = std::fs::read_to_string(&path).expect("source");
         for (line, name) in violations(&relative, &text) {
@@ -127,9 +147,8 @@ fn the_scan_finds_calls_in_production_code_only() {
 
 #[test]
 fn every_exception_is_still_needed() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     for (file, text, why) in ALLOWED {
-        let source = std::fs::read_to_string(src.join(file)).expect("excepted file");
+        let source = std::fs::read_to_string(locate(file)).expect("excepted file");
         assert!(
             source.contains(text),
             "{file} no longer has `{text}` ({why})"

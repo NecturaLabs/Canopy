@@ -42,12 +42,12 @@ PREFERRED = ["MIT", "Apache-2.0", "BSL-1.0"]
 # Subfolders whose text files are licences of bundled assets (epaint_default_fonts' fonts).
 ASSET_FOLDERS = {"fonts", "licenses", "LICENSES"}
 FONTS = [
-    ("Inter 4.1 by Rasmus Andersson", "crates/canopy-app/assets/fonts/OFL-Inter.txt"),
-    ("JetBrains Mono by JetBrains", "crates/canopy-app/assets/fonts/OFL-JetBrainsMono.txt"),
+    ("Inter 4.1 by Rasmus Andersson", "crates/nectura-ui/assets/fonts/OFL-Inter.txt"),
+    ("JetBrains Mono by JetBrains", "crates/nectura-ui/assets/fonts/OFL-JetBrainsMono.txt"),
     ("Atkinson Hyperlegible Bold by the Braille Institute of America",
-     "crates/canopy-app/assets/fonts/OFL-AtkinsonHyperlegible.txt"),
+     "crates/nectura-ui/assets/fonts/OFL-AtkinsonHyperlegible.txt"),
     ("Canopy CJK, a modified version of Noto Sans CJK JP by Adobe for Google",
-     "crates/canopy-app/assets/fonts/OFL-NotoSansCJK.txt"),
+     "crates/nectura-ui/assets/fonts/OFL-NotoSansCJK.txt"),
 ]
 
 

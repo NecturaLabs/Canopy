@@ -48,9 +48,9 @@ OPTIONS:
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, consent-updated, crash-consent, legal, credential, host-key,
                               merge, identity, settings-git, settings-git-pull, settings-git-commits, settings-git-config,
-                              clear-identity, update-installed, update-running, trust-folder,
-                              diff-options,
-                              settings-integrations, settings-accounts, settings-updates,
+                              clear-identity, update-installed, update-running, trust-prompt,
+                              trust-banner, trust-safety-off, privacy-trust-off, diff-options,
+                              settings-integrations, settings-accounts, settings-updates, settings-notifications,
                               settings-keyboard, settings-backup, settings-repository,
                               settings-repository-pull, settings-repository-diffs,
                               settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, search-changes, clean-stale, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
@@ -69,6 +69,7 @@ OPTIONS:
         --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
         --style <STYLE>       Start with a style: standard or deeper
         --density <DENSITY>   Start with a density: comfortable or dense
+        --request-density <D> Start the request list with comfortable or dense items
         --translucent <ON>    Translucent surfaces: on or off
         --contrast <ON>       High contrast: on or off
         --custom-theme <SPEC> The custom theme's colours, comma-separated: base=midnight|daylight,
@@ -139,6 +140,13 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 launch.density = Some(
                     ui::theme::Density::from_name(&name)
                         .ok_or("--density takes comfortable or dense")?,
+                );
+            }
+            "--request-density" => {
+                let name = next_text(&mut args, "--request-density needs comfortable or dense")?;
+                launch.request_density = Some(
+                    request_view::RequestDensity::from_name(&name)
+                        .ok_or("--request-density takes comfortable or dense")?,
                 );
             }
             "--translucent" => {
@@ -368,6 +376,7 @@ fn main() -> anyhow::Result<()> {
     validate_screenshot_launch(&launch, isolated).map_err(anyhow::Error::msg)?;
 
     // Normal detail until Settings load; their log setting takes over afterwards.
+    ui::install_host();
     logging::init(logging::LogLevel::Normal);
     canopy_hosting::set_build(build_info::NUMBER);
 

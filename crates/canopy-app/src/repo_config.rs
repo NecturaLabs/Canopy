@@ -38,11 +38,17 @@ impl ConfigValue {
 
     /// The value read as a git boolean (`true`, `yes`, `on`, `1`; `false`, `no`, `off`, `0`).
     pub fn as_bool(&self) -> Option<bool> {
-        match self.value.trim().to_ascii_lowercase().as_str() {
-            "true" | "yes" | "on" | "1" => Some(true),
-            "false" | "no" | "off" | "0" | "" => Some(false),
-            _ => None,
-        }
+        git_bool(&self.value)
+    }
+}
+
+/// `text` read as a git boolean: `true`, `yes`, `on` or a non-zero number; `false`, `no`, `off`, zero
+/// or nothing at all. `None` for any other word.
+pub fn git_bool(text: &str) -> Option<bool> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" => Some(true),
+        "false" | "no" | "off" | "" => Some(false),
+        number => number.parse::<i64>().ok().map(|n| n != 0),
     }
 }
 
@@ -372,7 +378,16 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
                 .iter()
                 .find(|v| v.key.eq_ignore_ascii_case(setting.key()))
                 .cloned(),
-            _ => get(setting.key()),
+            // These take a boolean or a word (`merges`, `only`, `input`): a spelled-out boolean
+            // reads as git reads it, a word stays as written.
+            canopy_core::config::Setting::PullRebase
+            | canopy_core::config::Setting::PullFastForward
+            | canopy_core::config::Setting::Autocrlf => get(setting.key()).map(|raw| {
+                get_bool(dir, scope, setting.key())
+                    .ok()
+                    .flatten()
+                    .unwrap_or(raw)
+            }),
         };
         facts.values.extend(value);
     }
@@ -507,6 +522,37 @@ fn parse_remotes(out: &str) -> Vec<Remote> {
             })
         })
         .collect()
+}
+
+/// Runs the calling test again in a child process whose git sees no system configuration and a
+/// private, empty global one, so the developer's own settings cannot decide the result. True in
+/// the child, where the test body runs; false in the parent once the child has passed.
+#[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test runs itself again in a child process"
+)]
+pub(crate) fn in_isolated_git_env(test: &str) -> bool {
+    if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
+        return true;
+    }
+    let home = tempfile::tempdir().expect("tempdir");
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([test, "--exact", "--test-threads=1"])
+        .env("CANOPY_TEST_ISOLATED_GIT", "1")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"))
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .output()
+        .expect("test binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("1 passed"),
+        "{test} in an isolated git environment:\n{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    false
 }
 
 #[cfg(test)]
@@ -664,6 +710,46 @@ mod tests {
             .expect("read")
             .expect("set");
         assert_eq!(found.file, Some(dir.join(".git/config")));
+        Ok(())
+    }
+
+    /// A setting that takes a boolean or a word reads as git reads it: `yes` and `1` are `true`,
+    /// so the editor can show its row (#230).
+    #[test]
+    fn a_boolean_spelled_out_is_read_as_the_value_git_uses() -> std::io::Result<()> {
+        // Git converts every value of a key, so another layer's word (`pull.ff = only`) would
+        // make the conversion fail.
+        if !in_isolated_git_env(
+            "repo_config::tests::a_boolean_spelled_out_is_read_as_the_value_git_uses",
+        ) {
+            return Ok(());
+        }
+        let dir = tempfile::tempdir()?;
+        let git = |args: &[&str]| {
+            canopy_core::cli::run(dir.path(), args).expect("git");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        for (key, written, shown) in [
+            ("pull.rebase", "1", "true"),
+            ("pull.rebase", "off", "false"),
+            ("pull.rebase", "merges", "merges"),
+            ("pull.ff", "yes", "true"),
+            ("pull.ff", "no", "false"),
+            ("pull.ff", "only", "only"),
+            ("core.autocrlf", "on", "true"),
+            ("core.autocrlf", "0", "false"),
+            ("core.autocrlf", "input", "input"),
+        ] {
+            git(&["config", "--local", key, written]);
+            let facts = read(Some(dir.path()));
+            assert_eq!(facts.error, None, "{key} = {written}");
+            let value = facts
+                .values
+                .iter()
+                .find(|v| v.key.eq_ignore_ascii_case(key))
+                .map(|v| v.value.as_str());
+            assert_eq!(value, Some(shown), "{key} = {written}");
+        }
         Ok(())
     }
 

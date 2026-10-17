@@ -3,11 +3,14 @@
 
 Every file a page, stylesheet or script names must exist in site/, every address outside it must
 be https and on a host the content security policy in site/netlify.toml allows or a link the
-visitor follows, and the scripts must parse. Exits non-zero with one line per problem.
+visitor follows, the scripts must parse, and the site's Privacy Policy and Terms of Service pages
+must be the current render of docs/legal/. Exits non-zero with one line per problem.
+--write-legal renders those two pages again from docs/legal/.
 """
 
 from __future__ import annotations
 
+import html
 import re
 import shutil
 import subprocess
@@ -16,11 +19,118 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
 
+ARGS = [a for a in sys.argv[1:] if a != "--write-legal"]
 SITE = (
-    Path(sys.argv[1])
-    if len(sys.argv) > 1
-    else Path(__file__).resolve().parent.parent / "site"
+    Path(ARGS[0]) if ARGS else Path(__file__).resolve().parent.parent / "site"
 ).resolve()
+LEGAL = SITE.parent / "docs" / "legal"
+# Each page the site publishes from docs/legal/: (page, source, title).
+LEGAL_PAGES = (
+    ("privacy.html", "privacy-policy.md", "Privacy Policy"),
+    ("terms.html", "terms-of-service.md", "Terms of Service"),
+)
+LEGAL_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{title}: Canopy</title>
+<meta name="description" content="Canopy's {title}.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#09090B" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FBFBFC" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="64x64" href="assets/icon-64.png">
+<link rel="canonical" href="https://canopy.necturalabs.com/{page}">
+<link rel="preload" href="fonts/InterDisplay-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <a class="brand" href="./"><img src="assets/icon-64.png" width="26" height="26" alt=""><span translate="no">Canopy</span></a>
+    <div class="top-end">
+      <a class="btn btn-cta btn-sm" href="./#download">Download</a>
+    </div>
+  </div>
+</header>
+
+<main id="main" class="doc wrap">
+<!-- Rendered from docs/legal/{source} by tools/check-site.py --write-legal. Edit that file, not this one. -->
+<article class="doc-body">
+{body}
+</article>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <div class="foot-brand">
+      <a class="brand" href="./"><img src="assets/icon-64.png" width="22" height="22" alt=""><span translate="no">Canopy</span></a>
+      <p>Canopy is made by NecturaLabs.</p>
+    </div>
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="./">Home</a>
+      <a href="./#download">Download</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="terms.html">Terms of Service</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
+"""
+
+
+def inline(text: str) -> str:
+    """Escape a line of the legal text and link its web addresses and email addresses."""
+    out = []
+    for part in re.split(r"(https://[^\s,;)]*[^\s,;.)]|[\w.+-]+@[\w-]+\.[\w.-]*\w)", text):
+        if part.startswith("https://"):
+            out.append(f'<a href="{html.escape(part)}">{html.escape(part)}</a>')
+        elif "@" in part and " " not in part:
+            out.append(f'<a href="mailto:{html.escape(part)}">{html.escape(part)}</a>')
+        else:
+            out.append(html.escape(part, quote=False))
+    return "".join(out)
+
+
+def render_legal(markdown: str) -> str:
+    """The legal documents use headings, paragraphs and flat lists only, one block per blank line."""
+    blocks = []
+    for block in re.split(r"\n\s*\n", markdown.strip()):
+        lines = block.splitlines()
+        if block.startswith("# "):
+            blocks.append(f"<h1>{inline(block[2:].strip())}</h1>")
+        elif block.startswith("## "):
+            title = block[3:].strip()
+            anchor = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+            blocks.append(f'<h2 id="{anchor}">{inline(title)}</h2>')
+        elif all(line.startswith("- ") for line in lines):
+            items = "\n".join(f"  <li>{inline(line[2:].strip())}</li>" for line in lines)
+            blocks.append(f"<ul>\n{items}\n</ul>")
+        elif block.startswith("Last updated:"):
+            blocks.append(f'<p class="doc-updated">{inline(block)}</p>')
+        else:
+            blocks.append(f"<p>{inline(' '.join(lines))}</p>")
+    return "\n".join(blocks)
+
+
+def legal_pages() -> dict[Path, str]:
+    """Each legal page the site should hold, rendered from docs/legal/; none without that folder."""
+    if not LEGAL.is_dir():
+        return {}
+    return {
+        SITE / page: LEGAL_PAGE.format(
+            title=title,
+            page=page,
+            source=source,
+            body=render_legal((LEGAL / source).read_text(encoding="utf-8")),
+        )
+        for page, source, title in LEGAL_PAGES
+    }
 
 # Attributes that load something into the page, and the policy directive that governs each;
 # any other address is a link the visitor follows.
@@ -101,7 +211,17 @@ def allowed_hosts() -> dict[str, set[str]]:
 
 
 def main() -> int:
+    if "--write-legal" in sys.argv[1:]:
+        for path, text in legal_pages().items():
+            path.write_text(text, encoding="utf-8")
+            print(f"check-site: wrote {path.relative_to(SITE.parent)}")
     problems: list[str] = []
+    for path, text in legal_pages().items():
+        rel = path.relative_to(SITE.parent)
+        if not path.exists() or path.read_text(encoding="utf-8") != text:
+            problems.append(
+                f"{rel}: not the current render of docs/legal/; run python3 tools/check-site.py --write-legal"
+            )
     pages = sorted(SITE.rglob("*.html"))
     if not pages:
         problems.append("site/: no HTML page")

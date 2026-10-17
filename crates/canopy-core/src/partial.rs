@@ -132,7 +132,8 @@ fn refused_reason(remotes: &[String]) -> String {
 /// Every path is resolved first (symbolic links, `..`), so a link or a relative spelling can
 /// neither enter nor leave a trusted folder, and `/a/bc` is not inside `/a/b`. A trusted folder
 /// that cannot be resolved (removed, unreadable) trusts nothing, and a filesystem root is never
-/// accepted as a trusted folder.
+/// accepted as a trusted folder. Folders are compared by identity, not spelling (see
+/// [`paths_in_trusted_folder`]).
 pub fn is_in_trusted_folder(repo: &Repository, trusted: &[std::path::PathBuf]) -> bool {
     paths_in_trusted_folder(repo.commondir(), repo.path(), repo.workdir(), trusted)
 }
@@ -220,19 +221,29 @@ fn runs_a_program(name: &str) -> bool {
 
 /// [`is_in_trusted_folder`] for the common git directory, this worktree's own git directory
 /// (which may hold `config.worktree`), and its working folder when present.
+///
+/// A folder is known by what it is, not by how it is spelled: a path is inside a trusted folder
+/// when one of its resolved ancestors is that same folder on disk (the same file on the same
+/// device). So `~/SRC` is `~/src` on a volume that ignores capitalization, and is a different
+/// folder, which trusts nothing, on one that does not; no spelling is ever folded or guessed.
 pub fn paths_in_trusted_folder(
     common_dir: &Path,
     git_dir: &Path,
     workdir: Option<&Path>,
     trusted: &[std::path::PathBuf],
 ) -> bool {
-    let trusted: Vec<std::path::PathBuf> = trusted
+    let trusted: Vec<same_file::Handle> = trusted
         .iter()
         .filter_map(|t| std::fs::canonicalize(t).ok())
         .filter(|t| t.parent().is_some())
+        .filter_map(|t| same_file::Handle::from_path(t).ok())
         .collect();
     let inside = |path: &Path| {
-        std::fs::canonicalize(path).is_ok_and(|p| trusted.iter().any(|t| p.starts_with(t)))
+        std::fs::canonicalize(path).is_ok_and(|resolved| {
+            resolved.ancestors().any(|folder| {
+                same_file::Handle::from_path(folder).is_ok_and(|folder| trusted.contains(&folder))
+            })
+        })
     };
     inside(common_dir) && inside(git_dir) && workdir.is_none_or(inside)
 }
@@ -721,6 +732,46 @@ mod tests {
         let mut anchor = root.path().to_path_buf();
         while anchor.pop() {}
         assert!(!trust(&[&anchor]));
+    }
+
+    /// A folder written with other capitalization is the same folder on a volume that ignores
+    /// capitalization and another folder (here: none) on one that does not. The test asks the
+    /// volume, so it holds on Linux, macOS and Windows alike.
+    #[test]
+    fn a_folder_spelled_in_other_capitals_is_trusted_only_where_the_volume_says_it_is_the_same() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let work = root.path().join("Work");
+        let repo = work.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let spelled = root.path().join("wORK");
+        let folds_case = spelled.exists();
+        assert_eq!(
+            paths_in_trusted_folder(&repo, &repo, Some(&repo), &[spelled]),
+            folds_case
+        );
+        assert!(paths_in_trusted_folder(&repo, &repo, Some(&repo), &[work]));
+    }
+
+    /// A trailing separator, `.` and a `..` that returns into the folder all name the same
+    /// trusted folder, and one that leaves it does not.
+    #[test]
+    fn spellings_of_a_trusted_folder_that_resolve_to_it_trust_the_same() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let work = root.path().join("work");
+        let repo = work.join("repo");
+        let other = root.path().join("other");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let trust = |folder: std::path::PathBuf| {
+            paths_in_trusted_folder(&repo, &repo, Some(&repo), &[folder])
+        };
+        assert!(trust(std::path::PathBuf::from(format!(
+            "{}/",
+            work.display()
+        ))));
+        assert!(trust(work.join(".")));
+        assert!(trust(other.join("..").join("work")));
+        assert!(!trust(work.join("..").join("other")));
     }
 
     #[test]

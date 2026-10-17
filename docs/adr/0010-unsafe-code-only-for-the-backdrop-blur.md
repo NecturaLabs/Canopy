@@ -28,7 +28,7 @@ unsafe code in one reviewed file under Canopy's own lints.
 
 - The workspace sets `unsafe_code = "deny"` and the clippy lints `undocumented_unsafe_blocks` and
   `multiple_unsafe_ops_per_block` (deny) and `unnecessary_safety_comment` (warn).
-- `crates/canopy-app/src/ui/kit/glass/gl.rs` alone begins with
+- `crates/nectura-ui/src/kit/glass/gl.rs` alone begins with
   `#![allow(unsafe_code, reason = "OpenGL calls for the backdrop blur; owner-approved 2026-10-05")]`.
   Each OpenGL call is one `unsafe` block with a `// SAFETY:` comment.
 - `crates/canopy-app/tests/unsafe_policy.rs` (run by `tools/check.sh` and CI's test jobs) fails
