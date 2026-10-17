@@ -69,7 +69,7 @@ impl Missing {
         }
     }
 
-    /// Whether the saved `command` starts this program.
+    /// Whether the saved `command` starts this program by its bare name (or, on macOS, `open -a`).
     pub fn is_started_by(&self, command: &str) -> bool {
         command_key(command).is_some_and(|key| self.keys.contains(&key))
     }
@@ -107,9 +107,13 @@ impl Apps {
 }
 
 /// The program a command starts, as [`Missing`] names it: the program's name, or for macOS's
-/// `open -a Name` the application, in lower case.
+/// `open -a Name` the application, in lower case. `None` for a command that names its program by
+/// a path (`/opt/zed/bin/zed`): that is a program the user placed, which runs as typed.
 fn command_key(command: &str) -> Option<String> {
     let (program, args) = split_command(command.trim())?;
+    if program.contains(['/', '\\']) {
+        return None;
+    }
     let name = program_name(&program);
     if name == "open" && args.first().is_some_and(|a| a == "-a") {
         return args.get(1).map(|app| app.to_ascii_lowercase());
@@ -199,7 +203,7 @@ pub struct Fallback {
     pub used: String,
 }
 
-/// The command an open action runs given what was `apps` detected: the one chosen in Settings,
+/// The command an open action runs given what `apps` detected: the one chosen in Settings,
 /// else the system's, else empty (the platform's own opener; also before the first detection
 /// ends). A chosen well-known program that is no longer installed is not started: the system's
 /// runs, and `fallback` says so.
@@ -320,8 +324,11 @@ fn on_path(program: &str, path: &[PathBuf]) -> bool {
 /// `/usr/bin/kitty` are one, under its own file name, so a link such as snap's `/snap/bin/code`
 /// stays the program it names rather than the `snap` it leads to.
 #[cfg_attr(
-    not(any(target_os = "linux", test)),
-    expect(dead_code, reason = "desktop entries are Linux's")
+    not(any(target_os = "linux", target_os = "macos", test)),
+    expect(
+        dead_code,
+        reason = "desktop entries are Linux's, a binary on PATH macOS's"
+    )
 )]
 fn executable_id(program: &str, path: &[PathBuf]) -> String {
     let Some(file) = find_program(program, path) else {
@@ -533,45 +540,80 @@ const KNOWN: &[Known] = &[
     Known::new(Kind::FileManager, "Files").windows("files.exe"),
 ];
 
-/// The known applications among `bundles` (names without `.app`), started with `open -a`.
+/// The known applications among `bundles` (names without `.app`), started with `open -a`, and
+/// those only found on `path` (a binary from Homebrew or Nix), started by their command.
 #[cfg_attr(
     not(any(target_os = "macos", test)),
     expect(dead_code, reason = "macOS's applications")
 )]
-fn mac_apps(bundles: &[String]) -> Vec<App> {
+fn mac_apps(bundles: &[String], path: &[PathBuf]) -> Vec<App> {
     let apps = KNOWN
         .iter()
         .filter_map(|k| Some((k, k.bundle?)))
-        .filter(|(_, bundle)| bundles.iter().any(|b| b == bundle))
-        .map(|(k, bundle)| {
-            let open = format!("open -a {}", crate::platform::quote(bundle));
-            App {
+        .filter_map(|(k, bundle)| {
+            if bundles.iter().any(|b| b == bundle) {
+                let open = format!("open -a {}", crate::platform::quote(bundle));
+                return Some(App {
+                    kind: k.kind,
+                    name: k.name.to_owned(),
+                    command: match k.kind {
+                        Kind::Editor => open,
+                        Kind::Terminal | Kind::FileManager => format!("{open} %d"),
+                    },
+                    id: bundle.to_owned(),
+                });
+            }
+            let command = k.commands.iter().find(|c| on_path(c, path))?;
+            Some(App {
                 kind: k.kind,
                 name: k.name.to_owned(),
-                command: match k.kind {
-                    Kind::Editor => open,
-                    Kind::Terminal | Kind::FileManager => format!("{open} %d"),
-                },
-                id: bundle.to_owned(),
-            }
+                command: (*command).to_owned(),
+                id: executable_id(command, path),
+            })
         })
         .collect();
     sorted(apps)
 }
 
-/// The known applications that are not among `bundles`.
+/// The known applications that are neither among `bundles` nor on `path`: what a saved command
+/// for one of them starts is nowhere to be found, by `open -a` or by its command name.
 #[cfg_attr(
     not(any(target_os = "macos", test)),
     expect(dead_code, reason = "macOS's applications")
 )]
-fn mac_missing(bundles: &[String]) -> Vec<Missing> {
+fn mac_missing(bundles: &[String], path: &[PathBuf]) -> Vec<Missing> {
     let missing = KNOWN
         .iter()
         .filter_map(|k| Some((k, k.bundle?)))
-        .filter(|(_, bundle)| !bundles.iter().any(|b| b == bundle))
-        .map(|(k, bundle)| Missing::new(k.kind, k.name, [bundle]))
+        .filter(|(k, bundle)| {
+            !bundles.iter().any(|b| b == bundle) && !k.commands.iter().any(|c| on_path(c, path))
+        })
+        .map(|(k, bundle)| {
+            Missing::new(
+                k.kind,
+                k.name,
+                std::iter::once(bundle).chain(k.commands.iter().copied()),
+            )
+        })
         .collect();
     sorted_missing(missing)
+}
+
+/// The application names in `mdfind` output: one path per line, `.app` bundles only.
+#[cfg_attr(
+    not(any(target_os = "macos", test)),
+    expect(dead_code, reason = "macOS's applications")
+)]
+fn bundles_from_mdfind(out: &str) -> Vec<String> {
+    out.lines()
+        .filter_map(|line| {
+            Path::new(line.trim())
+                .file_name()?
+                .to_str()?
+                .strip_suffix(".app")
+                .map(str::to_owned)
+        })
+        .collect()
 }
 
 /// `(program name, path)` from `reg query "…\App Paths" /s`: each key's default value.
@@ -1150,13 +1192,30 @@ mod linux {
 mod macos {
     use std::path::PathBuf;
 
+    use std::process::Command;
+
     use super::{
-        Apps, SystemChoice, editor_from_env, listed_gui_editor, mac_apps, mac_missing, path_dirs,
+        Apps, SystemChoice, bundles_from_mdfind, editor_from_env, listed_gui_editor, mac_apps,
+        mac_missing, path_dirs,
     };
+
+    /// Every application Spotlight knows, wherever it is installed (`open -a` finds those too).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "asks Spotlight for the installed applications, never git"
+    )]
+    fn spotlight_bundles() -> Vec<String> {
+        let mut cmd = Command::new("mdfind");
+        cmd.arg("kMDItemContentType == 'com.apple.application-bundle'");
+        crate::platform::output_within(cmd, crate::platform::QUERY_TIMEOUT)
+            .map(|out| bundles_from_mdfind(&out))
+            .unwrap_or_default()
+    }
 
     pub(super) fn detect() -> Apps {
         let home = crate::settings::home_dir();
-        let mut bundles = Vec::new();
+        let path = path_dirs();
+        let mut bundles = spotlight_bundles();
         for dir in [
             PathBuf::from("/Applications"),
             PathBuf::from("/Applications/Utilities"),
@@ -1179,7 +1238,7 @@ mod macos {
         let editor = editor_from_env(
             var("VISUAL").as_deref(),
             var("EDITOR").as_deref(),
-            &path_dirs(),
+            &path,
             &listed_gui_editor,
         )
         .or(Some(SystemChoice {
@@ -1199,8 +1258,8 @@ mod macos {
                 command: None,
                 id: Some("Finder".to_owned()),
             }),
-            installed: mac_apps(&bundles),
-            missing: mac_missing(&bundles),
+            installed: mac_apps(&bundles, &path),
+            missing: mac_missing(&bundles, &path),
         }
     }
 }
@@ -2044,8 +2103,13 @@ mod tests {
             .missing(Kind::Editor)
             .find(|m| m.name == "Zed")
             .unwrap();
-        for command in ["zed", "/opt/zed/bin/zed --wait %f", "zeditor", "  ZED  "] {
+        for command in ["zed", "zed --wait %f", "zeditor", "  ZED  "] {
             assert!(zed.is_started_by(command), "{command}");
+        }
+        // A command that names its program by a path is the user's own program, not the missing
+        // one (it was matched by its file name before).
+        for command in ["/opt/zed/bin/zed --wait %f", "./zed", "C:\\zed\\zed.exe"] {
+            assert!(!zed.is_started_by(command), "{command}");
         }
         assert!(!zed.is_started_by("zedd") && !zed.is_started_by(""));
         // Installing it moves it between the lists.
@@ -2139,6 +2203,10 @@ mod tests {
                 fallback: None
             }
         );
+        // A path-qualified command runs as typed, whether or not a program of that name is missing.
+        let ran = launch(Some(&apps), "/opt/zed/bin/zed --wait %f", Kind::Editor);
+        assert_eq!(ran.command, "/opt/zed/bin/zed --wait %f");
+        assert_eq!(ran.fallback, None);
         // macOS names its programs by `open -a`.
         let iterm = Missing::new(Kind::Terminal, "iTerm", ["iTerm"]);
         assert!(iterm.is_started_by("open -a iTerm %d"));
@@ -2146,10 +2214,52 @@ mod tests {
         assert!(!iterm.is_started_by("open -a Terminal %d"));
     }
 
+    // A program that macOS finds on `PATH` (a Homebrew or Nix binary) is installed, not "Not
+    // installed", so a saved `wezterm start --cwd %d` is never swapped for the system's terminal;
+    // one nowhere to be found by its bundle or its command still is.
+    #[test]
+    fn a_mac_program_on_path_is_installed_and_one_nowhere_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        program(&bin, "wezterm");
+        let path = [bin];
+        let bundles = ["Photos"].map(str::to_owned);
+        let apps = mac_apps(&bundles, &path);
+        let wezterm = apps
+            .iter()
+            .find(|a| a.name == "WezTerm")
+            .expect("WezTerm on PATH is listed as installed");
+        assert_eq!(wezterm.command, "wezterm");
+        let missing = mac_missing(&bundles, &path);
+        assert!(missing.iter().all(|m| m.name != "WezTerm"), "{missing:?}");
+        let apps = Apps {
+            missing,
+            ..Apps::default()
+        };
+        assert_eq!(
+            launch(Some(&apps), "wezterm start --cwd %d", Kind::Terminal).fallback,
+            None
+        );
+        // Not on PATH and no bundle: missing, by its bundle name and by its command.
+        let missing = mac_missing(&bundles, &[]);
+        let wezterm = missing.iter().find(|m| m.name == "WezTerm").unwrap();
+        assert!(wezterm.is_started_by("wezterm start") && wezterm.is_started_by("open -a WezTerm"));
+        // Its bundle can be anywhere Spotlight looks: names come from the `mdfind` paths.
+        let names = bundles_from_mdfind(
+            "/Users/me/Downloads/WezTerm.app\n/opt/homebrew/Caskroom/zed/Zed.app\nnot-an-app\n",
+        );
+        assert_eq!(names, ["WezTerm", "Zed"]);
+        assert!(
+            mac_missing(&names, &[])
+                .iter()
+                .all(|m| m.name != "WezTerm" && m.name != "Zed")
+        );
+    }
+
     #[test]
     fn mac_and_windows_programs_are_recognised() {
         let bundles = ["Zed", "iTerm", "Photos", "Finder"].map(str::to_owned);
-        let mac = mac_apps(&bundles);
+        let mac = mac_apps(&bundles, &[]);
         assert_eq!(
             mac.iter()
                 .map(|a| (a.kind, a.command.as_str()))
@@ -2160,7 +2270,7 @@ mod tests {
                 (Kind::Editor, "open -a Zed"),
             ]
         );
-        let missing = mac_missing(&bundles);
+        let missing = mac_missing(&bundles, &[]);
         let names: Vec<_> = missing.iter().map(|m| m.name.as_str()).collect();
         assert!(names.contains(&"Visual Studio Code") && names.contains(&"Ghostty"));
         assert!(

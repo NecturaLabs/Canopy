@@ -8702,6 +8702,11 @@ mod tests {
         assert_eq!(shown("konsole"), LaunchChoice::Missing(1));
         assert_eq!(shown("foot"), LaunchChoice::App(0));
         assert_eq!(shown("my-terminal"), LaunchChoice::Custom);
+        assert_eq!(
+            shown("/opt/alacritty/bin/alacritty"),
+            LaunchChoice::Custom,
+            "a command with a path is the user's own program"
+        );
 
         let ctx = crate::ui::kit::testkit::ctx();
         let (mut value, mut custom) = (
@@ -8718,10 +8723,15 @@ mod tests {
             launcher_row(ui, launcher, &mut value, Some(&apps), &mut custom);
         };
         let closed = spoken(&ctx, &mut draw);
-        let shown_value = closed
+        let combo = closed
             .iter()
-            .find(|n| n.role == egui::accesskit::Role::ComboBox)
-            .and_then(|n| n.value.as_deref());
+            .find(|n| n.role == egui::accesskit::Role::ComboBox);
+        let shown_value = combo.and_then(|n| n.value.as_deref());
+        assert_eq!(
+            combo.and_then(|n| n.description.as_deref()),
+            Some("Not installed"),
+            "the closed control says the saved choice is gone"
+        );
         assert_eq!(
             shown_value,
             Some("Alacritty"),
