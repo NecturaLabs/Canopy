@@ -14,7 +14,8 @@ use crate::action::Action;
 use crate::tab::{DetailsError, FileSelection, RepoTab};
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::LinkButton;
-use crate::ui::kit::chip::{ChangeBadge, DiffStat};
+use crate::ui::kit::chip::DiffStat;
+use crate::ui::kit::git::ChangeBadge;
 use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowKind, caps_galley};
@@ -1086,7 +1087,7 @@ fn file_list_row_inner(
     response
 }
 
-/// The status letter's square (concept 1's `.fs`, as `kit::chip::ChangeBadge`) and its letter.
+/// The status letter's square (concept 1's `.fs`, as `kit::git::ChangeBadge`) and its letter.
 const CHANGE_BADGE: f32 = 17.0;
 const CHANGE_LETTER: f32 = 10.0;
 /// Gap between a file row's badge, name, folder and counts (concept 1's `.frow`).

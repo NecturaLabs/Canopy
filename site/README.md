@@ -13,7 +13,7 @@ either differs from that render, so a change to a legal document that skips the 
 
 The site has its own palette, set in the tokens at the top of `styles.css`: a near-black ground
 (`#09090B`, light `#FBFBFC`), a white pill for the one call to action (near-black in light), and
-the app's own colours from `crates/canopy-app/src/ui/theme.rs`: Midnight's indigo (`#7C86FF`,
+the app's own colours from `crates/nectura-ui/src/theme.rs`: Midnight's indigo (`#7C86FF`,
 text `#9AA2FF`; Daylight's `#5E6AD2`, text `#4651C0`) for links, focus and selection, and its
 success green only for Copied. The screenshots keep the app's own Midnight and Daylight. Headings
 are Inter Display, text is Inter, and keys, commands and paths are JetBrains Mono. Surfaces follow
@@ -21,7 +21,7 @@ the app's Deeper style: panes sit on the ground with layered soft shadows, contr
 lit from the top, and every screenshot sits in a window frame.
 
 The page's motif is the app's commit graph. Each section has a lane colour, taken from the graph's
-lanes in `ui/theme.rs` (Midnight's in dark, Daylight's in light): History indigo, Changes green,
+lanes in `nectura-ui/src/theme.rs` (Midnight's in dark, Daylight's in light): History indigo, Changes green,
 Conflicts pink, Requests amber, Git settings blue, Keyboard orange, Themes violet, Privacy teal,
 Download indigo again. A rail in the left gutter carries that colour from section to section, with
 a commit dot level with each heading; it keeps at least 24 px from the window's edge (below

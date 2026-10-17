@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/canopy-core", "crates/canopy-app", "crates/canopy-hosting"]
+members = ["crates/canopy-core", "crates/canopy-app", "crates/canopy-hosting", "crates/nectura-ui"]
 # Vendored third-party code is built as a dependency, never linted, formatted or tested as ours.
 exclude = ["vendor"]
 
@@ -18,6 +18,7 @@ publish = false
 [workspace.dependencies]
 canopy-core = { path = "crates/canopy-core" }
 canopy-hosting = { path = "crates/canopy-hosting" }
+nectura-ui = { path = "crates/nectura-ui" }
 anyhow = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
@@ -38,7 +39,7 @@ same-file = "1"
 
 [workspace.lints.rust]
 # Denied, not forbidden, so the one owner-approved module can allow it: the backdrop blur's OpenGL
-# calls in crates/canopy-app/src/ui/kit/glass/gl.rs. crates/canopy-app/tests/unsafe_policy.rs fails
+# calls in crates/nectura-ui/src/kit/glass/gl.rs. crates/canopy-app/tests/unsafe_policy.rs fails
 # when unsafe code or an allow for it appears anywhere else.
 unsafe_code = "deny"
 rust_2018_idioms = { level = "warn", priority = -1 }

@@ -11,7 +11,13 @@ agent; [AGENTS.md](AGENTS.md) has the full conventions.
    and fix what the new clippy reports in the same commit.
 2. Install `git` 2.32 or newer (required by the fixture scripts) and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
-3. Optional: `cargo install cargo-deny` to run the licence and advisory checks locally, and
+3. Fetch the component library: `crates/nectura-ui` is a submodule of the private repository
+   `NecturaLabs/nectura-ui` (`git clone --recurse-submodules`, or `git submodule update --init` in
+   an existing clone). Change it in its own repository, then commit the new submodule pointer
+   here. CI fetches it over SSH with a read-only deploy key on that repository
+   (the `SUBMODULE_DEPLOY_KEY` secret, in the Actions and Dependabot stores; `.github/actions/fetch-ui`),
+   since a workflow's own token reads only Canopy.
+4. Optional: `cargo install cargo-deny` to run the licence and advisory checks locally, and
    `xvfb` to take headless screenshots.
 
 ```sh
@@ -38,7 +44,7 @@ The workspace `Cargo.toml` sets the lint levels for every crate: clippy's `all`,
 `cargo` groups, the nursery and restriction lints that fit this code, and extra rustc lints, with
 the reason for each lint turned on or left out beside it. `clippy.toml` refuses the calls that
 break three project rules: starting a program other than through `canopy_core::cli`, writing
-with libgit2, and making a colour outside `ui/theme.rs`. It lists the usual calls, not every way
+with libgit2, and making a colour outside `nectura-ui/src/theme.rs`. It lists the usual calls, not every way
 round a rule, so review still applies the rules themselves. When a finding is deliberate, put
 `#[expect(lint, reason = "...")]` on the narrowest item or statement that covers it; `allow` is
 itself a warning, and an `expect` fails once its finding is gone. Views convert between egui's
@@ -169,6 +175,6 @@ API details of the pinned versions that older examples get wrong:
 - **git2 0.21** returns `Result` from many string getters (`Reference::name`, `Remote::url`;
   `StringArray` iteration yields `Result<Option<&str>>`); prefer the `*_bytes` variants.
 - **Inter**: the bundled files have their private-use code points removed so Phosphor icons
-  render; re-apply that when updating Inter (`crates/canopy-app/assets/fonts/README.md`).
+  render; re-apply that when updating Inter (`crates/nectura-ui/assets/fonts/README.md`).
 
 Update this section when one of these crates is upgraded.

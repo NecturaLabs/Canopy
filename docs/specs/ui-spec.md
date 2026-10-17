@@ -187,7 +187,7 @@ Scale 1x-2x is handled by egui's pixels_per_point. Use integer point sizes (frac
 
 ## Sources
 
-- `/home/user/Canopy/docs/design.md`, `/home/user/Canopy/crates/canopy-app/src/ui/theme.rs`, `/home/user/Canopy/crates/canopy-app/src/ui/widgets.rs` — the current tokens and widgets.
+- `/home/user/Canopy/docs/design.md`, `/home/user/Canopy/crates/nectura-ui/src/theme.rs`, `/home/user/Canopy/crates/canopy-app/src/ui/widgets.rs` — the current tokens and widgets.
 - `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/{style.rs,context.rs,animation_manager.rs,widgets/}` and `epaint-0.36.2/src/text/fonts.rs` — egui defaults, animation and repaint behaviour, no focus ring, no font features.
 - https://raw.githubusercontent.com/zed-industries/zed/main/crates/ui/src/components/button/button_like.rs — Zed button heights (read for numbers only; the repo is GPL).
 - https://raw.githubusercontent.com/zed-industries/zed/main/crates/ui/src/components/toggle.rs — Zed switch and checkbox dimensions and focus.

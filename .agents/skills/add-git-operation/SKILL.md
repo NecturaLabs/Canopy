@@ -46,7 +46,7 @@ Done when: the UI thread only sends the job; nothing in `views/` or `app/` calls
 - A shortcut only if the operation is frequent: add it to the table in
   `crates/canopy-app/src/keymap.rs` (`add-keybinding` skill); the cheatsheet and palette hints
   follow from it.
-- Use `egui-phosphor` icons and `ui/theme.rs` tokens; reuse `ui/widgets.rs` components.
+- Use `egui-phosphor` icons and `nectura-ui/src/theme.rs` tokens; reuse `ui/widgets.rs` components.
 - Disable or hide the action when it cannot apply (for example, no upstream, detached HEAD),
   with a tooltip saying why.
 

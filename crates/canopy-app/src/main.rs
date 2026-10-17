@@ -376,6 +376,7 @@ fn main() -> anyhow::Result<()> {
     validate_screenshot_launch(&launch, isolated).map_err(anyhow::Error::msg)?;
 
     // Normal detail until Settings load; their log setting takes over afterwards.
+    ui::install_host();
     logging::init(logging::LogLevel::Normal);
     canopy_hosting::set_build(build_info::NUMBER);
 

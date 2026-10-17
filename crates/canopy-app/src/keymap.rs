@@ -742,6 +742,12 @@ pub fn listed_here(binding: &Binding) -> bool {
             .any(|b| b.command == binding.command && b.section.is_bare())
 }
 
+impl From<Command> for nectura_ui::kit::Shortcut {
+    fn from(command: Command) -> Self {
+        Self::new(hint(command))
+    }
+}
+
 /// Consumes a key press that matches one of the chords the table lists for `command`, for a
 /// widget that handles the command itself (the table only lists it); true if there was one.
 pub fn consume(input: &mut egui::InputState, command: Command) -> bool {
