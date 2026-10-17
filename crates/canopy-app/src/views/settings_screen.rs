@@ -939,8 +939,12 @@ fn synonyms(title: &str) -> &'static str {
         "Trusted folders" => "trust trusted repository worktree partial clone security folder",
         "Trust safety" => "trust untrusted read-only hooks programs security safety off",
         "Send crash reports" => "crash sentry telemetry error report",
-        "Log detail" => "log logging debug verbose diagnostics",
-        "Logs and crash reports" => "log logs diagnostics folder copy",
+        "Log detail" => {
+            "log logging debug verbose trace normal detailed everything canopy_log rust_log environment"
+        }
+        "Logs and crash files" => {
+            "log logs crash crashes diagnostics folder copy clipboard bug report"
+        }
         "Privacy Policy" | "Terms of Service" => {
             "legal privacy terms document consent accepted agreement"
         }
@@ -1309,7 +1313,9 @@ fn git_setting_help(setting: Setting) -> &'static str {
         Setting::PullFastForward => {
             "With fast-forward only, Canopy asks Rebase or Merge when branches diverged."
         }
-        Setting::PullAutostash => "Stashes local changes before a pull and restores them after.",
+        Setting::PullAutostash => {
+            "Stashes local changes before a pull and restores them after. Git before 2.51 ignores it."
+        }
         Setting::FetchPrune => "Removes remote branches that were deleted on the remote.",
         Setting::FetchPruneTags => {
             "Deletes local tags the remote doesn't have, even unpushed ones."
@@ -1317,14 +1323,18 @@ fn git_setting_help(setting: Setting) -> &'static str {
         Setting::RebaseAutostash => {
             "Stashes local changes before a rebase and restores them after."
         }
-        Setting::MergeAutostash => "Stashes local changes before a merge and restores them after.",
+        Setting::MergeAutostash => {
+            "Stashes local changes before a merge, never a squash, and restores them after."
+        }
         Setting::PushFollowTags => "Pushes the annotated tags on the commits being pushed.",
-        Setting::SubmoduleRecurse => "Checkout, pull and switch also update submodules.",
+        Setting::SubmoduleRecurse => {
+            "Checkout, switch and pull also update submodules; a push also pushes the submodule commits it needs."
+        }
         Setting::PushDefault => "Simple pushes to the upstream branch only when the names match.",
         Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
         Setting::InitialBranch => "The branch a new repository starts on.",
         Setting::CommitCleanup => {
-            "Whitespace trims spaces and blank lines; Strip also removes lines starting with #."
+            "Default removes # lines from a message you edit. Whitespace keeps them, git's template included."
         }
         Setting::Autocrlf => "Converts CRLF to LF on commit; CRLF on checkout converts back.",
         Setting::CommitSigning => "Signs every commit with your configured key.",
@@ -1504,21 +1514,7 @@ const DECIDES: &str = "Your git configuration decides";
 /// `key = value (where it is set)`, for a note.
 fn config_phrase(v: &ConfigValue) -> String {
     let source = source_label(Some(&v.source()));
-    let setting = |key: &str| {
-        Setting::ALL
-            .into_iter()
-            .find(|s| s.key().eq_ignore_ascii_case(key))
-    };
-    // A remote's own fetch value, or a branch's own pull value, names the remote or branch.
-    let (setting, owner) = match v.key.split_once('.') {
-        Some(("remote", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
-            (setting(&format!("fetch.{var}")), Some(name))
-        }),
-        Some(("branch", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
-            (setting(&format!("pull.{var}")), Some(name))
-        }),
-        _ => (setting(&v.key), None),
-    };
+    let (setting, owner) = row_of(&v.key);
     let Some(setting) = setting else {
         return format!("{} in {source}", v.value);
     };
@@ -1532,30 +1528,52 @@ fn config_phrase(v: &ConfigValue) -> String {
     )
 }
 
-/// The settings behind a pull strategy, phrased as every other row's: [`config_phrase`].
-fn pull_phrase(config: &canopy_core::PullConfig) -> Option<String> {
+/// The row a configuration key belongs to, and the remote or branch whose own value it is: a
+/// remote's own fetch value, or a branch's own pull value, is its row's setting for that one.
+fn row_of(key: &str) -> (Option<Setting>, Option<&str>) {
+    let row = |key: &str| {
+        Setting::ALL
+            .into_iter()
+            .find(|s| s.key().eq_ignore_ascii_case(key))
+    };
+    match key.split_once('.') {
+        Some(("remote", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
+            (row(&format!("fetch.{var}")), Some(name))
+        }),
+        Some(("branch", rest)) => rest.rsplit_once('.').map_or((None, None), |(name, var)| {
+            (row(&format!("pull.{var}")), Some(name))
+        }),
+        _ => (row(key), None),
+    }
+}
+
+/// The settings behind a pull strategy as configuration values.
+fn pull_values(config: &canopy_core::PullConfig) -> Vec<ConfigValue> {
     use canopy_core::ConfigScope;
-    let phrases: Vec<String> = config
+    config
         .sources
         .iter()
-        .map(|s| {
-            config_phrase(&ConfigValue {
-                key: s.key.clone(),
-                value: s.value.clone(),
-                scope: match s.scope {
-                    ConfigScope::System => "system",
-                    ConfigScope::Global => "global",
-                    ConfigScope::Local => "local",
-                    ConfigScope::Worktree => "worktree",
-                    ConfigScope::Command => "command",
-                    ConfigScope::Other => "",
-                }
-                .to_owned(),
-                origin: s.origin.clone(),
-                file: s.file.clone(),
-            })
+        .map(|s| ConfigValue {
+            key: s.key.clone(),
+            value: s.value.clone(),
+            scope: match s.scope {
+                ConfigScope::System => "system",
+                ConfigScope::Global => "global",
+                ConfigScope::Local => "local",
+                ConfigScope::Worktree => "worktree",
+                ConfigScope::Command => "command",
+                ConfigScope::Other => "",
+            }
+            .to_owned(),
+            origin: s.origin.clone(),
+            file: s.file.clone(),
         })
-        .collect();
+        .collect()
+}
+
+/// The settings behind a pull strategy, phrased as every other row's: [`config_phrase`].
+fn pull_phrase(config: &canopy_core::PullConfig) -> Option<String> {
+    let phrases: Vec<String> = pull_values(config).iter().map(config_phrase).collect();
     (!phrases.is_empty()).then(|| and_list(&phrases))
 }
 
@@ -1660,6 +1678,10 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
     )
 }
 
+/// The Autostash row's help. A squash merge is left out: git would keep its stash unapplied and
+/// hidden, so `Repo::merge` never autostashes one, whatever Canopy's choice or git's key says.
+const AUTOSTASH_HELP: &str = "Sets uncommitted changes aside around a pull, rebase or merge (never a squash) and restores them after.";
+
 /// What git's configuration says about autostash: `rebase.autoStash` decides rebases and
 /// `merge.autoStash` merges, so with only one set Canopy's switch still decides the other kind.
 fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Note> {
@@ -1668,7 +1690,7 @@ fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Not
         &values,
         follow,
         |v| v.as_bool() == Some(autostash),
-        "pulls and rebases",
+        "pulls, rebases and merges",
     )?;
     if let (true, [only]) = (follow, values.as_slice()) {
         let rest = if only.key.eq_ignore_ascii_case("rebase.autoStash") {
@@ -3327,7 +3349,7 @@ fn git(
         row_with_note(
             ui,
             "Autostash",
-            "Sets uncommitted changes aside before a pull or rebase and restores them after.",
+            AUTOSTASH_HELP,
             f.and_then(|f| autostash_note(f, s.autostash, follow))
                 .as_ref(),
             |ui| {
@@ -5380,8 +5402,8 @@ fn privacy(
     row_more(
         ui,
         "Log detail",
-        "Detailed also records every git command and API call with its timing.",
-        "Turn Detailed on while you reproduce a problem. The CANOPY_LOG environment variable overrides this.",
+        "Normal records operations and problems; Detailed adds every git command and API call.",
+        "Normal: start-up, each operation and its outcome, warnings and errors.\nDetailed: also every git command, API call and repository job, with timings.\nEverything: also the libraries' own messages, which Canopy does not filter.\n\nCanopy never logs tokens, passwords or answers to prompts, and removes URL credentials and commit messages from the git commands it logs.\n\nThe CANOPY_LOG or RUST_LOG environment variable overrides this setting.",
         |ui| {
             revert(ui, &mut s.log_level, &DEFAULTS.log_level, "Log detail");
             let before = s.log_level;
@@ -5397,29 +5419,33 @@ fn privacy(
         },
     );
     row_end(ui);
-    row_more(
-        ui,
-        "Logs and crash reports",
-        "Kept on this computer, one log per run, and never uploaded.",
-        "Copy diagnostics puts your versions, this run's log file and its latest warnings on the clipboard, for a bug report.",
-        |ui| {
-            // Right to left.
-            if Button::new("Copy diagnostics")
-                .icon(icon::CLIPBOARD_TEXT)
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::CopyDiagnostics);
-            }
-            if Button::new("Open folder")
-                .icon(icon::FOLDER_OPEN)
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::OpenLogs);
-            }
-        },
+    let logs = format!(
+        "One log file per run on this computer; the newest {} are kept. Nothing is uploaded.",
+        crate::logging::KEEP_RUNS,
     );
+    let more = format!(
+        "Open folder opens the logs folder. Each log stops at {} MB.\n\nCrash files are written when Canopy crashes, whether or not you send reports. They are in the crashes folder beside it, the newest {} kept. Send crash reports above is a separate, opt-in upload.\n\nCopy diagnostics puts this on the clipboard and sends nothing: the Canopy, Git and system versions, the run id, the log file's path, your log detail, theme, contrast and translucency settings, the number of open repositories, your crash-report answer and the last {} warnings and errors, with your home folder shown as ~.",
+        crate::logging::MAX_RUN_BYTES / (1024 * 1024),
+        crate::logging::KEEP_CRASHES,
+        crate::logging::RECENT,
+    );
+    row_more(ui, "Logs and crash files", &logs, &more, |ui| {
+        // Right to left.
+        if Button::new("Copy diagnostics")
+            .icon(icon::CLIPBOARD_TEXT)
+            .show(ui)
+            .clicked()
+        {
+            actions.push(Action::CopyDiagnostics);
+        }
+        if Button::new("Open folder")
+            .icon(icon::FOLDER_OPEN)
+            .show(ui)
+            .clicked()
+        {
+            actions.push(Action::OpenLogs);
+        }
+    });
     row_end(ui);
     open_accounts
 }
@@ -5852,25 +5878,20 @@ pub(crate) fn against_recommendation(
         |v| v.as_bool() == Some(settings.follow_tags),
         "pushes",
     );
-    // The pull recommendation is the one the editor marks and Use recommended writes.
-    let pull_recommended = lowercase_label(&git_value_label(
-        Setting::PullFastForward,
-        Setting::PullFastForward.recommendation_for(facts.git),
-    ));
-    let mut lines: Vec<String> = [
+    // A pull setting is judged against its own row's recommendation, as the editor marks it.
+    let mut lines: Vec<String> = facts
+        .pull
+        .iter()
+        .filter(|_| pull.follow_config)
+        .flat_map(pull_values)
+        .filter_map(|value| {
+            let (row, _) = row_of(&value.key);
+            against_line(row?, &value, facts.git)
+        })
+        .collect();
+    for (setting, note) in [
         (
-            "Pull",
-            pull_note(facts, pull).filter(|_| {
-                pull.follow_config
-                    && facts
-                        .pull
-                        .as_ref()
-                        .and_then(|p| p.strategy)
-                        .is_some_and(|s| s != canopy_core::PullStrategy::FastForwardOnly)
-            }),
-        ),
-        (
-            "Prune",
+            Setting::FetchPrune,
             prune_note(facts, settings.prune_on_fetch, follow).filter(|_| {
                 fetch_values(
                     facts,
@@ -5883,7 +5904,7 @@ pub(crate) fn against_recommendation(
             }),
         ),
         (
-            "Prune tags",
+            Setting::FetchPruneTags,
             prune_tags_note(facts, settings.prune_tags, follow).filter(|_| {
                 let (fetch, remote): (Vec<ConfigValue>, Vec<ConfigValue>) = facts
                     .prune_tags
@@ -5896,12 +5917,12 @@ pub(crate) fn against_recommendation(
             }),
         ),
         (
-            "Autostash",
+            Setting::PullAutostash,
             autostash_note(facts, settings.autostash, follow)
                 .filter(|_| facts.autostash.iter().any(|v| v.as_bool() != Some(true))),
         ),
         (
-            "Push tags",
+            Setting::PushFollowTags,
             follow_tags.filter(|_| {
                 facts
                     .follow_tags
@@ -5909,23 +5930,19 @@ pub(crate) fn against_recommendation(
                     .is_some_and(|v| v.as_bool() != Some(true))
             }),
         ),
-    ]
-    .into_iter()
-    .filter_map(|(name, note)| {
-        note.map(|n| {
-            let text = n.text.trim_start_matches(DECIDES).trim_start_matches(": ");
-            format!(
+    ] {
+        if let Some(note) = note {
+            let text = note
+                .text
+                .trim_start_matches(DECIDES)
+                .trim_start_matches(": ");
+            lines.push(format!(
                 "{} Recommended: {}.",
                 upper_first(text),
-                match name {
-                    "Pull" => pull_recommended.as_str(),
-                    "Prune tags" => "off",
-                    _ => "on",
-                }
-            )
-        })
-    })
-    .collect();
+                recommended_label(setting, facts.git)
+            ));
+        }
+    }
     for (setting, value) in [
         (Setting::PushDefault, facts.push_default.as_ref()),
         (Setting::ConflictStyle, facts.conflict_style.as_ref()),
@@ -5933,18 +5950,50 @@ pub(crate) fn against_recommendation(
         (Setting::InitialBranch, facts.initial_branch.as_ref()),
         (Setting::SubmoduleRecurse, facts.submodule_recurse.as_ref()),
     ] {
-        let recommended = setting.recommendation_for(facts.git);
-        if let Some(value) = value
-            && value.value != recommended
-        {
-            lines.push(format!(
-                "{}. Recommended: {}.",
-                upper_first(&config_phrase(value)),
-                git_value_label(setting, recommended)
-            ));
-        }
+        lines.extend(value.and_then(|value| against_line(setting, value, facts.git)));
     }
     lines
+}
+
+/// The recommendation for `setting`, named as its row's list names it.
+fn recommended_label(setting: Setting, git: Option<(u32, u32)>) -> String {
+    git_value_label(setting, setting.recommendation_for(git))
+}
+
+/// What `value` says against `setting`'s recommendation, in the words of the editor's row:
+/// where it is set, then what Canopy recommends for that same row. `None` when it is the
+/// recommendation.
+fn against_line(setting: Setting, value: &ConfigValue, git: Option<(u32, u32)>) -> Option<String> {
+    let recommended = setting.recommendation_for(git);
+    let is_recommended = match recommended {
+        "true" | "false" => value.as_bool() == Some(recommended == "true"),
+        _ => value.value == recommended,
+    };
+    (!is_recommended).then(|| {
+        format!(
+            "{}. Recommended: {}.",
+            upper_first(&config_phrase(value)),
+            recommended_label(setting, git)
+        )
+    })
+}
+
+/// How many findings the notice lists in full; more are cut to the first few and a count.
+const NOTICE_FINDINGS: usize = 4;
+
+/// The notice's text from the findings of [`against_recommendation`]: one paragraph each, so
+/// the card reads as a list, and past [`NOTICE_FINDINGS`] the first few and how many more
+/// the settings screen shows.
+pub(crate) fn notice_body(findings: &[String]) -> String {
+    let mut paragraphs = findings.to_vec();
+    if findings.len() > NOTICE_FINDINGS {
+        paragraphs.truncate(NOTICE_FINDINGS - 1);
+        paragraphs.push(format!(
+            "And {} more.",
+            findings.len() - (NOTICE_FINDINGS - 1)
+        ));
+    }
+    paragraphs.join("\n\n")
 }
 
 #[cfg(test)]
@@ -7461,6 +7510,23 @@ mod tests {
         assert_eq!(found("qqqzzz", &mut settings).total(), 0);
     }
 
+    /// #229: the Diagnostics rows are found by the words their new copy and synonyms use.
+    #[test]
+    fn a_search_finds_the_diagnostics_rows_by_their_words() {
+        let mut settings = Settings::default();
+        for (query, rows) in [
+            ("RUST_LOG", 1),
+            ("everything libraries", 1),
+            ("crashes folder", 1),
+            ("clipboard", 1),
+            ("log detail", 2),
+            ("crash files", 1),
+        ] {
+            let found = draw_screen(SettingsScreen::searching(query), &mut settings).search;
+            assert_eq!(found.count(Section::Privacy), rows, "{query}: {found:?}");
+        }
+    }
+
     #[test]
     fn escape_clears_a_search_before_it_closes_settings() {
         let mut screen = SettingsScreen::searching("zoom");
@@ -7883,15 +7949,15 @@ mod tests {
             .filter(|mode| crate::views::dialogs::diverged_label(*mode).contains("(recommended)"))
             .collect::<Vec<_>>();
         assert_eq!(marked, [PullMode::RECOMMENDED_WHEN_DIVERGED]);
-        // The notification center flags every strategy but the recommended one, and names it
-        // as the editor does.
-        let pulls_with = |strategy| {
+        // The notification center judges each pull setting against its own row's recommendation,
+        // named as that row's list names it.
+        let pulls_with = |strategy, key: &str, value: &str| {
             let facts = GitFacts {
                 pull: Some(canopy_core::PullConfig {
                     strategy: Some(strategy),
                     sources: vec![canopy_core::ConfigSource {
-                        key: "pull.rebase".into(),
-                        value: (strategy == PullStrategy::Rebase).to_string(),
+                        key: key.into(),
+                        value: value.into(),
                         scope: canopy_core::ConfigScope::Global,
                         origin: "file:/home/me/.gitconfig".into(),
                         file: None,
@@ -7903,17 +7969,45 @@ mod tests {
             };
             against_recommendation(&facts, &Settings::default(), Path::new("fixture"))
         };
-        assert_eq!(
-            pulls_with(PullStrategy::FastForwardOnly),
-            Vec::<String>::new()
-        );
-        for strategy in [PullStrategy::Merge, PullStrategy::Rebase] {
-            let lines = pulls_with(strategy);
+        for (strategy, key, value) in [
+            (PullStrategy::FastForwardOnly, "pull.ff", "only"),
+            (PullStrategy::Merge, "pull.rebase", "false"),
+            (PullStrategy::Merge, "pull.rebase", "no"),
+        ] {
+            assert_eq!(
+                pulls_with(strategy, key, value),
+                Vec::<String>::new(),
+                "{key}={value} is the recommendation for its row"
+            );
+        }
+        // The path in a line depends on the home folder, so only its ends are compared.
+        for (strategy, key, value, start, end) in [
+            (
+                PullStrategy::Rebase,
+                "pull.rebase",
+                "true",
+                "Rebase when pulling set to rebase in your global git config",
+                "Recommended: Don't rebase.",
+            ),
+            (
+                PullStrategy::Rebase,
+                "branch.main.rebase",
+                "true",
+                "Rebase when pulling for main set to rebase in your global git config",
+                "Recommended: Don't rebase.",
+            ),
+            (
+                PullStrategy::Merge,
+                "pull.ff",
+                "true",
+                "Fast-forward when pulling set to allow fast-forward in your global git config",
+                "Recommended: Fast-forward only.",
+            ),
+        ] {
+            let lines = pulls_with(strategy, key, value);
             assert!(
-                lines
-                    .iter()
-                    .any(|line| line.ends_with("Recommended: fast-forward only.")),
-                "{strategy:?}: {lines:?}"
+                matches!(lines.as_slice(), [line] if line.starts_with(start) && line.ends_with(end)),
+                "{key}={value}: {lines:?}"
             );
         }
     }
@@ -8831,6 +8925,116 @@ mod tests {
         }
     }
 
+    /// A boolean written another way is still the recommendation, and the card names the
+    /// recommendation as the editor's list does (On, Off, Default), the same word everywhere.
+    #[test]
+    fn a_finding_names_the_recommendation_as_the_list_does() {
+        let spelled = GitFacts {
+            submodule_recurse: Some(fact("submodule.recurse", "yes")),
+            git: Some((2, 55)),
+            ..GitFacts::default()
+        };
+        assert_eq!(
+            against_recommendation(&spelled, &Settings::default(), Path::new("fixture")),
+            Vec::<String>::new(),
+            "yes is true"
+        );
+        let facts = GitFacts {
+            fetch_prune: Some(fact("fetch.prune", "false")),
+            cleanup: Some(fact("commit.cleanup", "whitespace")),
+            submodule_recurse: Some(fact("submodule.recurse", "no")),
+            git: Some((2, 55)),
+            ..GitFacts::default()
+        };
+        let lines = against_recommendation(&facts, &Settings::default(), Path::new("fixture"));
+        for (row, name) in [
+            ("Prune remote branches", "On"),
+            ("Commit message cleanup", "Default"),
+            ("Update submodules", "On"),
+        ] {
+            assert!(
+                lines
+                    .iter()
+                    .any(|l| l.starts_with(row) && l.ends_with(&format!("Recommended: {name}."))),
+                "{row}: {lines:?}"
+            );
+        }
+    }
+
+    /// Git before 2.51 does not read `pull.autoStash`: once the facts are read, neither the
+    /// Settings row's note nor the notice says the configuration decides by it; the keys git does
+    /// read still are.
+    #[test]
+    fn a_pull_autostash_value_is_reported_only_where_git_reads_it() {
+        let read = |git, keys: &[&str]| {
+            let mut facts = GitFacts {
+                autostash: keys.iter().map(|k| fact(k, "false")).collect(),
+                git,
+                ..GitFacts::default()
+            };
+            facts.forget_ignored();
+            facts
+        };
+        let notice = |facts: &GitFacts| {
+            against_recommendation(facts, &Settings::default(), Path::new("fixture"))
+        };
+        for git in [Some((2, 50)), None] {
+            let facts = read(git, &["pull.autoStash"]);
+            assert!(autostash_note(&facts, true, true).is_none(), "{git:?}");
+            assert_eq!(notice(&facts), Vec::<String>::new(), "{git:?}");
+        }
+        for git in [Some((2, 51)), Some((2, 55))] {
+            let facts = read(git, &["pull.autoStash"]);
+            assert!(autostash_note(&facts, true, true).is_some(), "{git:?}");
+            assert_eq!(notice(&facts).len(), 1, "{git:?}");
+        }
+        let old = read(Some((2, 50)), &["pull.autoStash", "merge.autoStash"]);
+        let note = autostash_note(&old, true, true).expect("a note").text;
+        assert!(
+            note.contains("Autostash before merge") && !note.contains("Autostash for all pulls"),
+            "{note}"
+        );
+        let lines = notice(&old);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(!lines[0].contains("Autostash for all pulls"), "{lines:?}");
+    }
+
+    /// The Autostash row says a squash merge is never stashed, and, with Canopy's own choice
+    /// applying, that its merges use that choice instead of the configuration.
+    #[test]
+    fn the_autostash_row_says_a_squash_never_autostashes() {
+        assert!(
+            AUTOSTASH_HELP.contains("never a squash"),
+            "{AUTOSTASH_HELP}"
+        );
+        let facts = GitFacts {
+            autostash: vec![fact("merge.autoStash", "true")],
+            git: Some((2, 55)),
+            ..GitFacts::default()
+        };
+        let note = autostash_note(&facts, false, false).expect("a note").text;
+        assert!(
+            note.contains("Canopy's pulls, rebases and merges"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn the_notice_lists_findings_as_paragraphs_and_counts_the_rest() {
+        let findings = |n: usize| (1..=n).map(|i| format!("Finding {i}.")).collect::<Vec<_>>();
+        assert_eq!(notice_body(&findings(1)), "Finding 1.");
+        assert_eq!(
+            notice_body(&findings(4)),
+            "Finding 1.\n\nFinding 2.\n\nFinding 3.\n\nFinding 4.",
+            "four fit"
+        );
+        assert_eq!(
+            notice_body(&findings(6)),
+            "Finding 1.\n\nFinding 2.\n\nFinding 3.\n\nAnd 3 more.",
+            "more than four: the first three and the count of the rest"
+        );
+    }
+
     /// #42: the notification center lists what the git configuration decides against the
     /// recommendation, only while Canopy follows it.
     #[test]
@@ -9141,16 +9345,26 @@ mod tests {
     /// too long for its row.
     #[test]
     fn help_fits_on_one_line() {
+        let mut autostash_drawn = false;
         let mut wrapped = Vec::new();
         // With a repository open, so This repository is drawn too.
         let repo = Some(Path::new("/work/canopy"));
-        for section in Section::ALL.into_iter().chain([Section::Repository]) {
+        // With Canopy following git's configuration or choosing for itself: the rows differ.
+        for (follow, section) in [true, false].into_iter().flat_map(|follow| {
+            Section::ALL
+                .into_iter()
+                .chain([Section::Repository])
+                .map(move |section| (follow, section))
+        }) {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
             ctx.enable_accesskit();
             theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
             let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 6000.0));
-            let mut settings = Settings::default();
+            let mut settings = Settings {
+                follow_git_config: follow,
+                ..Settings::default()
+            };
             let mut tokens = TokenStore::default();
             let mut screen = SettingsScreen::at(section);
             screen.facts.global.asked = true;
@@ -9200,12 +9414,19 @@ mod tests {
                 let (Some(text), Some(rect)) = (node.value(), node.bounds()) else {
                     continue;
                 };
+                // Canopy's own choices (follow off) are checked for the Autostash row only: the
+                // conflict markers row there wraps already (filed apart from this change).
+                if !follow && !text.starts_with(AUTOSTASH_HELP) {
+                    continue;
+                }
+                autostash_drawn |= text.starts_with(AUTOSTASH_HELP);
                 if node.role() == egui::accesskit::Role::Label && rect.y1 - rect.y0 > two_lines {
-                    wrapped.push(format!("{section:?}: {text}"));
+                    wrapped.push(format!("{section:?} (follow {follow}): {text}"));
                 }
             }
         }
         assert!(wrapped.is_empty(), "{wrapped:#?}");
+        assert!(autostash_drawn, "the Autostash row was not drawn");
     }
 
     /// While this repository's git configuration decides its pulls or pruning, Canopy's own

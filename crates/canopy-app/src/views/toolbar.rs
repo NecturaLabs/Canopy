@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use canopy_core::RemoteInfo;
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{RequestState, RequestSummary, StateFilter};
 use egui::{
@@ -310,7 +311,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     tab.view,
                     changes,
                     forge.map_or_else(
-                        || Err(snap.map_or(0, |s| s.remotes.len())),
+                        || Err(snap.map(|s| s.remotes.as_slice())),
                         |(_, f)| Ok((f.kind, open_requests)),
                     ),
                     narrow_window || squeezed,
@@ -603,13 +604,13 @@ fn tool_fade<R>(ui: &Ui, bar: &egui::scroll_area::ScrollAreaOutput<R>, ground: t
 
 /// The History / Changes / Requests switcher (design spec 4.8 ViewTabs): the kit's view tabs with
 /// counts on the strong badge, each view's shortcut in its tooltip, Requests off (saying why)
-/// without a GitHub or GitLab remote (`Err` holds how many remotes the repository has), and when
-/// `compact` only the active view named.
+/// without a GitHub or GitLab remote (`Err` holds the repository's remotes, `None` until they are
+/// loaded), and when `compact` only the active view named.
 fn view_tabs(
     ui: &mut Ui,
     view: View,
     changes: usize,
-    requests: Result<(ForgeKind, usize), usize>,
+    requests: Result<(ForgeKind, usize), Option<&[RemoteInfo]>>,
     compact: bool,
     actions: &mut Vec<Action>,
 ) {
@@ -649,14 +650,33 @@ fn view_tabs(
     }
 }
 
-/// Why Requests is off in a repository with `remotes` remotes, none of them on GitHub or GitLab.
-fn requests_reason(remotes: usize) -> String {
-    let which = match remotes {
-        0 => "This repository has no remote.",
-        1 => "Its remote is not a GitHub or GitLab address.",
-        _ => "None of its remotes is a GitHub or GitLab address.",
-    };
-    format!("Pull and merge requests need a GitHub or GitLab remote. {which}")
+/// Why Requests is off: the repository's `remotes` (`None` before they are loaded) include no
+/// GitHub or GitLab remote.
+fn requests_reason(remotes: Option<&[RemoteInfo]>) -> String {
+    const SELF_HOSTED: &str = "For a self-hosted GitLab, list its host in Settings → Integrations.";
+    match remotes {
+        None => "Loading the repository's remotes.".into(),
+        Some([]) => {
+            "No remote. Add a GitHub or GitLab remote to use pull and merge requests.".into()
+        }
+        Some([only]) => format!(
+            "Remote {} is not on GitHub or GitLab. {SELF_HOSTED}",
+            only.name
+        ),
+        Some(several) => {
+            let (shown, hidden) = several.split_at(several.len().min(3));
+            let mut names: Vec<&str> = shown.iter().map(|r| r.name.as_str()).collect();
+            let more = format!("{} more", hidden.len());
+            if !hidden.is_empty() {
+                names.push(&more);
+            }
+            let last = names.pop().unwrap_or_default();
+            format!(
+                "Remotes {} and {last} are not on GitHub or GitLab. {SELF_HOSTED}",
+                names.join(", ")
+            )
+        }
+    }
 }
 
 /// The view switcher's id salt.
@@ -987,7 +1007,7 @@ mod tests {
         let mut nodes = Vec::new();
         for _ in 0..2 {
             nodes = frame(&ctx, Vec::new(), |ui| {
-                view_tabs(ui, View::History, 0, Err(0), false, &mut actions);
+                view_tabs(ui, View::History, 0, Err(Some(&[])), false, &mut actions);
             })
             .1;
         }
@@ -995,20 +1015,51 @@ mod tests {
         assert!(requests.is_disabled(), "Requests is spoken as unavailable");
         let at = node_rect(requests).center();
         let _ = frame(&ctx, click(at), |ui| {
-            view_tabs(ui, View::History, 0, Err(0), false, &mut actions);
+            view_tabs(ui, View::History, 0, Err(Some(&[])), false, &mut actions);
         });
         assert!(actions.is_empty(), "{actions:?}");
     }
 
-    /// #218: Requests says why it is off, and names what is missing: no remote, or remotes that
-    /// are not GitHub or GitLab.
+    fn remote(name: &str) -> RemoteInfo {
+        RemoteInfo {
+            name: name.into(),
+            url: Some(format!("https://example.com/{name}.git")),
+            default_branch: None,
+        }
+    }
+
+    /// #218, #222: Requests says once what is missing and what to do, naming the remotes it looked
+    /// at, and does not claim there is no remote before they are loaded.
     #[test]
     fn a_disabled_requests_tab_says_what_is_missing() {
         let ctx = context();
+        let hint = "list its host in Settings → Integrations.";
+        let four = ["origin", "upstream", "fork", "backup"].map(remote);
         for (remotes, says) in [
-            (0, "no remote"),
-            (1, "Its remote"),
-            (3, "None of its remotes"),
+            (None, "Loading the repository's remotes.".to_owned()),
+            (
+                Some(&[][..]),
+                "No remote. Add a GitHub or GitLab remote to use pull and merge requests."
+                    .to_owned(),
+            ),
+            (
+                Some(&four[..1]),
+                format!(
+                    "Remote origin is not on GitHub or GitLab. For a self-hosted GitLab, {hint}"
+                ),
+            ),
+            (
+                Some(&four[..2]),
+                format!(
+                    "Remotes origin and upstream are not on GitHub or GitLab. For a self-hosted GitLab, {hint}"
+                ),
+            ),
+            (
+                Some(&four[..]),
+                format!(
+                    "Remotes origin, upstream, fork and 1 more are not on GitHub or GitLab. For a self-hosted GitLab, {hint}"
+                ),
+            ),
         ] {
             let mut nodes = Vec::new();
             for _ in 0..2 {
@@ -1020,11 +1071,7 @@ mod tests {
             let why = node(&nodes, Role::RadioButton, "Pull requests")
                 .description()
                 .unwrap_or_default();
-            assert!(
-                why.starts_with("Pull and merge requests need a GitHub or GitLab remote.")
-                    && why.contains(says),
-                "{remotes} remotes: {why}"
-            );
+            assert_eq!(why, says, "{remotes:?}");
         }
     }
 
@@ -1035,13 +1082,13 @@ mod tests {
         let mut nodes = Vec::new();
         for _ in 0..2 {
             nodes = frame(&ctx, Vec::new(), |ui| {
-                view_tabs(ui, View::History, 4, Err(0), false, &mut actions);
+                view_tabs(ui, View::History, 4, Err(Some(&[])), false, &mut actions);
             })
             .1;
         }
         let at = node_rect(node(&nodes, Role::RadioButton, "Changes")).center();
         let _ = frame(&ctx, click(at), |ui| {
-            view_tabs(ui, View::History, 4, Err(0), false, &mut actions);
+            view_tabs(ui, View::History, 4, Err(Some(&[])), false, &mut actions);
         });
         assert!(
             matches!(actions.as_slice(), [Action::SetView(View::Changes)]),
@@ -1553,7 +1600,7 @@ mod tests {
         set_tooltip_level(TooltipLevel::Helpful);
         let mut tab = repo_tab("alpha");
         tab.snap = Some(Arc::new(canopy_core::RepoSnapshot {
-            remotes: vec![canopy_core::RemoteInfo {
+            remotes: vec![RemoteInfo {
                 name: "origin".into(),
                 url: Some("https://example.com/a.git".into()),
                 default_branch: None,

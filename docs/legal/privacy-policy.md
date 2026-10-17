@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 13 October 2026
+Last updated: 14 October 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -126,7 +126,7 @@ Canopy keeps its data in one folder: ~/.local/share/canopy on Linux (or canopy i
 - logs: one log file for each time Canopy runs. A log records what Canopy did and when, and can contain file paths, branch names, server names, the Git commands Canopy ran (without passwords, tokens or commit messages) and Git's error messages. The ten newest are kept, and each stops growing at 20 MB. Log detail in the Privacy section of Settings controls how much is recorded.
 - crashes: a text file for each crash, written whether or not you send crash reports. The ten newest are kept.
 
-These files never leave your computer unless you send them yourself. Before you send us a log or crash file, read it: it can contain file paths and branch names. To open the logs folder, choose Open log folder in the command palette or Open folder in the Privacy section of Settings. Copy diagnostics in the same section copies your Canopy, Git and operating system versions, the name of the current log file and its latest warnings, so you can paste them into a bug report. You can delete the data folder at any time. Canopy then starts as if newly installed and asks the start-up questions again.
+These files never leave your computer unless you send them yourself. Before you send us a log or crash file, read it: it can contain file paths and branch names. To open the logs folder, choose Open log folder in the command palette or Open folder in the Privacy section of Settings. Copy diagnostics in the same section puts this on the clipboard, so you can paste it into a bug report, and sends nothing: your Canopy, Git and operating system versions, the run's id, the full path of the current log file, your log detail, theme, contrast and translucency settings, the number of repositories open, your answer about crash reports and the latest 50 warnings and errors, with your home folder shown as ~ and tokens, passwords and email addresses removed. You can delete the data folder at any time. Canopy then starts as if newly installed and asks the start-up questions again.
 
 ## Your rights
 

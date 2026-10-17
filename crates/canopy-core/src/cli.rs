@@ -77,6 +77,10 @@ pub fn command(workdir: Option<&Path>) -> Command {
 /// The git versions, as `(major, minor)`, that brought what Canopy asks of them.
 pub(crate) const ZDIFF3_SINCE: (u32, u32) = (2, 35);
 pub(crate) const MERGE_AUTOSTASH_SINCE: (u32, u32) = (2, 27);
+/// `git pull` reads `pull.autoStash`; older git ignores it (git 2.51 release notes).
+pub(crate) const PULL_AUTOSTASH_SINCE: (u32, u32) = (2, 51);
+/// `gpg.format = ssh` (git 2.34 release notes).
+pub(crate) const SSH_SIGNING_SINCE: (u32, u32) = (2, 34);
 pub(crate) const INITIAL_BRANCH_SINCE: (u32, u32) = (2, 28);
 pub(crate) const MERGE_TREE_WRITE_TREE_SINCE: (u32, u32) = (2, 38);
 /// Git's exit status for a fatal error.

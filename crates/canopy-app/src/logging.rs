@@ -36,7 +36,7 @@ pub const MAX_RUN_BYTES: u64 = 20 * 1024 * 1024;
 /// Crash reports kept; older ones are deleted at start-up.
 pub const KEEP_CRASHES: usize = 10;
 /// Warnings and errors remembered for diagnostics.
-const RECENT: usize = 50;
+pub const RECENT: usize = 50;
 
 /// How much the log records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
