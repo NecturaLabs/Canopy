@@ -39,7 +39,7 @@ same-file = "1"
 
 [workspace.lints.rust]
 # Denied, not forbidden, so the one owner-approved module can allow it: the backdrop blur's OpenGL
-# calls in crates/canopy-app/src/ui/kit/glass/gl.rs. crates/canopy-app/tests/unsafe_policy.rs fails
+# calls in crates/nectura-ui/src/kit/glass/gl.rs. crates/canopy-app/tests/unsafe_policy.rs fails
 # when unsafe code or an allow for it appears anywhere else.
 unsafe_code = "deny"
 rust_2018_idioms = { level = "warn", priority = -1 }

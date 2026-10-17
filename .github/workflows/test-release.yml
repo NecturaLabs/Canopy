@@ -8,6 +8,10 @@ on:
         description: Full commit SHA to test
         required: true
         type: string
+    secrets:
+      SUBMODULE_DEPLOY_KEY:
+        description: The read-only deploy key of NecturaLabs/nectura-ui, which the build fetches as a submodule
+        required: true
 
 permissions: {}
 

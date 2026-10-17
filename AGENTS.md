@@ -1,7 +1,7 @@
 # Canopy
 
 A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written in Rust (edition
-2024, MSRV 1.91). Three crates and one submodule: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
+2024, MSRV 1.91). Three crates and the component library, a submodule that is also a workspace member: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
 `git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
 `crates/canopy-hosting`, the GitHub/GitLab API client (REST, plus one GraphQL query for the
 request list; `ureq`, rustls); `crates/canopy-app`, the GUI (`eframe`/`egui` 0.36, glow), binary
@@ -74,9 +74,11 @@ only; a file name only ever as a whole argument); settings import and export (`s
 a file never sets consent, trust, the programs Canopy runs or the hosts a token goes to);
 installed-app discovery (`system_apps.rs`); git configuration reading (`repo_config.rs`); log
 redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; `nectura-ui/src/kit/glass/gl.rs` (the only
-`unsafe` code); the update feed; `Cargo.toml`, `Cargo.lock`, `deny.toml`; `.github/`
-(self-hosted runners run code). A change there gets a security pass (`/security-review`) before
-the general review. Ask the owner before storing a token anywhere new, contacting a new host or
+`unsafe` code); the update feed; `Cargo.toml`, `Cargo.lock`, `deny.toml`; `.gitmodules` and the `crates/nectura-ui`
+pointer; `.github/` (self-hosted runners run code; `.github/actions/fetch-ui` handles the library's
+deploy key). A change there gets a security pass (`/security-review`) before the general review. A
+pointer bump shows only a hash, so review it as the library's own diff (`git -C crates/nectura-ui
+diff <old>..<new>`), and a change to the library's `gl.rs` gets the security pass too. Ask the owner before storing a token anywhere new, contacting a new host or
 adding a dependency.
 
 ## Commands

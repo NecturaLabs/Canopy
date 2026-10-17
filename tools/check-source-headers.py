@@ -50,7 +50,11 @@ def check() -> int:
     ).stdout.decode("utf-8").split("\0")
     # crates/nectura-ui is a submodule: git ls-files lists only its link, not its files.
     library = ROOT / "crates" / "nectura-ui"
-    files += [p.relative_to(ROOT).as_posix() for p in library.rglob("*.rs") if "target" not in p.parts]
+    library_files = [p.relative_to(ROOT).as_posix() for p in library.rglob("*.rs") if "target" not in p.parts]
+    if not library_files:
+        print("check-source-headers: no Rust files under crates/nectura-ui: run `git submodule update --init`")
+        return 1
+    files += library_files
     missing = [
         name for name in sorted(set(files))
         if is_source(name)

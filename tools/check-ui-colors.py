@@ -114,9 +114,16 @@ def check() -> int:
         cwd=ROOT, check=True, stdout=subprocess.PIPE,
     ).stdout
     names = set(out.decode("utf-8").split("\0"))
-    names |= {
-        path.relative_to(ROOT).as_posix() for path in (ROOT / LIBRARY).rglob("*.rs")
+    # crates/nectura-ui is a submodule: git ls-files lists only its link, not its files.
+    library = {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / LIBRARY).rglob("*.rs")
+        if "target" not in path.parts
     }
+    if not library:
+        print(f"check-ui-colors: no Rust files under {LIBRARY}: run `git submodule update --init`")
+        return 1
+    names |= library
     failed = False
     for name in sorted(names):
         path = ROOT / name

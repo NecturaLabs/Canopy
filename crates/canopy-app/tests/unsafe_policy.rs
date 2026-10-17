@@ -514,14 +514,26 @@ fn the_workspace_denies_unsafe_code() {
             .unwrap_or_default();
         // A crate inherits the workspace lints, or (the shared component library, which other
         // workspaces use too) carries the same unsafe-related ones in its own manifest.
-        let own = [
-            "unsafe_code = \"deny\"",
-            "undocumented_unsafe_blocks = \"deny\"",
-            "multiple_unsafe_ops_per_block = \"deny\"",
-            "unnecessary_safety_comment = \"warn\"",
-        ]
-        .iter()
-        .all(|lint| manifest.contains(lint));
+        let lint_lines = |name: &str| {
+            manifest
+                .split(&format!("[lints.{name}]"))
+                .nth(1)
+                .and_then(|rest| rest.split("\n[").next())
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| !line.trim_start().starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let (rust, clippy) = (lint_lines("rust"), lint_lines("clippy"));
+        let own = rust.contains("unsafe_code = \"deny\"")
+            && [
+                "undocumented_unsafe_blocks = \"deny\"",
+                "multiple_unsafe_ops_per_block = \"deny\"",
+                "unnecessary_safety_comment = \"warn\"",
+            ]
+            .iter()
+            .all(|lint| clippy.contains(lint));
         assert!(
             lints.contains("workspace = true") || own,
             "{} neither inherits the workspace lints nor denies unsafe code itself",

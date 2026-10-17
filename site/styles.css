@@ -1,5 +1,5 @@
 /* Canopy's site. A near-black ground, a white call to action, and the app's own indigo accent and
-   success green from Midnight and Daylight (crates/canopy-app/src/ui/theme.rs); Inter Display for
+   success green from Midnight and Daylight (crates/nectura-ui/src/theme.rs); Inter Display for
    headings, Inter for text and JetBrains Mono for keys, commands and paths. */
 
 @font-face { font-family: "Inter Display"; src: url("fonts/InterDisplay-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
@@ -41,7 +41,7 @@
   --selected: rgb(124 134 255 / 0.18);
   --selection: rgb(124 134 255 / 0.35);
   --scrollbar: #2C2D33;
-  /* The graph's lane colours, Midnight's (ui/theme.rs) */
+  /* The graph's lane colours, Midnight's (nectura-ui/src/theme.rs) */
   --lane-1: #7C86FF;
   --lane-2: #4CC38A;
   --lane-3: #E5739F;
