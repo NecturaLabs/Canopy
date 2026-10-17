@@ -499,7 +499,7 @@ pub struct Settings {
     /// Hint, under the commit message fields, when a subject or body line is longer
     /// than most tools show. Never blocks a commit or changes the draft.
     pub check_message: bool,
-    /// Pull and rebase over uncommitted changes, stashing them around it (`--autostash`).
+    /// Pull, rebase and merge over uncommitted changes, stashing them around it (`--autostash`).
     pub autostash: bool,
     /// A push also sends the annotated tags on the commits it pushes (`--follow-tags`).
     pub follow_tags: bool,

@@ -559,13 +559,17 @@ pub enum Event {
         result: Result<String, String>,
     },
     Failed(String),
-    /// A pull or rebase finished, but putting the uncommitted changes back (autostash) left
+    /// A pull, rebase or merge finished, but putting the uncommitted changes back (autostash) left
     /// conflicts to resolve.
     AutostashConflict,
     /// A pull waits for the user: the branches diverged, or it would likely conflict.
     PullDecision(Box<PullDecision>),
-    /// The operation `label` (a pull or a rebase) stopped on conflicts for the user to resolve.
-    Conflicted(String),
+    /// The operation `label` (a pull, rebase or merge) stopped on conflicts for the user to
+    /// resolve; `autostashed` when git holds the uncommitted changes aside meanwhile.
+    Conflicted {
+        label: String,
+        autostashed: bool,
+    },
 }
 
 /// What a pull asks before it runs ([`Op::Pull`]).
@@ -1281,7 +1285,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         })));
                     } else if stopped {
                         // Not a failure: the conflicts are the user's to resolve.
-                        emit(Event::Conflicted(label));
+                        emit(Event::Conflicted {
+                            autostashed: repo.autostash_held(),
+                            label,
+                        });
                     } else {
                         // Frequent and quiet, unless it left folders out.
                         let announce =
@@ -2932,6 +2939,7 @@ mod read_tests {
             git(&repo, &["config", k, v]);
         }
         std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        std::fs::write(repo.join("d.txt"), "d\n").expect("write");
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-q", "-m", "base"]);
         git(&repo, &["switch", "-q", "-c", "other"]);
@@ -2940,13 +2948,21 @@ mod read_tests {
         git(&repo, &["switch", "-q", "main"]);
         std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
         git(&repo, &["commit", "-q", "-am", "ours"]);
+        // Uncommitted changes, which Canopy's Autostash choice sets aside around the operation.
+        std::fs::write(repo.join("d.txt"), "d\nmy edit\n").expect("write");
         let worker = worker_with_canopys_choices(trusted(repo));
         worker.send(Job::Op(Op::Rebase("other".into())));
         let events = events_until(&worker, |e| {
-            matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
+            matches!(e, Event::Conflicted { .. } | Event::OpFinished { .. })
         });
         assert!(
-            matches!(events.last(), Some(Event::Conflicted(_))),
+            matches!(
+                events.last(),
+                Some(Event::Conflicted {
+                    autostashed: true,
+                    ..
+                })
+            ),
             "{events:?}"
         );
     }
@@ -2969,6 +2985,7 @@ mod read_tests {
             git(&repo, &["config", k, v]);
         }
         std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        std::fs::write(repo.join("d.txt"), "d\n").expect("write");
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-q", "-m", "base"]);
         git(&repo, &["switch", "-q", "-c", "other"]);
@@ -2977,16 +2994,24 @@ mod read_tests {
         git(&repo, &["switch", "-q", "main"]);
         std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
         git(&repo, &["commit", "-q", "-am", "ours"]);
+        // Uncommitted changes, which Canopy's Autostash choice sets aside around the operation.
+        std::fs::write(repo.join("d.txt"), "d\nmy edit\n").expect("write");
         let worker = worker_with_canopys_choices(trusted(repo));
         worker.send(Job::Op(Op::Merge(
             "other".into(),
             canopy_core::MergeMode::default(),
         )));
         let events = events_until(&worker, |e| {
-            matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
+            matches!(e, Event::Conflicted { .. } | Event::OpFinished { .. })
         });
         assert!(
-            matches!(events.last(), Some(Event::Conflicted(_))),
+            matches!(
+                events.last(),
+                Some(Event::Conflicted {
+                    autostashed: true,
+                    ..
+                })
+            ),
             "{events:?}"
         );
     }

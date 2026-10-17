@@ -5827,6 +5827,15 @@ pub(crate) fn against_recommendation(
         return Vec::new();
     }
     let follow = true;
+    // Git before 2.51 does not read `pull.autoStash`: a value there decides nothing to report.
+    let read_by_git = Setting::PullAutostash.read_by(facts.git);
+    let facts = &GitFacts {
+        autostash: (facts.autostash.iter())
+            .filter(|v| read_by_git || !v.key.eq_ignore_ascii_case("pull.autoStash"))
+            .cloned()
+            .collect(),
+        ..facts.clone()
+    };
     let pull = settings.pull_for(repo);
     let follow_tags = config_note(
         &facts.follow_tags.iter().collect::<Vec<_>>(),
@@ -8772,6 +8781,34 @@ mod tests {
                 "{row}: {lines:?}"
             );
         }
+    }
+
+    /// Git before 2.51 does not read `pull.autoStash`, so a value there is nothing to report;
+    /// the keys it does read still are.
+    #[test]
+    fn a_pull_autostash_value_is_reported_only_where_git_reads_it() {
+        let report = |git, keys: &[&str]| {
+            let facts = GitFacts {
+                autostash: keys.iter().map(|k| fact(k, "false")).collect(),
+                git,
+                ..GitFacts::default()
+            };
+            against_recommendation(&facts, &Settings::default(), Path::new("fixture"))
+        };
+        assert_eq!(
+            report(Some((2, 50)), &["pull.autoStash"]),
+            Vec::<String>::new()
+        );
+        assert_eq!(report(None, &["pull.autoStash"]), Vec::<String>::new());
+        assert_eq!(report(Some((2, 51)), &["pull.autoStash"]).len(), 1);
+        assert_eq!(report(Some((2, 55)), &["pull.autoStash"]).len(), 1);
+        let old = report(Some((2, 50)), &["pull.autoStash", "merge.autoStash"]);
+        assert_eq!(old.len(), 1, "{old:?}");
+        assert!(
+            old[0].contains("merge.autoStash") || old[0].contains("merge"),
+            "{old:?}"
+        );
+        assert!(!old[0].contains("pull.autoStash"), "{old:?}");
     }
 
     #[test]
