@@ -466,7 +466,10 @@ pub fn show(
     if !screen.apps_asked {
         // Picks up an editor or terminal installed since the last look.
         screen.apps_asked = true;
-        crate::system_apps::refresh(Some(ctx));
+        crate::system_apps::refresh(
+            Some(ctx),
+            &[&settings.editor, &settings.terminal, &settings.file_manager],
+        );
     }
     let (width, height) = shell_size(ctx);
     let sidebar = width >= NAV_MIN_WIDTH;
@@ -4810,13 +4813,15 @@ enum LaunchChoice {
 }
 
 /// What a saved command shows as: the system's when empty, an installed app whose command it
-/// is, a well-known program that is no longer installed, else a custom command (also while the
-/// user has the command field open).
+/// is, a well-known program that is no longer installed (`absent`: the command names a program
+/// file that is gone, [`crate::system_apps::Apps::is_absent`]), else a custom command (also while
+/// the user has the command field open).
 fn launch_choice(
     value: &str,
     editing: bool,
     installed: &[&crate::system_apps::App],
     missing: &[&crate::system_apps::Missing],
+    absent: bool,
 ) -> LaunchChoice {
     let value = value.trim();
     if editing {
@@ -4831,7 +4836,7 @@ fn launch_choice(
             .or_else(|| {
                 missing
                     .iter()
-                    .position(|m| m.is_started_by(value))
+                    .position(|m| m.is_started_by(value, absent))
                     .map(LaunchChoice::Missing)
             })
             .unwrap_or(LaunchChoice::Custom)
@@ -4899,7 +4904,8 @@ fn launcher_row(
         .unwrap_or_default();
     let missing: Vec<&crate::system_apps::Missing> =
         apps.map(|a| a.missing(kind).collect()).unwrap_or_default();
-    let current = match launch_choice(value, custom.contains(&kind), &installed, &missing) {
+    let absent = apps.is_some_and(|a| a.is_absent(value));
+    let current = match launch_choice(value, custom.contains(&kind), &installed, &missing, absent) {
         LaunchChoice::App(i)
             if installed
                 .get(i)
@@ -7005,23 +7011,23 @@ mod tests {
         let (zed, code) = (app("Zed", "zed"), app("Code", "code %f"));
         let installed = [&zed, &code];
         assert_eq!(
-            launch_choice("  ", false, &installed, &[]),
+            launch_choice("  ", false, &installed, &[], false),
             LaunchChoice::System
         );
         assert_eq!(
-            launch_choice("code %f", false, &installed, &[]),
+            launch_choice("code %f", false, &installed, &[], false),
             LaunchChoice::App(1)
         );
         assert_eq!(
-            launch_choice(" zed ", false, &installed, &[]),
+            launch_choice(" zed ", false, &installed, &[], false),
             LaunchChoice::App(0)
         );
         assert_eq!(
-            launch_choice("zed --wait", false, &installed, &[]),
+            launch_choice("zed --wait", false, &installed, &[], false),
             LaunchChoice::Custom
         );
         assert_eq!(
-            launch_choice("zed", true, &installed, &[]),
+            launch_choice("zed", true, &installed, &[], false),
             LaunchChoice::Custom,
             "an open command field stays open"
         );
@@ -8694,7 +8700,7 @@ mod tests {
         );
         // A saved command of a program that is not installed shows as that program, an installed
         // one as itself, and anything else as a custom command.
-        let shown = |value: &str| launch_choice(value, false, &installed, &missing);
+        let shown = |value: &str| launch_choice(value, false, &installed, &missing, false);
         assert_eq!(
             shown("alacritty --working-directory %d"),
             LaunchChoice::Missing(0)
@@ -8705,7 +8711,18 @@ mod tests {
         assert_eq!(
             shown("/opt/alacritty/bin/alacritty"),
             LaunchChoice::Custom,
-            "a command with a path is the user's own program"
+            "a command with a path to a file that is there is the user's own program"
+        );
+        assert_eq!(
+            launch_choice(
+                "/opt/alacritty/bin/alacritty",
+                false,
+                &installed,
+                &missing,
+                true
+            ),
+            LaunchChoice::Missing(0),
+            "a path to a file that is gone is the program that was saved from the list"
         );
 
         let ctx = crate::ui::kit::testkit::ctx();
