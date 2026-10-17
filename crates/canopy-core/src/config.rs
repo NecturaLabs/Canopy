@@ -126,6 +126,13 @@ impl Setting {
         }
     }
 
+    /// Whether the installed git (`git`, from the worker; `None` when unknown) reads this key at
+    /// all: git before 2.51 ignores `pull.autoStash`.
+    #[must_use]
+    pub fn read_by(self, git: Option<(u32, u32)>) -> bool {
+        self != Self::PullAutostash || git.is_some_and(|v| v >= cli::PULL_AUTOSTASH_SINCE)
+    }
+
     /// Pure metadata for a UI that already received the installed Git version from its worker.
     pub fn recommendation_for(self, git: Option<(u32, u32)>) -> &'static str {
         match self {

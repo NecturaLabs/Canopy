@@ -686,9 +686,17 @@ impl Repo {
     /// Merges `target` into the current branch as `mode` says and returns git's standard output,
     /// stashing uncommitted changes around it when [`crate::GitOptions::autostash`] says so.
     /// [`MergeMode::Squash`] stages the changes and stops before committing; the caller commits.
+    /// A squash never stashes: git leaves that stash unapplied in `.git/MERGE_AUTOSTASH`, out of
+    /// `git stash list`, so the edits vanish from the tree until the next commit restores them.
+    /// A squash over files it changes is refused instead, as git refuses it without autostash.
     pub fn merge(&self, target: &str, mode: MergeMode) -> Result<String> {
         let mut args = vec!["merge", "--no-edit", mode.flag()];
-        args.extend(self.autostash_flag(false));
+        if matches!(mode, MergeMode::Squash) {
+            let known = cli::version_number().is_some_and(|v| v >= cli::MERGE_AUTOSTASH_SINCE);
+            args.extend(known.then_some("--no-autostash"));
+        } else {
+            args.extend(self.autostash_flag(false));
+        }
         args.extend(["--", target]);
         self.conflicting_cmd(&args)
     }

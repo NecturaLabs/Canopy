@@ -547,7 +547,6 @@ fn canopys_merge_stashes_what_its_choice_and_the_configuration_say_as_git_does()
             (MergeMode::Default, true),
             (MergeMode::NoFastForward, false),
             (MergeMode::FastForwardOnly, false),
-            (MergeMode::Squash, false),
         ] {
             let world = World::new();
             let clone = world.clone_to("clone");
@@ -577,6 +576,162 @@ fn canopys_merge_stashes_what_its_choice_and_the_configuration_say_as_git_does()
             } else {
                 let text = fs::read_to_string(clone.join("a.txt")).expect("read");
                 assert!(text.contains("NINE") && !text.contains("ONE"), "{mode:?}");
+            }
+        }
+    }
+}
+
+/// A clone of `world` whose local branch and upstream both moved on, `d.txt` committed and then
+/// edited without committing. With `conflict` both sides change line one of `a.txt`, else the
+/// upstream adds `s.txt` and the clone `b.txt`.
+fn squash_ready(world: &World, conflict: bool) -> PathBuf {
+    let clone = world.clone_to("clone");
+    commit_file(&clone, "d.txt", "d\n", "feat: d");
+    let other = world.clone_to("upstream-editor");
+    if conflict {
+        let text = LINES.replacen("one", "ONE", 1);
+        commit_file(&other, "a.txt", &text, "feat: upstream");
+        commit_file(
+            &clone,
+            "a.txt",
+            &LINES.replacen("one", "UNO", 1),
+            "feat: local",
+        );
+    } else {
+        commit_file(&other, "s.txt", "s\n", "feat: upstream");
+        commit_file(&clone, "b.txt", "b\n", "feat: local");
+    }
+    git(&other, &["push", "-q", "origin", "main"]);
+    git(&clone, &["fetch", "-q"]);
+    fs::write(clone.join("d.txt"), "d\nmy edit\n").expect("write");
+    clone
+}
+
+/// The edit is in the working tree, and nothing is held back: no stash, and no autostash that
+/// only `git commit` or `git merge --continue` would bring back.
+fn assert_edit_in_the_tree_and_nothing_hidden(clone: &Path) {
+    assert_eq!(
+        fs::read_to_string(clone.join("d.txt")).expect("read"),
+        "d\nmy edit\n"
+    );
+    assert_eq!(git(clone, &["stash", "list"]), "");
+    assert!(
+        !clone.join(".git").join("MERGE_AUTOSTASH").exists(),
+        "an autostash is held back"
+    );
+}
+
+#[test]
+fn a_squash_never_hides_your_changes() {
+    if !isolated("a_squash_never_hides_your_changes") {
+        return;
+    }
+    // The premise: git's own `--autostash` on a squash that does not fast-forward stashes the
+    // edit and never puts it back, out of `git stash list`. (Without the premise the rest
+    // would prove nothing.)
+    if at_least((2, 27)) {
+        let world = World::new();
+        let clone = squash_ready(&world, false);
+        git(
+            &clone,
+            &[
+                "merge",
+                "--no-edit",
+                "--squash",
+                "--autostash",
+                "--",
+                "origin/main",
+            ],
+        );
+        assert!(clone.join(".git").join("MERGE_AUTOSTASH").exists());
+        assert_eq!(
+            fs::read_to_string(clone.join("d.txt")).expect("read"),
+            "d\n",
+            "git hid the edit"
+        );
+    }
+
+    // Canopy's squash leaves the edit where it is, whatever Canopy's choice or the
+    // configuration says, for a squash that merges and for one that conflicts.
+    for (configured, canopy) in [(None, true), (None, false), (Some("true"), true)] {
+        for conflict in [false, true] {
+            let world = World::new();
+            let clone = squash_ready(&world, conflict);
+            if let Some(value) = configured {
+                git(&clone, &["config", "merge.autoStash", value]);
+            }
+            let repo = Repo::open(&clone).expect("open");
+            repo.set_options(GitOptions {
+                autostash: canopy,
+                ..GitOptions::default()
+            });
+            let result = repo.merge("origin/main", MergeMode::Squash);
+            let what =
+                format!("conflict {conflict}, merge.autoStash {configured:?}, Canopy {canopy}");
+            assert_eq!(result.is_err(), conflict, "{what}: {result:?}");
+            assert_edit_in_the_tree_and_nothing_hidden(&clone);
+            let status = git(&clone, &["status", "--porcelain"]);
+            if conflict {
+                assert!(status.contains("UU a.txt"), "{what}: {status}");
+            } else {
+                assert!(
+                    status.contains("A  s.txt") && status.contains(" M d.txt"),
+                    "{what}: {status}"
+                );
+            }
+        }
+    }
+
+    // Over a file the squash changes, it is refused as git refuses it without autostash.
+    let world = World::new();
+    let clone = world.clone_to("clone");
+    upstream_edits_line_one(&world, &clone);
+    dirty_line_nine(&clone);
+    let repo = Repo::open(&clone).expect("open");
+    let message = repo
+        .merge("origin/main", MergeMode::Squash)
+        .expect_err("refused");
+    assert!(
+        message.to_string().contains("would be overwritten"),
+        "{message}"
+    );
+    assert!(!clone.join(".git").join("MERGE_AUTOSTASH").exists());
+    let text = fs::read_to_string(clone.join("a.txt")).expect("read");
+    assert!(text.contains("NINE") && !text.contains("ONE"));
+}
+
+#[test]
+fn changes_git_holds_aside_for_a_stopped_merge_or_rebase_are_recognised() {
+    if !isolated("changes_git_holds_aside_for_a_stopped_merge_or_rebase_are_recognised") {
+        return;
+    }
+    for rebase in [false, true] {
+        for dirty in [false, true] {
+            let world = World::new();
+            let clone = squash_ready(&world, true);
+            if !dirty {
+                git(&clone, &["checkout", "-q", "--", "d.txt"]);
+            }
+            let repo = Repo::open(&clone).expect("open");
+            let what = format!("rebase {rebase}, uncommitted changes {dirty}");
+            assert!(!repo.autostash_held(), "{what}: before");
+            let result = if rebase {
+                repo.rebase("origin/main")
+            } else {
+                repo.merge("origin/main", MergeMode::Default)
+            };
+            assert!(result.is_err(), "{what}: stops on conflicts");
+            assert!(repo.stopped_on_conflicts().expect("state"), "{what}");
+            assert_eq!(repo.autostash_held(), dirty, "{what}");
+            let state = if rebase {
+                canopy_core::model::RepoState::Rebase
+            } else {
+                canopy_core::model::RepoState::Merge
+            };
+            repo.continue_or_abort(state, true).expect("abort");
+            assert!(!repo.autostash_held(), "{what}: after the abort");
+            if dirty {
+                assert_edit_in_the_tree_and_nothing_hidden(&clone);
             }
         }
     }
@@ -743,6 +898,8 @@ fn new_repositories_start_on_main() {
 /// The messages left by a commit, an amend and a squash in an interactive rebase when the editor
 /// keeps git's template and adds a `#123` line and a subject above it, with `config` as `-c`
 /// options and `env` added to the environment. Git's own global file is replaced by `global`.
+/// Unix only: the editors are `sh` and `sed -i.bak` scripts.
+#[cfg(unix)]
 fn edited_messages(config: &[&str], global: &Path) -> Vec<String> {
     let dir = tempfile::tempdir().expect("repository");
     let p = dir.path();
@@ -791,6 +948,7 @@ fn edited_messages(config: &[&str], global: &Path) -> Vec<String> {
     messages
 }
 
+#[cfg(unix)]
 #[test]
 fn the_recommended_commit_cleanup_is_gits_own_and_whitespace_leaks_the_editor_template() {
     if !isolated(
