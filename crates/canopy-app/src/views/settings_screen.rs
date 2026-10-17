@@ -1319,7 +1319,9 @@ fn git_setting_help(setting: Setting) -> &'static str {
         Setting::RebaseAutostash => {
             "Stashes local changes before a rebase and restores them after."
         }
-        Setting::MergeAutostash => "Stashes local changes before a merge and restores them after.",
+        Setting::MergeAutostash => {
+            "Stashes local changes before a merge, never a squash, and restores them after."
+        }
         Setting::PushFollowTags => "Pushes the annotated tags on the commits being pushed.",
         Setting::SubmoduleRecurse => {
             "Checkout, switch and pull also update submodules; a push also pushes the submodule commits it needs."
@@ -1672,6 +1674,10 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
     )
 }
 
+/// The Autostash row's help. A squash merge is left out: git would keep its stash unapplied and
+/// hidden, so `Repo::merge` never autostashes one, whatever Canopy's choice or git's key says.
+const AUTOSTASH_HELP: &str = "Sets uncommitted changes aside around a pull, rebase or merge (never a squash) and restores them after.";
+
 /// What git's configuration says about autostash: `rebase.autoStash` decides rebases and
 /// `merge.autoStash` merges, so with only one set Canopy's switch still decides the other kind.
 fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Note> {
@@ -1680,7 +1686,7 @@ fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Not
         &values,
         follow,
         |v| v.as_bool() == Some(autostash),
-        "pulls and rebases",
+        "pulls, rebases and merges",
     )?;
     if let (true, [only]) = (follow, values.as_slice()) {
         let rest = if only.key.eq_ignore_ascii_case("rebase.autoStash") {
@@ -3339,7 +3345,7 @@ fn git(
         row_with_note(
             ui,
             "Autostash",
-            "Sets uncommitted changes aside before a pull, rebase or merge and restores them after.",
+            AUTOSTASH_HELP,
             f.and_then(|f| autostash_note(f, s.autostash, follow))
                 .as_ref(),
             |ui| {
@@ -5827,15 +5833,6 @@ pub(crate) fn against_recommendation(
         return Vec::new();
     }
     let follow = true;
-    // Git before 2.51 does not read `pull.autoStash`: a value there decides nothing to report.
-    let read_by_git = Setting::PullAutostash.read_by(facts.git);
-    let facts = &GitFacts {
-        autostash: (facts.autostash.iter())
-            .filter(|v| read_by_git || !v.key.eq_ignore_ascii_case("pull.autoStash"))
-            .cloned()
-            .collect(),
-        ..facts.clone()
-    };
     let pull = settings.pull_for(repo);
     let follow_tags = config_note(
         &facts.follow_tags.iter().collect::<Vec<_>>(),
@@ -8783,32 +8780,62 @@ mod tests {
         }
     }
 
-    /// Git before 2.51 does not read `pull.autoStash`, so a value there is nothing to report;
-    /// the keys it does read still are.
+    /// Git before 2.51 does not read `pull.autoStash`: once the facts are read, neither the
+    /// Settings row's note nor the notice says the configuration decides by it; the keys git does
+    /// read still are.
     #[test]
     fn a_pull_autostash_value_is_reported_only_where_git_reads_it() {
-        let report = |git, keys: &[&str]| {
-            let facts = GitFacts {
+        let read = |git, keys: &[&str]| {
+            let mut facts = GitFacts {
                 autostash: keys.iter().map(|k| fact(k, "false")).collect(),
                 git,
                 ..GitFacts::default()
             };
-            against_recommendation(&facts, &Settings::default(), Path::new("fixture"))
+            facts.forget_ignored();
+            facts
         };
-        assert_eq!(
-            report(Some((2, 50)), &["pull.autoStash"]),
-            Vec::<String>::new()
-        );
-        assert_eq!(report(None, &["pull.autoStash"]), Vec::<String>::new());
-        assert_eq!(report(Some((2, 51)), &["pull.autoStash"]).len(), 1);
-        assert_eq!(report(Some((2, 55)), &["pull.autoStash"]).len(), 1);
-        let old = report(Some((2, 50)), &["pull.autoStash", "merge.autoStash"]);
-        assert_eq!(old.len(), 1, "{old:?}");
+        let notice = |facts: &GitFacts| {
+            against_recommendation(facts, &Settings::default(), Path::new("fixture"))
+        };
+        for git in [Some((2, 50)), None] {
+            let facts = read(git, &["pull.autoStash"]);
+            assert!(autostash_note(&facts, true, true).is_none(), "{git:?}");
+            assert_eq!(notice(&facts), Vec::<String>::new(), "{git:?}");
+        }
+        for git in [Some((2, 51)), Some((2, 55))] {
+            let facts = read(git, &["pull.autoStash"]);
+            assert!(autostash_note(&facts, true, true).is_some(), "{git:?}");
+            assert_eq!(notice(&facts).len(), 1, "{git:?}");
+        }
+        let old = read(Some((2, 50)), &["pull.autoStash", "merge.autoStash"]);
+        let note = autostash_note(&old, true, true).expect("a note").text;
         assert!(
-            old[0].contains("merge.autoStash") || old[0].contains("merge"),
-            "{old:?}"
+            note.contains("Autostash before merge") && !note.contains("Autostash for all pulls"),
+            "{note}"
         );
-        assert!(!old[0].contains("pull.autoStash"), "{old:?}");
+        let lines = notice(&old);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(!lines[0].contains("Autostash for all pulls"), "{lines:?}");
+    }
+
+    /// The Autostash row says a squash merge is never stashed, and, with Canopy's own choice
+    /// applying, that its merges use that choice instead of the configuration.
+    #[test]
+    fn the_autostash_row_says_a_squash_never_autostashes() {
+        assert!(
+            AUTOSTASH_HELP.contains("never a squash"),
+            "{AUTOSTASH_HELP}"
+        );
+        let facts = GitFacts {
+            autostash: vec![fact("merge.autoStash", "true")],
+            git: Some((2, 55)),
+            ..GitFacts::default()
+        };
+        let note = autostash_note(&facts, false, false).expect("a note").text;
+        assert!(
+            note.contains("Canopy's pulls, rebases and merges"),
+            "{note}"
+        );
     }
 
     #[test]
@@ -9137,16 +9164,26 @@ mod tests {
     /// too long for its row.
     #[test]
     fn help_fits_on_one_line() {
+        let mut autostash_drawn = false;
         let mut wrapped = Vec::new();
         // With a repository open, so This repository is drawn too.
         let repo = Some(Path::new("/work/canopy"));
-        for section in Section::ALL.into_iter().chain([Section::Repository]) {
+        // With Canopy following git's configuration or choosing for itself: the rows differ.
+        for (follow, section) in [true, false].into_iter().flat_map(|follow| {
+            Section::ALL
+                .into_iter()
+                .chain([Section::Repository])
+                .map(move |section| (follow, section))
+        }) {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
             ctx.enable_accesskit();
             theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
             let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 6000.0));
-            let mut settings = Settings::default();
+            let mut settings = Settings {
+                follow_git_config: follow,
+                ..Settings::default()
+            };
             let mut tokens = TokenStore::default();
             let mut screen = SettingsScreen::at(section);
             screen.facts.global.asked = true;
@@ -9196,12 +9233,19 @@ mod tests {
                 let (Some(text), Some(rect)) = (node.value(), node.bounds()) else {
                     continue;
                 };
+                // Canopy's own choices (follow off) are checked for the Autostash row only: the
+                // conflict markers row there wraps already (filed apart from this change).
+                if !follow && !text.starts_with(AUTOSTASH_HELP) {
+                    continue;
+                }
+                autostash_drawn |= text.starts_with(AUTOSTASH_HELP);
                 if node.role() == egui::accesskit::Role::Label && rect.y1 - rect.y0 > two_lines {
-                    wrapped.push(format!("{section:?}: {text}"));
+                    wrapped.push(format!("{section:?} (follow {follow}): {text}"));
                 }
             }
         }
         assert!(wrapped.is_empty(), "{wrapped:#?}");
+        assert!(autostash_drawn, "the Autostash row was not drawn");
     }
 
     /// While this repository's git configuration decides its pulls or pruning, Canopy's own

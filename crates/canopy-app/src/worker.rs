@@ -1190,6 +1190,9 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     // A pull, a rebase or a merge: it can autostash, and stopping on conflicts is
                     // not a failure.
                     let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_) | Op::Merge(..));
+                    // A leftover autostash (an external `git merge --squash --autostash`) is
+                    // not this operation's: only one that appears during it is reported.
+                    let held_before = integrates && repo.autostash_held();
                     let pull = match op {
                         Op::Pull {
                             strategy,
@@ -1286,7 +1289,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     } else if stopped {
                         // Not a failure: the conflicts are the user's to resolve.
                         emit(Event::Conflicted {
-                            autostashed: repo.autostash_held(),
+                            autostashed: !held_before && repo.autostash_held(),
                             label,
                         });
                     } else {
@@ -3014,6 +3017,76 @@ mod read_tests {
             ),
             "{events:?}"
         );
+    }
+
+    /// A leftover `.git/MERGE_AUTOSTASH` (an earlier `git merge --squash --autostash` outside
+    /// Canopy) is not this merge's: a merge that stops on conflicts without stashing anything
+    /// does not claim to hold the user's changes.
+    #[test]
+    fn a_leftover_autostash_is_not_reported_as_held_by_a_stopped_merge() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let repo = root.path().join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        std::fs::write(repo.join("d.txt"), "d\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["switch", "-q", "-c", "other"]);
+        std::fs::write(repo.join("a.txt"), "theirs\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "theirs"]);
+        git(&repo, &["switch", "-q", "-c", "side", "main"]);
+        std::fs::write(repo.join("s.txt"), "s\n").expect("write");
+        git(&repo, &["add", "s.txt"]);
+        git(&repo, &["commit", "-q", "-m", "side"]);
+        git(&repo, &["switch", "-q", "main"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "ours"]);
+        // Git's own squash with autostash leaves the stash unapplied in `.git/MERGE_AUTOSTASH`.
+        std::fs::write(repo.join("d.txt"), "d\nold edit\n").expect("write");
+        git(
+            &repo,
+            &[
+                "merge",
+                "--no-edit",
+                "--squash",
+                "--autostash",
+                "--",
+                "side",
+            ],
+        );
+        // Drop the squash's result without `git reset`, which would clear the leftover too.
+        git(&repo, &["rm", "-q", "-f", "--", "s.txt"]);
+        let leftover = repo.join(".git").join("MERGE_AUTOSTASH");
+        assert!(leftover.exists(), "the premise: a stale autostash");
+        let worker = worker_with_canopys_choices(trusted(repo));
+        worker.send(Job::Op(Op::Merge(
+            "other".into(),
+            canopy_core::MergeMode::default(),
+        )));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::Conflicted { .. } | Event::OpFinished { .. })
+        });
+        assert!(
+            matches!(
+                events.last(),
+                Some(Event::Conflicted {
+                    autostashed: false,
+                    ..
+                })
+            ),
+            "{events:?}"
+        );
+        assert!(leftover.exists(), "the leftover is not Canopy's to remove");
     }
 
     /// #92: the repository thread reads the commit template; a missing file is reported, not

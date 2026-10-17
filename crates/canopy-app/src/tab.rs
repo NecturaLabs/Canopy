@@ -57,8 +57,6 @@ pub enum SidebarItem {
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
-/// Whether `message`, a hosting error's text, is the host refusing the token
-/// (`canopy_hosting::Error::Unauthorized`).
 /// What a merge, rebase or pull that stopped on conflicts asks of the user. When git holds their
 /// uncommitted changes aside (`--autostash`), they are not in the stash list: it says where they
 /// are and when they come back.
@@ -74,6 +72,8 @@ fn stopped_body(autostashed: bool) -> String {
     body
 }
 
+/// Whether `message`, a hosting error's text, is the host refusing the token
+/// (`canopy_hosting::Error::Unauthorized`).
 fn credential_refused(message: &str) -> bool {
     message.starts_with("The server refused the request (check the access token")
 }

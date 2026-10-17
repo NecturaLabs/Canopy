@@ -738,6 +738,43 @@ fn changes_git_holds_aside_for_a_stopped_merge_or_rebase_are_recognised() {
 }
 
 #[test]
+fn changes_held_aside_in_a_linked_worktree_are_recognised_there_only() {
+    if !isolated("changes_held_aside_in_a_linked_worktree_are_recognised_there_only") {
+        return;
+    }
+    let world = World::new();
+    let clone = squash_ready(&world, true);
+    let linked = world.root.path().join("linked");
+    git(
+        &clone,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "topic",
+            &linked.to_string_lossy(),
+        ],
+    );
+    fs::write(linked.join("d.txt"), "d\nmy edit\n").expect("write");
+    let repo = Repo::open(&linked).expect("open");
+    repo.merge("origin/main", MergeMode::Default)
+        .expect_err("stops on conflicts");
+    assert!(repo.autostash_held(), "the linked worktree holds it");
+    assert!(
+        !Repo::open(&clone).expect("open").autostash_held(),
+        "the main worktree holds nothing"
+    );
+    repo.continue_or_abort(canopy_core::model::RepoState::Merge, true)
+        .expect("abort");
+    assert!(!repo.autostash_held());
+    assert_eq!(
+        fs::read_to_string(linked.join("d.txt")).expect("read"),
+        "d\nmy edit\n"
+    );
+}
+
+#[test]
 fn a_merge_whose_stash_conflicts_on_the_way_back_is_recognised() {
     if !isolated("a_merge_whose_stash_conflicts_on_the_way_back_is_recognised") {
         return;
