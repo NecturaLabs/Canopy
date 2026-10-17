@@ -1,16 +1,16 @@
 ---
 name: add-theme
-description: Recipe for adding a colour theme to Canopy, or changing a theme's colours or adding a design token. Covers the Palette constant and ThemeId variant in crates/canopy-app/src/ui/theme.rs, every token, the WCAG contrast test, dark and light screenshots of each view, and the docs/design.md section. Use whenever a request adds, renames, retunes or removes a theme, or adds a field to Palette.
+description: Recipe for adding a colour theme to Canopy, or changing a theme's colours or adding a design token. Covers the Palette constant and ThemeId variant in crates/nectura-ui/src/theme.rs, every token, the WCAG contrast test, dark and light screenshots of each view, and the docs/design.md section. Use whenever a request adds, renames, retunes or removes a theme, or adds a field to Palette.
 license: Proprietary (NecturaLabs); see LICENSE
 ---
 
 # Add a theme
 
-`crates/canopy-app/src/ui/theme.rs` is the only place a colour is defined; views ask `palette()`.
+`crates/nectura-ui/src/theme.rs` is the only place a colour is defined; views ask `palette()`.
 A theme is one `Palette` constant plus one `ThemeId` variant. The theme cards in Settings, the
 toolbar menu, the "Theme: X" palette entries, `--theme NAME` and the cycling in `ThemeId::next` all
 iterate `ThemeId::ALL`, so none of them is edited. `ThemeId::Custom` is the user's own colours
-(`ui/custom_theme.rs`) and is not a built-in theme: it is in `ALL` but not in `BUILT_IN`. Work through the steps in order.
+(`nectura-ui/src/custom_theme.rs`) and is not a built-in theme: it is in `ALL` but not in `BUILT_IN`. Work through the steps in order.
 
 ## 1. Decide
 
@@ -56,7 +56,7 @@ Write colours with `hex(0xRRGGBB)`. Hex literals are allowed here and nowhere el
   variant name, and a saved theme this build no longer has reads as the default theme through
   `known` in `settings.rs`, without resetting the other settings.
 - Update the module doc ("Canopy ships three themes") if the count is written there.
-- High contrast is a switch, not a theme: `ui/contrast.rs` derives every theme's high-contrast
+- High contrast is a switch, not a theme: `nectura-ui/src/contrast.rs` derives every theme's high-contrast
   version from its palette, keeping its grounds and hues and raising each foreground token to
   the ratio `CONTRAST_REFERENCE` (Midnight at full contrast) keeps against its ground. A new
   theme gets it for free; never hand-write a contrast variant. `HIGH_CONTRAST` is built over

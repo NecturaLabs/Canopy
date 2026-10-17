@@ -25,7 +25,7 @@ fixtures and images under a scratch directory (or `screenshots-out/`, which git 
    `tools/README.md` describes, so no network or token is needed), at the default 1440x900 and at
    a small size (`--size 1024x640`) to catch overflow. Render the `conflict` fixture for banners
    and conflict lists. Dialogs and screens render with `--overlay NAME` (`tools/screenshot.sh -h`
-   lists them). When the change touches `ui/theme.rs`, render every theme in `ThemeId::ALL` with
+   lists them). When the change touches `nectura-ui/src/theme.rs`, render every theme in `ThemeId::ALL` with
    `--theme NAME`, not only the default dark and `--light`.
 3. View every PNG with the Read tool. To inspect detail, crop or enlarge with ImageMagick
    (`convert in.png -crop 480x300+0+120 +repage -scale 200% crop.png`) and read the crop.

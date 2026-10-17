@@ -2,7 +2,7 @@
 
 Canopy's visual language: a calm, dark workspace where colour is reserved for meaning (branches,
 state, actions). All values here are implemented as tokens in
-`crates/canopy-app/src/ui/theme.rs`, which is the only place colours, spacing and radii are
+`crates/nectura-ui/src/theme.rs`, which is the only place colours, spacing and radii are
 defined. When a token or component changes, update this document in the same change.
 
 ## Principles
@@ -20,7 +20,7 @@ defined. When a token or component changes, update this document in the same cha
 
 ## Colour tokens
 
-Every colour is defined in `ui/theme.rs` and nowhere else. A theme is a `Palette`: the colours
+Every colour is defined in `nectura-ui/src/theme.rs` and nowhere else. A theme is a `Palette`: the colours
 both styles share (text, accents, status, lanes, syntax, request fields, focus, selection, shadows,
 scrim, glass) plus two `Surfaces` sets, one per Style. Views read the active set with `theme::surfaces(ctx)` and
 the shared colours with `theme::palette(ctx)`.
@@ -85,7 +85,7 @@ ground, periwinkle signature, selection bar, zenith lift and constellation art
 | Observatory | Build 690's Midnight | navy-ink `#0B0F19` under `#111723` chrome, a periwinkle `#646CD6` primary, starlight links |
 
 Custom is a fourth choice, not a palette in the table: Midnight or Daylight recoloured from the
-user's choices (`ui/custom_theme.rs`, saved as `custom_theme`). Settings, Appearance shows a
+user's choices (`nectura-ui/src/custom_theme.rs`, saved as `custom_theme`). Settings, Appearance shows a
 "Custom theme" group when it is chosen: Based on (Midnight or Daylight), Accent (nine hue swatches),
 Accent hue (0 to 359), Accent intensity (20 to 140%), Tint (the same swatches), Tint hue and Tint
 strength (0 to 100%). The defaults are Midnight's own colours. The accent recolours the indigo
@@ -99,7 +99,7 @@ base's hues, and the structure (`Design`) is the base's. It is not in `ThemeId::
 high-contrast version is derived when it is built, like the others.
 
 High contrast is a switch over any theme, Custom included (Settings, Appearance; the toolbar's
-theme menu; the command palette's "High contrast: On" and "Off"), not a theme. `ui/contrast.rs`
+theme menu; the command palette's "High contrast: On" and "Off"), not a theme. `nectura-ui/src/contrast.rs`
 derives each theme's high-contrast colours once: the theme's grounds and hues stay, and every
 colour drawn on them moves, in `OKLab` lightness, to the contrast ratio the reference keeps on
 its ground (`theme::CONTRAST_REFERENCE`, Midnight at full contrast): lighter on a dark theme,
@@ -277,8 +277,8 @@ it off for the session and every layer is opaque again.
 
 ## Motion
 
-Motion is feedback, never decoration. Durations, curves and springs live in `ui/motion.rs`; the
-kit's helpers in `ui/kit/anim.rs`.
+Motion is feedback, never decoration. Durations, curves and springs live in `nectura-ui/src/motion.rs`; the
+kit's helpers in `nectura-ui/src/kit/anim.rs`.
 
 | Token | Duration | Use |
 |---|---|---|
@@ -767,7 +767,7 @@ above.
 
 ### Illustrations
 
-Drawn in code in the theme's colours (`ui/art.rs`, `docs/art-prompts.md`): the logo mark, the
+Drawn in code in the theme's colours (`nectura-ui/src/art.rs`, `docs/art-prompts.md`): the logo mark, the
 welcome canopy and four empty-state spots. Each grows in once when it appears and then stays
 still; reduce motion shows it finished. Midnight and Daylight show them as drawn over a plain
 ground (`ArtMotif::Plain`); Observatory joins them into constellations (`Constellation`) and high

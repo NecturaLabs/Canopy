@@ -37,7 +37,7 @@ rewriting every view.
 Chosen option: "1. `egui`/`eframe`", because it keeps the product in one language with no
 JavaScript toolchain or browser runtime, makes custom painting (the graph, diffs, ref pills) a
 direct drawing call against a frame that only lays out what is visible, and lets the whole
-palette come from one Rust module (`crates/canopy-app/src/ui/theme.rs`) applied to egui's
+palette come from one Rust module (`crates/nectura-ui/src/theme.rs` (moved there by [ADR 0015](0015-component-library-in-a-private-submodule.md))) applied to egui's
 visuals. The owner reviewed the egui build and chose it over React ("no need for react, what u
 have there looks phenomenal"). Options 2 and 3 add a second language, an IPC boundary between UI
 and backend, and a web runtime; 4 and 5 bring large C/C++ dependencies that complicate building

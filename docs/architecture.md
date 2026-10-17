@@ -1,6 +1,6 @@
 # Architecture
 
-Canopy is a Cargo workspace with three crates. The split is strict: everything that knows about Git
+Canopy is a Cargo workspace with three crates and a fourth, `nectura-ui`, the shared component library (a submodule). The split is strict: everything that knows about Git
 lives in `canopy-core`, everything that draws lives in `canopy-app`, and the only bridge is a
 background worker per repository. `canopy-hosting` is the one HTTP client: the GitHub and GitLab
 REST APIs (plus GraphQL for a request list's checks and reviews and for GitHub's request search) and Canopy's update
@@ -10,7 +10,7 @@ report transport).
 
 ```text
 ┌──────────────────────────── canopy-app ─────────────────────────────┐
-│  main.rs ─▶ CanopyApp (app/)   ─▶ views/* ─▶ ui/* (theme, widgets)  │
+│  main.rs ─▶ CanopyApp (app/)   ─▶ views/* ─▶ ui/* (widgets)  │
 │                     │  ▲                                            │
 │               Job   │  │  Event        (crossbeam channels)     │
 │                     ▼  │                                            │
@@ -127,39 +127,10 @@ thread.
 | `system_apps.rs` | The editor, terminal and file manager the system provides (`$VISUAL`/`$EDITOR`/`$TERMINAL`, desktop defaults, `PATH`) and the installed ones (Linux desktop entries, macOS `/Applications`, Windows App Paths), resolved on one background thread and cached; `command_for` is what the open actions run. Every program has an `id`, what it runs and never its name or command text (Linux: the executable with its folder resolved, or the entry itself for a launcher such as `flatpak`, `env` or `sh`; macOS: the bundle; Windows: the App Paths name), so one program found twice is one row and the system's choice (`SystemChoice::is`) is the listed program it starts, not a second row. An entry whose `Exec` carries `--server`, `--daemon` or `--gapplication-service`, or runs `footclient`, `urxvtc` or `emacsclient`, is a helper and is not listed. |
 | `trust.rs` | The trust decision as process-wide state the repository threads read: the trusted folders (`Settings::trusted_folders`, outermost folders only: `add` replaces the entries a new folder covers and skips a covered one, by spelling and without disk access) and the switch that turns trust checks off (`Settings::trust_safety`), published together by `publish` with one change count. Resolving the working/common/private Git folders on the repository thread for `Event::TrustFolders`, the download gate core asks before each `git fetch` (`install_gate`), and the folders trusting a repository covers (ADR 0009, 0014). |
 | `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread; running commands with quotes and `%f`/`%F`/`%d` placeholders. |
-| `ui/mod.rs` | The look-and-feel modules, and the conversions between egui's integer and float types (`points_i8`, `count_f32`, `int_f32`, `to_f32`, `saturate_u8`, `saturate_usize`), each a plain cast named for what it does out of range, so views never cast by hand. |
-| `ui/theme.rs` | Design tokens: the three built-in palettes (shared colours plus Standard and Deeper surfaces), the custom theme's slot (`ThemeId::Custom`, `set_custom`), the high-contrast switch, the graph's node shape and curve, elevation materials, metrics per density and style, the active look (`apply`, `palette`, `surfaces`, `metrics`, `appearance`) and the contrast tests. The only place colours and sizes are defined. |
-| `ui/motion.rs` | Motion tokens (durations, Bézier curves, springs), the Motion preference, the system's answer (asked on a background thread) and whether motion is currently reduced. |
-| `ui/kit/mod.rs` | The component library: `Size`, `Tone`, `ForceState`, `KitResponse`, `focus_visible` (kept current every frame by a begin-pass hook), `show_focus` and the shared interaction state. |
-| `ui/kit/anim.rs` | Eased booleans and values, springs, sliding rectangles, the press scale and `Flip` (list rows gliding to their new places); all instant with reduced motion. |
-| `ui/kit/a11y.rs` | What screen readers and the keyboard need beyond each widget's own role: named groups and modal dialogs over a `Ui`'s node, open or closed states in a disclosure's name, focus given back when an overlay closes (`FocusReturn`) and Tab kept inside an open overlay (`trap_focus`). |
-| `ui/kit/paint.rs` | Shadows, gradient fills, highlights, recesses, focus rings, pixel-snapped seams, Deeper panes with the focused-pane edge (`pane_focus`) and deck, spinners and scroll fades. |
-| `ui/kit/button.rs` | `Button` (primary, secondary, ghost, danger), `IconButton`, `ToolButton`, `LinkButton`, `SplitButton`: the reference component. |
-| `ui/kit/glass/mod.rs` | Translucent surfaces: decides which floating layers get the backdrop blur (the setting, the theme, the driver, at most four a frame), plans each in validated window pixels, queries the system's reduce-transparency answer off the UI thread, and falls back to the opaque overlay. |
-| `ui/kit/glass/gl.rs` | The blur's OpenGL renderer, two `egui_glow` paint callbacks per layer: the capture copies and dual-Kawase blurs the region behind it, before its shadow; the composite keeps the backdrop's luminance in the theme's band (scaled down in dark themes, lifted towards white in light ones) and draws it inside the layer. GL objects are deleted only on the thread that owns the context. The only `unsafe` code in Canopy (ADR 0010). |
-| `ui/kit/glass/shaders.rs` | The blur's GLSL and the dialect chosen for the context (OpenGL 3.0+, OpenGL ES 3.0+). |
-| `ui/kit/gallery.rs` | The component gallery (`--overlay gallery`) with a section per kit module, plus token, elevation, style and motion strips. |
-| `ui/kit/field.rs` | `TextField`, `SearchField`, `TextArea` and `CodeArea`: frameless `TextEdit`s inside the kit's fill, border, focus and error halo. |
-| `ui/kit/select.rs` | `Select`, which replaces `ComboBox`: a Secondary trigger and a floating list driven from the keyboard. |
-| `ui/kit/toggle.rs` | `Checkbox` (with indeterminate), `Radio`, `RadioGroup` (arrow keys, one Tab stop) and `Switch`. |
-| `ui/kit/choice.rs` | `Segmented` with its sliding thumb, `ViewTabs` and `UnderlineTabs` with a sliding indicator, and `Swatches`, a radio group of colour circles. |
-| `ui/kit/tabs.rs` | `DocTabs`, the title bar's repository tabs: busy spinner, ahead/behind counts, close on hover and middle click, sideways scrolling with edge fades, and closed tabs collapsing out. |
-| `ui/kit/range.rs` | `Slider`, which replaces `egui::Slider`: keyboard steps and a value bubble while dragged. |
-| `ui/kit/progress.rs` | `Progress` (determinate, indeterminate, line), `Spinner` and `Skeleton`; all static under reduced motion. |
-| `ui/kit/menu.rs` | Menus and context menus: items with icon, shortcut, check, danger, disabled-with-reason and second line, headings, separators and delayed submenus. |
-| `ui/kit/overlay.rs` | The floating surface every layer shares (shadow, glass backdrop, fill, ring) and the ground its content sits on, scrolling bodies with edge fades, the room a modal card may take, `Tooltip`, `Popover`, `Dialog` and its scrim, entrances and exit fades. |
-| `ui/kit/toast.rs` | `ToastCard`, the toast's painting; the queue, its pausing timers and the cards' slide into place stay in `ui/toast.rs`. |
-| `ui/kit/row.rs` | `ListRow`, `TreeRow`, `Disclosure`, `SectionHeader`, the Shift/Ctrl `Selection` and `Roving` (a list as one Tab stop, the arrows moving inside it; a click focuses the row). |
-| `ui/kit/chip.rs` | `Badge`, `CountBadge`, `ChangeBadge`, `RefPill`, `RefOverflow`, `Keycap`, `KeyChord`, `StatusDot`, `DiffStat` and the status `Chip`. |
-| `ui/kit/avatar.rs` | `Avatar` and `AvatarStack` with the picture crossfade. |
-| `ui/kit/surface.rs` | `PaneHeader`, `Deck` (the top bars), `Card`, `Banner` and `Callout` with their `NoticeAction`s, `EmptyState` and `InsetBox`. |
+| `ui/mod.rs` | The application's look-and-feel modules, the re-exports of `nectura-ui` (`theme`, `motion`, `fonts`, `art`, the conversions between egui's integer and float types) so views name them as `ui::...`, and `install_host`, the application's side of `nectura_ui::host::Host`. |
+| `ui/kit/mod.rs` | `ui::kit` is `nectura_ui::kit` plus the Git components below; the gallery's extra sections. |
+| `ui/kit/git.rs` | `ChangeBadge` (a file's change letter), `RefPill` and `RefOverflow` (a commit's branch, tag and HEAD labels): the components that need `canopy-core`. |
 | `ui/kit/graph.rs` | The history row painter: circle nodes, hollow merges, the HEAD halo, a dashed WIP node and lane spacing by density. |
-| `ui/kit/split.rs` | `SplitHandle`, the handle between two panes of a custom split: pointer drag, double-click reset, arrow keys with keyboard focus, and a named splitter for screen readers. |
-| `ui/kit/testkit.rs` | Test-only helpers for the kit's tests: a themed context, frames with input events and the AccessKit nodes a frame produced. |
-| `ui/contrast.rs` | Colour maths on `OKLab` lightness: `derive` makes a theme's high-contrast palette (grounds and hues kept, each foreground moved to the ratio Midnight's contrast reference keeps), `lift` moves every foreground drawn on a ground to at least a reference palette's ratios times a margin, `fit` does that for one colour, and `clear` moves one colour until it reads at a given ratio on a given ground. |
-| `ui/custom_theme.rs` | The custom theme: `CustomTheme`, the saved choices (base Midnight or Daylight, accent hue and intensity, tint hue and strength) and the `Palette` they make. Each colour is recoloured at its own luminance; then the grounds keep the base's steps (`keep_steps`), `contrast::lift` moves foregrounds to the base theme's ratios times 1.04, and text colours clear every wash they are drawn over (`clear_text`). Status colours, graph lanes, syntax, danger and diff colours keep the base's hues. |
-| `ui/fonts.rs` | Registers the bundled fonts: Inter, JetBrains Mono NL, Phosphor, the heading face and the Canopy CJK fallback. |
-| `ui/art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
 | `ui/widgets.rs` | Ref pills, avatars, badges, segmented controls, switches, checkboxes, and the older button helpers, which now draw `ui::kit` buttons. |
 | `ui/folder_picker.rs` | Native folder selection on a background thread; a bounded result channel and requesting-field lifetime keep the event loop responsive. |
 | `ui/toast.rs` | Toast queue and animation, and the notification center's history, kept in eframe storage (`canopy-notifications-v1`; `Toasts::to_json`/`restore_json`). |
@@ -189,6 +160,53 @@ thread.
 | `views/dialogs/{url,start,credential,update,common}.rs` | The remote URL builder, where a new branch starts, credential prompts, the update dialog (what is new, installing, restarting), shared fields and buttons. |
 | `views/statusbar.rs` | Branch, ahead/behind, repository state, running job. |
 | `views/state_banner.rs` | The merge, rebase, cherry-pick or revert in progress above History, Changes and requests, with Continue and Abort. |
+
+## nectura-ui
+
+The component library, a private repository (`NecturaLabs/nectura-ui`) that Canopy and other projects
+use as a Git submodule at `crates/nectura-ui`. It is a workspace member here, so it builds with the
+workspace's `Cargo.lock` and `[patch]` entries. It knows nothing about Git or Canopy: what it needs
+from the application comes through `host::Host` (the system's reduce-motion and reduce-transparency
+answers, the context-menu key) and `kit::Shortcut` (key hints). To change it, work in its own
+repository and update the submodule pointer here.
+
+| Module | Responsibility |
+|---|---|
+| `lib.rs` | The modules, and the conversions between egui's integer and float types (`points_i8`, `count_f32`, `int_f32`, `to_f32`, `saturate_u8`, `saturate_usize`), each a plain cast named for what it does out of range, so views never cast by hand. |
+| `host.rs` | `Host`, what the library asks the application, and `install`. |
+| `text.rs` | Text helpers the kit shares: one-line labels that end in an ellipsis, a stable colour and initials for a name, and removing tooltips under a blocking overlay. |
+| `theme.rs` | Design tokens: the three built-in palettes (shared colours plus Standard and Deeper surfaces), the custom theme's slot (`ThemeId::Custom`, `set_custom`), the high-contrast switch, the graph's node shape and curve, elevation materials, metrics per density and style, the active look (`apply`, `palette`, `surfaces`, `metrics`, `appearance`) and the contrast tests. The only place colours and sizes are defined. |
+| `motion.rs` | Motion tokens (durations, Bézier curves, springs), the Motion preference, the system's answer (asked on a background thread) and whether motion is currently reduced. |
+| `kit/mod.rs` | The component kit: `Size`, `Tone`, `ForceState`, `KitResponse`, `focus_visible` (kept current every frame by a begin-pass hook), `show_focus` and the shared interaction state. |
+| `kit/shortcut.rs` | `Shortcut`, the key hint a component shows; the application converts its own commands into one, so the library has no list of actions. |
+| `kit/anim.rs` | Eased booleans and values, springs, sliding rectangles, the press scale and `Flip` (list rows gliding to their new places); all instant with reduced motion. |
+| `kit/a11y.rs` | What screen readers and the keyboard need beyond each widget's own role: named groups and modal dialogs over a `Ui`'s node, open or closed states in a disclosure's name, focus given back when an overlay closes (`FocusReturn`) and Tab kept inside an open overlay (`trap_focus`). |
+| `kit/paint.rs` | Shadows, gradient fills, highlights, recesses, focus rings, pixel-snapped seams, Deeper panes with the focused-pane edge (`pane_focus`) and deck, spinners and scroll fades. |
+| `kit/button.rs` | `Button` (primary, secondary, ghost, danger), `IconButton`, `ToolButton`, `LinkButton`, `SplitButton`: the reference component. |
+| `kit/glass/mod.rs` | Translucent surfaces: decides which floating layers get the backdrop blur (the setting, the theme, the driver, at most four a frame), plans each in validated window pixels, queries the system's reduce-transparency answer off the UI thread, and falls back to the opaque overlay. |
+| `kit/glass/gl.rs` | The blur's OpenGL renderer, two `egui_glow` paint callbacks per layer: the capture copies and dual-Kawase blurs the region behind it, before its shadow; the composite keeps the backdrop's luminance in the theme's band (scaled down in dark themes, lifted towards white in light ones) and draws it inside the layer. GL objects are deleted only on the thread that owns the context. The only `unsafe` code in Canopy (ADR 0010). |
+| `kit/glass/shaders.rs` | The blur's GLSL and the dialect chosen for the context (OpenGL 3.0+, OpenGL ES 3.0+). |
+| `kit/gallery.rs` | The component gallery (`--overlay gallery`) with a section per kit module plus the sections the application passes in, plus token, elevation, style and motion strips. |
+| `kit/field.rs` | `TextField`, `SearchField`, `TextArea` and `CodeArea`: frameless `TextEdit`s inside the kit's fill, border, focus and error halo. |
+| `kit/select.rs` | `Select`, which replaces `ComboBox`: a Secondary trigger and a floating list driven from the keyboard. |
+| `kit/toggle.rs` | `Checkbox` (with indeterminate), `Radio`, `RadioGroup` (arrow keys, one Tab stop) and `Switch`. |
+| `kit/choice.rs` | `Segmented` with its sliding thumb, `ViewTabs` and `UnderlineTabs` with a sliding indicator, and `Swatches`, a radio group of colour circles. |
+| `kit/tabs.rs` | `DocTabs`, the title bar's repository tabs: busy spinner, ahead/behind counts, close on hover and middle click, sideways scrolling with edge fades, and closed tabs collapsing out. |
+| `kit/range.rs` | `Slider`, which replaces `egui::Slider`: keyboard steps and a value bubble while dragged. |
+| `kit/progress.rs` | `Progress` (determinate, indeterminate, line), `Spinner` and `Skeleton`; all static under reduced motion. |
+| `kit/menu.rs` | Menus and context menus: items with icon, shortcut, check, danger, disabled-with-reason and second line, headings, separators and delayed submenus. |
+| `kit/overlay.rs` | The floating surface every layer shares (shadow, glass backdrop, fill, ring) and the ground its content sits on, scrolling bodies with edge fades, the room a modal card may take, `Tooltip`, `Popover`, `Dialog` and its scrim, entrances and exit fades. |
+| `kit/toast.rs` | `ToastCard`, the toast's painting; the queue, its pausing timers and the cards' slide into place stay in `ui/toast.rs`. |
+| `kit/row.rs` | `ListRow`, `TreeRow`, `Disclosure`, `SectionHeader`, the Shift/Ctrl `Selection` and `Roving` (a list as one Tab stop, the arrows moving inside it; a click focuses the row). |
+| `kit/chip.rs` | `Badge`, `CountBadge`, `Keycap`, `KeyChord`, `StatusDot`, `DiffStat` and the status `Chip`. |
+| `kit/avatar.rs` | `Avatar` and `AvatarStack` with the picture crossfade. |
+| `kit/surface.rs` | `PaneHeader`, `Deck` (the top bars), `Card`, `Banner` and `Callout` with their `NoticeAction`s, `EmptyState` and `InsetBox`. |
+| `kit/split.rs` | `SplitHandle`, the handle between two panes of a custom split: pointer drag, double-click reset, arrow keys with keyboard focus, and a named splitter for screen readers. |
+| `kit/testkit.rs` | Test helpers (with the `testkit` feature, an application's tests use them too, and the per-thread look and motion state the tests need) for the kit's tests: a themed context, frames with input events and the AccessKit nodes a frame produced. |
+| `contrast.rs` | Colour maths on `OKLab` lightness: `derive` makes a theme's high-contrast palette (grounds and hues kept, each foreground moved to the ratio Midnight's contrast reference keeps), `lift` moves every foreground drawn on a ground to at least a reference palette's ratios times a margin, `fit` does that for one colour, and `clear` moves one colour until it reads at a given ratio on a given ground. |
+| `custom_theme.rs` | The custom theme: `CustomTheme`, the saved choices (base Midnight or Daylight, accent hue and intensity, tint hue and strength) and the `Palette` they make. Each colour is recoloured at its own luminance; then the grounds keep the base's steps (`keep_steps`), `contrast::lift` moves foregrounds to the base theme's ratios times 1.04, and text colours clear every wash they are drawn over (`clear_text`). Status colours, graph lanes, syntax, danger and diff colours keep the base's hues. |
+| `fonts.rs` | Registers the bundled fonts: Inter, JetBrains Mono NL, Phosphor, the heading face and the Canopy CJK fallback. |
+| `art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
 
 ## Threading model
 
@@ -268,7 +286,7 @@ Paths are under `crates/canopy-app/src/` unless they start with `crates/`.
 | A dialog | A variant of `Dialog` and its drawing in `views/dialogs/mod.rs`, with a file beside it when it is large | Open it with `Action::OpenDialog`; stacking rules are in `views/dialogs/stack.rs` |
 | A message to the user | `self.toasts.push(ctx, ToastKind::..., title, body)` (`ui/toast.rs`). A worker failure arrives as an `Event` that `Tab::poll` (`tab.rs`) turns into a notice, which `app/background.rs` shows as a toast; its body is git's own stderr | Log the detail with `tracing` |
 | A keyboard shortcut | The `add-keybinding` skill: `BINDINGS` in `keymap.rs` | `docs/keybindings.md` |
-| A colour, theme or token | The `add-theme` skill: `ui/theme.rs` (`ThemeId::ALL`) | `docs/design.md`; screenshots dark and light |
+| A colour, theme or token | The `add-theme` skill: `nectura-ui/src/theme.rs` (`ThemeId::ALL`) | `docs/design.md`; screenshots dark and light |
 | A GitHub or GitLab call | The `hosting-api` skill: `crates/canopy-hosting`, then a `HostJob` in `hosting.rs` | `docs/legal/privacy-policy.md` when what leaves the machine changes |
 | What first launch asks, or what a report carries | `TERMS_VERSION` and `PRIVACY_VERSION` in `ui/legal.rs`, `DATA_VERSION` in `crash_reports.rs`, the `Settings` fields `accepted_terms`, `accepted_privacy`, `crash_reports` and `seen_intro` | The texts in `docs/legal/`, with their `Last updated` date |
 | A test that must not see the user's git configuration | `in_isolated_git_env` in `crates/canopy-core/tests/operations.rs` | `tools/check.sh` runs the suite with an isolated configuration too |
@@ -367,12 +385,12 @@ Canopy-specific folders.
   with `tracing`. Nothing in the app panics on a Git error.
 - `unwrap()`, `expect()`, `panic!` and printing are not used outside tests (clippy `unwrap_used`,
   `expect_used`, `panic`, `print_stdout` and `print_stderr`; `clippy.toml` exempts tests), and
-  `unsafe` is denied everywhere except the backdrop blur's OpenGL calls in `ui/kit/glass/gl.rs`
+  `unsafe` is denied everywhere except the backdrop blur's OpenGL calls in `nectura-ui/src/kit/glass/gl.rs`
   (ADR 0010; `crates/canopy-app/tests/unsafe_policy.rs` enforces it).
 - The drawing code (`src/views`, `src/ui`) names no filesystem, process, network, libgit2 or git-CLI
   API in its production code: `crates/canopy-app/tests/ui_thread.rs` fails when it does, so repository
   and disk reads stay in worker jobs. `tools/check-ui-colors.py` does the same for colour constructors
-  outside `ui/theme.rs`.
+  outside `nectura-ui/src/theme.rs`.
 
 ## Testing strategy
 

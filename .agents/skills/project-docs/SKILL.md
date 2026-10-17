@@ -42,7 +42,7 @@ Canopy's layout, and which change keeps each file true (the update rules come fr
 |---|---|---|
 | `docs/README.md` | The documentation map: where each fact is written and how far to trust it; `tools/check-docs.py` fails when a document is missing from it | A document under `docs/` is added, renamed or removed |
 | `docs/architecture.md` | Architecture overview: crates, modules, threading, data flow, where common changes live, why libgit2 plus the CLI | A module is added or its responsibility changes |
-| `docs/design.md` | Reference: design tokens, typography, components | A token, theme or component changes in `ui/theme.rs` or `ui/widgets.rs` |
+| `docs/design.md` | Reference: design tokens, typography, components | A token, theme or component changes in `nectura-ui/src/theme.rs` or `ui/widgets.rs` |
 | `docs/features.md` | Reference: feature matrix against Fork, GitKraken, Sourcetree | A feature is added, changed or re-scoped |
 | GitHub Issues (`docs/backlog.md` is the migration pointer) | Active task tracker and acceptance criteria | Owned by the workflow in `AGENTS.md`; not a document this skill restructures |
 | `docs/art-prompts.md` | Reference: how the illustrations and app icon are made, and the list of scenes | An illustration is added or changed |
@@ -54,7 +54,7 @@ Canopy's layout, and which change keeps each file true (the update rules come fr
 Rules specific to Canopy:
 
 - **The same fact lives in one file.** Product rules live in `AGENTS.md`; the threading model and
-  layer choice in `docs/architecture.md`; colours only in `ui/theme.rs` and `docs/design.md`; the
+  layer choice in `docs/architecture.md`; colours only in `nectura-ui/src/theme.rs` and `docs/design.md`; the
   keybinding table in one place that the app also renders, so it cannot drift. `README.md`
   summarises and links; it does not restate a table that lives elsewhere.
 - **Commands in a doc are verified.** Before writing one into `README.md`, `CONTRIBUTING.md`,

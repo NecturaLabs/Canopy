@@ -52,6 +52,8 @@ jobs:
     uses: ./.github/workflows/test-release.yml
     with:
       commit: ${{ github.sha }}
+    secrets:
+      SUBMODULE_DEPLOY_KEY: ${{ secrets.SUBMODULE_DEPLOY_KEY }}
 
   prepare:
     name: Build number and tag
@@ -147,6 +149,8 @@ jobs:
     with:
       tag: ${{ needs.prepare.outputs.tag }}
       channel: ${{ inputs.channel }}
-    # Only the feed token: RELEASE_TOKEN, which can push tags, stays in this workflow.
+    # Only the feed token and the library's read-only key: RELEASE_TOKEN, which can push tags,
+    # stays in this workflow.
     secrets:
+      SUBMODULE_DEPLOY_KEY: ${{ secrets.SUBMODULE_DEPLOY_KEY }}
       APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
