@@ -86,23 +86,67 @@ fn serve(stream: TcpStream, log: &Mutex<Vec<String>>, reply: &dyn Fn(&str) -> Re
     }
 }
 
-/// A reserved TCP address with no listener. The established connection keeps the port owned
-/// until the fixture drops, so another test's server cannot be assigned it.
+/// An address on 127.0.0.1 that refuses connections and that no bind to port 0, in this process
+/// or another, is handed: a port below every operating system's ephemeral range.
+///
+/// Binding a listener and dropping it does not give such an address: the port is free again. Nor
+/// does holding a connected pair on it: a server another test starts on port 0 can still be
+/// handed that port where the kernel is set to reuse them (`net.ipv4.ip_autobind_reuse`), and
+/// Windows lets another socket bind a port a connected one uses. Only a process that names the
+/// port itself can take this address, and an unprivileged one cannot on Linux.
 pub(crate) struct Refused {
     pub address: SocketAddr,
-    _client: TcpStream,
-    _server: TcpStream,
 }
 
 pub(crate) fn refused() -> Refused {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let address = listener.local_addr().expect("addr");
-    let client = TcpStream::connect(address).expect("connect");
-    let (server, _) = listener.accept().expect("accept");
-    drop(listener);
-    Refused {
-        address,
-        _client: client,
-        _server: server,
+    let address = (1..=16u16)
+        .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+        .find(|address| {
+            TcpStream::connect(address)
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
+        })
+        .expect("a port below 17 on 127.0.0.1 that refuses connections");
+    Refused { address }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #210: the address `refused()` hands out must not be one a parallel test or process can
+    /// take while the fixture is alive; a listener there answers the lookup that should be
+    /// refused (`ECONNRESET` instead of `ECONNREFUSED`). Linux: an unprivileged process cannot
+    /// bind below `ip_unprivileged_port_start`, and `refused()` stays below it; this fails when
+    /// the process may bind low ports (root, or that sysctl lowered).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_refused_address_cannot_be_bound_while_it_is_held() {
+        let closed = refused();
+        let taken = TcpListener::bind(closed.address);
+        assert!(
+            taken.is_err(),
+            "{} was bound while refused() held it",
+            closed.address
+        );
+    }
+
+    #[test]
+    fn a_refused_address_stays_refused_and_is_never_handed_to_a_server() {
+        let closed = refused();
+        let connect = TcpStream::connect(closed.address).unwrap_err();
+        assert_eq!(connect.kind(), std::io::ErrorKind::ConnectionRefused);
+        assert!(
+            closed.address.port() < 1024,
+            "below every operating system's ephemeral range"
+        );
+        // The servers of the other tests bind to port 0 and keep what they are given.
+        let servers: Vec<_> = (0..64)
+            .map(|_| TcpListener::bind("127.0.0.1:0").expect("bind"))
+            .collect();
+        assert!(
+            servers
+                .iter()
+                .all(|s| s.local_addr().expect("addr") != closed.address)
+        );
     }
 }
