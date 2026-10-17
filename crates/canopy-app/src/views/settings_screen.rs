@@ -120,6 +120,8 @@ pub struct SettingsScreen {
     picker: crate::ui::folder_picker::FolderPicker,
     /// What the CLIs said about each host on the Accounts page, by `host[:port]` in lower case.
     checks: HashMap<String, CliCheck>,
+    /// The Accounts page's hosts, with what they were built from (`AccountHosts::source`).
+    account_hosts: Option<(u64, Arc<AccountHosts>)>,
     identity_for: Option<PathBuf>,
     loaded_identity: Option<Identity>,
     identity_name: String,
@@ -5034,13 +5036,110 @@ fn account_actions(
             }
         }
         Err(error @ (CliError::SignedOut { .. } | CliError::MissingScope { .. })) => {
-            detail(ui, "Run this in a terminal, then check again.");
+            detail(
+                ui,
+                &error.fix_note().map_or_else(
+                    || "Run this in a terminal, then check again.".to_owned(),
+                    |note| format!("Run this in a terminal and {note}, then check again."),
+                ),
+            );
             if let Some(command) = error.fix_command() {
                 command_line(ui, &command, actions);
             }
         }
         Err(CliError::Failed { message, .. }) => detail(ui, message),
     }
+}
+
+/// The most sign-in checks the Accounts page runs at once; the other hosts wait their turn.
+const MAX_CHECKS: usize = 4;
+/// The most cards for hosts that only open repositories' remotes name; the rest are counted.
+const MAX_REPO_HOSTS: usize = 4;
+
+/// The hosts the Accounts page shows: github.com, gitlab.com and the GitLab hosts listed in
+/// Integrations always, then those of open repositories up to [`MAX_REPO_HOSTS`]. A host on a
+/// non-default port is its own entry.
+#[derive(Debug, Default)]
+struct AccountHosts {
+    hosts: Vec<Forge>,
+    /// Hosts of open repositories left out.
+    more: usize,
+    /// What a settings search finds the page by.
+    search: String,
+}
+
+impl AccountHosts {
+    fn of(settings: &Settings, tabs: &[crate::tab::RepoTab]) -> Self {
+        let account = |kind, host: &str| Forge {
+            kind,
+            host: host.to_lowercase(),
+            port: None,
+            path: String::new(),
+        };
+        let mut hosts: Vec<Forge> = vec![
+            account(ForgeKind::GitHub, "github.com"),
+            account(ForgeKind::GitLab, "gitlab.com"),
+        ];
+        for h in settings
+            .gitlab_host_list()
+            .iter()
+            .filter_map(|h| canopy_core::forge::normalise_host(h))
+        {
+            hosts.push(account(ForgeKind::GitLab, &h));
+        }
+        let mut seen = HashSet::new();
+        hosts.retain(|f| seen.insert(f.authority().to_lowercase()));
+        let listed = hosts.len();
+        let mut more = 0;
+        for f in tabs.iter().flat_map(|t| t.forges.iter().map(|(_, f)| f)) {
+            if !seen.insert(f.authority().to_lowercase()) {
+                continue;
+            }
+            if hosts.len() - listed < MAX_REPO_HOSTS {
+                hosts.push(Forge {
+                    path: String::new(),
+                    ..f.clone()
+                });
+            } else {
+                more += 1;
+            }
+        }
+        let search = hosts
+            .iter()
+            .map(|f| f.host.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        Self {
+            hosts,
+            more,
+            search,
+        }
+    }
+
+    /// What the list is made from, so it is built again only when that changes.
+    fn source(settings: &Settings, tabs: &[crate::tab::RepoTab]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        settings.gitlab_hosts.hash(&mut h);
+        for (_, f) in tabs.iter().flat_map(|t| t.forges.iter()) {
+            (f.kind, &f.host, f.port).hash(&mut h);
+        }
+        h.finish()
+    }
+}
+
+/// The hosts whose check starts now: those not checked yet, in page order, while fewer than
+/// [`MAX_CHECKS`] run.
+fn checks_to_start<'a>(hosts: &'a [Forge], checks: &HashMap<String, CliCheck>) -> Vec<&'a Forge> {
+    let running = checks
+        .values()
+        .filter(|c| matches!(c, CliCheck::Running(_)))
+        .count();
+    hosts
+        .iter()
+        .filter(|f| !checks.contains_key(&f.authority().to_lowercase()))
+        .take(MAX_CHECKS.saturating_sub(running))
+        .collect()
 }
 
 /// The hosts' sign-in under Accounts. Returns the hosts (`host[:port]`, lower case) whose sign-in
@@ -5060,14 +5159,23 @@ fn accounts(
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let mut changed = Vec::new();
-    let forges = tabs.iter().flat_map(|t| t.forges.iter().map(|(_, f)| f));
-    let hosts_text = std::iter::once("github.com gitlab.com".to_owned())
-        .chain(settings.gitlab_host_list())
-        .chain(forges.clone().map(|f| f.host.clone()))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let source = AccountHosts::source(settings, tabs);
+    if screen
+        .account_hosts
+        .as_ref()
+        .is_none_or(|(s, _)| *s != source)
+    {
+        screen.account_hosts = Some((source, Arc::new(AccountHosts::of(settings, tabs))));
+    }
+    let Some(page) = screen.account_hosts.as_ref().map(|(_, h)| Arc::clone(h)) else {
+        return changed;
+    };
     // The page is one block: a search for any host or for the CLIs shows all of it.
-    if !block(ui, "Sign-in", &format!("{} {hosts_text}", ABOUT.join(" "))) {
+    if !block(
+        ui,
+        "Sign-in",
+        &format!("{} {}", ABOUT.join(" "), page.search),
+    ) {
         return changed;
     }
     for line in ABOUT {
@@ -5086,50 +5194,16 @@ fn accounts(
         .show(ui);
     }
     ui.add_space(theme::MD);
-    // Hosts: the two public ones, configured GitLab hosts and those of open repositories. A host
-    // on a non-default port is its own entry.
-    let account = |kind, host: &str| Forge {
-        kind,
-        host: host.to_lowercase(),
-        port: None,
-        path: String::new(),
-    };
-    let mut hosts: Vec<Forge> = vec![
-        account(ForgeKind::GitHub, "github.com"),
-        account(ForgeKind::GitLab, "gitlab.com"),
-    ];
-    for h in settings
-        .gitlab_host_list()
-        .iter()
-        .filter_map(|h| canopy_core::forge::normalise_host(h))
-    {
-        hosts.push(account(ForgeKind::GitLab, &h));
-    }
-    for f in forges {
-        hosts.push(Forge {
-            path: String::new(),
-            ..f.clone()
-        });
-    }
-    let mut seen = HashSet::new();
-    hosts.retain(|f| seen.insert(f.authority().to_lowercase()));
 
-    let width = ui.available_width() - theme::SM;
-    for forge in hosts {
-        let kind = forge.kind;
-        let host = forge.authority();
-        let key = host.to_lowercase();
-        // Ask the CLI when the page first shows the host, and again on "Check again".
-        if live && !screen.checks.contains_key(&key) {
-            let rx = hosting::check_cli(forge.clone(), ui.ctx().clone());
-            screen.checks.insert(key.clone(), CliCheck::Running(rx));
-        }
+    // Collect finished checks first, so a freed slot is taken in this frame.
+    for forge in &page.hosts {
+        let key = forge.authority().to_lowercase();
         if let Some(CliCheck::Running(rx)) = screen.checks.get(&key) {
             let finished = match rx.try_recv() {
                 Ok(state) => Some(state),
                 Err(crossbeam_channel::TryRecvError::Empty) => None,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => Some(Err(CliError::Failed {
-                    kind,
+                    kind: forge.kind,
                     message: "the check could not be run".into(),
                 })),
             };
@@ -5144,9 +5218,25 @@ fn accounts(
                 if stale {
                     changed.push(key.clone());
                 }
-                screen.checks.insert(key.clone(), CliCheck::Done(state));
+                screen.checks.insert(key, CliCheck::Done(state));
             }
         }
+    }
+    // Ask the CLI when the page first shows a host, and again on "Check again".
+    if live {
+        for forge in checks_to_start(&page.hosts, &screen.checks) {
+            let rx = hosting::check_cli(forge.clone(), ui.ctx().clone());
+            screen
+                .checks
+                .insert(forge.authority().to_lowercase(), CliCheck::Running(rx));
+        }
+    }
+
+    let width = ui.available_width() - theme::SM;
+    for forge in &page.hosts {
+        let kind = forge.kind;
+        let host = forge.authority();
+        let key = host.to_lowercase();
         Card::new()
             .width(width)
             .id_salt(("account-card", &host))
@@ -5165,7 +5255,10 @@ fn accounts(
                     );
                 });
                 match screen.checks.get(&key) {
-                    Some(CliCheck::Running(_)) => {
+                    // Waiting for a free slot reads the same as running: the check is on its way.
+                    Some(CliCheck::Running(_)) | None
+                        if live || screen.checks.contains_key(&key) =>
+                    {
                         ui.horizontal(|ui| {
                             Spinner::new()
                                 .size(Size::Sm)
@@ -5193,7 +5286,7 @@ fn accounts(
                         );
                         account_actions(ui, kind, state, actions);
                     }
-                    None => {
+                    _ => {
                         ui.label(
                             RichText::new("Not checked while pull and merge requests are off.")
                                 .size(m.meta_size)
@@ -5201,7 +5294,7 @@ fn accounts(
                         );
                     }
                 }
-                let busy = matches!(screen.checks.get(&key), Some(CliCheck::Running(_)));
+                let busy = !matches!(screen.checks.get(&key), Some(CliCheck::Done(_)));
                 if live
                     && Button::new("Check again")
                         .icon(icon::ARROW_CLOCKWISE)
@@ -5211,11 +5304,18 @@ fn accounts(
                         .show(ui)
                         .clicked()
                 {
-                    let rx = hosting::check_cli(forge.clone(), ui.ctx().clone());
-                    screen.checks.insert(key.clone(), CliCheck::Running(rx));
+                    // Queued: it starts on the next frame, when a slot is free.
+                    screen.checks.remove(&key);
+                    ui.ctx().request_repaint();
                 }
             });
         ui.add_space(m.card_gap);
+    }
+    if page.more > 0 {
+        help_label(
+            ui,
+            &format!("And {} more hosts of open repositories.", page.more),
+        );
     }
     changed
 }
@@ -6206,6 +6306,14 @@ mod tests {
             "Signed in as tanuki with the GitLab CLI, without the api scope"
         ));
         assert!(said(&words, "glab auth login --hostname gitlab.com"));
+        // GitLab's sign-in asks which scopes to grant: the card says to allow the missing one.
+        assert!(
+            said(
+                &words,
+                "Run this in a terminal and allow the api scope, then check again."
+            ),
+            "{words:#?}"
+        );
     }
 
     /// While pull and merge requests are off, or before the start-up questions are answered, the
@@ -6237,6 +6345,114 @@ mod tests {
                 "nothing to check again"
             );
         }
+    }
+
+    /// A tab with 200 remotes on 200 GitLab hosts.
+    fn tab_with_many_hosts() -> crate::tab::RepoTab {
+        let (worker, _events, _jobs) = crate::worker::Worker::detached();
+        let mut tab = crate::tab::RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.forges = (0..200)
+            .map(|n| {
+                (
+                    format!("r{n}"),
+                    Forge {
+                        kind: ForgeKind::GitLab,
+                        host: format!("gitlab-{n}.example"),
+                        port: None,
+                        path: "x/y".into(),
+                    },
+                )
+            })
+            .collect();
+        tab
+    }
+
+    /// A repository with hundreds of remotes on as many hosts starts at most [`MAX_CHECKS`] CLIs
+    /// at once, and only for the hosts it shows: the listed ones and [`MAX_REPO_HOSTS`] of the
+    /// repository's, the rest counted in one line.
+    #[test]
+    fn many_repository_hosts_are_capped() {
+        use crate::ui::kit::testkit;
+        let tab = tab_with_many_hosts();
+        let tabs = std::slice::from_ref(&tab);
+        let page = AccountHosts::of(&answered(), tabs);
+        assert_eq!(page.hosts.len(), 2 + MAX_REPO_HOSTS);
+        assert_eq!(page.more, 200 - MAX_REPO_HOSTS);
+        // Nothing checked yet: the first MAX_CHECKS start, then one per slot that frees.
+        let mut checks = HashMap::new();
+        assert_eq!(checks_to_start(&page.hosts, &checks).len(), MAX_CHECKS);
+        let running: Vec<_> = (0..MAX_CHECKS - 1)
+            .map(|_| crossbeam_channel::unbounded::<hosting::CliState>())
+            .collect();
+        for (n, (_, rx)) in running.iter().enumerate() {
+            checks.insert(page.hosts[n].authority(), CliCheck::Running(rx.clone()));
+        }
+        let next = checks_to_start(&page.hosts, &checks);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].host, page.hosts[MAX_CHECKS - 1].host);
+        let (_, rx) = crossbeam_channel::unbounded::<hosting::CliState>();
+        checks.insert(next[0].authority(), CliCheck::Running(rx));
+        assert_eq!(checks_to_start(&page.hosts, &checks), Vec::<&Forge>::new());
+
+        // The page shows those cards and counts the rest; with every shown host answered it
+        // starts nothing for the hidden ones.
+        let ctx = testkit::ctx();
+        let settings = Settings {
+            hosting_api: true,
+            ..answered()
+        };
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        for forge in &page.hosts {
+            screen.checks.insert(
+                forge.authority(),
+                CliCheck::Done(hosting::signed_out(forge.kind, &forge.host)),
+            );
+        }
+        let (words, _) = accounts_frame(&ctx, &mut screen, &settings, tabs, &mut Vec::new());
+        assert_eq!(
+            screen.checks.len(),
+            2 + MAX_REPO_HOSTS,
+            "no check for a hidden host"
+        );
+        assert!(said(&words, "gitlab-3.example"));
+        assert!(!said(&words, "gitlab-4.example"));
+        assert!(said(&words, "And 196 more hosts of open repositories."));
+        let cards = words
+            .iter()
+            .filter(|n| n.label.as_deref() == Some("Check again"))
+            .count();
+        assert_eq!(cards, 2 + MAX_REPO_HOSTS);
+    }
+
+    /// The page's host list is built once and kept while the settings and the tabs' remotes stay
+    /// the same, not every frame.
+    #[test]
+    fn the_account_hosts_are_built_again_only_when_they_change() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let tab = tab_with_many_hosts();
+        let tabs = std::slice::from_ref(&tab);
+        // Off, so no CLI runs.
+        let mut settings = Settings {
+            hosting_api: false,
+            ..answered()
+        };
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        let built = |screen: &SettingsScreen| Arc::clone(&screen.account_hosts.as_ref().unwrap().1);
+        accounts_frame(&ctx, &mut screen, &settings, tabs, &mut Vec::new());
+        let first = built(&screen);
+        accounts_frame(&ctx, &mut screen, &settings, tabs, &mut Vec::new());
+        assert!(Arc::ptr_eq(&first, &built(&screen)), "kept between frames");
+        settings.gitlab_hosts = "gitlab.corp".into();
+        accounts_frame(&ctx, &mut screen, &settings, tabs, &mut Vec::new());
+        let second = built(&screen);
+        assert!(!Arc::ptr_eq(&first, &second), "built again for a new host");
+        assert!(second.hosts.iter().any(|f| f.host == "gitlab.corp"));
     }
 
     /// A check that finds another answer than the one a tab's hosting thread started with marks
