@@ -482,6 +482,20 @@ mod tests {
         assert_eq!(Document::Terms.updated(), "17 October 2026");
     }
 
+    /// Canopy keeps no token (ADR 0017), so no sentence may still speak of one it saved or that
+    /// the user could change.
+    #[test]
+    fn the_documents_speak_of_no_saved_token() {
+        for doc in [TERMS, PRIVACY] {
+            for stale in ["saved token", "token you saved", "change the token"] {
+                assert!(
+                    !doc.to_lowercase().contains(stale),
+                    "{stale:?} is still there"
+                );
+            }
+        }
+    }
+
     #[test]
     fn documents_parse_into_blocks_without_markdown() {
         for doc in [Document::Terms, Document::Privacy] {

@@ -66,7 +66,7 @@ pub struct Forge {
     /// Which provider.
     pub kind: ForgeKind,
     /// Lower-case host name without port or credentials, e.g. `github.com`. Use it to show
-    /// and match the host (settings, saved tokens); use [`Forge::authority`] to build URLs.
+    /// and match the host (settings, the CLI sign-in); use [`Forge::authority`] to build URLs.
     pub host: String,
     /// The web server's port when the remote is an `https://` or `http://` URL that names one
     /// other than the scheme's default (443 or 80), e.g. `8443` for
