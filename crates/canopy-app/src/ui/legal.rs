@@ -591,7 +591,7 @@ mod tests {
     ) -> egui::FullOutput {
         let mut out = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 6000.0))),
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 8000.0))),
                 events,
                 ..Default::default()
             },
