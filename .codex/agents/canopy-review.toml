@@ -56,7 +56,7 @@ index or any branch, and never build into `target/` of a build someone else is r
 7. **Performance.** No per-frame allocation of large vectors or strings, no repository walks or
    diff computation per frame, long lists are virtualised, expensive results are cached on the
    worker.
-8. **Theme, components and keys.** Colours, spacing and radii come from `ui/theme.rs` (no hex or
+8. **Theme, components and keys.** Colours, spacing and radii come from `nectura-ui/src/theme.rs` (no hex or
    `Color32::from_rgb` in views); icons from `egui-phosphor`; light and dark themes considered.
    Shortcuts live only in the `keymap.rs` table: no Super, no bare key that could fire while a
    text field has focus.

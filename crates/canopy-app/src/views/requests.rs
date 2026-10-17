@@ -29,9 +29,10 @@ use crate::tab::{RepoTab, host_unreachable};
 use crate::ui::art;
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::{LinkButton, icon_button_side};
-use crate::ui::kit::chip::{Badge, DiffStat, RefPill};
+use crate::ui::kit::chip::{Badge, DiffStat};
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::{SearchField, TextArea};
+use crate::ui::kit::git::RefPill;
 use crate::ui::kit::overlay::{Popover, TooltipExt};
 use crate::ui::kit::progress::{Skeleton, Spinner};
 use crate::ui::kit::row::{self, Disclosure, ListRow, Roving, RowKind, SectionHeader};
@@ -2478,7 +2479,7 @@ mod tests {
             };
             assert_eq!(
                 colours("+607\u{2212}98"),
-                [p.success, p.danger.gamma_multiply(0.85)],
+                [p.diff_added, p.diff_removed],
                 "{theme_id:?}"
             );
             assert_eq!(colours("8 commits"), [p.text_dim], "{theme_id:?}");

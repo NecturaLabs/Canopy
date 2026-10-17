@@ -18,33 +18,6 @@ pub enum Kind {
     FileManager,
 }
 
-/// Where the system's choice comes from: the quiet tag beside it in Settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Origin {
-    /// An environment variable (`VISUAL`, `EDITOR`, `TERMINAL`).
-    Env(&'static str),
-    /// The desktop's default application (Linux `xdg-mime`, `xdg-terminal-exec`).
-    Desktop,
-    /// The first of the usual programs found on this computer.
-    Found,
-    /// What the platform itself opens (TextEdit's default, Notepad, Finder, Explorer).
-    #[cfg_attr(
-        not(any(target_os = "macos", target_os = "windows")),
-        expect(dead_code, reason = "Linux names the desktop's choices")
-    )]
-    Platform,
-}
-
-impl Origin {
-    pub fn tag(self) -> String {
-        match self {
-            Self::Env(var) => format!("from ${var}"),
-            Self::Desktop | Self::Platform => "System default".to_owned(),
-            Self::Found => "Found on this computer".to_owned(),
-        }
-    }
-}
-
 /// The program the system would use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemChoice {
@@ -55,7 +28,6 @@ pub struct SystemChoice {
     pub command: Option<String>,
     /// Which installed program it is ([`App::id`]), when it is one the list can show.
     pub id: Option<String>,
-    pub origin: Origin,
 }
 
 impl SystemChoice {
@@ -298,22 +270,19 @@ fn editor_from_env(
     path: &[PathBuf],
     known: &dyn Fn(&str) -> Option<KnownEditor>,
 ) -> Option<SystemChoice> {
-    [("VISUAL", visual), ("EDITOR", editor)]
-        .into_iter()
-        .find_map(|(var, value)| {
-            let value = value?.trim();
-            let (program, _) = split_command(value)?;
-            if !on_path(&program, path) {
-                return None;
-            }
-            let (name, id) = known(&program_name(&program))?;
-            Some(SystemChoice {
-                name,
-                command: Some(value.to_owned()),
-                id,
-                origin: Origin::Env(var),
-            })
+    [visual, editor].into_iter().flatten().find_map(|value| {
+        let value = value.trim();
+        let (program, _) = split_command(value)?;
+        if !on_path(&program, path) {
+            return None;
+        }
+        let (name, id) = known(&program_name(&program))?;
+        Some(SystemChoice {
+            name,
+            command: Some(value.to_owned()),
+            id,
         })
+    })
 }
 
 /// What the [`GUI_EDITORS`] list knows about `program`: its own name, and no list entry.
@@ -460,8 +429,8 @@ mod linux {
     use std::process::Command;
 
     use super::{
-        App, Apps, Kind, Origin, SystemChoice, editor_from_env, executable_id, listed_gui_editor,
-        on_path, sorted,
+        App, Apps, Kind, SystemChoice, editor_from_env, executable_id, listed_gui_editor, on_path,
+        sorted,
     };
     use crate::platform::{program_name, quote};
 
@@ -828,17 +797,18 @@ mod linux {
             &known,
         )
         .or_else(|| {
-            let entry = entries.get(&(env.default_for)("text/plain")?)?;
+            let entry = entries
+                .get(&(env.default_for)("text/plain")?)
+                .filter(|e| e.installed(&env.path))?;
             let (name, command) = editor_command(entry, launcher)?;
             Some(SystemChoice {
                 name,
                 command: Some(command),
                 id: Some(entry.program_id(&env.path)),
-                origin: Origin::Desktop,
             })
         });
 
-        let terminal_named = |command: &str, origin: Origin| {
+        let terminal_named = |command: &str| {
             let (program, _) = crate::platform::split_command(command)?;
             if !on_path(&program, &env.path) {
                 return None;
@@ -856,18 +826,17 @@ mod linux {
                 name,
                 command: Some(command.to_owned()),
                 id: Some(id),
-                origin,
             })
         };
         let terminal = env
             .terminal
             .as_deref()
-            .and_then(|t| terminal_named(t.trim(), Origin::Env("TERMINAL")))
-            .or_else(|| terminal_named("xdg-terminal-exec", Origin::Desktop))
+            .and_then(|t| terminal_named(t.trim()))
+            .or_else(|| terminal_named("xdg-terminal-exec"))
             .or_else(|| {
                 super::LINUX_TERMINALS
                     .iter()
-                    .find_map(|t| terminal_named(t, Origin::Found))
+                    .find_map(|t| terminal_named(t))
             });
 
         let file_manager = (env.default_for)("inode/directory")
@@ -878,7 +847,6 @@ mod linux {
                     name: e.name.clone(),
                     command: Some(e.command("%d")?),
                     id: Some(e.program_id(&env.path)),
-                    origin: Origin::Desktop,
                 })
             });
 
@@ -941,9 +909,7 @@ mod linux {
 mod macos {
     use std::path::PathBuf;
 
-    use super::{
-        Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, mac_apps, path_dirs,
-    };
+    use super::{Apps, SystemChoice, editor_from_env, listed_gui_editor, mac_apps, path_dirs};
 
     pub(super) fn detect() -> Apps {
         let home = crate::settings::home_dir();
@@ -977,7 +943,6 @@ mod macos {
             name: "Default text editor".to_owned(),
             command: None,
             id: None,
-            origin: Origin::Platform,
         }));
         Apps {
             editor,
@@ -985,13 +950,11 @@ mod macos {
                 name: "Terminal".to_owned(),
                 command: None,
                 id: Some("Terminal".to_owned()),
-                origin: Origin::Platform,
             }),
             file_manager: Some(SystemChoice {
                 name: "Finder".to_owned(),
                 command: None,
                 id: Some("Finder".to_owned()),
-                origin: Origin::Platform,
             }),
             installed: mac_apps(&bundles),
         }
@@ -1003,7 +966,7 @@ mod windows {
     use std::process::Command;
 
     use super::{
-        Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, on_path, parse_app_paths,
+        Apps, SystemChoice, editor_from_env, listed_gui_editor, on_path, parse_app_paths,
         path_dirs, windows_apps,
     };
 
@@ -1040,21 +1003,18 @@ mod windows {
             name: "Notepad".to_owned(),
             command: None,
             id: None,
-            origin: Origin::Platform,
         }));
         let terminal = if on_path("wt.exe", &path) {
             SystemChoice {
                 name: "Windows Terminal".to_owned(),
                 command: Some("wt -d %d".to_owned()),
                 id: Some("wt.exe".to_owned()),
-                origin: Origin::Platform,
             }
         } else {
             SystemChoice {
                 name: "Command Prompt".to_owned(),
                 command: None,
                 id: None,
-                origin: Origin::Platform,
             }
         };
         Apps {
@@ -1064,7 +1024,6 @@ mod windows {
                 name: "File Explorer".to_owned(),
                 command: None,
                 id: None,
-                origin: Origin::Platform,
             }),
             installed: windows_apps(&app_paths()),
         }
@@ -1284,7 +1243,6 @@ mod tests {
                 name: "Neovim in terminal".to_owned(),
                 command: Some("xdg-terminal-exec nvim %f".to_owned()),
                 id: Some(exe(root, "bin/nvim")),
-                origin: Origin::Desktop,
             })
         );
         assert_eq!(
@@ -1293,7 +1251,6 @@ mod tests {
                 name: "kitty".to_owned(),
                 command: Some("xdg-terminal-exec".to_owned()),
                 id: Some(exe(root, "bin/kitty")),
-                origin: Origin::Env("TERMINAL"),
             })
         );
         assert_eq!(
@@ -1302,7 +1259,6 @@ mod tests {
                 name: "Files".to_owned(),
                 command: Some("nautilus --new-window %d".to_owned()),
                 id: Some(exe(root, "bin/nautilus")),
-                origin: Origin::Desktop,
             })
         );
 
@@ -1316,13 +1272,13 @@ mod tests {
         e.editor = Some("nvim".to_owned());
         let found = detect(&e);
         let editor = found.editor.unwrap();
-        assert_eq!(
-            (editor.name.as_str(), editor.origin),
-            ("Visual Studio Code", Origin::Env("VISUAL"))
-        );
+        assert_eq!(editor.name, "Visual Studio Code");
         assert_eq!(editor.command, e.visual);
         // No $TERMINAL: xdg-terminal-exec is the desktop's.
-        assert_eq!(found.terminal.unwrap().origin, Origin::Desktop);
+        assert_eq!(
+            found.terminal.unwrap().command.as_deref(),
+            Some("xdg-terminal-exec")
+        );
 
         // Nothing configured, no launcher: a terminal editor cannot be the default, and the
         // terminal is the first one found.
@@ -1331,17 +1287,85 @@ mod tests {
         assert_eq!(found.editor, None);
         let terminal = found.terminal.unwrap();
         assert_eq!(
-            (
-                terminal.name.as_str(),
-                terminal.command.as_deref(),
-                terminal.origin
-            ),
-            ("kitty", Some("kitty"), Origin::Found)
+            (terminal.name.as_str(), terminal.command.as_deref()),
+            ("kitty", Some("kitty"))
         );
-        // A $TERMINAL that is not installed is passed over.
+    }
+
+    /// The program a missing default names, as a desktop entry and as a command, for `kind`.
+    #[cfg(unix)]
+    fn ghost_entry(kind: Kind) -> String {
+        entry_of(kind, "Ghost", "ghost %F")
+    }
+
+    // Every source of a default: the environment, the desktop's text editor and file manager,
+    // and `xdg-terminal-exec`. A program that is not installed is never the default.
+    #[cfg(unix)]
+    #[test]
+    fn a_default_naming_a_program_that_is_not_installed_is_never_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let apps = root.join("usr-share/applications");
+        write(&apps, "ghost-term.desktop", &ghost_entry(Kind::Terminal));
+        write(&apps, "ghost-edit.desktop", &ghost_entry(Kind::Editor));
+        write(
+            &apps,
+            "ghost-files.desktop",
+            &ghost_entry(Kind::FileManager),
+        );
+        write(
+            &root.join("config"),
+            "xdg-terminals.list",
+            "ghost-term.desktop\n",
+        );
+        let defaults = [
+            ("text/plain", "ghost-edit.desktop"),
+            ("inode/directory", "ghost-files.desktop"),
+        ];
         let mut e = env(root, &defaults);
-        e.terminal = Some("wezterm".to_owned());
-        assert_eq!(detect(&e).terminal.unwrap().origin, Origin::Found);
+        e.terminal = Some("ghost".to_owned());
+        e.visual = Some("ghost --wait".to_owned());
+        e.editor = Some("ghost".to_owned());
+        let found = detect(&e);
+        assert_eq!(found.terminal, None, "$TERMINAL");
+        assert_eq!(
+            found.editor, None,
+            "$VISUAL, $EDITOR and the desktop's text editor"
+        );
+        assert_eq!(found.file_manager, None, "the desktop's file manager");
+
+        // xdg-terminal-exec starts the first terminal of its list that is installed.
+        program(&root.join("bin"), "xdg-terminal-exec");
+        program(&root.join("bin"), "kitty");
+        write(&apps, "kitty.desktop", KITTY);
+        write(
+            &root.join("config"),
+            "xdg-terminals.list",
+            "ghost-term.desktop\nkitty.desktop\n",
+        );
+        e.terminal = None;
+        assert_eq!(detect(&e).terminal.unwrap().name, "kitty");
+
+        // The installed program after a missing one is the default.
+        for p in ["code", "nautilus"] {
+            program(&root.join("bin"), p);
+        }
+        write(
+            &apps,
+            "code.desktop",
+            &CODE.replace("/opt/code/bin/code", "code"),
+        );
+        write(&apps, "org.gnome.Nautilus.desktop", FILES);
+        e.visual = Some("ghost --wait".to_owned());
+        e.editor = Some("code --wait".to_owned());
+        let found = detect(&e);
+        assert_eq!(
+            found.editor.unwrap().command.as_deref(),
+            Some("code --wait")
+        );
+        let mut e = env(root, &[("inode/directory", "org.gnome.Nautilus.desktop")]);
+        e.terminal = Some("ghost".to_owned());
+        assert_eq!(detect(&e).file_manager.unwrap().name, "Files");
     }
 
     const FOOT: &str = "[Desktop Entry]\nType=Application\nName=Foot\nExec=foot\nCategories=System;TerminalEmulator;\n";

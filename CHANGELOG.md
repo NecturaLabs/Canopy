@@ -10,6 +10,15 @@ commits since the previous build.
 
 ### Added
 
+- Canopy asks before it acts on a repository it does not trust: opening one outside every trusted
+  folder shows a prompt that says a repository can run programs on this computer through its hooks
+  and settings, with Trust and Don't trust. Don't trust opens it read-only: history and diffs show,
+  every action is refused with a toast that says why, background fetches skip it, and a banner offers
+  Trust…. A trusted folder
+  trusts everything inside it, linked worktrees included, and the list in Settings → Privacy keeps
+  only the outer folders. Trust safety can be turned off there, after a confirmation; a settings file
+  never changes the list or the switch. Folders are compared by what they are on disk, so
+  capitalization and links never decide.
 - The pull and merge request list has a comfortable / dense toggle in its toolbar (and in Settings,
   Appearance, Request list). Dense shows one line per request, with the number, title, labels and
   checks and no preview; the choice is remembered and is separate from the whole-app density.
@@ -38,6 +47,11 @@ commits since the previous build.
   uncommitted work and unmerged commits are protected, with safety checked again before removal.
 
 ### Fixed
+
+- Settings → Integrations marks the program your system would use as "<name> (Default)" instead of
+  "Recommended", and no longer names the `$TERMINAL`, `$VISUAL` or `$EDITOR` it came from. The desktop's
+  default text editor is offered only when it is installed, like the other defaults. Searching
+  Settings for "default terminal", "default editor" or "default file manager" finds the row.
 
 - Settings → Integrations lists each terminal, editor and file manager once: the program the system
   starts (kitty behind `xdg-terminal-exec`, Terminal or Finder on macOS, Windows Terminal) is no
@@ -104,9 +118,17 @@ commits since the previous build.
 - A merge message put into the commit boxes is dropped again when the merge is aborted, unless it was
   edited.
 - Cancelling a sign-in prompt says "Sign-in was cancelled." instead of showing git's askpass error.
+- Fewer notification cards: a failure that repeats while its card shows raises no second card, an
+  automatic fetch that fails reaches the notification center and the bell but not a card, and a pull,
+  rebase or merge that stops on conflicts, or a missing program, is a Needs your attention notice, not an error.
 
 ### Changed
 
+- The commit details header now shows the author, the commit id and the parents before the commit
+  subject, and the subject takes the rest of the row. The commit identity card describes the
+  author and names the committer only when someone else committed.
+- The "Changed files" label is gone from the commit details; the "N files changed" line with its
+  line counts is now the section's centred title.
 - `canopy-core` no longer has `Repo::stage_all` and `Repo::delete_branch`, which only wrapped other
   functions: use `stage_all_except_repositories`, `delete_merged_branch` and `force_delete_branch`
   instead.

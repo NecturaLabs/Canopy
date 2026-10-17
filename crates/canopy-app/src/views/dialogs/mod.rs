@@ -286,13 +286,14 @@ pub enum Dialog {
         repo: Option<std::path::PathBuf>,
         scope: canopy_core::identity::Scope,
     },
-    /// Allow downloads in the repository's working and Git folders, or its parent.
-    TrustFolder {
+    /// Trust the repository's working and Git folders (`trust.rs`): it opens read-only until
+    /// then. Everything inside a trusted folder is trusted too.
+    Trust {
         repo: std::path::PathBuf,
         folders: Vec<std::path::PathBuf>,
-        /// The promisor remote the downloads would come from.
-        remote: String,
     },
+    /// Turning trust safety off (Settings, Privacy).
+    ConfirmTrustSafetyOff,
     /// What's new in an available update.
     Update(Box<crate::updater::Available>),
     /// What's new in this version (after an upgrade, or from the palette).
@@ -1614,83 +1615,89 @@ pub fn show(
                 }])
             })
         }
-        Dialog::TrustFolder {
-            repo,
-            folders,
-            remote,
-        } => {
-            let repo = repo.as_path();
-            let name = |path: &std::path::Path| {
-                path.file_name().map_or_else(
-                    || path.display().to_string(),
-                    |n| n.to_string_lossy().into_owned(),
-                )
-            };
+        Dialog::Trust { repo, folders } => {
+            let (repo, folders) = (&*repo, &*folders);
+            let name = repo.file_name().map_or_else(
+                || repo.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
             swallow_enter(ctx);
-            let parent = crate::trust::parent_offer(repo);
-            let actions_for = |root: &std::path::Path| {
-                std::iter::once(root)
-                    .chain(
-                        folders
-                            .iter()
-                            .map(std::path::PathBuf::as_path)
-                            .filter(|path| !path.starts_with(root)),
-                    )
-                    .map(|path| Action::TrustFolder(path.to_path_buf()))
-                    .collect()
-            };
+            let outside = |folder: &&std::path::PathBuf| !folder.starts_with(repo);
             let result = KitDialog::new(salt)
-                .title("Trust this folder?")
-                .icon(icon::SHIELD_CHECK)
+                .title("Trust this repository?")
+                .icon(icon::SHIELD_WARNING)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description(format!("{} is a partial clone: some of its files were left on the server. To show them, Canopy has to download them from {remote} with git, and git then follows this repository's own configuration, which can run programs and contact servers.", name(repo)))
+                .description(format!("{name} can run programs on this computer through its hooks and settings."))
                 .body(|ui| {
-                    ui.label(
-                        RichText::new("Trust a folder only if everything in it was made by you or by people you trust. You can remove it again in Settings.")
-                            .size(m.body_size)
-                            .color(p.text_dim),
-                    );
-                    if folders.iter().any(|folder| !folder.starts_with(repo)) {
-                        ui.add_space(theme::XS);
-                        note(ui, "This worktree also uses these Git folders:", p.text_dim);
-                        for folder in folders.iter().filter(|folder| !folder.starts_with(repo)) {
-                            ui.label(RichText::new(folder.display().to_string()).size(m.body_size).color(p.text));
-                        }
-                        note(ui, "They will be trusted too.", p.text_dim);
+                    for line in [
+                        "Trust it only if you made it or know who did.",
+                        "Otherwise it opens read-only: you can browse it, but Canopy changes nothing in it and runs nothing from it.",
+                    ] {
+                        ui.label(RichText::new(line).size(m.body_size).color(p.text_dim));
                     }
-                    if let Some(parent) = &parent {
-                        paint::seam_h(
-                            ui.painter(),
-                            ui.max_rect().x_range(),
-                            ui.cursor().top(),
-                            theme::surfaces(ui.ctx()).border,
+                    paint::seam_h(
+                        ui.painter(),
+                        ui.max_rect().x_range(),
+                        ui.cursor().top() + theme::XS,
+                        theme::surfaces(ui.ctx()).border,
+                    );
+                    ui.add_space(theme::SM);
+                    note(
+                        ui,
+                        if folders.iter().any(|folder| outside(&folder)) {
+                            "Trusts these folders and everything inside them:"
+                        } else {
+                            "Trusts this folder and everything inside it:"
+                        },
+                        p.text_faint,
+                    );
+                    for folder in std::iter::once(repo).chain(folders.iter().filter(outside)) {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(folder.display().to_string())
+                                    .font(FontId::monospace(m.small_size))
+                                    .color(p.text),
+                            )
+                            .truncate(),
                         );
-                        ui.add_space(theme::XS);
-                        note(ui, format!("Trusting {} covers every repository inside it, including ones you clone later.", name(parent)), p.text_faint);
-                        if Button::new(format!("Trust everything in {}", name(parent)))
-                            .ghost()
-                            .size(Size::Sm)
-                            .icon(icon::WARNING)
-                            .icon_tone(Tone::Warning)
-                            .tooltip(parent.display().to_string())
-                            .show(ui)
-                            .clicked()
-                        {
-                            extra = Some(Outcome::Run(actions_for(parent)));
-                        }
                     }
                 })
                 .footer(|f| {
-                    f.cancel_label("Not now")
-                        .confirm(if folders.iter().any(|folder| !folder.starts_with(repo)) {
-                            "Trust these folders".to_owned()
-                        } else {
-                            format!("Trust {}", name(repo))
-                        });
+                    f.cancel_label("Don't trust").confirm("Trust");
                 })
                 .show(ctx);
-            answer(result, || Outcome::Run(actions_for(repo)))
+            answer(result, || {
+                Outcome::Run(
+                    std::iter::once(repo)
+                        .chain(folders.iter().filter(outside))
+                        .map(|folder| Action::TrustFolder(folder.clone()))
+                        .collect(),
+                )
+            })
+        }
+        Dialog::ConfirmTrustSafetyOff => {
+            let result = confirmation(
+                salt,
+                "Turn trust safety off?",
+                "Canopy will stop asking before it changes or runs anything in a repository. Any \
+                 repository, including one you only downloaded, can then run programs on this \
+                 computer through its hooks and settings.",
+                "Turn off",
+                true,
+                icon::SHIELD_WARNING,
+                |ui| {
+                    ui.label(
+                        RichText::new(
+                            "Your trusted folders are kept for when you turn it back on.",
+                        )
+                        .size(m.body_size)
+                        .color(p.text_dim),
+                    );
+                },
+            )
+            .show(ctx);
+            answer(result, || Outcome::Run(vec![Action::SetTrustSafety(false)]))
         }
         Dialog::ConvertPartialClone { path, remote } => {
             let result = confirmation(
@@ -2672,81 +2679,115 @@ mod tests {
         (painted, reveal)
     }
 
+    /// Draws `dialog` for a few frames and clicks the button labelled `label`; what the click
+    /// answered.
+    fn click_button(mut dialog: Dialog, label: &str) -> super::Outcome {
+        use super::Outcome;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        let updater = crate::updater::Updater::default();
+        let mut frame = |events| {
+            let mut answer = Outcome::Keep;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    answer = super::show(
+                        ui.ctx(),
+                        &mut dialog,
+                        None,
+                        &mut picker,
+                        false,
+                        &updater,
+                        "",
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            let button = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            });
+            (button, answer)
+        };
+        let mut at = None;
+        for _ in 0..3 {
+            at = frame(Vec::new()).0;
+        }
+        let at = at.unwrap_or_else(|| panic!("the {label} button is drawn"));
+        let click = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(at), click(true)]);
+        frame(vec![click(false)]).1
+    }
+
     #[test]
     fn trusting_a_linked_worktree_includes_the_displayed_git_folders() {
         use super::{Action, Outcome};
-        for (label, chosen) in [
-            ("Trust these folders", "/projects/linked"),
-            ("Trust everything in projects", "/projects"),
-        ] {
-            let ctx = egui::Context::default();
-            crate::ui::fonts::install(&ctx);
-            let mut dialog = Dialog::TrustFolder {
-                repo: "/projects/linked".into(),
-                folders: vec!["/projects/linked".into(), "/other/main/.git".into()],
-                remote: "origin".into(),
-            };
-            let mut picker = crate::ui::folder_picker::FolderPicker::default();
-            let updater = crate::updater::Updater::default();
-            let mut frame = |events| {
-                let mut answer = Outcome::Keep;
-                let mut output = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(1200.0, 800.0),
-                        )),
-                        events,
-                        ..Default::default()
-                    },
-                    |ui| {
-                        answer = super::show(
-                            ui.ctx(),
-                            &mut dialog,
-                            None,
-                            &mut picker,
-                            false,
-                            &updater,
-                            "",
-                        );
-                    },
-                );
-                output.textures_delta.clear();
-                let button = output.shapes.iter().find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.text() == label => {
-                        Some(text.visual_bounding_rect().center())
-                    }
-                    _ => None,
-                });
-                (button, answer)
-            };
-            let mut at = None;
-            for _ in 0..3 {
-                at = frame(Vec::new()).0;
-            }
-            let at = at.expect("the chosen trust button is drawn");
-            let click = |pressed| egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            };
-            frame(vec![egui::Event::PointerMoved(at), click(true)]);
-            let Outcome::Run(actions) = frame(vec![click(false)]).1 else {
-                panic!("trust click must return actions")
-            };
-            let folders: Vec<_> = actions
-                .into_iter()
-                .map(|action| match action {
-                    Action::TrustFolder(folder) => folder,
-                    _ => panic!("trusting must only change trusted folders"),
-                })
-                .collect();
-            assert_eq!(
-                folders,
-                [std::path::PathBuf::from(chosen), "/other/main/.git".into()]
-            );
-        }
+        let dialog = Dialog::Trust {
+            repo: "/projects/linked".into(),
+            folders: vec!["/projects/linked".into(), "/other/main/.git".into()],
+        };
+        let Outcome::Run(actions) = click_button(dialog, "Trust") else {
+            panic!("trust click must return actions")
+        };
+        let folders: Vec<_> = actions
+            .into_iter()
+            .map(|action| match action {
+                Action::TrustFolder(folder) => folder,
+                _ => panic!("trusting must only change trusted folders"),
+            })
+            .collect();
+        assert_eq!(
+            folders,
+            [
+                std::path::PathBuf::from("/projects/linked"),
+                "/other/main/.git".into()
+            ],
+            "the repository and the Git folder outside it, once each"
+        );
+    }
+
+    /// Don't trust trusts nothing and leaves the repository read-only.
+    #[test]
+    fn not_trusting_changes_no_folder() {
+        use super::Outcome;
+        let dialog = Dialog::Trust {
+            repo: "/projects/linked".into(),
+            folders: vec!["/projects/linked".into()],
+        };
+        assert!(matches!(
+            click_button(dialog, "Don't trust"),
+            Outcome::Close
+        ));
+    }
+
+    /// Turning trust safety off needs the confirmation's own button; nothing else gives
+    /// `SetTrustSafety(false)`.
+    #[test]
+    fn trust_safety_goes_off_only_through_its_confirmation() {
+        use super::{Action, Outcome};
+        let Outcome::Run(actions) = click_button(Dialog::ConfirmTrustSafetyOff, "Turn off") else {
+            panic!("the confirmation must answer")
+        };
+        assert!(matches!(actions[..], [Action::SetTrustSafety(false)]));
+        assert!(matches!(
+            click_button(Dialog::ConfirmTrustSafetyOff, "Cancel"),
+            Outcome::Close
+        ));
     }
 
     /// review-views-7: a password shown in one prompt is hidden again in the next one.

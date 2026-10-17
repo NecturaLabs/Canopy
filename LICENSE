@@ -17,7 +17,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 Third-party components
 ----------------------
 
-The fonts bundled in crates/canopy-app/assets/fonts/ (Inter and JetBrains Mono) are licensed
+The fonts bundled in crates/nectura-ui/assets/fonts/ (Inter and JetBrains Mono) are licensed
 under the SIL Open Font License 1.1; their licence texts are in that directory.
 
 Third-party Rust crates used by Canopy are licensed under their own terms, as declared in their

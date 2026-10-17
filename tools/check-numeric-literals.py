@@ -3,7 +3,7 @@
 
 The quality standard (C3) asks for a named constant, with its unit, for every meaningful number.
 This checks the Git and hosting backends (`crates/canopy-core/src`, `crates/canopy-hosting/src`),
-where the rules live; the UI takes its sizes and times from `ui/theme.rs` tokens, which
+where the rules live; the UI takes its sizes and times from nectura-ui's `theme.rs` tokens, which
 `check-ui-colors.py` and review guard. A literal passes when it is
 
 - 0 or 1 (integer or float, any suffix), or part of a tuple index or a range bound written as a
