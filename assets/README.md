@@ -6,7 +6,7 @@
 | `icon-64.png`, `icon-256.png` | Scaled down from `icon-512.png`. |
 
 The icon is original work owned by NecturaLabs and covered by the repository's [LICENSE](../LICENSE).
-It is the in-app Canopy mark (`crates/canopy-app/src/ui/art.rs`, `logo`) on a midnight rounded
+It is the in-app Canopy mark (`crates/nectura-ui/src/art.rs`, `logo`) on a midnight rounded
 square: a trunk with two branches that curve outwards to round nodes, violet, blue and cyan, bold
 enough to read at 32 px.
 

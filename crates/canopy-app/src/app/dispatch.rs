@@ -442,7 +442,7 @@ impl CanopyApp {
                     }
                 }
                 Action::SettingsReplaced => {
-                    crate::trust::set(&self.settings.trusted_folders);
+                    crate::trust::publish(&self.settings);
                     crate::logging::set_level(self.settings.log_level);
                     for t in &mut self.tabs {
                         let prefs = self.settings.diff_for(&t.path);
@@ -496,7 +496,7 @@ impl CanopyApp {
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();
                     if crate::trust::add(&mut self.settings.trusted_folders, &folder) {
-                        crate::trust::set(&self.settings.trusted_folders);
+                        crate::trust::publish(&self.settings);
                         self.toasts.push(
                             ctx,
                             ToastKind::Success,
@@ -505,6 +505,10 @@ impl CanopyApp {
                             shown,
                         );
                     }
+                }
+                Action::SetTrustSafety(on) => {
+                    self.settings.trust_safety = on;
+                    crate::trust::publish(&self.settings);
                 }
                 Action::Copy(text) => {
                     ctx.copy_text(text.clone());

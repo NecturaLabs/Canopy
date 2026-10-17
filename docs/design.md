@@ -2,7 +2,7 @@
 
 Canopy's visual language: a calm, dark workspace where colour is reserved for meaning (branches,
 state, actions). All values here are implemented as tokens in
-`crates/canopy-app/src/ui/theme.rs`, which is the only place colours, spacing and radii are
+`crates/nectura-ui/src/theme.rs`, which is the only place colours, spacing and radii are
 defined. When a token or component changes, update this document in the same change.
 
 ## Principles
@@ -20,7 +20,7 @@ defined. When a token or component changes, update this document in the same cha
 
 ## Colour tokens
 
-Every colour is defined in `ui/theme.rs` and nowhere else. A theme is a `Palette`: the colours
+Every colour is defined in `nectura-ui/src/theme.rs` and nowhere else. A theme is a `Palette`: the colours
 both styles share (text, accents, status, lanes, syntax, request fields, focus, selection, shadows,
 scrim, glass) plus two `Surfaces` sets, one per Style. Views read the active set with `theme::surfaces(ctx)` and
 the shared colours with `theme::palette(ctx)`.
@@ -57,6 +57,21 @@ styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readab
 also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
 (`disabled_actions_read_on_banners`; high contrast 4.5:1 throughout).
 
+Diff colours are their own tokens, so a passing check and an added line do not share a green.
+`added_bg`, `removed_bg` and the line-number gutters `added_gutter`, `removed_gutter` are the row
+and gutter tints, and `diff_added` and `diff_removed` the ink of the `+` and `−` marks and of
+every diffstat (file lists, commit cards, the request summary line, the diffstat blocks); they are
+richer than `success` and `danger`, which keep meaning a passing or failing check and the other
+states. Code text keeps its contrast on the tinted rows (text 7:1, syntax colours 4.5:1) and the inks
+keep 4.5:1 on every ground, row state, diff row and gutter (`every_theme_meets_contrast_targets`). The
+pair is also apart in lightness, green lighter than red in dark themes, so it reads without hue.
+
+| Theme | `added_bg` / `added_gutter` | `removed_bg` / `removed_gutter` | `diff_added` | `diff_removed` |
+|---|---|---|---|---|
+| Midnight | `#032917` / `#013820` | `#411418` / `#5A1820` | `#34DE8A` | `#FF7076` |
+| Daylight | `#DDF6E7` / `#BDEDD2` | `#FFE9E7` / `#FFD1CE` | `#016B3B` | `#AF001A` |
+| Observatory | `#022C1D` / `#003D2A` | `#41141C` / `#5A1A27` | `#3FE0A2` | `#FF787C` |
+
 Three themes. Midnight and Daylight are round-2 concept 1, the look the owner locked: one design
 in dark and in light (`CONCEPT_ONE` in `theme.rs`, `the_default_themes_are_concept_one`).
 Observatory is the Midnight that build 690 shipped, kept as a theme of its own with its navy
@@ -70,7 +85,7 @@ ground, periwinkle signature, selection bar, zenith lift and constellation art
 | Observatory | Build 690's Midnight | navy-ink `#0B0F19` under `#111723` chrome, a periwinkle `#646CD6` primary, starlight links |
 
 Custom is a fourth choice, not a palette in the table: Midnight or Daylight recoloured from the
-user's choices (`ui/custom_theme.rs`, saved as `custom_theme`). Settings, Appearance shows a
+user's choices (`nectura-ui/src/custom_theme.rs`, saved as `custom_theme`). Settings, Appearance shows a
 "Custom theme" group when it is chosen: Based on (Midnight or Daylight), Accent (nine hue swatches),
 Accent hue (0 to 359), Accent intensity (20 to 140%), Tint (the same swatches), Tint hue and Tint
 strength (0 to 100%). The defaults are Midnight's own colours. The accent recolours the indigo
@@ -84,7 +99,7 @@ base's hues, and the structure (`Design`) is the base's. It is not in `ThemeId::
 high-contrast version is derived when it is built, like the others.
 
 High contrast is a switch over any theme, Custom included (Settings, Appearance; the toolbar's
-theme menu; the command palette's "High contrast: On" and "Off"), not a theme. `ui/contrast.rs`
+theme menu; the command palette's "High contrast: On" and "Off"), not a theme. `nectura-ui/src/contrast.rs`
 derives each theme's high-contrast colours once: the theme's grounds and hues stay, and every
 colour drawn on them moves, in `OKLab` lightness, to the contrast ratio the reference keeps on
 its ground (`theme::CONTRAST_REFERENCE`, Midnight at full contrast): lighter on a dark theme,
@@ -111,7 +126,7 @@ Copy link in its context menu (Copy address for an e-mail link). Every link is a
 tall (`theme::MIN_TARGET`), WCAG 2.5.8's 24 CSS pixels read as 24 points at 100% scale.
 
 `LinkButton::max_text_width` elides long labels while retaining the whole accessible name; the
-commit header uses it for long committer names and provides their full text in a tooltip.
+commit header uses it for long author names and provides their full text in a tooltip.
 
 ### Request field colours
 
@@ -262,8 +277,8 @@ it off for the session and every layer is opaque again.
 
 ## Motion
 
-Motion is feedback, never decoration. Durations, curves and springs live in `ui/motion.rs`; the
-kit's helpers in `ui/kit/anim.rs`.
+Motion is feedback, never decoration. Durations, curves and springs live in `nectura-ui/src/motion.rs`; the
+kit's helpers in `nectura-ui/src/kit/anim.rs`.
 
 | Token | Duration | Use |
 |---|---|---|
@@ -351,13 +366,15 @@ in the density's metrics:
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
-- Commit details keep the summary, copyable commit id, parent links and committer's picture and
-  name in the pane header. The summary elides first, with its full text in a tooltip; facts wrap
-  below it when their controls cannot fit. Dates remain in the History row's tooltip. Compact
+- Commit details keep the author's picture and name, the copyable commit id and the parent links
+  at the left of the pane header, before the summary. The summary takes the remaining width and
+  elides, with its full text in a tooltip; when the ids alone leave the summary too little room,
+  they take their own row and the summary goes below. Dates remain in the History row's tooltip. Compact
   windows move the same facts into the card's top. The name opens the commit identity card with
-  the original author, signature status, profile link and picture explanation.
-- The details card holds only the description and the Changed files section: the description
-  scrolls independently behind a fade, leaving room for the stats and two file rows. A commit
+  the committer (when it differs), signature status, profile link and picture explanation.
+- The details card holds only the description and the centred "N files changed" title with its
+  line counts above the file rows: the description scrolls independently behind a fade, leaving
+  room for the title and two file rows. A commit
   without a body goes directly to its files. File names take precedence over folders and have
   full-path tooltips; status badges and line counts use the kit. Automatic inspector height
   follows the header and card contents; a manual resize takes precedence.
@@ -461,6 +478,13 @@ in the density's metrics:
   too long for the card is cut back to a word or number boundary before its ellipsis, so a number
   is never cut in two, unless that would lose more than a quarter of what fits. A file both sides
   deleted offers one "Delete it", not one per side.
+- A repository that is not trusted leads History, Changes and Requests with the kit warning
+  `Banner` "Read-only: this repository is not trusted" and a Trust… ghost action at its right end
+  (`views/state_banner.rs`); it stacks above the operation banner. Settings shows the kit `Callout`
+  in the danger tone, "Trust safety is off" with Turn on, at the top of every page while the
+  switch is off. The Trust prompt is a form-width dialog (shield icon, what a repository can do, what
+  Don't trust means, the folders it trusts in monospace); turning the switch off is a danger
+  confirmation.
 - The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests,
   drawn the same way in all three (`views/state_banner.rs`): the kit warning `Banner` with
   Continue and Abort as ghost buttons at its right end.
@@ -587,8 +611,8 @@ shared reset that returns both to the app defaults. Help text never types the re
 `Popover` is a small panel anchored to a control (diff options, the commit identity card, the theme
 quick-pick): the overlay surface with `card_pad` inside, 6 pt from the anchor and at least as wide.
 Clicking the anchor toggles it; a click outside or Esc closes it and gives focus back to the
-anchor. One popover is open at a time. The identity card in the commit details is one: the committer's name is a
-link button, the card holds the email with a copy button, the original author, the signature, a profile
+anchor. One popover is open at a time. The identity card in the commit details is one: the author's name is a
+link button, the card holds the email with a copy button, the committer when different, the signature, a profile
 or user-search link and the picture settings; signature results get distinct glyphs and spoken
 names (verified: green seal, invalid: danger X, unavailable: muted question, untrusted or expired:
 warning). The identity card names the result and signer. The same result mark appears beside
@@ -745,7 +769,7 @@ above.
 
 ### Illustrations
 
-Drawn in code in the theme's colours (`ui/art.rs`, `docs/art-prompts.md`): the logo mark, the
+Drawn in code in the theme's colours (`nectura-ui/src/art.rs`, `docs/art-prompts.md`): the logo mark, the
 welcome canopy and four empty-state spots. Each grows in once when it appears and then stays
 still; reduce motion shows it finished. Midnight and Daylight show them as drawn over a plain
 ground (`ArtMotif::Plain`); Observatory joins them into constellations (`Constellation`) and high
@@ -923,7 +947,8 @@ leaves the choice to Git. Enumerated values have one option each; unsupported co
 remain visible as text. Recommendations are badges, never a reason to lock a control. A global
 value is changed, never cleared; a repository's own value has the reset button, which removes the
 override and leaves includes and higher-priority scopes intact. The
-first-branch field requires Save and validates before writing. Writes temporarily disable the
+first-branch field requires Save and validates before writing; it is on the Git page only, because
+Git reads `init.defaultBranch` to create a repository, never from one that exists. Writes temporarily disable the
 editor, then reread facts and show success or Git's error. Use recommended confirms its global
 scope and preserves signing, hooks, identity and line endings.
 

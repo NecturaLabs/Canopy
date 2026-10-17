@@ -77,10 +77,10 @@ impl Topic {
     pub fn help(self) -> &'static str {
         match self {
             Self::Error => {
-                "An operation, the host or opening something failed, with the reason it gave."
+                "A Git operation, a hosting request, an update check or opening a program failed, with the reason it gave."
             }
             Self::Attention => {
-                "SSH waits for your security key, or an installed update waits for a restart."
+                "Conflicts, a missing program, a security key to touch, Git settings to review or an update to restart."
             }
             Self::Update => "A new Canopy build is out, or the result of checking for one.",
             Self::Finished => "A commit, push, pull, fetch, clone or other Git work finished.",
@@ -168,6 +168,20 @@ fn error_help(
         ))
     } else {
         None
+    }
+}
+
+/// The help line and the decision an error notification carries; other kinds carry none.
+fn recovery(
+    kind: ToastKind,
+    title: &str,
+    body: &str,
+    repo: Option<&Path>,
+) -> (Option<&'static str>, Option<Offer>) {
+    if kind == ToastKind::Error {
+        error_help(title, body, repo).map_or((None, None), |(help, offer)| (Some(help), offer))
+    } else {
+        (None, None)
     }
 }
 
@@ -491,6 +505,12 @@ impl Toasts {
             .retain(|(id, _)| self.items.iter().any(|item| item.id == *id));
     }
 
+    /// How many cards are on screen and how many rows the center holds, for tests elsewhere.
+    #[cfg(test)]
+    pub(crate) fn counts(&self) -> (usize, usize) {
+        (self.items.len(), self.history.len())
+    }
+
     /// Notifies: into the center, and as a card when its topic shows as one.
     pub fn push(
         &mut self,
@@ -515,16 +535,31 @@ impl Toasts {
     ) {
         let title = title.into();
         let body = body.into();
-        let (help, offer) = if kind == ToastKind::Error {
-            error_help(&title, &body, repo)
-                .map_or((None, None), |(help, offer)| (Some(help), offer))
-        } else {
-            (None, None)
-        };
+        let (help, offer) = recovery(kind, &title, &body, repo);
         let source = repo
             .and_then(Path::file_name)
             .map(|name| name.to_string_lossy().into_owned());
-        self.notify(ctx, kind, topic, title, body, help, offer, source);
+        self.notify(ctx, kind, topic, title, body, help, offer, source, true);
+    }
+
+    /// Like [`Self::push_for`] for work the user did not start (an automatic fetch failing):
+    /// the center and the bell hold it, and no card interrupts.
+    pub fn push_quiet_for(
+        &mut self,
+        ctx: &egui::Context,
+        kind: ToastKind,
+        topic: Topic,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        repo: &Path,
+    ) {
+        let title = title.into();
+        let body = body.into();
+        let (help, offer) = recovery(kind, &title, &body, Some(repo));
+        let source = repo
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        self.notify(ctx, kind, topic, title, body, help, offer, source, false);
     }
 
     /// Notifies with a decision to make: the card shows buttons for it for a decision's time
@@ -547,6 +582,7 @@ impl Toasts {
             None,
             Some(offer),
             None,
+            true,
         );
     }
 
@@ -585,6 +621,7 @@ impl Toasts {
             None,
             Some(offer),
             source,
+            true,
         );
     }
 
@@ -602,6 +639,7 @@ impl Toasts {
         help: Option<&'static str>,
         offer: Option<Offer>,
         source: Option<String>,
+        interrupts: bool,
     ) {
         let left = lifetime(
             kind,
@@ -610,23 +648,34 @@ impl Toasts {
             card_text(kind, &body, help).body,
         );
         self.next += 1;
-        let card = self.prefs.shows(topic) && !self.center_open;
-        let unread = !card && topic.counts() && !self.center_open;
         let at = chrono::Utc::now().timestamp();
         // The same notice again, straight after itself and from the same repository (a fetch
         // that found nothing, ten times), is one row with a count and the latest time.
+        // A decision collapses only into the same decision, and only for an error, which counts
+        // the same failure rather than replacing a pending choice.
         let repeated = self.history.front_mut().filter(|e| {
-            offer.is_none()
-                && e.offer.is_none()
-                && e.kind == kind
+            e.kind == kind
                 && e.title == title
                 && e.body == body
                 && e.source == source
+                && e.offer == offer
+                && (offer.is_none() || kind == ToastKind::Error)
         });
+        // A failure that repeats while its card is still on screen adds no second card: the row
+        // counts it. Once the card is gone (dismissed or expired), the next occurrence, a retry
+        // for example, raises one again.
+        let again = kind == ToastKind::Error
+            && repeated
+                .as_ref()
+                .is_some_and(|e| self.items.iter().any(|t| t.id == e.id));
+        let card = interrupts && self.prefs.shows(topic) && !self.center_open && !again;
+        let unread = !card && !again && topic.counts() && !self.center_open;
         if let Some(entry) = repeated {
             entry.count = entry.count.saturating_add(1);
             entry.at = at;
-            entry.id = self.next;
+            if !again {
+                entry.id = self.next;
+            }
             entry.unread |= unread;
         } else {
             self.history.push_front(Entry {
@@ -1295,6 +1344,37 @@ mod tests {
             );
             assert_eq!(toasts.history.len(), Topic::ALL.len());
         }
+    }
+
+    /// #234: every way to notify goes through the card filter; with cards off none raises one,
+    /// and each still reaches the center.
+    #[test]
+    fn every_entry_point_follows_the_card_filter() {
+        let ctx = egui::Context::default();
+        let repo = Path::new("/work/mote");
+        let off = NotificationPrefs {
+            cards: false,
+            ..NotificationPrefs::default()
+        };
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(off);
+        for topic in Topic::ALL {
+            toasts.push(&ctx, ToastKind::Error, topic, "a", "x");
+            toasts.push_for(&ctx, ToastKind::Error, topic, "b", "x", Some(repo));
+            toasts.push_quiet_for(&ctx, ToastKind::Error, topic, "c", "x", repo);
+            toasts.push_offer(&ctx, ToastKind::Info, topic, "d", "x", Offer::Accounts);
+            toasts.push_offer_for(&ctx, topic, "e", "x".into(), Offer::GitSettings, repo);
+        }
+        assert!(toasts.items.is_empty(), "no entry point skips the filter");
+        assert!(!toasts.history.is_empty());
+
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs::default());
+        toasts.push_quiet_for(&ctx, ToastKind::Error, Topic::Error, "c", "x", repo);
+        assert!(
+            toasts.items.is_empty(),
+            "quiet raises none, even when shown"
+        );
     }
 
     #[test]
@@ -2397,6 +2477,113 @@ mod tests {
             "Fetched",
             body,
             Some(Path::new(repo)),
+        );
+    }
+
+    /// #234: a failure that repeats raises one card, not one per attempt; other words, or a
+    /// success between, raise a new one. A quiet notice never raises a card but still counts on
+    /// the bell.
+    #[test]
+    fn a_repeated_failure_is_one_card_and_a_quiet_one_none() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        let repo = Path::new("/work/mote");
+        let fail = |toasts: &mut Toasts, body: &str| {
+            toasts.push_for(
+                &ctx,
+                ToastKind::Error,
+                Topic::Error,
+                "Could not fetch",
+                body,
+                Some(repo),
+            );
+        };
+        for _ in 0..5 {
+            fail(&mut toasts, "could not resolve host");
+        }
+        assert_eq!(toasts.items.len(), 1, "five identical failures, one card");
+        assert_eq!(toasts.history[0].count, 5, "the center counts them");
+        fail(&mut toasts, "connection refused");
+        assert_eq!(toasts.items.len(), 2, "other words, a new card");
+        toasts.push_for(
+            &ctx,
+            ToastKind::Success,
+            Topic::Finished,
+            "Fetched",
+            "",
+            Some(repo),
+        );
+        fail(&mut toasts, "connection refused");
+        assert_eq!(toasts.items.len(), 3, "after a success, a new card");
+
+        let mut toasts = Toasts::default();
+        toasts.push_quiet_for(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Could not fetch",
+            "could not resolve host",
+            repo,
+        );
+        assert!(toasts.items.is_empty(), "no card");
+        assert_eq!(toasts.history.len(), 1, "kept in the center");
+        assert_eq!(toasts.unread, 1, "and counted on the bell");
+    }
+
+    /// #234: a retry after the card is gone raises a card again, a repeat while it shows does
+    /// not mark the row unread, and a failure with a decision on it collapses like any other.
+    #[test]
+    fn a_repeat_is_quiet_only_while_its_card_shows() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        let repo = Path::new("/work/mote");
+        let fail = |toasts: &mut Toasts| {
+            toasts.push_for(
+                &ctx,
+                ToastKind::Error,
+                Topic::Error,
+                "Could not push",
+                "remote: Invalid username or password. Authentication failed",
+                Some(repo),
+            );
+        };
+        fail(&mut toasts);
+        fail(&mut toasts);
+        assert_eq!(toasts.items.len(), 1, "an offer does not stop the collapse");
+        assert_eq!(toasts.history.len(), 1);
+        assert_eq!(toasts.history[0].count, 2);
+        assert_eq!(toasts.history[0].offer, Some(Offer::Accounts));
+        assert_eq!(toasts.unread, 0, "the card on screen is the notice");
+
+        toasts.items.clear();
+        fail(&mut toasts);
+        assert_eq!(toasts.items.len(), 1, "dismissed, the retry shows a card");
+        assert_eq!(toasts.history.len(), 1, "still one row");
+        assert_eq!(toasts.history[0].count, 3);
+        assert_eq!(
+            toasts.items[0].id, toasts.history[0].id,
+            "the card is the row's"
+        );
+    }
+
+    /// #234: a failure that raises no card keeps what a card would have said about it.
+    #[test]
+    fn a_quiet_failure_keeps_its_help_and_offer() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.push_quiet_for(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Could not fetch",
+            "fatal: Authentication failed for 'https://example.test/r.git'",
+            Path::new("/work/mote"),
+        );
+        assert!(toasts.items.is_empty());
+        assert_eq!(toasts.history[0].offer, Some(Offer::Accounts));
+        assert_eq!(
+            toasts.history[0].help,
+            Some("The host did not accept your credentials.")
         );
     }
 

@@ -379,7 +379,7 @@ fn listed_gui_editor(program: &str) -> Option<KnownEditor> {
 /// ones found as installed programs and, where a platform can tell reliably (Linux, macOS), the
 /// others as "Not installed". Graphical editors only: a terminal editor (vim, helix) needs a
 /// terminal, so it is listed only through a desktop entry that a terminal launcher can start.
-/// Sources are in docs/adr/0014-launcher-lists.md.
+/// Sources are in docs/adr/0016-launcher-lists.md.
 struct Known {
     kind: Kind,
     name: &'static str,

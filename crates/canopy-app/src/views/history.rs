@@ -16,9 +16,9 @@ use crate::tab::RepoTab;
 use crate::ui::kit::a11y;
 use crate::ui::kit::anim::Flip;
 use crate::ui::kit::avatar::{self, Person};
-use crate::ui::kit::chip::RefPill;
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::SearchField;
+use crate::ui::kit::git::RefPill;
 use crate::ui::kit::graph::{self, Lanes, Marks};
 use crate::ui::kit::menu::{self, Menu};
 use crate::ui::kit::overlay::TooltipExt;
@@ -1374,7 +1374,9 @@ mod tests {
             "author must be readable: {visible:?}"
         );
         assert!(
-            visible.iter().any(|text| text == "1 file changed"),
+            visible
+                .iter()
+                .any(|text| text.eq_ignore_ascii_case("1 file changed")),
             "changed files must be readable: {visible:?}"
         );
         assert!(

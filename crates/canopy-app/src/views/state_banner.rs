@@ -1,22 +1,25 @@
-//! The merge, rebase, cherry-pick or revert in progress, shown the same way above History,
-//! Changes and the request list: a kit warning [`Banner`] with Continue and Abort at its right.
+//! What a repository is in the middle of, shown the same way above History, Changes and the
+//! request list: a kit warning [`Banner`]. A merge, rebase, cherry-pick or revert in progress has
+//! Continue and Abort at its right; a repository that is not trusted has Trust.
 
 use egui::{Align, Layout, Rect, Ui, UiBuilder, pos2, vec2};
 use egui_phosphor::regular as icon;
 
 use crate::action::Action;
-use crate::tab::RepoTab;
-use crate::ui::kit::surface::Banner;
+use crate::tab::{RepoTab, RepoTrust};
+use crate::ui::kit::surface::{Banner, NoticeAction};
 use crate::ui::kit::{Button, Size, Tone};
 use crate::ui::theme;
+use crate::views::dialogs::Dialog;
 use crate::worker::Op;
 
 /// Why Continue or Abort waits.
 const WAIT: &str = "Wait for the current operation";
 
-/// Draws the banner while the repository is in the middle of an operation; nothing when it is
-/// clean.
+/// Draws the banners: the repository's trust while it has none, and the operation it is in the
+/// middle of; nothing when it is trusted and clean.
 pub fn show(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
+    untrusted(ui, tab, actions);
     let Some(snap) = &tab.snap else {
         return;
     };
@@ -89,6 +92,30 @@ pub fn show(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 actions.push(Action::Op(Op::ContinueOrAbort {
                     state,
                     abort: false,
+                }));
+            }
+        });
+}
+
+/// The banner over a repository that is not trusted: it is read-only until the user trusts it.
+fn untrusted(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
+    if tab.trust != RepoTrust::Untrusted {
+        return;
+    }
+    egui::Panel::top("repository-untrusted")
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| {
+            let clicked = Banner::new(Tone::Warning, "Read-only: this repository is not trusted")
+                .icon(icon::SHIELD_WARNING)
+                .body("Canopy changes nothing in it and runs nothing from it.")
+                .action(NoticeAction::new("Trust…").icon(icon::SHIELD_CHECK))
+                .id_salt("repository-untrusted")
+                .show(ui)
+                .value;
+            if clicked == Some(0) {
+                actions.push(Action::OpenDialog(Dialog::Trust {
+                    repo: tab.trust_folders.first().unwrap_or(&tab.path).clone(),
+                    folders: tab.trust_folders.clone(),
                 }));
             }
         });

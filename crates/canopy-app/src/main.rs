@@ -48,9 +48,9 @@ OPTIONS:
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, crash-consent, legal, credential, host-key,
                               merge, identity, settings-git, settings-git-pull, settings-git-commits, settings-git-config,
-                              clear-identity, update-installed, update-running, trust-folder,
-                              diff-options,
-                              settings-integrations, settings-accounts, settings-updates,
+                              clear-identity, update-installed, update-running, trust-prompt,
+                              trust-banner, trust-safety-off, privacy-trust-off, diff-options,
+                              settings-integrations, settings-accounts, settings-updates, settings-notifications,
                               settings-keyboard, settings-backup, settings-repository,
                               settings-repository-pull, settings-repository-diffs,
                               settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, search-changes, clean-stale, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
@@ -376,6 +376,7 @@ fn main() -> anyhow::Result<()> {
     validate_screenshot_launch(&launch, isolated).map_err(anyhow::Error::msg)?;
 
     // Normal detail until Settings load; their log setting takes over afterwards.
+    ui::install_host();
     logging::init(logging::LogLevel::Normal);
     canopy_hosting::set_build(build_info::NUMBER);
 

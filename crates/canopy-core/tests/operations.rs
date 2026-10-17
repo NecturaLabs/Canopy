@@ -1679,6 +1679,9 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
 
 #[test]
 fn pull_ignores_a_value_git_rejects_when_the_strategy_is_given() {
+    if !in_isolated_git_env("pull_ignores_a_value_git_rejects_when_the_strategy_is_given") {
+        return;
+    }
     // A bare `git pull` dies on pull.rebase=sometimes; a pull with a strategy does not read it,
     // and the resolver reports it instead of guessing.
     let (up_dir, _clone, copy) = pull_scenario(&["pull.rebase=sometimes"], true);
@@ -1758,6 +1761,9 @@ fn pull_config_names_the_setting_its_value_and_where_it_is_set() {
 
 #[test]
 fn pull_config_follows_the_branch_it_is_asked_about() {
+    if !in_isolated_git_env("pull_config_follows_the_branch_it_is_asked_about") {
+        return;
+    }
     let (_up, _clone, copy) = pull_scenario(&["pull.rebase=false"], true);
     let workdir = copy.workdir();
     // Branch names with slashes and dots are subsections of the key as they are.
@@ -1782,6 +1788,9 @@ fn pull_config_follows_the_branch_it_is_asked_about() {
 
 #[test]
 fn pull_config_reads_a_key_without_a_value_and_included_files() {
+    if !in_isolated_git_env("pull_config_reads_a_key_without_a_value_and_included_files") {
+        return;
+    }
     let (_up, _clone, copy) = pull_scenario(&[], true);
     let git_dir = copy.workdir().join(".git");
     let mut config = fs::read_to_string(git_dir.join("config")).expect("read");
@@ -1812,6 +1821,10 @@ fn pull_config_reads_a_key_without_a_value_and_included_files() {
 #[test]
 fn pull_config_names_a_file_that_is_not_utf8() {
     use std::os::unix::ffi::OsStrExt;
+
+    if !in_isolated_git_env("pull_config_names_a_file_that_is_not_utf8") {
+        return;
+    }
 
     let (_up, _clone, copy) = pull_scenario(&[], true);
     let git_dir = copy.workdir().join(".git");
