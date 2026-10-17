@@ -27,7 +27,7 @@ pub const PRIVACY: &str = include_str!("../../../../docs/legal/privacy-policy.md
 /// "Last updated" of the Terms of Service, as `YYYY-MM-DD`.
 pub const TERMS_VERSION: &str = "2026-10-03";
 /// "Last updated" of the Privacy Policy, as `YYYY-MM-DD`.
-pub const PRIVACY_VERSION: &str = "2026-10-13";
+pub const PRIVACY_VERSION: &str = "2026-10-14";
 
 /// A list item's dot, and how far below the line's middle its x-height sits.
 const BULLET_RADIUS: f32 = 2.5;
@@ -591,7 +591,7 @@ mod tests {
     ) -> egui::FullOutput {
         let mut out = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 6000.0))),
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 8000.0))),
                 events,
                 ..Default::default()
             },
