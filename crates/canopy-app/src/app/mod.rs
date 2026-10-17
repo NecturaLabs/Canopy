@@ -48,6 +48,7 @@ pub const OVERLAYS: &[&str] = &[
     "cheatsheet",
     "palette",
     "consent",
+    "consent-updated",
     "crash-consent",
     "legal",
     "credential",
@@ -541,10 +542,10 @@ impl CanopyApp {
             Some("privacy" | "privacy-trust-off") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy));
             }
-            Some("consent") => {
+            Some(name @ ("consent" | "consent-updated")) => {
                 app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::Terms,
-                    updated: false,
+                    updated: name == "consent-updated",
                     reading: None,
                 });
             }
