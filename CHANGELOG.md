@@ -13,8 +13,9 @@ commits since the previous build.
 - Settings → Integrations lists the well-known editors, terminals and file managers that are not
   installed after the installed ones, dimmed and tagged Not installed, so you see what exists; they
   cannot be picked, and the keyboard passes over them (Linux and macOS; Windows lists the installed
-  programs only). A program you chose that has since been uninstalled shows the same way, and
-  opening falls back to your system's program and says so. A well-known program found only on `PATH`
+  programs only). A program you chose that has since been uninstalled shows the same way (also when its
+  saved command is a path to a file that is gone; a path to a file that is there runs as typed),
+  and opening falls back to your system's program and says so. A well-known program found only on `PATH`
   is now listed as installed (Linux and macOS).
 - Canopy asks before it acts on a repository it does not trust: opening one outside every trusted
   folder shows a prompt that says a repository can run programs on this computer through its hooks

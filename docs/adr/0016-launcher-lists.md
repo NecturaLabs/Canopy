@@ -40,8 +40,14 @@ order, and a missing program cannot be picked.
   | Platform | Editors | Terminals | File managers | How a program counts as installed |
   |---|---|---|---|---|
   | Linux | rows | rows | rows | an installed desktop entry with one of its ids, or one of its commands on `PATH` |
-  | macOS | rows | rows | rows | its `.app` folder in `/Applications`, `/Applications/Utilities`, `/System/Applications`, `/System/Applications/Utilities`, `/System/Library/CoreServices` or `~/Applications`, or anywhere Spotlight (`mdfind`) lists it, or one of its commands on `PATH` |
+  | macOS | rows | rows | rows | its `.app` folder in `/Applications`, `/Applications/Utilities`, `/System/Applications`, `/System/Applications/Utilities`, `/System/Library/CoreServices` or `~/Applications`, or anywhere Spotlight (`mdfind`) lists it, or one of its commands on Canopy's own `PATH` |
   | Windows | none | none | none | App Paths only; it misses programs that are only on `PATH` (`wt.exe` is an alias) and Explorer is always there, so it cannot say a program is missing |
+
+  On macOS `PATH` counts only as far as Canopy's own `PATH` carries the directories: a launch
+  from the Dock or Finder has roughly `/usr/bin:/bin:/usr/sbin:/sbin`, so a Homebrew or Nix
+  binary is found only when Canopy was started from a shell that has them (Spotlight still finds
+  applications wherever they are). Such a binary would not start from Canopy either, so it is
+  reported as it would run.
 
   A kind or platform without rows lists the installed programs and Custom command…. Windows
   gets rows once the Start menu or `PATH` is read for the curated names.
@@ -52,10 +58,15 @@ order, and a missing program cannot be picked.
 - **A saved choice that is gone shows as missing and runs nothing.** A saved command that starts
   a well-known program that is not installed shows as that program, selected, dimmed and tagged.
   Opening runs the system's program instead and a notification says which program is missing and
-  what ran. Only a bare command name (or, on macOS, `open -a Name`) counts: a command that names
-  its program by a path (`/opt/alacritty/bin/alacritty`) is the user's own program and, like any
-  other saved command (a program nobody knows, or an installed one), runs as typed; a failure
-  keeps today's error message with the operating system's reason. The closed select of a gone
+  what ran. A bare command name (or, on macOS, `open -a Name`) counts. A command that names its
+  program by a path counts only when that program file is gone: a list entry saves the entry's
+  own `Exec` program, often absolute (`/usr/share/code/code --unity-launch %F`), so after the
+  uninstall it shows as the program, "Not installed", and opens with the system's. A path to a
+  file that is there (`/opt/alacritty/bin/alacritty`, on neither `PATH` nor an entry) is the
+  user's own program and runs as typed, as does any other saved command (a program nobody knows,
+  or an installed one); a failure keeps today's error message with the operating system's
+  reason. The file check runs on the detection thread, never the UI thread: detection is given
+  the saved commands (startup and when Settings opens) and keeps those whose file is missing. The closed select of a gone
   choice carries "Not installed" as its accessible description, as the list rows do.
 - **Installed means found, not just categorised.** A well-known program on `PATH` that no desktop
   entry lists is an installed program too (its command is the program's name), so it is never
