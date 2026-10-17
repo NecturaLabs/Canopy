@@ -1965,7 +1965,7 @@ fn action_bar(
 
 /// A credential that cannot do what the request's actions need, and what fixes it.
 struct CredentialProblem {
-    title: &'static str,
+    title: String,
     text: String,
     fix: &'static str,
 }
@@ -1975,8 +1975,11 @@ struct CredentialProblem {
 /// sign-in nothing was refused, whatever the host answered (a GitLab that wants one answers 401).
 fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
     if let Some(Err(error)) = &tab.requests.cli {
+        // Titled as Settings → Accounts words the state: not installed and failing are not
+        // "not signed in".
         Some(CredentialProblem {
-            title: "Not signed in",
+            title: crate::views::settings_screen::account_status(error.kind(), &Err(error.clone()))
+                .0,
             text: format!(
                 "{error} Until then Canopy can only read this request: approving, merging and commenting need a sign-in."
             ),
@@ -1996,7 +1999,7 @@ fn credential_problem(tab: &RepoTab) -> Option<CredentialProblem> {
             },
         );
         Some(CredentialProblem {
-            title: "The host refused the sign-in",
+            title: "The host refused the sign-in".to_owned(),
             text: format!(
                 "The {cli}'s sign-in is expired, revoked or lacks the scope this needs. Sign in again{command} to approve, merge or comment."
             ),
@@ -2589,6 +2592,32 @@ mod tests {
         assert!(frame.off("Approve"));
     }
 
+    /// A 404 whose own words are just "Not Found" says not found once, after the CLI's state.
+    #[test]
+    fn a_plain_not_found_is_said_once() {
+        let mut tab = test_tab();
+        tab.requests.list = Some(Err(
+            canopy_hosting::Error::NotFound("Not Found".into()).to_string()
+        ));
+        tab.requests.cli = Some(signed_out(ForgeKind::GitHub));
+        let frame = render(theme::ThemeId::Midnight, SCREEN, |ui| {
+            detail(ui, &mut tab, ForgeKind::GitHub, &mut Vec::new());
+        });
+        assert!(
+            frame.mentions(
+                "Not signed in with the GitHub CLI. Not found, or the repository is private"
+            ),
+            "{:?}",
+            frame.texts
+        );
+        let said: usize = frame
+            .texts
+            .iter()
+            .map(|(t, _)| t.to_lowercase().matches("not found").count())
+            .sum();
+        assert_eq!(said, 1, "{:?}", frame.texts);
+    }
+
     /// F6: when the list could not load, the right pane says why instead of "Select a ...".
     #[test]
     fn a_failed_list_is_explained_in_the_details_pane() {
@@ -2816,27 +2845,40 @@ mod tests {
     #[test]
     fn why_the_cli_gave_no_credential_is_in_the_warning() {
         let kind = ForgeKind::GitHub;
-        for error in [
-            CliError::NotInstalled { kind },
-            CliError::SignedOut {
-                kind,
-                host: "github.com".into(),
-            },
-            CliError::MissingScope {
-                kind,
-                host: "github.com".into(),
-                user: Some("octocat".into()),
-                scope: "repo",
-            },
-            CliError::Failed {
-                kind,
-                message: "it took longer than 10 seconds".into(),
-            },
+        // Titled as Settings → Accounts words each state.
+        for (error, title) in [
+            (
+                CliError::NotInstalled { kind },
+                "The GitHub CLI is not installed",
+            ),
+            (
+                CliError::SignedOut {
+                    kind,
+                    host: "github.com".into(),
+                },
+                "Not signed in with the GitHub CLI",
+            ),
+            (
+                CliError::MissingScope {
+                    kind,
+                    host: "github.com".into(),
+                    user: Some("octocat".into()),
+                    scope: "repo",
+                },
+                "Signed in as octocat with the GitHub CLI, without the repo scope",
+            ),
+            (
+                CliError::Failed {
+                    kind,
+                    message: "it took longer than 10 seconds".into(),
+                },
+                "The GitHub CLI could not be used",
+            ),
         ] {
             let mut tab = test_tab();
             tab.requests.cli = Some(Err(error.clone()));
             let problem = credential_problem(&tab).unwrap();
-            assert_eq!(problem.title, "Not signed in");
+            assert_eq!(problem.title, title);
             assert!(
                 problem.text.starts_with(&error.to_string()),
                 "{}",

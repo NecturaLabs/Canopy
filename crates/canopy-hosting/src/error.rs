@@ -24,7 +24,7 @@ pub enum Error {
     },
     /// HTTP 404. GitHub and GitLab answer 404 rather than 403 for private projects the signed-in
     /// account cannot see, or that nobody is signed in to see.
-    #[error("Not found, or the repository is private ({0})")]
+    #[error("{}", not_found(.0))]
     NotFound(String),
     /// Any other unsuccessful status, with the message from the response's `message`, `error`
     /// or `errors` fields when present.
@@ -71,6 +71,18 @@ pub(crate) fn map_head_conflict<T>(result: Result<T>, sha_sent: bool, noun: &str
     }
 }
 
+/// The sentence for a 404, with the server's words only when they add something: GitHub's are
+/// just "Not Found".
+fn not_found(message: &str) -> String {
+    const SAID: &str = "Not found, or the repository is private";
+    let message = message.trim();
+    if message.is_empty() || message.eq_ignore_ascii_case("not found") {
+        SAID.to_owned()
+    } else {
+        format!("{SAID} ({message})")
+    }
+}
+
 fn rate_limited(reset: Option<i64>) -> String {
     match reset.and_then(|t| DateTime::<Utc>::from_timestamp(t, 0)) {
         Some(at) => format!(
@@ -95,10 +107,14 @@ mod tests {
             e.to_string(),
             "The server rejected the request (HTTP 422): Validation Failed: A pull request already exists"
         );
-        assert!(
-            Error::NotFound("Not Found".into())
-                .to_string()
-                .contains("repository is private")
+        assert_eq!(
+            Error::NotFound("Not Found".into()).to_string(),
+            "Not found, or the repository is private",
+            "the server's \"Not Found\" adds nothing"
+        );
+        assert_eq!(
+            Error::NotFound("404 Project Not Found".into()).to_string(),
+            "Not found, or the repository is private (404 Project Not Found)"
         );
         assert_eq!(
             Error::RateLimited {

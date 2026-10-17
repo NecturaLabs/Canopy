@@ -1308,7 +1308,8 @@ fn gitlab_error_mapping() {
     );
     let err = client.details(404).expect_err("404");
     assert_eq!(err, Error::NotFound("Not Found".into()));
-    assert!(err.to_string().contains("Not Found"));
+    // The server's "Not Found" adds nothing to the sentence, so it is not repeated.
+    assert_eq!(err.to_string(), "Not found, or the repository is private");
 }
 
 #[test]
