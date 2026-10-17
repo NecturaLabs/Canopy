@@ -1253,8 +1253,9 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(error = %redacted(&e), "conflicts not checked");
                             false
                         });
-                    let stopped =
-                        integrates && result.is_err() && repo.stopped_on_conflicts().unwrap_or(false);
+                    let stopped = integrates
+                        && result.is_err()
+                        && repo.stopped_on_conflicts().unwrap_or(false);
                     // Only a fast-forward was allowed and the branches diverged after all: a
                     // choice to make, not a failure (a pull checked beforehand asks first). A
                     // failed fetch brought nothing to combine: its error is the answer.
