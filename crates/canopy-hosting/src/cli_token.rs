@@ -31,9 +31,9 @@ const MAX_OUTPUT: u64 = 64 * 1024;
 /// The longest token accepted: real tokens are far shorter; anything longer is not one.
 const MAX_TOKEN_LEN: usize = 4096;
 
-/// The variables that hand a CLI a token (or the host to use it for) instead of its own stored
-/// sign-in.
-const CREDENTIAL_ENV: [&str; 9] = [
+/// The variables that hand a CLI a token (or the host to use it for, or a CI job's sign-in)
+/// instead of its own stored sign-in.
+const CREDENTIAL_ENV: [&str; 15] = [
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GH_ENTERPRISE_TOKEN",
@@ -43,6 +43,12 @@ const CREDENTIAL_ENV: [&str; 9] = [
     "GITLAB_ACCESS_TOKEN",
     "OAUTH_TOKEN",
     "GITLAB_HOST",
+    "GL_HOST",
+    "GITLAB_URI",
+    "GITLAB_API_HOST",
+    "GH_HOST",
+    "GLAB_ENABLE_CI_AUTOLOGIN",
+    "CI_JOB_TOKEN",
 ];
 
 /// What the CLI said about its sign-in to one host, without the token.
@@ -109,10 +115,33 @@ pub enum CliError {
 }
 
 impl CliError {
+    /// The provider whose CLI this is about.
+    pub const fn kind(&self) -> ForgeKind {
+        match self {
+            Self::NotInstalled { kind }
+            | Self::SignedOut { kind, .. }
+            | Self::MissingScope { kind, .. }
+            | Self::Failed { kind, .. } => *kind,
+        }
+    }
+
     /// The account the CLI is signed in as, when the error knows it.
     pub fn user(&self) -> Option<&str> {
         match self {
             Self::MissingScope { user, .. } => user.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// What to do besides running [`Self::fix_command`]: GitLab's sign-in asks which scopes to
+    /// grant, so the missing one has to be allowed there.
+    pub fn fix_note(&self) -> Option<String> {
+        match self {
+            Self::MissingScope {
+                kind: ForgeKind::GitLab,
+                scope,
+                ..
+            } => Some(format!("allow the {scope} scope")),
             _ => None,
         }
     }
@@ -178,7 +207,10 @@ fn scope_fix(kind: ForgeKind, host: &str) -> String {
     let command = scope_command(kind, host);
     match kind {
         ForgeKind::GitHub => format!("Run `{command}` to add it."),
-        ForgeKind::GitLab => format!("Run `{command}` and allow the `api` scope."),
+        ForgeKind::GitLab => format!(
+            "Run `{command}` and allow the {} scope.",
+            required_scope(kind)
+        ),
     }
 }
 
@@ -187,12 +219,18 @@ fn scope_fix(kind: ForgeKind, host: &str) -> String {
 /// Blocking: runs `gh auth status` and `gh auth token`, or `glab auth status --show-token`, for
 /// at most ten seconds in all, so call it from a background thread.
 pub fn login_from_cli(kind: ForgeKind, host: &str) -> Result<CliLogin, CliError> {
-    login_with(kind, host, OsStr::new(program(kind)))
+    login_with(kind, host, OsStr::new(program(kind)), CLI_TIMEOUT)
 }
 
-/// [`login_from_cli`] with the program to run, so tests can use a fake one.
-fn login_with(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, CliError> {
-    let result = read_login(kind, host, program);
+/// [`login_from_cli`] with the program to run and the time it may take, so tests can use a fake
+/// one and a short deadline.
+fn login_with(
+    kind: ForgeKind,
+    host: &str,
+    program: &OsStr,
+    timeout: Duration,
+) -> Result<CliLogin, CliError> {
+    let result = read_login(kind, host, program, timeout);
     // Neither arm names the token: a login's `Debug` hides it and an error's words are `shorten`ed.
     match &result {
         Ok(_) => tracing::debug!(host, cli = self::program(kind), "using the CLI's sign-in"),
@@ -206,7 +244,12 @@ fn login_with(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
     result
 }
 
-fn read_login(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, CliError> {
+fn read_login(
+    kind: ForgeKind,
+    host: &str,
+    program: &OsStr,
+    timeout: Duration,
+) -> Result<CliLogin, CliError> {
     let host = host.trim();
     let failed = |message: &str| CliError::Failed {
         kind,
@@ -217,7 +260,7 @@ fn read_login(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
     if !is_host_name(host) {
         return Err(failed("the host name is not valid"));
     }
-    let deadline = Instant::now() + CLI_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let run = |args: &[&str]| match run_capture(program, args, deadline) {
         Ok(out) => Ok(out),
         Err(RunError::NotFound) => Err(CliError::NotInstalled { kind }),
@@ -267,8 +310,9 @@ fn read_login(kind: ForgeKind, host: &str, program: &OsStr) -> Result<CliLogin, 
     let token = match kind {
         ForgeKind::GitHub => {
             let out = run(&["auth", "token", "--hostname", host])?;
+            // Standard error may carry a warning (a keyring notice); the token is on standard output.
             if out.success {
-                Some(out.text.trim().to_owned())
+                Some(out.stdout.trim().to_owned())
             } else {
                 return Err(failed(&hide(&out.text, None)));
             }
@@ -362,9 +406,20 @@ fn hide(text: &str, token: Option<&str>) -> String {
     shorten(&text.join("\n"))
 }
 
-/// A token is one visible word, no longer than any real one.
+/// A token is one visible word, no longer than any real one, and not one the CLI masked.
 fn usable(token: &str) -> bool {
-    !token.is_empty() && token.len() <= MAX_TOKEN_LEN && token.chars().all(|c| c.is_ascii_graphic())
+    !token.is_empty()
+        && token.len() <= MAX_TOKEN_LEN
+        && token.chars().all(|c| c.is_ascii_graphic())
+        && !masked(token)
+}
+
+/// The fewest asterisks in a row that mark a token the CLI masked (`glpat-****`).
+const MASK_RUN: &str = "****";
+
+/// Whether the CLI printed a masked token instead of the token: all asterisks, or a run of them.
+fn masked(token: &str) -> bool {
+    token.chars().all(|c| c == '*') || token.contains(MASK_RUN)
 }
 
 /// What a CLI's `auth status` said about one host.
@@ -448,7 +503,7 @@ fn parse_status(text: &str, host: &str) -> StatusReport {
                 // stored>: …" (newer).
                 key if (key == "token" || key.starts_with("token found"))
                     && !value.is_empty()
-                    && !value.chars().all(|c| c == '*') =>
+                    && !masked(value) =>
                 {
                     account.report.token = Some(value.to_owned());
                 }
@@ -469,6 +524,8 @@ struct Captured {
     success: bool,
     /// Standard output, then standard error.
     text: String,
+    /// Standard output alone.
+    stdout: String,
 }
 
 enum RunError {
@@ -573,12 +630,12 @@ fn run_capture(program: &OsStr, args: &[&str], deadline: Instant) -> Result<Capt
         }
     };
     let until = (Instant::now() + DRAIN_GRACE).min(deadline);
-    let mut text = out.text(until);
-    text.push('\n');
-    text.push_str(&err.text(until));
+    let stdout = out.text(until);
+    let text = format!("{stdout}\n{}", err.text(until));
     Ok(Captured {
         success: status.success(),
         text,
+        stdout,
     })
 }
 
@@ -632,7 +689,7 @@ mod tests {
         }
 
         fn login(&self, kind: ForgeKind, host: &str) -> Result<CliLogin, CliError> {
-            login_with(kind, host, self.path().as_os_str())
+            login_with(kind, host, self.path().as_os_str(), CLI_TIMEOUT)
         }
     }
 
@@ -741,7 +798,7 @@ esac"#,
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("no-such-cli");
         for kind in [ForgeKind::GitHub, ForgeKind::GitLab] {
-            let err = login_with(kind, "github.com", missing.as_os_str()).unwrap_err();
+            let err = login_with(kind, "github.com", missing.as_os_str(), CLI_TIMEOUT).unwrap_err();
             assert_eq!(err, CliError::NotInstalled { kind });
         }
     }
@@ -754,6 +811,109 @@ esac"#,
         let result = run_capture(fake.path().as_os_str(), &["auth"], deadline);
         assert!(matches!(result, Err(RunError::TimedOut)));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// A CLI that hangs while asked for its sign-in ends in a failure that says so, in time.
+    #[test]
+    fn a_hung_sign_in_check_fails_in_time() {
+        let fake = Fake::new("sleep 30");
+        let started = Instant::now();
+        let err = login_with(
+            ForgeKind::GitHub,
+            "github.com",
+            fake.path().as_os_str(),
+            Duration::from_millis(300),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, CliError::Failed { message, .. } if message.contains("took longer")),
+            "{err:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// A warning on standard error (a keyring notice) does not spoil the token on standard output.
+    #[test]
+    fn a_warning_beside_the_token_is_not_part_of_it() {
+        let fake = Fake::new(&format!(
+            r#"case "$2" in
+status) echo "  ✓ Logged in to github.com account octocat (keyring)"; echo "  - Token scopes: 'repo'";;
+token) echo "warning: the keyring is slow to answer" >&2; echo "{TOKEN}";;
+esac"#
+        ));
+        let login = fake.login(ForgeKind::GitHub, "github.com").unwrap();
+        assert_eq!(login.into_parts().0, TOKEN);
+    }
+
+    /// Output past [`MAX_OUTPUT`] is not read: a sign-in report that starts beyond it does not
+    /// count, what is shown stays short, and a CLI that keeps writing does not hold the caller.
+    #[test]
+    fn output_past_the_limit_is_not_read() {
+        let signed_in = format!(
+            r#"echo "  ✓ Logged in to gitlab.com as tanuki" >&2; echo "  ✓ Token found: {TOKEN}" >&2"#
+        );
+        let fake = Fake::new(&signed_in);
+        assert!(
+            fake.login(ForgeKind::GitLab, "gitlab.com").is_ok(),
+            "the report alone is read"
+        );
+        drop(fake);
+        let fake = Fake::new(&format!(
+            "head -c {} /dev/zero | tr '\\0' 'a' >&2; echo >&2\n{signed_in}",
+            MAX_OUTPUT * 2
+        ));
+        let started = Instant::now();
+        let err = fake.login(ForgeKind::GitLab, "gitlab.com").unwrap_err();
+        let CliError::Failed { message, .. } = &err else {
+            panic!("{err:?}");
+        };
+        assert!(!message.contains(TOKEN));
+        assert!(message.len() < 1024, "{}", message.len());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// Bytes that are not UTF-8 neither stop a report from being read nor pass as a token.
+    #[test]
+    fn output_that_is_not_utf8() {
+        let fake = Fake::new(&format!(
+            r#"case "$2" in
+status) printf '\377\376 github.com\n'; echo "  ✓ Logged in to github.com account octocat (keyring)";;
+token) echo "{TOKEN}";;
+esac"#
+        ));
+        let login = fake.login(ForgeKind::GitHub, "github.com").unwrap();
+        assert_eq!(login.account.user.as_deref(), Some("octocat"));
+        drop(fake);
+        let fake = Fake::new(
+            r#"case "$2" in
+status) echo "  ✓ Logged in to github.com account octocat (keyring)";;
+token) printf 'gho_\377\376abc\n';;
+esac"#,
+        );
+        assert!(matches!(
+            fake.login(ForgeKind::GitHub, "github.com"),
+            Err(CliError::Failed { .. })
+        ));
+    }
+
+    /// A token the CLI masked (`glpat-****`) is never taken for the token.
+    #[test]
+    fn a_masked_token_is_not_used() {
+        for shown in ["glpat-****", "glpat-****abcd", "**********"] {
+            let fake = Fake::new(&format!(
+                r#"echo "  ✓ Logged in to gitlab.com as tanuki" >&2; echo "  ✓ Token found: {shown}" >&2"#
+            ));
+            assert!(
+                matches!(
+                    fake.login(ForgeKind::GitLab, "gitlab.com"),
+                    Err(CliError::Failed { .. })
+                ),
+                "{shown}"
+            );
+            drop(fake);
+            assert!(!usable(shown), "{shown}");
+        }
+        assert!(usable(TOKEN));
     }
 
     #[test]
@@ -860,6 +1020,13 @@ exit 1"#
         assert_eq!(
             missing(glab).fix_command().as_deref(),
             Some("glab auth login --hostname h.example")
+        );
+        assert_eq!(missing(gh).fix_note(), None);
+        let note = missing(glab).fix_note().unwrap();
+        assert_eq!(note, "allow the api scope");
+        assert!(
+            missing(glab).to_string().contains(&note),
+            "the message says the same"
         );
         assert_eq!(CliError::NotInstalled { kind: gh }.fix_command(), None);
         assert_eq!(
@@ -1071,6 +1238,17 @@ exit 1"#
             .map(|(name, _)| name.to_string_lossy().into_owned())
             .collect();
         for name in CREDENTIAL_ENV {
+            assert!(removed.iter().any(|r| r == name), "{name} is passed on");
+        }
+        // The host and CI variables `gh` and `glab` read besides their token variables.
+        for name in [
+            "GL_HOST",
+            "GITLAB_URI",
+            "GITLAB_API_HOST",
+            "GH_HOST",
+            "GLAB_ENABLE_CI_AUTOLOGIN",
+            "CI_JOB_TOKEN",
+        ] {
             assert!(removed.iter().any(|r| r == name), "{name} is passed on");
         }
     }
