@@ -58,16 +58,22 @@ order, and a missing program cannot be picked.
 - **A saved choice that is gone shows as missing and runs nothing.** A saved command that starts
   a well-known program that is not installed shows as that program, selected, dimmed and tagged.
   Opening runs the system's program instead and a notification says which program is missing and
-  what ran. A bare command name (or, on macOS, `open -a Name`) counts. A command that names its
-  program by a path counts only when that program file is gone: a list entry saves the entry's
-  own `Exec` program, often absolute (`/usr/share/code/code --unity-launch %F`), so after the
-  uninstall it shows as the program, "Not installed", and opens with the system's. A path to a
-  file that is there (`/opt/alacritty/bin/alacritty`, on neither `PATH` nor an entry) is the
-  user's own program and runs as typed, as does any other saved command (a program nobody knows,
-  or an installed one); a failure keeps today's error message with the operating system's
-  reason. The file check runs on the detection thread, never the UI thread: detection is given
-  the saved commands (startup and when Settings opens) and keeps those whose file is missing. The closed select of a gone
-  choice carries "Not installed" as its accessible description, as the list rows do.
+  what ran. The closed select carries "Not installed" as its accessible description, as the list
+  rows do.
+- **Which saved commands count as a gone program.** A bare command name (or, on macOS,
+  `open -a Name`) does. So does a command with an absolute path whose program file is gone: a
+  list entry saves the entry's own `Exec` program, often absolute
+  (`/usr/share/code/code --unity-launch %F`), so after the uninstall it shows as the program,
+  "Not installed", and opens with the system's. A path to a file that is there
+  (`/opt/alacritty/bin/alacritty`, on neither `PATH` nor an entry) is the user's own program and
+  runs as typed. A `~` or relative path is never judged: starting a program does not expand `~`,
+  and a relative path is resolved against the folder the command runs in, so it gives the
+  system's own error, not a "not installed" notice. Any other saved command runs as typed, and a
+  failure keeps the operating system's reason.
+- **Where the file check runs.** On the detection thread, never the UI thread. Detection is given
+  the saved commands (at startup and when Settings opens) and keeps those whose file is missing.
+  The lists are published first and the check follows, so a saved path on a mount that hangs
+  cannot delay them; it would only leave those commands running as typed (accepted limitation).
 - **Installed means found, not just categorised.** A well-known program on `PATH` that no desktop
   entry lists is an installed program too (its command is the program's name), so it is never
   shown as "Not installed". One program found through its entry and `PATH` is one row (#243: a
