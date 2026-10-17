@@ -466,10 +466,7 @@ pub fn show(
     if !screen.apps_asked {
         // Picks up an editor or terminal installed since the last look.
         screen.apps_asked = true;
-        crate::system_apps::refresh(
-            Some(ctx),
-            &[&settings.editor, &settings.terminal, &settings.file_manager],
-        );
+        crate::system_apps::refresh(Some(ctx), &settings.launcher_commands());
     }
     let (width, height) = shell_size(ctx);
     let sidebar = width >= NAV_MIN_WIDTH;

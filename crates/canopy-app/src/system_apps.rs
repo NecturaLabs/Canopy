@@ -133,15 +133,19 @@ fn command_key(command: &str) -> Option<(String, bool)> {
     Some((name, by_path))
 }
 
-/// The `saved` commands that name their program by a path to a file that is not there (blocking
-/// file access: never on the UI thread).
+/// The `saved` commands that name their program by an absolute path to a file that is not there
+/// (blocking file access: never on the UI thread). A `~` path or a relative one is left out:
+/// starting a program never expands `~`, and a relative path is resolved against the folder the
+/// command runs in, not Canopy's, so such a command runs as typed and fails with the system's
+/// own error.
 fn absent_commands(saved: &[String]) -> Vec<String> {
     saved
         .iter()
         .map(|c| c.trim())
         .filter(|c| {
             split_command(c).is_some_and(|(program, _)| {
-                program.contains(['/', '\\']) && !Path::new(&program).is_file()
+                let path = Path::new(&program);
+                path.is_absolute() && !path.is_file()
             })
         })
         .map(str::to_owned)
@@ -193,14 +197,22 @@ pub fn refresh(ctx: Option<&egui::Context>, saved: &[&str]) {
     let spawned = std::thread::Builder::new()
         .name("system-apps".into())
         .spawn(move || {
-            let apps = Arc::new(detect(&saved));
-            let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
-            cache.apps = Some(apps);
-            cache.running = false;
-            drop(cache);
-            if let Some(ctx) = ctx {
-                ctx.request_repaint();
-            }
+            let publish = |apps: &Apps, finished: bool| {
+                let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+                cache.apps = Some(Arc::new(apps.clone()));
+                cache.running = !finished;
+                drop(cache);
+                if let Some(ctx) = &ctx {
+                    ctx.request_repaint();
+                }
+            };
+            let mut apps = detect();
+            // The lists are published before the saved paths are checked, so a path on a mount
+            // that hangs cannot delay them. Its limit: such a thread never ends, `absent` stays
+            // empty (those commands run as typed) and no later refresh starts.
+            publish(&apps, false);
+            apps.absent = absent_commands(&saved);
+            publish(&apps, true);
         });
     if let Err(e) = spawned {
         tracing::warn!(error = %e, "could not start detecting the editor and terminal");
@@ -267,13 +279,7 @@ pub fn launch(apps: Option<&Apps>, configured: &str, kind: Kind) -> Launch {
 }
 
 /// Detects for this computer (blocking: never on the UI thread).
-fn detect(saved: &[String]) -> Apps {
-    let mut apps = detect_programs();
-    apps.absent = absent_commands(saved);
-    apps
-}
-
-fn detect_programs() -> Apps {
+fn detect() -> Apps {
     #[cfg(target_os = "linux")]
     {
         linux::detect(&linux::Env::current())
@@ -2292,6 +2298,45 @@ mod tests {
                 .iter()
                 .all(|m| m.name != "WezTerm" && m.name != "Zed")
         );
+    }
+
+    // Which saved commands name an absolute path to a file that is not there: a file that exists
+    // (also through a link) is there; a broken link, a folder or a missing file is gone; a quoted
+    // path with spaces is read whole; `~` and relative paths are never judged.
+    #[test]
+    fn a_saved_command_is_absent_only_for_an_absolute_path_to_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let spaced = root.join("with space");
+        write(&spaced, "code", "#!/bin/sh\n");
+        write(root, "real", "#!/bin/sh\n");
+        std::fs::create_dir(root.join("folder")).unwrap();
+        let quoted = |p: &Path| format!("\"{}\" --wait %f", p.display());
+        let mut saved = vec![
+            quoted(&spaced.join("code")),
+            quoted(&spaced.join("gone")),
+            format!("{} %f", root.join("folder").display()),
+            format!("{} %f", root.join("missing").display()),
+            "~/bin/code %f".to_owned(),
+            "./code %f".to_owned(),
+            "bin/code %f".to_owned(),
+            "code %f".to_owned(),
+            String::new(),
+        ];
+        let mut absent = vec![
+            quoted(&spaced.join("gone")),
+            format!("{} %f", root.join("folder").display()),
+            format!("{} %f", root.join("missing").display()),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+            std::os::unix::fs::symlink(root.join("nowhere"), root.join("broken")).unwrap();
+            saved.push(format!("{} %f", root.join("link").display()));
+            saved.push(format!("  {}  ", root.join("broken").display()));
+            absent.push(format!("{}", root.join("broken").display()));
+        }
+        assert_eq!(absent_commands(&saved), absent);
     }
 
     // A command saved from a desktop entry names its program by a path (`/usr/share/code/code`).
