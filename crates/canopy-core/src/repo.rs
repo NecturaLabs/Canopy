@@ -183,11 +183,26 @@ impl Repo {
         }
     }
 
-    /// Whether putting back the changes stashed around a pull or rebase (`--autostash`) ran into
-    /// conflicts: files are conflicted while no merge, rebase or other operation is in progress.
-    /// Git keeps those changes in the stash list as well until the stash is dropped.
+    /// Whether putting back the changes stashed around a pull, rebase or merge (`--autostash`)
+    /// ran into conflicts: files are conflicted while no merge, rebase or other operation is in
+    /// progress. Git keeps those changes in the stash list as well until the stash is dropped.
     pub fn autostash_conflicted(&self) -> Result<bool> {
         Ok(self.state() == RepoState::Clean && self.index_conflicted()?)
+    }
+
+    /// Whether git holds uncommitted changes aside for the merge or rebase in progress
+    /// (`--autostash` stopped on conflicts): they are not in the stash list, and come back when
+    /// the operation is finished or aborted.
+    #[must_use]
+    pub fn autostash_held(&self) -> bool {
+        let dir = self.git.path();
+        [
+            "MERGE_AUTOSTASH",
+            "rebase-merge/autostash",
+            "rebase-apply/autostash",
+        ]
+        .iter()
+        .any(|file| dir.join(file).exists())
     }
 
     /// Whether a merge or rebase (a pull's, say) stopped with conflicts to resolve.
