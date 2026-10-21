@@ -188,19 +188,17 @@ impl Repo {
     }
 
     /// The `-c submodule.recurse=false` that goes before a pull, switch or rebase: Canopy brings
-    /// the submodules along itself afterwards ([`Repo::follow_submodules`]), so whatever the
-    /// configuration says that Canopy does not follow cannot move them. Nothing where the
-    /// configuration decides.
-    pub(crate) fn submodule_override(&self) -> Vec<String> {
-        if self.config_decides(r"^submodule\.recurse$") {
-            return Vec::new();
-        }
+    /// the submodules along itself afterwards ([`Repo::follow_submodules`], which reads a
+    /// followed `submodule.recurse`), always with `git submodule update`. A recursive switch
+    /// drops uncommitted edits inside a submodule to files both submodule commits share; the
+    /// update keeps them.
+    pub(crate) fn submodule_override() -> Vec<String> {
         vec!["-c".to_owned(), "submodule.recurse=false".to_owned()]
     }
 
     /// Runs `git switch args…` with [`Self::submodule_override`].
     pub(crate) fn switch_cmd(&self, args: &[&str]) -> crate::Result<String> {
-        let o = self.submodule_override();
+        let o = Self::submodule_override();
         let mut all: Vec<&str> = o.iter().map(String::as_str).collect();
         all.push("switch");
         all.extend(args);

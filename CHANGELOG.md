@@ -48,6 +48,9 @@ commits since the previous build.
 
 ### Fixed
 
+- A pull or checkout with `submodule.recurse` on in your git configuration no longer throws away
+  uncommitted edits inside a submodule: Canopy updates submodules itself, the way it does when the
+  key is unset, and that keeps them.
 - Settings → Integrations marks the program your system would use as "<name> (Default)" instead of
   "Recommended", and no longer names the `$TERMINAL`, `$VISUAL` or `$EDITOR` it came from. The desktop's
   default text editor is offered only when it is installed, like the other defaults. Searching

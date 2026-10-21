@@ -341,8 +341,9 @@ impl Repo {
     /// Brings the submodules to the commits the checked-out commit records, after a pull or a
     /// checkout, when [`crate::GitOptions::recurse_submodules`] says so, or where Canopy follows
     /// the git configuration and `submodule.recurse` is true. (Git's own commands run with
-    /// `-c submodule.recurse=false` unless the configuration decides, so this one rule also
-    /// covers a pull that merges, which git would not recurse for.)
+    /// `-c submodule.recurse=false`, so this one rule also covers a pull that merges, which git
+    /// would not recurse for, and keeps uncommitted edits inside a submodule that a recursive
+    /// switch would drop.)
     /// A failure says the pull or checkout itself succeeded.
     pub fn follow_submodules(&self, progress: impl FnMut(&str)) -> Result<()> {
         if !self.recurses_into_submodules()? {

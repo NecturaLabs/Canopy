@@ -894,11 +894,41 @@ fn a_checkout_moves_submodules_only_as_canopy_or_a_followed_configuration_says()
     repo.checkout_branch("advanced").expect("checkout");
     assert_eq!(git(&sub, &["rev-parse", "HEAD"]), first);
 
-    // Following the configuration, git's value decides: it recurses.
+    // Following the configuration, git's value decides: it recurses (the worker follows every
+    // checkout with `follow_submodules`).
     repo.set_options(GitOptions::default());
     repo.checkout_branch("main").expect("checkout back");
+    repo.follow_submodules(|_| {}).expect("follow");
     repo.checkout_branch("advanced").expect("checkout");
+    repo.follow_submodules(|_| {}).expect("follow");
     assert_ne!(git(&sub, &["rev-parse", "HEAD"]), first);
+}
+
+/// `git switch --recurse-submodules`, which `submodule.recurse = true` turns on, drops an edit
+/// inside a submodule to a file both submodule commits share, without a word (git 2.56).
+/// `git submodule update` keeps it, so Canopy moves submodules only that way.
+#[test]
+fn a_checkout_keeps_uncommitted_edits_inside_a_submodule_when_git_recurses() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    let first = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+    git(&sup, &["switch", "-q", "-c", "advanced"]);
+    git(&sub, &["checkout", "-q", "main"]);
+    git(&sup, &["add", "deps/lib"]);
+    git(&sup, &["commit", "-q", "-m", "chore: advance lib"]);
+    git(&sup, &["config", "submodule.recurse", "true"]);
+    // a.txt is the same in both submodule commits.
+    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+
+    repo.checkout_branch("main").expect("checkout");
+    repo.follow_submodules(|_| {}).expect("follow");
+
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), first);
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "edited\n",
+        "the edit inside the submodule must survive the checkout"
+    );
 }
 
 #[test]

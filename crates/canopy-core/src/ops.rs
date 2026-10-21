@@ -1077,7 +1077,7 @@ impl Repo {
     pub fn pull(&self, strategy: PullStrategy, progress: impl FnMut(&str)) -> Result<String> {
         let rebase = matches!(strategy, PullStrategy::Rebase | PullStrategy::RebaseMerges);
         let conflicts = self.conflict_override();
-        let submodules = self.submodule_override();
+        let submodules = Self::submodule_override();
         let mut args: Vec<&str> = conflicts
             .iter()
             .chain(&submodules)
@@ -1105,7 +1105,7 @@ impl Repo {
         progress: impl FnMut(&str),
     ) -> Result<String> {
         let conflicts = self.conflict_override();
-        let submodules = self.submodule_override();
+        let submodules = Self::submodule_override();
         let mut args: Vec<&str> = conflicts
             .iter()
             .chain(&submodules)
