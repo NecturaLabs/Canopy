@@ -289,16 +289,19 @@ fn has_promisor_packs(repo: &Repository) -> bool {
 /// Git before 2.24 wrote and libgit2 refuses to open. Read from the common directory, which holds
 /// the configuration of a linked worktree too.
 pub(crate) fn legacy_extension(path: &Path) -> Option<String> {
+    extension(path, "extensions.partialclone")
+}
+
+/// The value of repository extension `key` in the repository at `path`, read from its common
+/// configuration file without opening it (libgit2 refuses to open one with an unknown extension).
+pub(crate) fn extension(path: &Path, key: &str) -> Option<String> {
     let gitdir = Repository::discover_path(path, std::iter::empty::<&Path>()).ok()?;
     let common = std::fs::read_to_string(gitdir.join("commondir"))
         .ok()
         .map(|rel| gitdir.join(rel.trim()))
         .unwrap_or(gitdir);
     let config = git2::Config::open(&common.join("config")).ok()?;
-    config
-        .get_string("extensions.partialclone")
-        .ok()
-        .filter(|v| !v.is_empty())
+    config.get_string(key).ok().filter(|v| !v.is_empty())
 }
 
 /// Converts a partial clone made by Git before 2.24 to the current form and returns its remote.

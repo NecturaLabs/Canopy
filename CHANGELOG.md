@@ -48,6 +48,8 @@ commits since the previous build.
 
 ### Fixed
 
+- Opening a repository that stores its references in Git's reftable format says so plainly;
+  Canopy cannot open such a repository yet.
 - A pull or checkout with `submodule.recurse` on in your git configuration no longer throws away
   uncommitted edits inside a submodule: Canopy updates submodules itself, the way it does when the
   key is unset, and that keeps them.

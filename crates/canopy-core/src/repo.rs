@@ -56,6 +56,11 @@ impl Repo {
             git2::ErrorCode::NotFound => Error::NotARepository(path.to_path_buf()),
             _ => match partial::legacy_extension(path) {
                 Some(remote) => Error::LegacyPartialClone { remote },
+                None if partial::extension(path, "extensions.refstorage")
+                    .is_some_and(|format| format.eq_ignore_ascii_case("reftable")) =>
+                {
+                    Error::Reftable
+                }
                 None => Error::Git(e),
             },
         })?;
