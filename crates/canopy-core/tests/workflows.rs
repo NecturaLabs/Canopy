@@ -1320,6 +1320,22 @@ fn discarding_a_submodule_refuses_to_strand_a_commit_on_no_branch() {
     );
 }
 
+/// A submodule whose folder was deleted shows as a change; Discard checks it out again at the
+/// recorded commit instead of failing on the missing folder.
+#[test]
+fn discarding_a_submodule_whose_folder_was_deleted_checks_it_out_again() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+    fs::remove_dir_all(&sub).expect("delete the submodule folder");
+    let row = submodule_row(&repo);
+
+    repo.discard(&row).expect("discard");
+
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+    assert!(sub.join("a.txt").exists());
+}
+
 /// With Canopy's choice to delete them, Discard on a submodule also deletes its untracked files;
 /// ignored files stay.
 #[test]

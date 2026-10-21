@@ -475,12 +475,15 @@ impl Repo {
     /// and nested repositories always stay), and nested submodules are left as they are.
     fn discard_submodule(&self, submodule: &crate::SubmoduleInfo) -> Result<()> {
         let dir = self.workdir().join(&submodule.path);
-        cli::run(
-            &dir,
-            &["-c", "submodule.recurse=false", "reset", "--hard", "-q"],
-        )?;
-        if self.options().discard_untracked_in_submodules {
-            cli::run(&dir, &["clean", "-f", "-d", "-q"])?;
+        // A deleted folder has nothing to reset: the update below checks it out again.
+        if dir.join(".git").exists() {
+            cli::run(
+                &dir,
+                &["-c", "submodule.recurse=false", "reset", "--hard", "-q"],
+            )?;
+            if self.options().discard_untracked_in_submodules {
+                cli::run(&dir, &["clean", "-f", "-d", "-q"])?;
+            }
         }
         self.git_cmd(&[
             "-c",

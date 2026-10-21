@@ -647,7 +647,6 @@ fn discard_all(files: &[FileEntry], delete_untracked: bool) -> Action {
              undone."
         }
         .into(),
-
         confirm: "Discard all changes".into(),
         danger: true,
         op: Op::Discard(files.to_vec()),
