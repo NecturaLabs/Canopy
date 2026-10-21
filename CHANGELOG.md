@@ -127,6 +127,10 @@ commits since the previous build.
 
 ### Changed
 
+- Canopy no longer changes your git configuration unless you turn on Settings → Git → Edit my git
+  config (off by default). Until then the git configuration in Settings is read only and Use
+  recommended is hidden; Canopy still passes its own choices to every git command. A settings file
+  cannot turn it on.
 - Settings recommends leaving git's `submodule.recurse` off (Recurse into submodules): with it on,
   git's own checkout, reset and restore can drop edits inside submodules. Use recommended removes it
   from your global git config. Canopy's own Update submodules stays on.

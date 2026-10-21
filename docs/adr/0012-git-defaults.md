@@ -1,6 +1,6 @@
 # ADR 0012: Canopy's git defaults are today's recommended practice, and pulls look before they leap
 
-**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration), 2026-10-11 (one pull recommendation), 2026-10-14 (audit of every recommendation against Git's documentation) and 2026-10-21 (second audit: `submodule.recurse` recommended off)
+**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration), 2026-10-11 (one pull recommendation), 2026-10-14 (audit of every recommendation against Git's documentation) and 2026-10-21 (second audit: `submodule.recurse` recommended off; Edit my git config, off by default)
 **Date:** 2026-10-06
 
 ## Context
@@ -55,7 +55,11 @@ A pull or rebase that still stops on conflicts, or a pull, rebase or merge whose
 conflict when they come back, takes the user to Changes with a plain message.
 
 Settings shows every choice with Canopy's recommendation; where the user's configuration sets
-it, the note names the setting, its value and where it is set. Supported values stay editable:
+it, the note names the setting, its value and where it is set. Canopy writes no git
+configuration unless Edit my git config (Settings → Git) is on; it is off by default (the owner's
+decision, 2026-10-21), as Fork, Sourcetree and GitKraken write none either, and every choice is
+passed to the git command that needs it, so nothing depends on a written value. Off, both editors
+show the values read only; a settings file cannot turn it on. On, supported values are editable:
 Settings → Git writes the main global file, This repository writes the common local file.
 Unset/Inherit removes only that file's values. Included, system, worktree and command values
 remain in force according to Git's precedence. Global Settings shows global values; the
@@ -71,8 +75,11 @@ branches diverge Canopy still asks Rebase (recommended) or Merge. Line endings f
 sets up a key, then with an SSH key (`gpg.format = ssh`), the simplest format
 [GitHub verifies](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification).
 
-Use recommended confirms and writes the non-sensitive recommendations globally on the Git
-worker. It leaves identity, signing, hooks and line endings alone. A failed batch reports saved
+Use recommended (shown only while Edit my git config is on) confirms and writes the
+non-sensitive recommendations globally on the Git worker. It leaves identity, signing, hooks and
+line endings alone, and it writes a value only when that value is safe for git used outside
+Canopy too: the configuration it writes reaches the terminal and every other tool, where
+Canopy's own safeguards do not run (2026-10-21, after `submodule.recurse`). A failed batch reports saved
 progress; Settings rereads actual state. Canopy fallback controls remain available when Follow
 my git config is off. Existing repository preferences remain compatible.
 

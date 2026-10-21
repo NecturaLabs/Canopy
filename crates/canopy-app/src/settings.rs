@@ -484,6 +484,10 @@ pub struct Settings {
     /// below (the pull strategy among them), it decides; each choice here applies where it sets
     /// none. On by default.
     pub follow_git_config: bool,
+    /// Edit my git config: Settings may write the git configuration (the editor's values and
+    /// Use recommended). Off by default: Canopy passes its choices to each git command and never
+    /// needs a value written. A permission, not a git choice, so Use recommended leaves it.
+    pub edit_git_config: bool,
     /// Canopy's pull strategy; while `follow_git_config` is on, only where the git configuration
     /// sets none.
     #[serde(deserialize_with = "known")]
@@ -631,6 +635,7 @@ impl Default for Settings {
             motion: MotionPref::System,
             reduce_motion: None,
             follow_git_config: true,
+            edit_git_config: false,
             pull_mode: PullMode::FastForwardOnly,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
