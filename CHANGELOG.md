@@ -127,6 +127,9 @@ commits since the previous build.
 
 ### Changed
 
+- Settings recommends leaving git's `submodule.recurse` off (Recurse into submodules): with it on,
+  git's own checkout, reset and restore can drop edits inside submodules. Use recommended removes it
+  from your global git config. Canopy's own Update submodules stays on.
 - The commit details header now shows the author, the commit id and the parents before the commit
   subject, and the subject takes the rest of the row. The commit identity card describes the
   author and names the committer only when someone else committed.

@@ -1311,7 +1311,8 @@ mod tests {
     /// Canopy's own choices (Settings → Git with Follow my git config off) are the recommendations
     /// of ADR 0012's audit: for every git key that has a Canopy choice, what `Settings::default`
     /// says is the value `Setting::recommendation_for` gives. Line endings and signing have no
-    /// Canopy choice: Canopy leaves them to git.
+    /// Canopy choice: Canopy leaves them to git. Update submodules is on while git's own
+    /// `submodule.recurse` is recommended off.
     #[test]
     fn canopys_defaults_agree_with_the_recommendation_for_every_key() {
         use canopy_core::config::Setting;
@@ -1345,7 +1346,6 @@ mod tests {
                     Setting::FetchPrune => Some(on(s.prune_on_fetch).into()),
                     Setting::FetchPruneTags => Some(on(o.prune_tags).into()),
                     Setting::PushFollowTags => Some(on(o.follow_tags).into()),
-                    Setting::SubmoduleRecurse => Some(on(o.recurse_submodules).into()),
                     Setting::PushDefault => Some(o.push_default.value().into()),
                     Setting::ConflictStyle => Some(o.conflict_style.value(git).into()),
                     Setting::InitialBranch => Some(s.initial_branch().into()),
@@ -1359,7 +1359,12 @@ mod tests {
                         }
                         .into(),
                     ),
-                    Setting::Autocrlf | Setting::CommitSigning | Setting::SigningFormat => None,
+                    // Canopy updates submodules itself (`git submodule update`, which keeps edits
+                    // inside them); git's own recursion is recommended off.
+                    Setting::SubmoduleRecurse
+                    | Setting::Autocrlf
+                    | Setting::CommitSigning
+                    | Setting::SigningFormat => None,
                 };
                 let Some(canopy) = canopy else {
                     without.push(setting);
@@ -1375,6 +1380,7 @@ mod tests {
             assert_eq!(
                 without,
                 [
+                    Setting::SubmoduleRecurse,
                     Setting::Autocrlf,
                     Setting::CommitSigning,
                     Setting::SigningFormat

@@ -919,6 +919,7 @@ fn synonyms(title: &str) -> &'static str {
         "Follow my git config" => "pull rebase pull.rebase pull.ff configuration follow default",
         "Prune on fetch" => "prune stale remote branches delete",
         "Update submodules" => "submodule recurse pull checkout clone recursive",
+        "Recurse into submodules" => "submodule.recurse submodule recursive git config",
         "Fetch in the background" => "auto fetch automatic interval minutes",
         "Add Signed-off-by" => "signoff sign-off dco trailer",
         "Check commit messages" => {
@@ -1328,7 +1329,7 @@ fn git_setting_help(setting: Setting) -> &'static str {
         }
         Setting::PushFollowTags => "Pushes the annotated tags on the commits being pushed.",
         Setting::SubmoduleRecurse => {
-            "Checkout, switch and pull also update submodules; a push also pushes the submodule commits it needs."
+            "Checkout, reset and restore also reset submodules and can lose edits; a push includes their commits."
         }
         Setting::PushDefault => "Simple pushes to the upstream branch only when the names match.",
         Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
@@ -8746,7 +8747,7 @@ mod tests {
             conflict_style: Some(fact("merge.conflictStyle", "merge")),
             cleanup: Some(fact("commit.cleanup", "strip")),
             initial_branch: Some(fact("init.defaultBranch", "trunk")),
-            submodule_recurse: Some(fact("submodule.recurse", "false")),
+            submodule_recurse: Some(fact("submodule.recurse", "true")),
             git: Some((2, 55)),
             ..GitFacts::default()
         };
@@ -8774,19 +8775,19 @@ mod tests {
     #[test]
     fn a_finding_names_the_recommendation_as_the_list_does() {
         let spelled = GitFacts {
-            submodule_recurse: Some(fact("submodule.recurse", "yes")),
+            submodule_recurse: Some(fact("submodule.recurse", "no")),
             git: Some((2, 55)),
             ..GitFacts::default()
         };
         assert_eq!(
             against_recommendation(&spelled, &Settings::default(), Path::new("fixture")),
             Vec::<String>::new(),
-            "yes is true"
+            "no is false"
         );
         let facts = GitFacts {
             fetch_prune: Some(fact("fetch.prune", "false")),
             cleanup: Some(fact("commit.cleanup", "whitespace")),
-            submodule_recurse: Some(fact("submodule.recurse", "no")),
+            submodule_recurse: Some(fact("submodule.recurse", "yes")),
             git: Some((2, 55)),
             ..GitFacts::default()
         };
@@ -8794,7 +8795,7 @@ mod tests {
         for (row, name) in [
             ("Prune remote branches", "On"),
             ("Commit message cleanup", "Default"),
-            ("Update submodules", "On"),
+            ("Recurse into submodules", "Off"),
         ] {
             assert!(
                 lines
