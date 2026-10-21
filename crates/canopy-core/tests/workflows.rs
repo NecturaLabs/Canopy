@@ -1255,3 +1255,95 @@ fn submodule_remove_refuses_a_module_directory_behind_a_symlink() {
     assert!(outside.join("lib").is_dir());
     assert_eq!(git(&sup, &["ls-files", "--stage"]), before);
 }
+
+/// The Changes row of the submodule at `deps/lib`.
+fn submodule_row(repo: &Repo) -> Vec<canopy_core::FileEntry> {
+    repo.snapshot(10)
+        .expect("snapshot")
+        .status
+        .unstaged
+        .into_iter()
+        .filter(|f| f.path == "deps/lib")
+        .collect()
+}
+
+/// #285: Discard on a submodule row brings the submodule back to what the superproject records:
+/// tracked edits inside it go, the recorded commit is checked out, and untracked files stay.
+/// `git checkout -- <submodule>` alone did nothing, whatever the row showed.
+#[test]
+fn discarding_a_submodule_restores_what_the_superproject_records_and_keeps_untracked_files() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+    // A new commit on a branch, an edit to a tracked file and an untracked file inside.
+    git(&sub, &["checkout", "-q", "main"]);
+    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+    fs::write(sub.join("mine.txt"), "keep me\n").expect("untracked");
+    let row = submodule_row(&repo);
+    assert_eq!(row.len(), 1, "the submodule shows as changed");
+    assert!(row[0].is_submodule(), "{row:?}");
+
+    repo.discard(&row).expect("discard");
+
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs::read_to_string(sub.join("mine.txt")).expect("read"),
+        "keep me\n",
+        "an untracked file inside the submodule stays"
+    );
+    assert!(git(&sub, &["branch", "--list", "main"]).contains("main"));
+}
+
+/// A commit made in a submodule on no branch would be left behind by going back to the recorded
+/// commit: Discard refuses and changes nothing.
+#[test]
+fn discarding_a_submodule_refuses_to_strand_a_commit_on_no_branch() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::write(sub.join("a.txt"), "detached work\n").expect("edit");
+    git(&sub, &["commit", "-q", "-am", "feat: detached"]);
+    let detached = git(&sub, &["rev-parse", "HEAD"]);
+    fs::write(sub.join("a.txt"), "more\n").expect("edit");
+
+    let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+
+    assert!(err.to_string().contains("no branch"), "{err}");
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), detached);
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "more\n",
+        "nothing was discarded"
+    );
+}
+
+/// With Canopy's choice to delete them, Discard on a submodule also deletes its untracked files;
+/// ignored files stay.
+#[test]
+fn discarding_a_submodule_deletes_its_untracked_files_when_chosen() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::write(sub.join(".gitignore"), "*.log\n").expect("ignore");
+    fs::write(sub.join("debug.log"), "ignored\n").expect("ignored");
+    fs::write(sub.join("mine.txt"), "untracked\n").expect("untracked");
+    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+    repo.set_options(GitOptions {
+        discard_untracked_in_submodules: true,
+        ..GitOptions::default()
+    });
+
+    repo.discard(&submodule_row(&repo)).expect("discard");
+
+    assert!(
+        !sub.join("mine.txt").exists(),
+        "the untracked file is deleted"
+    );
+    assert!(sub.join("debug.log").exists(), "an ignored file stays");
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "one\ntwo\nthree\n"
+    );
+}

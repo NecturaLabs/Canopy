@@ -110,7 +110,8 @@ impl Safe {
 /// cannot have a pruning fetch delete local tags that were never pushed (`prune_tags`), take
 /// decisions away from the user's git configuration (`follow_git_config`) or have a push without
 /// a destination create or update a branch the user did not choose (`push_default`), and a file
-/// cannot let Settings write the git configuration (`edit_git_config`). The other
+/// cannot let Settings write the git configuration (`edit_git_config`) or have Discard delete
+/// untracked files inside a submodule (`discard_untracked_in_submodules`). The other
 /// git choices are Canopy's defaults or lose nothing, and a file sets them freely.
 pub const GIT_GUARDS: &[(&str, Safe, &str)] = &[
     ("prune_tags", Safe::Bool(false), "tag pruning"),
@@ -124,6 +125,11 @@ pub const GIT_GUARDS: &[(&str, Safe, &str)] = &[
         "edit_git_config",
         Safe::Bool(false),
         "editing your git config",
+    ),
+    (
+        "discard_untracked_in_submodules",
+        Safe::Bool(false),
+        "deleting untracked files in submodules",
     ),
 ];
 
@@ -631,6 +637,22 @@ mod tests {
         };
         let back = import(&on, &file_with(r#"{"edit_git_config": false}"#)).unwrap();
         assert!(!back.settings.edit_git_config, "a file may turn it off");
+    }
+
+    #[test]
+    fn a_file_cannot_have_discard_delete_untracked_files_in_submodules() {
+        let keep = Settings::default();
+        let imported = import(
+            &keep,
+            &file_with(r#"{"discard_untracked_in_submodules": true}"#),
+        )
+        .unwrap();
+        assert!(!imported.settings.discard_untracked_in_submodules);
+        assert!(
+            imported
+                .kept
+                .contains(&"deleting untracked files in submodules")
+        );
     }
 
     #[test]

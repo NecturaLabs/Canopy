@@ -920,6 +920,7 @@ fn synonyms(title: &str) -> &'static str {
         "Edit my git config" => "write change global config gitconfig recommended permission",
         "Prune on fetch" => "prune stale remote branches delete",
         "Update submodules" => "submodule recurse pull checkout clone recursive",
+        "Discard in a submodule" => "submodule discard untracked clean delete reset",
         "Recurse into submodules" => "submodule.recurse submodule recursive git config",
         "Fetch in the background" => "auto fetch automatic interval minutes",
         "Add Signed-off-by" => "signoff sign-off dco trailer",
@@ -3623,6 +3624,30 @@ fn git(
                 "Commits per page",
             );
             commit_page(ui, s);
+        },
+    );
+    heading(ui, "Submodules");
+    row(
+        ui,
+        "Discard in a submodule",
+        "What Discard does with untracked files inside a submodule.",
+        |ui| {
+            revert(
+                ui,
+                &mut s.discard_untracked_in_submodules,
+                &DEFAULTS.discard_untracked_in_submodules,
+                "Discard in a submodule",
+            );
+            let options = [
+                (false, "Keep untracked files"),
+                (true, "Delete untracked files too"),
+            ];
+            Select::new(&mut s.discard_untracked_in_submodules, &options)
+                .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                .name("Discard in a submodule")
+                .recommended(DEFAULTS.discard_untracked_in_submodules)
+                .id_salt("discard-untracked-in-submodules")
+                .show(ui);
         },
     );
     heading(ui, "Diffs");

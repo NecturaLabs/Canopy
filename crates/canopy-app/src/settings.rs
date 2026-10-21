@@ -97,6 +97,7 @@ pub struct GitChoices {
     autostash: bool,
     follow_tags: bool,
     recurse_submodules: bool,
+    discard_untracked_in_submodules: bool,
     push_default: PushMode,
     conflict_style: ConflictMode,
     cleanup: CleanupMode,
@@ -115,6 +116,7 @@ impl Settings {
             autostash: self.autostash,
             follow_tags: self.follow_tags,
             recurse_submodules: self.recurse_submodules,
+            discard_untracked_in_submodules: self.discard_untracked_in_submodules,
             push_default: self.push_default,
             conflict_style: self.conflict_style,
             cleanup: self.cleanup,
@@ -133,6 +135,7 @@ impl Settings {
             autostash,
             follow_tags,
             recurse_submodules,
+            discard_untracked_in_submodules,
             push_default,
             conflict_style,
             cleanup,
@@ -147,6 +150,7 @@ impl Settings {
         self.autostash = autostash;
         self.follow_tags = follow_tags;
         self.recurse_submodules = recurse_submodules;
+        self.discard_untracked_in_submodules = discard_untracked_in_submodules;
         self.push_default = push_default;
         self.conflict_style = conflict_style;
         self.cleanup = cleanup;
@@ -510,6 +514,9 @@ pub struct Settings {
     /// After a pull or checkout, and in a new clone, submodules follow the commits the
     /// repository records (`git submodule update --init --recursive`).
     pub recurse_submodules: bool,
+    /// Discard on a submodule also deletes the untracked files inside it; off (recommended),
+    /// they stay.
+    pub discard_untracked_in_submodules: bool,
     /// How conflicts are written into files (`merge.conflictStyle`).
     #[serde(deserialize_with = "known")]
     pub conflict_style: ConflictMode,
@@ -645,6 +652,7 @@ impl Default for Settings {
             autostash: true,
             follow_tags: true,
             recurse_submodules: true,
+            discard_untracked_in_submodules: false,
             conflict_style: ConflictMode::Zdiff3,
             push_default: PushMode::Simple,
             cleanup: CleanupMode::Whitespace,
@@ -786,6 +794,7 @@ impl Settings {
             cleanup: self.cleanup.cleanup(),
             prune_tags: self.prune_tags,
             recurse_submodules: self.recurse_submodules,
+            discard_untracked_in_submodules: self.discard_untracked_in_submodules,
         }
     }
 
@@ -923,6 +932,7 @@ mod tests {
             autostash: false,
             follow_tags: false,
             recurse_submodules: false,
+            discard_untracked_in_submodules: true,
             push_default: PushMode::Current,
             conflict_style: ConflictMode::Merge,
             cleanup: CleanupMode::Strip,
@@ -949,6 +959,10 @@ mod tests {
             (
                 s.recurse_submodules != default.recurse_submodules,
                 "recurse_submodules",
+            ),
+            (
+                s.discard_untracked_in_submodules != default.discard_untracked_in_submodules,
+                "discard_untracked_in_submodules",
             ),
             (s.push_default != default.push_default, "push_default"),
             (s.conflict_style != default.conflict_style, "conflict_style"),
@@ -1307,6 +1321,7 @@ mod tests {
                 cleanup: Cleanup::Whitespace,
                 prune_tags: false,
                 recurse_submodules: true,
+                discard_untracked_in_submodules: false,
             }
         );
         assert_eq!(s.git_options(), GitOptions::default());
@@ -1405,6 +1420,7 @@ mod tests {
             cleanup: CleanupMode::Strip,
             prune_tags: true,
             recurse_submodules: false,
+            discard_untracked_in_submodules: true,
             initial_branch: "  trunk ".into(),
             ..Settings::default()
         };
@@ -1419,6 +1435,7 @@ mod tests {
                 cleanup: Cleanup::Strip,
                 prune_tags: true,
                 recurse_submodules: false,
+                discard_untracked_in_submodules: true,
             }
         );
         assert_eq!(s.initial_branch(), "trunk");

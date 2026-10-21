@@ -139,6 +139,9 @@ pub struct GitOptions {
     /// After a pull or a checkout, and in a new clone, the submodules are brought to the
     /// commits the superproject records (`git submodule update --init --recursive`).
     pub recurse_submodules: bool,
+    /// Discard on a submodule also deletes the untracked files inside it (`git clean -f -d`,
+    /// ignored files kept); off, they stay.
+    pub discard_untracked_in_submodules: bool,
 }
 
 impl Default for GitOptions {
@@ -154,6 +157,7 @@ impl Default for GitOptions {
             cleanup: Cleanup::Whitespace,
             prune_tags: false,
             recurse_submodules: true,
+            discard_untracked_in_submodules: false,
         }
     }
 }

@@ -48,6 +48,10 @@ commits since the previous build.
 
 ### Fixed
 
+- Discard on a submodule in Changes now works: the submodule goes back to the commit this
+  repository records and changes to its tracked files are thrown away, while untracked files inside
+  it stay (Settings → Git → Discard in a submodule can delete them too). It refuses when that would
+  leave a commit on no branch. Before, it did nothing.
 - Opening a repository that stores its references in Git's reftable format says so plainly;
   Canopy cannot open such a repository yet.
 - A pull or checkout with `submodule.recurse` on in your git configuration no longer throws away

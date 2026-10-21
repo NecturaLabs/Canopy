@@ -401,10 +401,27 @@ impl Repo {
 
     /// Throws away working-tree changes to `files`: tracked files go back to their staged (or
     /// committed) content, untracked files are deleted. Paths are literal, never globs, so a file
-    /// named `*` or `[ab].txt` discards only itself.
+    /// named `*` or `[ab].txt` discards only itself. A submodule goes back to the commit the index
+    /// records, with its tracked files' changes discarded ([`Repo::discard_submodule`]); every
+    /// submodule is checked before anything is discarded.
     pub fn discard(&self, files: &[FileEntry]) -> Result<()> {
-        let (untracked, tracked): (Vec<_>, Vec<_>) =
-            files.iter().partition(|f| f.kind == ChangeKind::Untracked);
+        let submodules = self.submodules(false)?;
+        let (inside, files): (Vec<&FileEntry>, Vec<&FileEntry>) = files
+            .iter()
+            .partition(|f| submodules.iter().any(|s| s.path == f.path));
+        let inside: Vec<&crate::SubmoduleInfo> = submodules
+            .iter()
+            .filter(|s| inside.iter().any(|f| f.path == s.path))
+            .collect();
+        for submodule in &inside {
+            self.stranded_commit_check(submodule)?;
+        }
+        for submodule in inside {
+            self.discard_submodule(submodule)?;
+        }
+        let (untracked, tracked): (Vec<_>, Vec<_>) = files
+            .into_iter()
+            .partition(|f| f.kind == ChangeKind::Untracked);
         let tracked: Vec<String> = tracked.into_iter().map(|f| f.path.clone()).collect();
         let untracked: Vec<String> = untracked.into_iter().map(|f| f.path.clone()).collect();
         if !tracked.is_empty() {
@@ -420,6 +437,62 @@ impl Repo {
             ))?;
         }
         Ok(())
+    }
+
+    /// Refuses when going back to the recorded commit would leave the commit checked out in
+    /// `submodule` on no branch or tag of its own.
+    fn stranded_commit_check(&self, submodule: &crate::SubmoduleInfo) -> Result<()> {
+        let (Some(work), Some(recorded)) = (submodule.workdir_id, submodule.index_id) else {
+            return Ok(());
+        };
+        if work == recorded {
+            return Ok(());
+        }
+        let dir = self.workdir().join(&submodule.path);
+        let refs = cli::run(
+            &dir,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "--contains",
+                &work.to_string(),
+            ],
+        )?;
+        if refs.trim().is_empty() {
+            return Err(Error::invalid(format!(
+                "{} has commits on no branch ({}). Create a branch in it first, or they are hard to find again.",
+                submodule.path,
+                crate::model::short_id(work)
+            )));
+        }
+        Ok(())
+    }
+
+    /// Discards the changes to the tracked files inside `submodule` (`git reset --hard` there)
+    /// and checks out the commit the index records (`git submodule update --checkout`, which
+    /// ignores a configured update command). Untracked files inside stay unless
+    /// [`crate::GitOptions::discard_untracked_in_submodules`] says to delete them (ignored files
+    /// and nested repositories always stay), and nested submodules are left as they are.
+    fn discard_submodule(&self, submodule: &crate::SubmoduleInfo) -> Result<()> {
+        let dir = self.workdir().join(&submodule.path);
+        cli::run(
+            &dir,
+            &["-c", "submodule.recurse=false", "reset", "--hard", "-q"],
+        )?;
+        if self.options().discard_untracked_in_submodules {
+            cli::run(&dir, &["clean", "-f", "-d", "-q"])?;
+        }
+        self.git_cmd(&[
+            "-c",
+            "submodule.recurse=false",
+            "submodule",
+            "update",
+            "--checkout",
+            "-q",
+            "--",
+            &submodule.path,
+        ])
+        .map(drop)
     }
 
     /// Stages, unstages or discards hunk number `index` of `path`. `expected` is the hunk's
