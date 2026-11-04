@@ -11,7 +11,60 @@ PREFIX = "crates/canopy-app/src/"
 # The component library is a submodule, so `git ls-files` of this repository does not list its files.
 LIBRARY = "crates/nectura-ui/src/"
 THEME = LIBRARY + "theme.rs"
-CONSTRUCTOR = re.compile(r"\bColor32\s*::\s*from_(?:rgb\w*|gray|hex)\s*\(")
+CONSTRUCTOR = re.compile(
+    r"\bColor32\s*::\s*from_(?:rgb\w*|gray|black_alpha|white_alpha|additive_luminance|hex)\s*\("
+)
+NAMED = re.compile(r"\bColor32\s*::\s*([A-Z][A-Z0-9_]*)\b")
+# Exact non-design expressions: texture/alpha channels, black-or-white contrast selection, gallery
+# opacity/blur samples and text measurement. Matching the whole line keeps every other use a violation.
+ALLOWED_CONSTANTS = {
+    (LIBRARY + "contrast.rs", "BLACK"): [
+        ("Color32::BLACK", "black is one of the two contrast candidates"),
+        (
+            "if worst(Color32::WHITE) >= worst(Color32::BLACK) {",
+            "black is one of the two contrast candidates",
+        ),
+    ],
+    (LIBRARY + "contrast.rs", "WHITE"): [
+        ("Color32::WHITE", "white is one of the two contrast candidates"),
+        (
+            "if worst(Color32::WHITE) >= worst(Color32::BLACK) {",
+            "white is one of the two contrast candidates",
+        ),
+    ],
+    (LIBRARY + "kit/avatar.rs", "WHITE"): [
+        (
+            "RectShape::filled(rect, radius, Color32::WHITE.gamma_multiply(shown))",
+            "white carries a picture's alpha channel, not a theme colour",
+        )
+    ],
+    (LIBRARY + "kit/paint.rs", "WHITE"): [
+        (
+            "RectShape::filled(rect, radius, Color32::WHITE)",
+            "white carries texture alpha, not a theme colour",
+        ),
+        (
+            "Palette::tint(Color32::WHITE, crate::saturate_u8(glow_falloff(t) * 255.0))",
+            "white carries glow alpha, not a theme colour",
+        ),
+    ],
+    (LIBRARY + "kit/glass/mod.rs", "BLACK"): [
+        ("Color32::BLACK", "the glass gallery uses black as opacity/blur test content"),
+        (
+            "if row % 2 == 0 { p.text } else { Color32::BLACK },",
+            "the glass gallery uses black as opacity/blur test content",
+        ),
+    ],
+    (LIBRARY + "kit/glass/mod.rs", "WHITE"): [
+        ("Color32::WHITE", "the glass gallery uses white as opacity/blur test content")
+    ],
+    (PREFIX + "views/settings_screen.rs", "WHITE"): [
+        (
+            ".layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)",
+            "text measurement does not paint the measured text",
+        )
+    ],
+}
 TEST_ITEM = re.compile(
     r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]"
     r"(?:\s*#\[[^]]*\])*\s*(?:pub(?:\([^)]*\))?\s+)?"
@@ -106,6 +159,19 @@ def violations(name: str, source: str) -> list[tuple[int, str]]:
         ):
             continue
         problems.append((source.count("\n", 0, m.start()) + 1, m.group()[:-1].strip()))
+    for m in NAMED.finditer(runtime):
+        constant = m[1]
+        if constant in {"TRANSPARENT", "PLACEHOLDER"}:
+            continue
+        line_start = runtime.rfind("\n", 0, m.start()) + 1
+        line_end = runtime.find("\n", m.end())
+        if line_end < 0:
+            line_end = len(runtime)
+        line = runtime[line_start:line_end].strip()
+        allowed = ALLOWED_CONSTANTS.get((name, constant), [])
+        if any(line == expression for expression, _ in allowed):
+            continue
+        problems.append((source.count("\n", 0, m.start()) + 1, m.group()))
     return problems
 
 def check() -> int:
@@ -125,6 +191,15 @@ def check() -> int:
         return 1
     names |= library
     failed = False
+    for (name, constant), cases in ALLOWED_CONSTANTS.items():
+        runtime_lines = {
+            line.strip()
+            for line in runtime_code((ROOT / name).read_text(encoding="utf-8")).splitlines()
+        }
+        for expression, reason in cases:
+            if expression not in runtime_lines:
+                print(f"{name}: stale colour allowlist entry for Color32::{constant}: {reason}")
+                failed = True
     for name in sorted(names):
         path = ROOT / name
         if not name.endswith(".rs") or not path.is_file():
@@ -138,6 +213,14 @@ def selftest() -> int:
     p = PREFIX + "views/synthetic.rs"
     assert violations(p, "Color32::from_rgb(1, 2, 3)") == [(1, "Color32::from_rgb")]
     assert violations(p, "\nColor32::from_hex(\"#fff\")") == [(2, "Color32::from_hex")]
+    assert violations(p, "Color32::from_black_alpha(4)") == [(1, "Color32::from_black_alpha")]
+    assert violations(p, "Color32::from_white_alpha(4)") == [(1, "Color32::from_white_alpha")]
+    assert violations(p, "Color32::from_additive_luminance(4)") == [
+        (1, "Color32::from_additive_luminance")
+    ]
+    assert violations(p, "Color32::WHITE") == [(1, "Color32::WHITE")]
+    assert violations(p, "Color32::TRANSPARENT") == []
+    assert violations(p, "Color32::PLACEHOLDER") == []
     assert violations(p, "#[cfg(test)]\nmod tests { fn check() { Color32::from_gray(4); } }") == []
     assert violations(LIBRARY + "kit/glass/tests.rs", "Color32::from_rgb(1,2,3)") == []
     assert violations(THEME, "Color32::from_rgb(1,2,3)") == []
@@ -159,6 +242,13 @@ def selftest() -> int:
     assert violations(p, "#[cfg(test)] fn check() { let brace = '}'; }\nColor32::from_gray(4)") == [
         (2, "Color32::from_gray")
     ]
+    assert violations(
+        LIBRARY + "kit/paint.rs",
+        "fn draw(painter: &Painter, rect: Rect) {\npainter.rect_filled(rect, CornerRadius::ZERO, Color32::WHITE);\n}",
+    ) == [(2, "Color32::WHITE")]
+    for (name, constant), cases in ALLOWED_CONSTANTS.items():
+        for expression, reason in cases:
+            assert violations(name, expression) == [], reason
     print("UI colour guard self-test passed")
     return 0
 
