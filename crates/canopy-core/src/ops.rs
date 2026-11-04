@@ -336,15 +336,24 @@ fn tree_paths(
 
 /// The untracked candidate at `candidate`, or one above or below it, when it resolves to the same
 /// path as `root` on this filesystem. Canonical paths catch case-insensitive and normalizing names
-/// without treating unrelated files as obstructions.
+/// without treating unrelated files as obstructions. A dangling symlink has no target to preserve,
+/// so it does not collide; other I/O errors still stop the reset.
 fn resolves_to_same_path(
     dir: &Path,
     root: &Path,
     candidates: &[(PathBuf, bool)],
 ) -> Result<Option<(PathBuf, bool)>> {
-    let actual = std::fs::canonicalize(dir.join(root))?;
+    let actual = match std::fs::canonicalize(dir.join(root)) {
+        Ok(path) => path,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
     for (candidate, ignored) in candidates {
-        let other = std::fs::canonicalize(dir.join(candidate))?;
+        let other = match std::fs::canonicalize(dir.join(candidate)) {
+            Ok(path) => path,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
         if other.starts_with(&actual) || actual.starts_with(&other) {
             return Ok(Some((candidate.clone(), *ignored)));
         }

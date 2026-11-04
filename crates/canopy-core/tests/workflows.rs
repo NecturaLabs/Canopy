@@ -1503,6 +1503,26 @@ fn discarding_a_submodule_refuses_an_obstruction_after_a_staged_deletion() {
     );
 }
 
+/// A dangling symlink has no target whose contents need preserving: reset can replace it with the
+/// tracked file instead of failing canonicalization.
+#[cfg(unix)]
+#[test]
+fn discarding_a_submodule_replaces_a_dangling_symlink() {
+    use std::os::unix::fs::symlink;
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+    symlink("missing-target", sub.join("a.txt")).expect("dangling symlink");
+
+    repo.discard(&submodule_row(&repo)).expect("discard");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("restored file"),
+        "one\ntwo\nthree\n"
+    );
+    assert!(!sub.join("missing-target").exists());
+}
+
 /// An unrelated untracked file is not an obstruction just because another tracked file was
 /// deleted: reset restores the latter and leaves the former alone.
 #[test]
