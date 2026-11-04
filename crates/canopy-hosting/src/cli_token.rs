@@ -264,7 +264,7 @@ fn read_login(
     let run = |args: &[&str]| match run_capture(program, args, deadline) {
         Ok(out) => Ok(out),
         Err(RunError::NotFound) => Err(CliError::NotInstalled { kind }),
-        Err(RunError::TimedOut) => Err(failed("it took longer than 10 seconds")),
+        Err(RunError::TimedOut) => Err(failed(&took_longer(timeout))),
         Err(RunError::Io(e)) => Err(failed(&format!("it could not be run ({e})"))),
     };
     let status_args: &[&str] = match kind {
@@ -328,6 +328,15 @@ fn read_login(
             },
         }),
         None => Err(failed("it printed no usable token")),
+    }
+}
+
+/// Why a CLI that ran past `timeout` was stopped, in the unit the timeout was given in.
+fn took_longer(timeout: Duration) -> String {
+    if timeout.subsec_nanos() == 0 {
+        format!("it took longer than {} seconds", timeout.as_secs())
+    } else {
+        format!("it took longer than {} ms", timeout.as_millis())
     }
 }
 
@@ -826,7 +835,7 @@ esac"#,
         )
         .unwrap_err();
         assert!(
-            matches!(&err, CliError::Failed { message, .. } if message.contains("took longer")),
+            matches!(&err, CliError::Failed { message, .. } if message.contains("took longer than 300 ms")),
             "{err:?}"
         );
         assert!(started.elapsed() < Duration::from_secs(5));
@@ -1005,80 +1014,6 @@ exit 1"#
     }
 
     #[test]
-    fn what_fixes_each_problem() {
-        let (gh, glab) = (ForgeKind::GitHub, ForgeKind::GitLab);
-        let missing = |kind| CliError::MissingScope {
-            kind,
-            host: "h.example".into(),
-            user: None,
-            scope: required_scope(kind),
-        };
-        assert_eq!(
-            missing(gh).fix_command().as_deref(),
-            Some("gh auth refresh --hostname h.example --scopes repo")
-        );
-        assert_eq!(
-            missing(glab).fix_command().as_deref(),
-            Some("glab auth login --hostname h.example")
-        );
-        assert_eq!(missing(gh).fix_note(), None);
-        let note = missing(glab).fix_note().unwrap();
-        assert_eq!(note, "allow the api scope");
-        assert!(
-            missing(glab).to_string().contains(&note),
-            "the message says the same"
-        );
-        assert_eq!(CliError::NotInstalled { kind: gh }.fix_command(), None);
-        assert_eq!(
-            CliError::Failed {
-                kind: gh,
-                message: "x".into()
-            }
-            .fix_command(),
-            None
-        );
-        assert_eq!(install_page(gh), "https://cli.github.com");
-        assert!(install_page(glab).starts_with("https://gitlab.com/"));
-    }
-
-    const GITLAB_CORP: &str =
-        "  ✓ Logged in to gitlab.corp as tanuki (/c.yml)\n  ✓ Token found: glpat-a";
-
-    #[test]
-    fn a_host_with_another_port_is_not_signed_in() {
-        assert!(parse_status(GITLAB_CORP, "gitlab.corp").signed_in);
-        assert!(!parse_status(GITLAB_CORP, "gitlab.corp:8443").signed_in);
-        let with_port = "  ✓ Logged in to gitlab.corp:8443 as tanuki (/c.yml)";
-        assert!(!parse_status(with_port, "gitlab.corp").signed_in);
-        assert!(parse_status(with_port, "GitLab.Corp:8443").signed_in);
-        // A longer name that merely contains the host is another host.
-        let longer = "  ✓ Logged in to my-gitlab.corp.example as tanuki (/c.yml)";
-        assert!(!parse_status(longer, "gitlab.corp").signed_in);
-    }
-
-    #[test]
-    fn scopes_and_token_of_another_host_are_not_used() {
-        let text = "\
-github.com
-  ✓ Logged in to github.com account octocat (keyring)
-  - Token scopes: 'repo'
-  ✓ Token found: ghp_other
-ghe.corp
-  ✓ Logged in to ghe.corp account octocat (keyring)
-  - Token scopes: 'gist'
-";
-        let report = parse_status(text, "ghe.corp");
-        assert_eq!(report.scopes, Some(vec!["gist".to_owned()]));
-        assert_eq!(report.token, None);
-        let report = parse_status(text, "github.com");
-        assert_eq!(report.scopes, Some(vec!["repo".to_owned()]));
-        assert_eq!(report.token.as_deref(), Some("ghp_other"));
-        // Lines before any account, and those of an account that failed, belong to nobody.
-        let text = "  - Token scopes: 'repo'\n  X Failed to log in to github.com account old (keyring)\n  - Token scopes: 'repo'\n  ✓ Logged in to github.com account octocat (keyring)\n";
-        assert_eq!(parse_status(text, "github.com").scopes, None);
-    }
-
-    #[test]
     fn the_active_account_of_a_host_decides_the_scopes() {
         // The inactive account is listed last and lacks `repo`; `gh auth token` answers for the
         // active one.
@@ -1201,18 +1136,6 @@ esac"#,
         assert_eq!(fake.calls(), Vec::<String>::new());
     }
 
-    #[test]
-    fn host_names_with_ports_and_underscores_are_accepted() {
-        for host in [
-            "github.com",
-            "ghe.corp:8443",
-            "git_lab.corp-1.example",
-            "localhost",
-        ] {
-            assert!(is_host_name(host), "{host}");
-        }
-    }
-
     /// A token the CLI prints in a line that names it never reaches the message, even one without a
     /// known prefix and one on a line that belongs to no account.
     #[test]
@@ -1227,30 +1150,6 @@ exit 1"#
         let shown = format!("{err} {err:?}");
         assert!(shown.contains("API call failed: 401"), "{shown}");
         assert!(!shown.contains(BARE), "{shown}");
-    }
-
-    #[test]
-    fn credential_variables_do_not_reach_the_cli() {
-        let cmd = command(OsStr::new("gh"));
-        let removed: Vec<_> = cmd
-            .get_envs()
-            .filter(|(_, value)| value.is_none())
-            .map(|(name, _)| name.to_string_lossy().into_owned())
-            .collect();
-        for name in CREDENTIAL_ENV {
-            assert!(removed.iter().any(|r| r == name), "{name} is passed on");
-        }
-        // The host and CI variables `gh` and `glab` read besides their token variables.
-        for name in [
-            "GL_HOST",
-            "GITLAB_URI",
-            "GITLAB_API_HOST",
-            "GH_HOST",
-            "GLAB_ENABLE_CI_AUTOLOGIN",
-            "CI_JOB_TOKEN",
-        ] {
-            assert!(removed.iter().any(|r| r == name), "{name} is passed on");
-        }
     }
 
     #[test]
@@ -1293,6 +1192,140 @@ exit 1"#
         assert!(
             !logged.contains("SECRET") && !logged.contains(TOKEN),
             "{logged}"
+        );
+    }
+}
+
+/// What needs no program to run, so it is tested on every platform (the fake CLIs above are shell
+/// scripts).
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+
+    const GITLAB_CORP: &str =
+        "  ✓ Logged in to gitlab.corp as tanuki (/c.yml)\n  ✓ Token found: glpat-a";
+
+    #[test]
+    fn what_fixes_each_problem() {
+        let (gh, glab) = (ForgeKind::GitHub, ForgeKind::GitLab);
+        let missing = |kind| CliError::MissingScope {
+            kind,
+            host: "h.example".into(),
+            user: None,
+            scope: required_scope(kind),
+        };
+        assert_eq!(
+            missing(gh).fix_command().as_deref(),
+            Some("gh auth refresh --hostname h.example --scopes repo")
+        );
+        assert_eq!(
+            missing(glab).fix_command().as_deref(),
+            Some("glab auth login --hostname h.example")
+        );
+        assert_eq!(missing(gh).fix_note(), None);
+        let note = missing(glab).fix_note().unwrap();
+        assert_eq!(note, "allow the api scope");
+        assert!(
+            missing(glab).to_string().contains(&note),
+            "the message says the same"
+        );
+        assert_eq!(CliError::NotInstalled { kind: gh }.fix_command(), None);
+        assert_eq!(
+            CliError::Failed {
+                kind: gh,
+                message: "x".into()
+            }
+            .fix_command(),
+            None
+        );
+        assert_eq!(install_page(gh), "https://cli.github.com");
+        assert!(install_page(glab).starts_with("https://gitlab.com/"));
+    }
+
+    #[test]
+    fn a_host_with_another_port_is_not_signed_in() {
+        assert!(parse_status(GITLAB_CORP, "gitlab.corp").signed_in);
+        assert!(!parse_status(GITLAB_CORP, "gitlab.corp:8443").signed_in);
+        let with_port = "  ✓ Logged in to gitlab.corp:8443 as tanuki (/c.yml)";
+        assert!(!parse_status(with_port, "gitlab.corp").signed_in);
+        assert!(parse_status(with_port, "GitLab.Corp:8443").signed_in);
+        // A longer name that merely contains the host is another host.
+        let longer = "  ✓ Logged in to my-gitlab.corp.example as tanuki (/c.yml)";
+        assert!(!parse_status(longer, "gitlab.corp").signed_in);
+    }
+
+    #[test]
+    fn scopes_and_token_of_another_host_are_not_used() {
+        let text = "\
+github.com
+  ✓ Logged in to github.com account octocat (keyring)
+  - Token scopes: 'repo'
+  ✓ Token found: ghp_other
+ghe.corp
+  ✓ Logged in to ghe.corp account octocat (keyring)
+  - Token scopes: 'gist'
+";
+        let report = parse_status(text, "ghe.corp");
+        assert_eq!(report.scopes, Some(vec!["gist".to_owned()]));
+        assert_eq!(report.token, None);
+        let report = parse_status(text, "github.com");
+        assert_eq!(report.scopes, Some(vec!["repo".to_owned()]));
+        assert_eq!(report.token.as_deref(), Some("ghp_other"));
+        // Lines before any account, and those of an account that failed, belong to nobody.
+        let text = "  - Token scopes: 'repo'\n  X Failed to log in to github.com account old (keyring)\n  - Token scopes: 'repo'\n  ✓ Logged in to github.com account octocat (keyring)\n";
+        assert_eq!(parse_status(text, "github.com").scopes, None);
+    }
+
+    #[test]
+    fn host_names_with_ports_and_underscores_are_accepted() {
+        for host in [
+            "github.com",
+            "ghe.corp:8443",
+            "git_lab.corp-1.example",
+            "localhost",
+        ] {
+            assert!(is_host_name(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn credential_variables_do_not_reach_the_cli() {
+        let cmd = command(OsStr::new("gh"));
+        let removed: Vec<_> = cmd
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect();
+        for name in CREDENTIAL_ENV {
+            assert!(removed.iter().any(|r| r == name), "{name} is passed on");
+        }
+        // The host and CI variables `gh` and `glab` read besides their token variables.
+        for name in [
+            "GL_HOST",
+            "GITLAB_URI",
+            "GITLAB_API_HOST",
+            "GH_HOST",
+            "GLAB_ENABLE_CI_AUTOLOGIN",
+            "CI_JOB_TOKEN",
+        ] {
+            assert!(removed.iter().any(|r| r == name), "{name} is passed on");
+        }
+    }
+
+    #[test]
+    fn a_masked_token_is_never_usable() {
+        for shown in ["glpat-****", "glpat-****abcd", "****", "**********"] {
+            assert!(!usable(shown), "{shown}");
+        }
+        assert!(usable("glpat-abcdefghijklmnop1234"));
+    }
+
+    #[test]
+    fn a_timeout_is_named_in_its_own_unit() {
+        assert_eq!(took_longer(CLI_TIMEOUT), "it took longer than 10 seconds");
+        assert_eq!(
+            took_longer(Duration::from_millis(300)),
+            "it took longer than 300 ms"
         );
     }
 }

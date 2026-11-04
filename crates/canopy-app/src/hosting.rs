@@ -7,7 +7,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -122,14 +122,44 @@ pub fn resolve_token(forge: &Forge) -> Resolved {
     canopy_hosting::login_from_cli(forge.kind, &forge.authority()).into()
 }
 
+/// [`check_cli`] threads running in this process, whichever Settings screen started them.
+static CLI_CHECKS: AtomicUsize = AtomicUsize::new(0);
+
+/// How many [`check_cli`] threads are running, so a reopened Settings screen does not start more
+/// while the previous one's still run.
+pub fn cli_checks_running() -> usize {
+    CLI_CHECKS.load(Ordering::Relaxed)
+}
+
+/// Counts one running check in [`CLI_CHECKS`] for as long as it lives.
+struct CheckRunning;
+
+impl CheckRunning {
+    fn start() -> Self {
+        CLI_CHECKS.fetch_add(1, Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for CheckRunning {
+    fn drop(&mut self) {
+        CLI_CHECKS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// [`resolve_token`] on its own thread, for the Accounts page, which has no hosting thread for
 /// a host without an open tab. The token is dropped unread; the result arrives on the channel.
 pub fn check_cli(forge: Forge, ctx: egui::Context) -> Receiver<CliState> {
     let (tx, rx) = unbounded();
+    // Moved into the thread and dropped before the answer is sent, so the page that reads the
+    // answer already sees the slot free; dropped here when the thread could not start.
+    let running = CheckRunning::start();
     let spawned = std::thread::Builder::new()
         .name(format!("cli-check:{}", forge.host))
         .spawn(move || {
-            let _ = tx.send(resolve_token(&forge).cli);
+            let state = resolve_token(&forge).cli;
+            drop(running);
+            let _ = tx.send(state);
             ctx.request_repaint();
         });
     if let Err(e) = spawned {
@@ -1322,7 +1352,7 @@ esac"#,
         // that may have changed, so they are dropped rather than shown over the newer list.
         let (arrived, query_arrived) = unbounded::<()>();
         let (release, released) = unbounded::<()>();
-        let lists = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let lists = Arc::new(AtomicUsize::new(0));
         let served = Arc::clone(&lists);
         let (base, log) = stub(Box::new(move |target| {
             if target.starts_with("/repos/o/r/pulls?") {

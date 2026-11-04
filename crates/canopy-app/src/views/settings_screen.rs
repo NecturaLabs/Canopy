@@ -5129,12 +5129,12 @@ impl AccountHosts {
 }
 
 /// The hosts whose check starts now: those not checked yet, in page order, while fewer than
-/// [`MAX_CHECKS`] run.
-fn checks_to_start<'a>(hosts: &'a [Forge], checks: &HashMap<String, CliCheck>) -> Vec<&'a Forge> {
-    let running = checks
-        .values()
-        .filter(|c| matches!(c, CliCheck::Running(_)))
-        .count();
+/// [`MAX_CHECKS`] run process-wide, including checks started by a Settings screen since closed.
+fn checks_to_start<'a>(
+    hosts: &'a [Forge],
+    checks: &HashMap<String, CliCheck>,
+    running: usize,
+) -> Vec<&'a Forge> {
     hosts
         .iter()
         .filter(|f| !checks.contains_key(&f.authority().to_lowercase()))
@@ -5195,36 +5195,55 @@ fn accounts(
     }
     ui.add_space(theme::MD);
 
-    // Collect finished checks first, so a freed slot is taken in this frame.
-    for forge in &page.hosts {
-        let key = forge.authority().to_lowercase();
-        if let Some(CliCheck::Running(rx)) = screen.checks.get(&key) {
-            let finished = match rx.try_recv() {
-                Ok(state) => Some(state),
-                Err(crossbeam_channel::TryRecvError::Empty) => None,
-                Err(crossbeam_channel::TryRecvError::Disconnected) => Some(Err(CliError::Failed {
-                    kind: forge.kind,
-                    message: "the check could not be run".into(),
-                })),
+    // Collect every finished check first, including one whose host left the page, so a freed slot
+    // is taken in this frame and an old Settings screen cannot strand a running check.
+    let finished: Vec<(String, Option<hosting::CliState>)> = screen
+        .checks
+        .iter()
+        .filter_map(|(key, check)| {
+            let CliCheck::Running(rx) = check else {
+                return None;
             };
-            if let Some(state) = finished {
-                // A tab that started with another answer holds a stale credential.
-                let stale = tabs.iter().any(|t| {
-                    t.host
-                        .as_ref()
-                        .is_some_and(|h| h.forge.authority().to_lowercase() == key)
-                        && t.requests.cli.as_ref().is_some_and(|had| *had != state)
-                });
-                if stale {
-                    changed.push(key.clone());
-                }
-                screen.checks.insert(key, CliCheck::Done(state));
+            match rx.try_recv() {
+                Ok(state) => Some((key.clone(), Some(state))),
+                Err(crossbeam_channel::TryRecvError::Empty) => None,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => Some((key.clone(), None)),
             }
+        })
+        .collect();
+    for (key, state) in finished {
+        let state = if let Some(state) = state {
+            state
+        } else {
+            let Some(forge) = page
+                .hosts
+                .iter()
+                .find(|forge| forge.authority().eq_ignore_ascii_case(&key))
+            else {
+                screen.checks.remove(&key);
+                continue;
+            };
+            Err(CliError::Failed {
+                kind: forge.kind,
+                message: "the check could not be run".into(),
+            })
+        };
+        // A tab that started with another answer holds a stale credential, even when its host is
+        // no longer one of the few repository hosts the page has room to show.
+        let stale = tabs.iter().any(|t| {
+            t.host
+                .as_ref()
+                .is_some_and(|h| h.forge.authority().to_lowercase() == key)
+                && t.requests.cli.as_ref().is_some_and(|had| *had != state)
+        });
+        if stale {
+            changed.push(key.clone());
         }
+        screen.checks.insert(key, CliCheck::Done(state));
     }
     // Ask the CLI when the page first shows a host, and again on "Check again".
     if live {
-        for forge in checks_to_start(&page.hosts, &screen.checks) {
+        for forge in checks_to_start(&page.hosts, &screen.checks, hosting::cli_checks_running()) {
             let rx = hosting::check_cli(forge.clone(), ui.ctx().clone());
             screen
                 .checks
@@ -6385,19 +6404,34 @@ mod tests {
         assert_eq!(page.more, 200 - MAX_REPO_HOSTS);
         // Nothing checked yet: the first MAX_CHECKS start, then one per slot that frees.
         let mut checks = HashMap::new();
-        assert_eq!(checks_to_start(&page.hosts, &checks).len(), MAX_CHECKS);
+        assert_eq!(checks_to_start(&page.hosts, &checks, 0).len(), MAX_CHECKS);
         let running: Vec<_> = (0..MAX_CHECKS - 1)
             .map(|_| crossbeam_channel::unbounded::<hosting::CliState>())
             .collect();
         for (n, (_, rx)) in running.iter().enumerate() {
             checks.insert(page.hosts[n].authority(), CliCheck::Running(rx.clone()));
         }
-        let next = checks_to_start(&page.hosts, &checks);
+        let next = checks_to_start(&page.hosts, &checks, MAX_CHECKS - 1);
         assert_eq!(next.len(), 1);
         assert_eq!(next[0].host, page.hosts[MAX_CHECKS - 1].host);
         let (_, rx) = crossbeam_channel::unbounded::<hosting::CliState>();
         checks.insert(next[0].authority(), CliCheck::Running(rx));
-        assert_eq!(checks_to_start(&page.hosts, &checks), Vec::<&Forge>::new());
+        assert_eq!(
+            checks_to_start(&page.hosts, &checks, MAX_CHECKS),
+            Vec::<&Forge>::new()
+        );
+
+        // Entries left by a page that closed are not how availability is measured: the counter of
+        // real threads is. Stale map entries alone must neither consume nor invent free slots.
+        let mut orphaned = HashMap::new();
+        for (_, rx) in running {
+            orphaned.insert(format!("orphan-{}", orphaned.len()), CliCheck::Running(rx));
+        }
+        assert_eq!(checks_to_start(&page.hosts, &orphaned, 0).len(), MAX_CHECKS);
+        assert_eq!(
+            checks_to_start(&page.hosts, &orphaned, MAX_CHECKS),
+            Vec::<&Forge>::new()
+        );
 
         // The page shows those cards and counts the rest; with every shown host answered it
         // starts nothing for the hidden ones.
@@ -6509,6 +6543,43 @@ mod tests {
                 Some(CliCheck::Done(_))
             ));
         }
+    }
+
+    /// A host that drops off the page while its check runs still has its answer collected, so its
+    /// tab restarts and an orphaned check cannot hold a slot forever.
+    #[test]
+    fn a_finished_check_is_collected_after_its_host_leaves_the_page() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let settings = Settings {
+            hosting_api: false,
+            ..answered()
+        };
+        let mut tab = tab_with_many_hosts();
+        let hidden = tab.forges[100].1.clone();
+        tab.host = Some(hosting::HostWorker::detached(hidden.clone()).0);
+        tab.requests.cli = Some(hosting::signed_out(hidden.kind, &hidden.host));
+        let key = hidden.authority().to_lowercase();
+        assert!(
+            !AccountHosts::of(&settings, std::slice::from_ref(&tab))
+                .hosts
+                .iter()
+                .any(|forge| forge.authority().eq_ignore_ascii_case(&key))
+        );
+
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        screen.checks.insert(key.clone(), CliCheck::Running(rx));
+        tx.send(Ok(hosting::demo_account())).unwrap();
+        let (_, changed) = accounts_frame(
+            &ctx,
+            &mut screen,
+            &settings,
+            std::slice::from_ref(&tab),
+            &mut Vec::new(),
+        );
+        assert_eq!(changed, vec![key.clone()]);
+        assert!(matches!(screen.checks.get(&key), Some(CliCheck::Done(_))));
     }
 
     /// Every preview theme needs an outlined selection marker; merely changing the

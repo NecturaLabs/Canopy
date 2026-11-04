@@ -48,7 +48,8 @@ Chosen: **2, only the CLIs.**
   The deletion does not erase the disk blocks, and the policy says that too. No settings migration
   is written for the removed fields: they are ignored.
 - **Settings → Accounts** is a status page, one card per host (github.com, gitlab.com, each
-  self-hosted GitLab host listed in Integrations, each host of an open repository): CLI not
+  self-hosted GitLab host listed in Integrations, and up to four hosts of open repositories, with
+  the rest counted in one line): CLI not
   installed (a link to the official install page, opened as a web address through `platform.rs`),
   signed out or short of a scope (the exact command with a button that copies it), signed in (the
   account and the scopes the CLI lists), or failed (the CLI's words). Canopy does **not** run
@@ -56,8 +57,9 @@ Chosen: **2, only the CLIs.**
 - The page asks the CLI when it opens and on **Check again**, on its own threads (a host without a
   tab has no hosting thread). A check that finds another answer than an open tab's hosting thread
   started with restarts that tab's thread, so installing or signing in does not need a restart of
-  Canopy. While Pull and merge requests are off, or before the start-up questions are answered,
-  the page runs nothing: `gh auth status` contacts the host.
+  Canopy. Only a host with a card is checked; after signing in to a repository host beyond those
+  four, reopen that repository's tab. While Pull and merge requests are off, or before the start-up
+  questions are answered, the page runs nothing: `gh auth status` contacts the host.
 - The same state (`CliState`, the CLI's account or the reason it cannot be used) is what the
   requests view, the repository's Hosting block and the picture notes say, so they never disagree
   with the Accounts page.
