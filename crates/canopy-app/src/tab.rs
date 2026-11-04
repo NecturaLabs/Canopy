@@ -1159,7 +1159,7 @@ pub struct RepoTab {
     pub forges: Vec<(String, Forge)>,
     /// The API thread for the main forge remote.
     pub host: Option<HostWorker>,
-    /// Self-hosted GitLab hosts the user listed in settings: environment tokens may go there.
+    /// Pull/merge request state for the main forge remote.
     pub requests: Requests,
     /// Drafts survive hosting initialization and worktree tab replacement for this run.
     pub request_comments: Vec<RequestCommentDraft>,

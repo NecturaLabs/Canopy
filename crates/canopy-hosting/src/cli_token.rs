@@ -86,7 +86,7 @@ impl std::fmt::Debug for CliLogin {
 /// Why the CLI's sign-in cannot be used. The text is meant for the user.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CliError {
-    /// The program is not on `PATH`: nothing to report, the next credential source applies.
+    /// The program is not on `PATH`, so its sign-in cannot be used.
     #[error("The {} is not installed.", cli_name(*.kind))]
     NotInstalled { kind: ForgeKind },
     /// Installed, but not signed in to the host.

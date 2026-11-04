@@ -120,6 +120,9 @@ pub struct SettingsScreen {
     picker: crate::ui::folder_picker::FolderPicker,
     /// What the CLIs said about each host on the Accounts page, by `host[:port]` in lower case.
     checks: HashMap<String, CliCheck>,
+    /// Hosts whose completed check was explicitly requested with Check again. A renewed token can
+    /// have the same account and scopes, so an open tab is restarted even when `CliState` matches.
+    rechecks: HashSet<String>,
     /// The Accounts page's hosts, with what they were built from (`AccountHosts::source`).
     account_hosts: Option<(u64, Arc<AccountHosts>)>,
     identity_for: Option<PathBuf>,
@@ -5098,12 +5101,17 @@ impl AccountHosts {
             account(ForgeKind::GitHub, "github.com"),
             account(ForgeKind::GitLab, "gitlab.com"),
         ];
-        for h in settings
+        for (host, port) in settings
             .gitlab_host_list()
             .iter()
-            .filter_map(|h| canopy_core::forge::normalise_host(h))
+            .filter_map(|h| canopy_core::forge::normalise_host_with_port(h))
         {
-            hosts.push(account(ForgeKind::GitLab, &h));
+            hosts.push(Forge {
+                kind: ForgeKind::GitLab,
+                host,
+                port,
+                path: String::new(),
+            });
         }
         let mut seen = HashSet::new();
         hosts.retain(|f| seen.insert(f.authority().to_lowercase()));
@@ -5239,6 +5247,7 @@ fn accounts(
                 .find(|forge| forge.authority().eq_ignore_ascii_case(&key))
             else {
                 screen.checks.remove(&key);
+                screen.rechecks.remove(&key);
                 continue;
             };
             Err(CliError::Failed {
@@ -5247,12 +5256,16 @@ fn accounts(
             })
         };
         // A tab that started with another answer holds a stale credential, even when its host is
-        // no longer one of the few repository hosts the page has room to show.
+        // no longer one of the few repository hosts the page has room to show. An explicit recheck
+        // also replaces a renewed token, which the account-and-scopes state cannot distinguish.
+        let rechecked = screen.rechecks.remove(&key);
         let stale = tabs.iter().any(|t| {
             t.host
                 .as_ref()
                 .is_some_and(|h| h.forge.authority().to_lowercase() == key)
-                && t.requests.cli.as_ref().is_some_and(|had| *had != state)
+                && (rechecked
+                    || t.requests.token_rejected
+                    || t.requests.cli.as_ref().is_some_and(|had| *had != state))
         });
         if stale {
             changed.push(key.clone());
@@ -5341,7 +5354,9 @@ fn accounts(
                         .show(ui)
                         .clicked()
                 {
-                    // Queued: it starts on the next frame, when a slot is free.
+                    // Queued: it starts on the next frame, when a slot is free. Its completion
+                    // restarts tabs even if the account and scopes are unchanged (token renewal).
+                    screen.rechecks.insert(key.clone());
                     screen.checks.remove(&key);
                     ui.ctx().request_repaint();
                 }
@@ -6504,6 +6519,30 @@ mod tests {
         assert_eq!(cards, 2 + MAX_REPO_HOSTS);
     }
 
+    /// A configured GitLab authority includes its web port in the CLI check, including when no
+    /// open repository can supply a correctly ported remote.
+    #[test]
+    fn configured_gitlab_hosts_keep_their_non_default_ports() {
+        let settings = Settings {
+            gitlab_hosts: "GitLab.Corp:8443, https://gitlab.other:9443/root".into(),
+            ..answered()
+        };
+        let page = AccountHosts::of(&settings, &[]);
+        let corp = page
+            .hosts
+            .iter()
+            .find(|forge| forge.host == "gitlab.corp")
+            .expect("configured host");
+        assert_eq!(corp.port, Some(8443));
+        assert_eq!(corp.authority(), "gitlab.corp:8443");
+        let other = page
+            .hosts
+            .iter()
+            .find(|forge| forge.host == "gitlab.other")
+            .expect("configured host with a path");
+        assert_eq!(other.port, Some(9443));
+    }
+
     /// The page's host list is built once and kept while the settings and the tabs' remotes stay
     /// the same, not every frame.
     #[test]
@@ -6584,6 +6623,83 @@ mod tests {
                 Some(CliCheck::Done(_))
             ));
         }
+    }
+
+    /// A rejected credential must be replaced even when the CLI comes back with the same account
+    /// and scopes: the token itself may have been renewed.
+    #[test]
+    fn a_rejected_credential_is_retried_when_the_account_did_not_change() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let settings = answered();
+        let forge = Forge::parse("https://github.com/acme/demo.git", &[]).unwrap();
+        let (worker, _events, _jobs) = crate::worker::Worker::detached();
+        let mut tab = crate::tab::RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.forges = vec![("origin".to_owned(), forge.clone())];
+        tab.host = Some(hosting::HostWorker::detached(forge).0);
+        let signed_in: hosting::CliState = Ok(hosting::demo_account());
+        tab.requests.cli = Some(signed_in.clone());
+        tab.requests.token_rejected = true;
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        screen
+            .checks
+            .insert("github.com".into(), CliCheck::Running(rx));
+        tx.send(signed_in).unwrap();
+
+        let (_, changed) = accounts_frame(
+            &ctx,
+            &mut screen,
+            &settings,
+            std::slice::from_ref(&tab),
+            &mut Vec::new(),
+        );
+
+        assert_eq!(changed, vec!["github.com".to_owned()]);
+    }
+
+    /// Check again replaces the worker's token even when reauthentication returned the identical
+    /// account metadata, which is the usual shape of a token renewal.
+    #[test]
+    fn check_again_restarts_a_tab_with_the_same_account_and_scopes() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let settings = answered();
+        let forge = Forge::parse("https://github.com/acme/demo.git", &[]).unwrap();
+        let (worker, _events, _jobs) = crate::worker::Worker::detached();
+        let mut tab = crate::tab::RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.forges = vec![("origin".to_owned(), forge.clone())];
+        tab.host = Some(hosting::HostWorker::detached(forge).0);
+        let signed_in: hosting::CliState = Ok(hosting::demo_account());
+        tab.requests.cli = Some(signed_in.clone());
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        screen.rechecks.insert("github.com".into());
+        let (tx, rx) = crossbeam_channel::unbounded();
+        screen
+            .checks
+            .insert("github.com".into(), CliCheck::Running(rx));
+        tx.send(signed_in).unwrap();
+
+        let (_, changed) = accounts_frame(
+            &ctx,
+            &mut screen,
+            &settings,
+            std::slice::from_ref(&tab),
+            &mut Vec::new(),
+        );
+
+        assert_eq!(changed, vec!["github.com".to_owned()]);
+        assert!(!screen.rechecks.contains("github.com"));
     }
 
     /// A host that drops off the page while its check runs still has its answer collected, so its

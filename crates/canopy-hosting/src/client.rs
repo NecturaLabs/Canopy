@@ -111,8 +111,8 @@ fn default_api_base(forge: &Forge) -> String {
 }
 
 impl Client {
-    /// A client for `forge`'s project on its own host. `token` is the user's personal access
-    /// token; without one only public projects can be read and nothing can be changed.
+    /// A client for `forge`'s project on its own host. `token` comes from the provider CLI's
+    /// sign-in; without one only public projects can be read and nothing can be changed.
     pub fn new(forge: &Forge, token: Option<String>) -> Self {
         Self::with_api_base(forge, token, &default_api_base(forge))
     }
