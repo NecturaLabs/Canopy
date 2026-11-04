@@ -298,16 +298,15 @@ impl CanopyApp {
                         let file_manager = self.file_manager(ctx);
                         let opened = std::fs::create_dir_all(&dir)
                             .map_err(|e| format!("{}: {e}", dir.display()))
-                            .and_then(|()| crate::platform::open_folder(&dir, &file_manager));
-                        if let Err(e) = opened {
-                            self.toasts.push(
-                                ctx,
-                                ToastKind::Error,
-                                Topic::Error,
-                                "Could not open the log folder",
-                                e,
-                            );
-                        }
+                            .and_then(|()| {
+                                crate::platform::open_folder(&dir, &file_manager.command)
+                            });
+                        self.finish_launch(
+                            ctx,
+                            &file_manager,
+                            opened,
+                            "Could not open the log folder",
+                        );
                     }
                     None => self.toasts.push(
                         ctx,
@@ -528,39 +527,18 @@ impl CanopyApp {
                 }
                 Action::OpenPath(dir) => {
                     let file_manager = self.file_manager(ctx);
-                    if let Err(e) = crate::platform::open_folder(&dir, &file_manager) {
-                        self.toasts.push(
-                            ctx,
-                            ToastKind::Error,
-                            Topic::Error,
-                            "Could not open the folder",
-                            e,
-                        );
-                    }
+                    let opened = crate::platform::open_folder(&dir, &file_manager.command);
+                    self.finish_launch(ctx, &file_manager, opened, "Could not open the folder");
                 }
                 Action::OpenInEditor(file) => {
                     let editor = self.launcher(ctx, Kind::Editor);
-                    if let Err(e) = crate::platform::open_in_editor(&file, &editor) {
-                        self.toasts.push(
-                            ctx,
-                            ToastKind::Error,
-                            Topic::Error,
-                            "Could not open the file",
-                            e,
-                        );
-                    }
+                    let opened = crate::platform::open_in_editor(&file, &editor.command);
+                    self.finish_launch(ctx, &editor, opened, "Could not open the file");
                 }
                 Action::OpenTerminal(p) => {
                     let terminal = self.launcher(ctx, Kind::Terminal);
-                    if let Err(e) = crate::platform::open_terminal(&p, &terminal) {
-                        self.toasts.push(
-                            ctx,
-                            ToastKind::Error,
-                            Topic::Error,
-                            "Could not open a terminal",
-                            e,
-                        );
-                    }
+                    let opened = crate::platform::open_terminal(&p, &terminal.command);
+                    self.finish_launch(ctx, &terminal, opened, "Could not open a terminal");
                 }
                 Action::Command(c) => {
                     let mut more = Vec::new();
@@ -675,42 +653,58 @@ impl CanopyApp {
     }
 
     /// The command an open action runs: the one chosen in Settings, else the system's. A chosen
-    /// well-known program that is no longer installed is not started: the system's runs instead,
-    /// and a notification says so.
-    fn launcher(&mut self, ctx: &egui::Context, kind: Kind) -> String {
+    /// well-known program that is no longer installed is not started: the system's runs instead.
+    fn launcher(&self, _ctx: &egui::Context, kind: Kind) -> crate::system_apps::Launch {
         let apps = crate::system_apps::get();
-        self.launcher_with(ctx, kind, apps.as_deref())
+        self.launcher_with(kind, apps.as_deref())
     }
 
     /// [`Self::launcher`] given what was detected.
     fn launcher_with(
-        &mut self,
-        ctx: &egui::Context,
+        &self,
         kind: Kind,
         apps: Option<&crate::system_apps::Apps>,
-    ) -> String {
+    ) -> crate::system_apps::Launch {
         let configured = match kind {
             Kind::Editor => &self.settings.editor,
             Kind::Terminal => &self.settings.terminal,
             Kind::FileManager => &self.settings.file_manager,
         };
-        let launch = crate::system_apps::launch(apps, configured, kind);
-        if let Some(fallback) = &launch.fallback {
-            self.toasts.push(
-                ctx,
-                ToastKind::Info,
-                Topic::Attention,
-                format!("{} is not installed", fallback.missing),
-                format!(
-                    "Opened with {} instead. Choose another program in Settings → Integrations.",
-                    fallback.used
-                ),
-            );
-        }
-        launch.command
+        crate::system_apps::launch(apps, configured, kind)
     }
 
-    fn file_manager(&mut self, ctx: &egui::Context) -> String {
+    /// Reports a fallback only after the operating system accepted the replacement program;
+    /// otherwise the launch error stands on its own, with no contradictory success message.
+    fn finish_launch(
+        &mut self,
+        ctx: &egui::Context,
+        launch: &crate::system_apps::Launch,
+        opened: Result<(), String>,
+        error_title: &'static str,
+    ) {
+        match opened {
+            Ok(()) => {
+                if let Some(fallback) = &launch.fallback {
+                    self.toasts.push(
+                        ctx,
+                        ToastKind::Info,
+                        Topic::Attention,
+                        format!("{} is not installed", fallback.missing),
+                        format!(
+                            "Opened with {} instead. Choose another program in Settings → Integrations.",
+                            fallback.used
+                        ),
+                    );
+                }
+            }
+            Err(e) => {
+                self.toasts
+                    .push(ctx, ToastKind::Error, Topic::Error, error_title, e);
+            }
+        }
+    }
+
+    fn file_manager(&self, ctx: &egui::Context) -> crate::system_apps::Launch {
         self.launcher(ctx, Kind::FileManager)
     }
 
@@ -802,24 +796,52 @@ mod tests {
         };
         let mut app = test_app();
         app.settings.terminal = "alacritty --working-directory %d".to_owned();
+        let launch = app.launcher_with(Kind::Terminal, Some(&apps));
         assert_eq!(
-            app.launcher_with(&ctx, Kind::Terminal, Some(&apps)),
-            "kitty",
+            launch.command, "kitty",
             "the system's terminal runs, never the missing one"
         );
+        app.finish_launch(&ctx, &launch, Ok(()), "Could not open a terminal");
         let toasts = format!("{:?}", app.toasts);
         assert!(toasts.contains("Alacritty is not installed"), "{toasts}");
         assert!(toasts.contains("Opened with kitty instead"), "{toasts}");
 
         let mut app = test_app();
         app.settings.terminal = "foot".to_owned();
-        assert_eq!(app.launcher_with(&ctx, Kind::Terminal, Some(&apps)), "foot");
+        assert_eq!(
+            app.launcher_with(Kind::Terminal, Some(&apps)).command,
+            "foot"
+        );
         app.settings.terminal = String::new();
         assert_eq!(
-            app.launcher_with(&ctx, Kind::Terminal, Some(&apps)),
+            app.launcher_with(Kind::Terminal, Some(&apps)).command,
             "kitty"
         );
         assert!(!format!("{:?}", app.toasts).contains("not installed"));
+    }
+
+    /// A fallback is not a success until the operating system accepted the launch. In particular,
+    /// a missing saved terminal with no detected replacement must produce only the launch error.
+    #[test]
+    fn a_fallback_is_not_announced_before_the_launch_succeeds() {
+        use crate::system_apps::{Apps, Missing};
+        let ctx = egui::Context::default();
+        let apps = Apps {
+            missing: vec![Missing::new(Kind::Terminal, "Alacritty", ["alacritty"])],
+            ..Apps::default()
+        };
+        let mut app = test_app();
+        app.settings.terminal = "alacritty".to_owned();
+        let launch = app.launcher_with(Kind::Terminal, Some(&apps));
+        app.finish_launch(
+            &ctx,
+            &launch,
+            Err("No terminal emulator found".to_owned()),
+            "Could not open a terminal",
+        );
+        let toasts = format!("{:?}", app.toasts);
+        assert!(!toasts.contains("Opened with"), "{toasts}");
+        assert!(toasts.contains("No terminal emulator found"), "{toasts}");
     }
 
     /// A divergence answered for this repository becomes its own pull strategy; answered for

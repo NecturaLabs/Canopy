@@ -65,7 +65,7 @@ impl Missing {
         Self {
             kind,
             name: name.to_owned(),
-            keys: keys.into_iter().map(str::to_ascii_lowercase).collect(),
+            keys: keys.into_iter().map(str::to_owned).collect(),
         }
     }
 
@@ -74,8 +74,14 @@ impl Missing {
     /// entry in the list saved, such as `/usr/share/code/code --unity-launch %F`). A path to a file
     /// that is there is the user's own program and runs as typed.
     pub fn is_started_by(&self, command: &str, program_absent: bool) -> bool {
-        command_key(command)
-            .is_some_and(|(key, by_path)| (program_absent || !by_path) && self.keys.contains(&key))
+        command_key(command).is_some_and(|(key, by_path, ignore_case)| {
+            (program_absent || !by_path)
+                && if ignore_case {
+                    self.keys.iter().any(|k| k.eq_ignore_ascii_case(&key))
+                } else {
+                    self.keys.contains(&key)
+                }
+        })
     }
 }
 
@@ -120,17 +126,26 @@ impl Apps {
     }
 }
 
-/// The program a command starts, as [`Missing`] names it: the program's name, or for macOS's
-/// `open -a Name` the application, in lower case; and whether the command names its program by a
-/// path (`/opt/zed/bin/zed`).
-fn command_key(command: &str) -> Option<(String, bool)> {
+/// The program a command starts, as [`Missing`] names it, and whether the command names its
+/// program by a path (`/opt/zed/bin/zed`). Case is significant to Unix process launches; Windows
+/// executable names and macOS's `open -a Name` application names are matched case-insensitively.
+fn command_key(command: &str) -> Option<(String, bool, bool)> {
     let (program, args) = split_command(command.trim())?;
     let by_path = program.contains(['/', '\\']);
-    let name = program_name(&program);
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(&program);
     if name == "open" && args.first().is_some_and(|a| a == "-a") {
-        return args.get(1).map(|app| (app.to_ascii_lowercase(), by_path));
+        return args
+            .get(1)
+            .map(|app| (app.to_ascii_lowercase(), by_path, true));
     }
-    Some((name, by_path))
+    #[cfg(windows)]
+    let name = {
+        let lower = name.to_ascii_lowercase();
+        lower.strip_suffix(".exe").unwrap_or(&lower).to_owned()
+    };
+    #[cfg(not(windows))]
+    let name = name.to_owned();
+    Some((name, by_path, cfg!(windows)))
 }
 
 /// The `saved` commands that name their program by an absolute path to a file that is not there
@@ -236,12 +251,12 @@ pub struct Launch {
     pub fallback: Option<Fallback>,
 }
 
-/// The chosen program is no longer installed: the system's ran instead.
+/// The chosen program is no longer installed: the system's is used instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fallback {
     /// The well-known program that was chosen.
     pub missing: String,
-    /// The program that ran instead.
+    /// The program used instead.
     pub used: String,
 }
 
@@ -1787,6 +1802,33 @@ mod tests {
         );
     }
 
+    /// Executable names stay case-sensitive where the platform's process launch is. A distinct
+    /// custom `ZED` must not be mistaken for the well-known `zed` and replaced by the default.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_case_distinct_custom_command_runs_as_typed() {
+        let apps = Apps {
+            editor: Some(SystemChoice {
+                name: "Default editor".into(),
+                command: Some("default-editor".into()),
+                id: None,
+            }),
+            missing: vec![Missing::new(Kind::Editor, "Zed", ["zed", "zeditor"])],
+            ..Apps::default()
+        };
+        assert_eq!(
+            launch(Some(&apps), "ZED", Kind::Editor),
+            Launch {
+                command: "ZED".into(),
+                fallback: None
+            }
+        );
+        assert_eq!(
+            launch(Some(&apps), "zed", Kind::Editor).command,
+            "default-editor"
+        );
+    }
+
     #[cfg(unix)]
     fn names(apps: &Apps, kind: Kind) -> Vec<(String, String)> {
         apps.installed(kind)
@@ -2147,14 +2189,23 @@ mod tests {
             .missing(Kind::Editor)
             .find(|m| m.name == "Zed")
             .unwrap();
-        for command in ["zed", "zed --wait %f", "zeditor", "  ZED  "] {
+        for command in ["zed", "zed --wait %f", "zeditor"] {
             assert!(zed.is_started_by(command, false), "{command}");
         }
+        #[cfg(windows)]
+        assert!(zed.is_started_by("  ZED  ", false));
+        #[cfg(not(windows))]
+        assert!(!zed.is_started_by("  ZED  ", false));
         // A command that names its program by a path matches by that program's name only when the
         // file is gone (`program_absent`); a file that is there is the user's own program.
-        for command in ["/opt/zed/bin/zed --wait %f", "./zed", "C:\\zed\\zed.exe"] {
+        for command in ["/opt/zed/bin/zed --wait %f", "./zed"] {
             assert!(!zed.is_started_by(command, false), "{command}");
             assert!(zed.is_started_by(command, true), "{command}");
+        }
+        #[cfg(windows)]
+        {
+            assert!(!zed.is_started_by("C:\\zed\\zed.exe", false));
+            assert!(zed.is_started_by("C:\\zed\\zed.exe", true));
         }
         assert!(!zed.is_started_by("zedd", false) && !zed.is_started_by("", false));
         // Installing it moves it between the lists.

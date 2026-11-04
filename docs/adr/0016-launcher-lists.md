@@ -57,12 +57,14 @@ order, and a missing program cannot be picked.
   disabled with the description "Not installed".
 - **A saved choice that is gone shows as missing and runs nothing.** A saved command that starts
   a well-known program that is not installed shows as that program, selected, dimmed and tagged.
-  Opening runs the system's program instead and a notification says which program is missing and
-  what ran. The closed select carries "Not installed" as its accessible description, as the list
-  rows do.
+  Opening runs the system's program instead; after that program opens, a notification says which
+  program is missing and what ran. The closed select carries "Not installed" as its accessible
+  description, as the list rows do.
 - **Which saved commands count as a gone program.** A bare command name (or, on macOS,
-  `open -a Name`) does. So does a command with an absolute path whose program file is gone: a
-  list entry saves the entry's own `Exec` program, often absolute
+  `open -a Name`) does. Command names keep their case on Unix, where `ZED` and `zed` can be
+  different programs; Windows commands and `open -a` application names ignore case. So does a
+  command with an absolute path whose program file is gone: a list entry saves the entry's own
+  `Exec` program, often absolute
   (`/usr/share/code/code --unity-launch %F`), so after the uninstall it shows as the program,
   "Not installed", and opens with the system's. A path to a file that is there
   (`/opt/alacritty/bin/alacritty`, on neither `PATH` nor an entry) is the user's own program and
@@ -127,5 +129,6 @@ consulted on 2026-10-14 and can be extended with a row in `KNOWN`.
   Settings opens, not while it runs. A program installed or removed meanwhile shows as before
   until Settings is reopened (accepted limitation), and the saved-choice fallback uses the same
   result.
-- The detection runs on its own thread, as before, and reads the same places (desktop entries,
-  `PATH`, the macOS application folders, the Windows registry): no new access and no new host.
+- The detection runs on its own thread and reads desktop entries, `PATH`, the macOS application
+  folders and Spotlight (`mdfind`, limited to the curated application bundle names), and the
+  Windows registry. It accesses no new host.
