@@ -2,10 +2,10 @@
 //! so hooks, signing, filters and credentials behave as they do in a terminal.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use git2::Oid;
+use git2::{ObjectType, Oid};
 
 use crate::cli;
 use crate::diff::{DiffSource, Whitespace};
@@ -313,6 +313,60 @@ pub struct PushTarget {
     pub dest: String,
 }
 
+/// Every blob and gitlink path in `tree`, without converting native names through UTF-8.
+fn tree_paths(
+    repo: &git2::Repository,
+    tree: &git2::Tree<'_>,
+    parent: &Path,
+    out: &mut Vec<PathBuf>,
+) -> Result<()> {
+    for entry in tree {
+        let path = parent.join(crate::paths::os_path(entry.name_bytes()));
+        match entry.kind() {
+            Some(ObjectType::Tree) => {
+                let subtree = entry.to_object(repo)?.peel_to_tree()?;
+                tree_paths(repo, &subtree, &path, out)?;
+            }
+            Some(ObjectType::Blob | ObjectType::Commit) => out.push(path),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// An untracked path `git reset --hard` would remove while restoring a tracked file, or an ignored
+/// one it would remove in either mode. Returning it lets Discard refuse before the first mutation.
+fn reset_obstruction(dir: &Path, keep_untracked: bool) -> Result<Option<(PathBuf, bool)>> {
+    let repo = git2::Repository::open(dir)?;
+    let head = repo.head()?.peel_to_tree()?;
+    let mut tracked = Vec::new();
+    tree_paths(&repo, &head, Path::new(""), &mut tracked)?;
+    let mut options = git2::StatusOptions::new();
+    options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_ignored(true)
+        .recurse_ignored_dirs(true);
+    let statuses = repo.statuses(Some(&mut options))?;
+    for entry in statuses.iter() {
+        let status = entry.status();
+        let ignored = status.contains(git2::Status::IGNORED);
+        let untracked = status.contains(git2::Status::WT_NEW);
+        if !(ignored || keep_untracked && untracked) {
+            continue;
+        }
+        let candidate = crate::paths::os_path(entry.path_bytes());
+        if tracked.iter().any(|tracked| {
+            candidate == *tracked
+                || candidate.starts_with(tracked)
+                || tracked.starts_with(&candidate)
+        }) {
+            return Ok(Some((candidate, ignored)));
+        }
+    }
+    Ok(None)
+}
+
 impl Repo {
     pub(crate) fn git_cmd(&self, args: &[&str]) -> Result<String> {
         cli::run(self.workdir(), args)
@@ -448,7 +502,7 @@ impl Repo {
         if work == recorded {
             return Ok(());
         }
-        let dir = self.workdir().join(&submodule.path);
+        let dir = self.workdir().join(&submodule.path_os);
         let refs = cli::run(
             &dir,
             &[
@@ -474,27 +528,40 @@ impl Repo {
     /// [`crate::GitOptions::discard_untracked_in_submodules`] says to delete them (ignored files
     /// and nested repositories always stay), and nested submodules are left as they are.
     fn discard_submodule(&self, submodule: &crate::SubmoduleInfo) -> Result<()> {
-        let dir = self.workdir().join(&submodule.path);
+        let dir = self.workdir().join(&submodule.path_os);
         // A deleted folder has nothing to reset: the update below checks it out again.
         if dir.join(".git").exists() {
+            let keep_untracked = !self.options().discard_untracked_in_submodules;
+            if let Some((path, ignored)) = reset_obstruction(&dir, keep_untracked)? {
+                let kind = if ignored { "ignored" } else { "untracked" };
+                return Err(Error::invalid(format!(
+                    "{} has an {kind} path that obstructs a tracked path: {}. Move it aside before Discard so it is not deleted.",
+                    submodule.path,
+                    path.display()
+                )));
+            }
             cli::run(
                 &dir,
                 &["-c", "submodule.recurse=false", "reset", "--hard", "-q"],
             )?;
-            if self.options().discard_untracked_in_submodules {
+            if !keep_untracked {
                 cli::run(&dir, &["clean", "-f", "-d", "-q"])?;
             }
         }
-        self.git_cmd(&[
-            "-c",
-            "submodule.recurse=false",
-            "submodule",
-            "update",
-            "--checkout",
-            "-q",
-            "--",
-            &submodule.path,
-        ])
+        cli::run_with_path(
+            self.workdir(),
+            &[
+                "--literal-pathspecs",
+                "-c",
+                "submodule.recurse=false",
+                "submodule",
+                "update",
+                "--checkout",
+                "-q",
+                "--",
+            ],
+            &submodule.path_os,
+        )
         .map(drop)
     }
 
@@ -780,10 +847,10 @@ impl Repo {
     /// Rebases the current branch onto `onto`, stashing uncommitted changes around it when
     /// [`crate::GitOptions::autostash`] says so.
     pub fn rebase(&self, onto: &str) -> Result<String> {
-        let mut args = vec!["rebase"];
+        let mut args = Vec::new();
         args.extend(self.autostash_flag(true));
         args.extend(["--", onto]);
-        self.conflicting_cmd(&args)
+        self.rebase_cmd(&args)
     }
 
     /// Continues or aborts the operation in progress.
@@ -791,7 +858,12 @@ impl Repo {
         let Some(cmd) = state.command() else {
             return Err(Error::invalid("Nothing to continue or abort."));
         };
-        self.conflicting_cmd(&[cmd, if abort { "--abort" } else { "--continue" }])
+        let flag = if abort { "--abort" } else { "--continue" };
+        if cmd == "rebase" {
+            self.rebase_cmd(&[flag])
+        } else {
+            self.conflicting_cmd(&[cmd, flag])
+        }
     }
 
     fn mainline_args(&self, oid: Oid) -> Result<Vec<String>> {
@@ -879,7 +951,7 @@ impl Repo {
     /// returns their paths. `dir` must be absolute and is created when missing. A merge commit
     /// is refused: `git format-patch` has no patch for it ([`Self::patch_series`] sets merges
     /// apart).
-    pub fn export_patches(&self, oids: &[Oid], dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+    pub fn export_patches(&self, oids: &[Oid], dir: &Path) -> Result<Vec<PathBuf>> {
         if oids.is_empty() {
             return Ok(Vec::new());
         }
@@ -921,10 +993,10 @@ impl Repo {
                 &staging_arg,
                 &id.to_string(),
             ])?;
-            staged.extend(out.lines().map(std::path::PathBuf::from));
+            staged.extend(out.lines().map(PathBuf::from));
             Ok::<(), Error>(())
         });
-        let targets: Vec<std::path::PathBuf> = staged
+        let targets: Vec<PathBuf> = staged
             .iter()
             .filter_map(|file| file.file_name().map(|name| dir.join(name)))
             .collect();
@@ -962,7 +1034,7 @@ impl Repo {
     /// Applies mailbox patch files as commits (`git am --3way`), keeping their authors. A
     /// patch that does not apply cleanly stops with the repository in the "Applying patches"
     /// state, which [`Self::continue_or_abort`] resolves.
-    pub fn apply_patches(&self, patches: &[std::path::PathBuf]) -> Result<String> {
+    pub fn apply_patches(&self, patches: &[PathBuf]) -> Result<String> {
         if patches.is_empty() {
             return Ok(String::new());
         }

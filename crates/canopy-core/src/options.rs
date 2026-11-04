@@ -209,6 +209,17 @@ impl Repo {
         self.git_cmd(&all)
     }
 
+    /// Runs `git rebase args…` with recursive updates off and the chosen conflict style. Canopy
+    /// follows submodules explicitly after the rebase or its continuation finishes.
+    pub(crate) fn rebase_cmd(&self, args: &[&str]) -> crate::Result<String> {
+        let mut overrides = Self::submodule_override();
+        overrides.extend(self.conflict_override());
+        let mut all: Vec<&str> = overrides.iter().map(String::as_str).collect();
+        all.push("rebase");
+        all.extend(args);
+        self.git_cmd(&all)
+    }
+
     /// The `-c merge.conflictStyle=…` override that goes before the sub-command of anything that
     /// can write conflicts.
     pub(crate) fn conflict_override(&self) -> Vec<String> {

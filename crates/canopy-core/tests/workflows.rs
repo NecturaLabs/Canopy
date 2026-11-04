@@ -7,6 +7,7 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -16,11 +17,16 @@ use canopy_core::{
     MissingObjects, Repo, SubmoduleState, Whitespace, submodule_add_problem,
 };
 
+fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    git_output_os(dir, &args)
+}
+
 #[expect(
     clippy::disallowed_methods,
     reason = "tests drive git directly to build and check repositories"
 )]
-fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+fn git_output_os(dir: &Path, args: &[&OsStr]) -> std::process::Output {
     Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -1272,94 +1278,336 @@ fn submodule_row(repo: &Repo) -> Vec<canopy_core::FileEntry> {
 /// `git checkout -- <submodule>` alone did nothing, whatever the row showed.
 #[test]
 fn discarding_a_submodule_restores_what_the_superproject_records_and_keeps_untracked_files() {
-    let (dir, repo, sub) = submodule_fixture();
-    let sup = dir.path().join("super");
-    let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
-    // A new commit on a branch, an edit to a tracked file and an untracked file inside.
-    git(&sub, &["checkout", "-q", "main"]);
-    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
-    fs::write(sub.join("mine.txt"), "keep me\n").expect("untracked");
-    let row = submodule_row(&repo);
-    assert_eq!(row.len(), 1, "the submodule shows as changed");
-    assert!(row[0].is_submodule(), "{row:?}");
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        let sup = dir.path().join("super");
+        git(
+            &sup,
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+        // A new commit on a branch, an edit to a tracked file and an untracked file inside.
+        git(&sub, &["checkout", "-q", "main"]);
+        fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+        fs::write(sub.join("mine.txt"), "keep me\n").expect("untracked");
+        let row = submodule_row(&repo);
+        assert_eq!(row.len(), 1, "the submodule shows as changed");
+        assert!(row[0].is_submodule(), "{row:?}");
 
-    repo.discard(&row).expect("discard");
+        repo.discard(&row).expect("discard");
 
-    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
-    assert_eq!(
-        fs::read_to_string(sub.join("a.txt")).expect("read"),
-        "one\ntwo\nthree\n"
-    );
-    assert_eq!(
-        fs::read_to_string(sub.join("mine.txt")).expect("read"),
-        "keep me\n",
-        "an untracked file inside the submodule stays"
-    );
-    assert!(git(&sub, &["branch", "--list", "main"]).contains("main"));
+        assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+        assert_eq!(
+            fs::read_to_string(sub.join("a.txt")).expect("read"),
+            "one\ntwo\nthree\n"
+        );
+        assert_eq!(
+            fs::read_to_string(sub.join("mine.txt")).expect("read"),
+            "keep me\n",
+            "recurse={recurse}: an untracked file inside the submodule stays"
+        );
+        assert!(git(&sub, &["branch", "--list", "main"]).contains("main"));
+    }
 }
 
 /// A commit made in a submodule on no branch would be left behind by going back to the recorded
 /// commit: Discard refuses and changes nothing.
 #[test]
 fn discarding_a_submodule_refuses_to_strand_a_commit_on_no_branch() {
-    let (dir, repo, sub) = submodule_fixture();
-    let _ = dir;
-    fs::write(sub.join("a.txt"), "detached work\n").expect("edit");
-    git(&sub, &["commit", "-q", "-am", "feat: detached"]);
-    let detached = git(&sub, &["rev-parse", "HEAD"]);
-    fs::write(sub.join("a.txt"), "more\n").expect("edit");
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        git(
+            &dir.path().join("super"),
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        fs::write(sub.join("a.txt"), "detached work\n").expect("edit");
+        git(&sub, &["commit", "-q", "-am", "feat: detached"]);
+        let detached = git(&sub, &["rev-parse", "HEAD"]);
+        fs::write(sub.join("a.txt"), "more\n").expect("edit");
 
-    let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+        let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
 
-    assert!(err.to_string().contains("no branch"), "{err}");
-    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), detached);
-    assert_eq!(
-        fs::read_to_string(sub.join("a.txt")).expect("read"),
-        "more\n",
-        "nothing was discarded"
-    );
+        assert!(err.to_string().contains("no branch"), "{err}");
+        assert_eq!(git(&sub, &["rev-parse", "HEAD"]), detached);
+        assert_eq!(
+            fs::read_to_string(sub.join("a.txt")).expect("read"),
+            "more\n",
+            "recurse={recurse}: nothing was discarded"
+        );
+    }
 }
 
 /// A submodule whose folder was deleted shows as a change; Discard checks it out again at the
 /// recorded commit instead of failing on the missing folder.
 #[test]
 fn discarding_a_submodule_whose_folder_was_deleted_checks_it_out_again() {
-    let (dir, repo, sub) = submodule_fixture();
-    let sup = dir.path().join("super");
-    let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
-    fs::remove_dir_all(&sub).expect("delete the submodule folder");
-    let row = submodule_row(&repo);
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        let sup = dir.path().join("super");
+        git(
+            &sup,
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+        fs::remove_dir_all(&sub).expect("delete the submodule folder");
+        let row = submodule_row(&repo);
 
-    repo.discard(&row).expect("discard");
+        repo.discard(&row).expect("discard");
 
-    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
-    assert!(sub.join("a.txt").exists());
+        assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+        assert!(sub.join("a.txt").exists());
+    }
 }
 
 /// With Canopy's choice to delete them, Discard on a submodule also deletes its untracked files;
 /// ignored files stay.
 #[test]
 fn discarding_a_submodule_deletes_its_untracked_files_when_chosen() {
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        git(
+            &dir.path().join("super"),
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        fs::write(sub.join(".gitignore"), "*.log\n").expect("ignore");
+        fs::write(sub.join("debug.log"), "ignored\n").expect("ignored");
+        fs::write(sub.join("mine.txt"), "untracked\n").expect("untracked");
+        fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+        repo.set_options(GitOptions {
+            discard_untracked_in_submodules: true,
+            ..GitOptions::default()
+        });
+
+        repo.discard(&submodule_row(&repo)).expect("discard");
+
+        assert!(
+            !sub.join("mine.txt").exists(),
+            "recurse={recurse}: the untracked file is deleted"
+        );
+        assert!(sub.join("debug.log").exists(), "an ignored file stays");
+        assert_eq!(
+            fs::read_to_string(sub.join("a.txt")).expect("read"),
+            "one\ntwo\nthree\n"
+        );
+    }
+}
+
+/// An untracked file or directory obstructing a tracked path makes `git reset --hard` delete it.
+/// Keep-untracked Discard must refuse before changing anything, whatever recursive setting Git has.
+#[test]
+fn discarding_a_submodule_refuses_to_delete_an_obstructing_untracked_path() {
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        git(
+            &dir.path().join("super"),
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+        fs::create_dir(sub.join("a.txt")).expect("make untracked directory");
+        fs::write(sub.join("a.txt").join("notes"), "precious\n").expect("write note");
+
+        let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+
+        assert!(err.to_string().contains("obstruct"), "{err}");
+        assert_eq!(
+            fs::read_to_string(sub.join("a.txt").join("notes")).expect("read note"),
+            "precious\n",
+            "recurse={recurse}: the untracked note was not deleted"
+        );
+    }
+}
+
+/// Ignored files always stay, even when deleting untracked files was chosen, so an ignored path
+/// obstructing a tracked path is refused too.
+#[test]
+fn discarding_a_submodule_refuses_to_delete_an_obstructing_ignored_path() {
     let (dir, repo, sub) = submodule_fixture();
     let _ = dir;
-    fs::write(sub.join(".gitignore"), "*.log\n").expect("ignore");
-    fs::write(sub.join("debug.log"), "ignored\n").expect("ignored");
-    fs::write(sub.join("mine.txt"), "untracked\n").expect("untracked");
-    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+    fs::write(sub.join(".gitignore"), "a.txt\n").expect("ignore");
+    fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+    fs::create_dir(sub.join("a.txt")).expect("make ignored directory");
+    fs::write(sub.join("a.txt").join("notes"), "precious\n").expect("write note");
     repo.set_options(GitOptions {
         discard_untracked_in_submodules: true,
         ..GitOptions::default()
     });
 
-    repo.discard(&submodule_row(&repo)).expect("discard");
+    let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
 
-    assert!(
-        !sub.join("mine.txt").exists(),
-        "the untracked file is deleted"
+    assert!(err.to_string().contains("ignored"), "{err}");
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt").join("notes")).expect("read note"),
+        "precious\n"
     );
-    assert!(sub.join("debug.log").exists(), "an ignored file stays");
+}
+
+/// A submodule path is a literal path, never a pathspec that can select another submodule.
+#[test]
+fn discarding_a_submodule_with_glob_characters_touches_only_its_literal_path() {
+    for recurse in [false, true] {
+        let (dir, repo, _sub) = submodule_fixture();
+        let sup = dir.path().join("super");
+        let url = dir.path().join("lib").to_string_lossy().into_owned();
+        for path in ["deps/lib1", "deps/lib[1]"] {
+            git(
+                &sup,
+                &[
+                    "--literal-pathspecs",
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    "-q",
+                    "--",
+                    &url,
+                    path,
+                ],
+            );
+            let sub = sup.join(path);
+            git(&sub, &["checkout", "-q", "HEAD~1"]);
+        }
+        git(&sup, &["add", "."]);
+        git(
+            &sup,
+            &["commit", "-q", "-m", "feat: add literal path fixtures"],
+        );
+        git(
+            &sup,
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        let glob = sup.join("deps/lib[1]");
+        let plain = sup.join("deps/lib1");
+        git(&glob, &["checkout", "-q", "main"]);
+        git(&plain, &["checkout", "-q", "main"]);
+        let plain_head = git(&plain, &["rev-parse", "HEAD"]);
+        let row = repo
+            .snapshot(10)
+            .expect("snapshot")
+            .status
+            .unstaged
+            .into_iter()
+            .filter(|f| f.path == "deps/lib[1]")
+            .collect::<Vec<_>>();
+        assert_eq!(row.len(), 1);
+
+        repo.discard(&row).expect("discard literal path");
+
+        let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib[1]"]);
+        assert_eq!(git(&glob, &["rev-parse", "HEAD"]), recorded);
+        assert_eq!(
+            git(&plain, &["rev-parse", "HEAD"]),
+            plain_head,
+            "recurse={recurse}: deps/lib[1] must not match deps/lib1"
+        );
+    }
+}
+
+/// Submodule operations keep a native non-UTF-8 path rather than looking for U+FFFD on disk.
+#[cfg(unix)]
+#[test]
+fn discarding_a_submodule_uses_its_non_utf8_path() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("lib");
+    let sup = dir.path().join("super");
+    fs::create_dir_all(&lib).expect("mkdir");
+    fs::create_dir_all(&sup).expect("mkdir");
+    init(&lib);
+    commit_file(&lib, "b.txt", "b\n", "feat: second");
+    init(&sup);
+    let native = OsStr::from_bytes(b"deps/lib\xff");
+    let added = git_output_os(
+        &sup,
+        &[
+            OsStr::new("-c"),
+            OsStr::new("protocol.file.allow=always"),
+            OsStr::new("submodule"),
+            OsStr::new("add"),
+            OsStr::new("-q"),
+            OsStr::new("--"),
+            lib.as_os_str(),
+            native,
+        ],
+    );
+    assert!(
+        added.status.success(),
+        "add non-UTF-8 submodule: {}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let sub = sup.join(native);
+    git(&sub, &["checkout", "-q", "HEAD~1"]);
+    git(&sup, &["add", "."]);
+    git(&sup, &["commit", "-q", "-m", "feat: add non-UTF-8 lib"]);
+    let repo = Repo::open(&sup).expect("open");
+    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+    let row = repo
+        .snapshot(10)
+        .expect("snapshot")
+        .status
+        .unstaged
+        .into_iter()
+        .filter(canopy_core::FileEntry::is_submodule)
+        .collect::<Vec<_>>();
+    assert_eq!(row.len(), 1, "the native path must reach the changed row");
+
+    repo.discard(&row).expect("discard non-UTF-8 path");
+
     assert_eq!(
         fs::read_to_string(sub.join("a.txt")).expect("read"),
         "one\ntwo\nthree\n"
     );
+}
+
+/// A direct rebase must not let Git's own recursive update drop an edit inside a submodule;
+/// Canopy's explicit update afterwards preserves it.
+#[test]
+fn rebasing_keeps_edits_inside_submodules() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    git(&sup, &["switch", "-q", "-c", "topic"]);
+    git(&sup, &["switch", "-q", "main"]);
+    git(&sub, &["checkout", "-q", "main"]);
+    let recorded = git(&sub, &["rev-parse", "HEAD"]);
+    git(&sup, &["add", "deps/lib"]);
+    git(&sup, &["commit", "-q", "-m", "feat: update lib"]);
+    git(&sup, &["switch", "-q", "topic"]);
+    commit_file(&sup, "topic.txt", "topic\n", "feat: topic");
+    git(&sup, &["config", "submodule.recurse", "true"]);
+    git(&sub, &["checkout", "-q", "HEAD~1"]);
+    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+
+    repo.rebase("main").expect("rebase");
+    repo.follow_submodules(&mut |_: &str| {}).expect("follow");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "edited\n",
+        "the recursive sequencer must not drop the edit"
+    );
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+    assert_eq!(git(&sup, &["rev-parse", "HEAD:deps/lib"]), recorded);
 }
