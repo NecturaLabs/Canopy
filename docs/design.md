@@ -582,6 +582,37 @@ dialogs) are modal: Tab stays inside, and closing gives focus back to what had i
 never takes focus; Tab does.
 
 
+### Public component types and where they are covered
+
+The builders above are the main contract. These public types complete it; each points to the
+section that describes its user-visible behaviour rather than duplicating that behaviour here.
+
+| Type | Covered by |
+|---|---|
+| `AvatarSize`, `AvatarStack`, `Person` | **Avatar**: row, detail, large and card sizes; a person's initial or picture; overlapping stacks of at most three with a `+N` badge |
+| `ButtonKind` | **Component library**: primary, secondary, ghost and danger buttons, their sizes and states |
+| `KeyChord` | **Popover and the smaller components** (`Keycap`) and **Component library** (keyboard reporting): one key or chord drawn as a keycap |
+| `DiffStat` | **Popover and the smaller components** (`Badge`, `CountBadge`): addition/deletion counts and their mono digits |
+| `UnderlineTabs` | **Document tabs**: tab-list keyboard and selected-state behavior, with an underline and sliding marker rather than repository-tab cards |
+| `TextArea`, `CodeArea` | **Text field**: multiline plain and code input, their accessible names, errors and focus treatment |
+| `RowKind` | **Component library**: List, File, History, Sidebar, Request and Palette row heights, grounds and label treatments |
+| `SectionHeader` | **Component library**: a disclosure row for a sidebar section, with its expanded state and row actions |
+| `SplitAxis` | **Layout** and **Component library** (split focus): horizontal or vertical split panes and dragging the seam |
+| `HeaderKind` | **Banner and callout** and the pane layout: Table, Detail and File header heights and top-edge treatment |
+| `InsetBox` | **Component library**: an inset surface for grouped content inside a card or pane |
+| `EmptyAction` | **Popover and the smaller components** (`EmptyState`): the primary action and optional link offered by an empty pane |
+| `ToastCard` | **Toast**: the bounded overlay card, its glyph, title, body, actions and accessible announcement |
+| `DialogWidth` | **Dialog**: the modal's width, margins and compact-window behavior |
+| `ExitMotion` | **Motion** and **Dialog**: popup, dialog and toast exit translation and fade durations |
+| `FadeEdge` | **Scroll edges** and **Document tabs**: the top, bottom, left or right band that fades clipped content into its ground |
+| `Flip` | **Motion**: keyed list rows entering, leaving and sliding to their new positions, landing at once with reduced motion |
+| `FocusReturn`, `TreeNav` | **Component library** (keyboard and screen readers): returning focus when an overlay closes and navigating a tree without making the chevron a Tab stop |
+
+`DialogResult`, `RowCtx`, `DocTabsEvent` and `ToastOutput` are implementation results or painting
+context, not separate user-visible components, so they intentionally have no section of their own.
+`DocTabsEvent` describes what a tab action did, `DialogResult` what a dialog returned, `RowCtx` the
+rectangles and colours a row paints with, and `ToastOutput` the result of showing a toast.
+
 ### Select
 
 Select lists stay inside their containing dialog, settings card or main panel. They open above
