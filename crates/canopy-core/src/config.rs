@@ -105,10 +105,14 @@ impl Setting {
         }
     }
 
-    /// The recommended value of every setting. Line endings follow GitHub's guidance (convert on
-    /// Windows, only on commit elsewhere), signing stays off until the user sets up a key, and an
-    /// SSH key signs once it is on. `pull.rebase` is `false`, so `pull.ff = only` takes effect
-    /// (ADR 0012); a diverged pull then asks Rebase (recommended) or Merge.
+    /// The recommended value of every setting, each with its source in ADR 0012 ("Audit of the
+    /// recommendations"). Line endings follow GitHub's guidance (convert on Windows, only on
+    /// commit elsewhere), signing stays off until the user sets up a key, and an SSH key signs
+    /// once it is on. `pull.ff = only` makes a diverged pull stop, whatever `pull.rebase` says
+    /// since git 2.34, and `pull.rebase = false` keeps older git merging instead of rebasing;
+    /// Canopy then asks Rebase (recommended) or Merge. Commit cleanup is git's own `default`: a
+    /// message written in an editor loses its `#` lines, Canopy's own commits (never edited) keep
+    /// them.
     pub fn recommendation(self) -> &'static str {
         self.recommendation_for(cli::version_number())
     }
@@ -120,6 +124,13 @@ impl Setting {
             Self::Autocrlf | Self::CommitSigning | Self::SigningFormat => None,
             _ => Some(self.recommendation()),
         }
+    }
+
+    /// Whether the installed git (`git`, from the worker; `None` when unknown) reads this key at
+    /// all: git before 2.51 ignores `pull.autoStash`.
+    #[must_use]
+    pub fn read_by(self, git: Option<(u32, u32)>) -> bool {
+        self != Self::PullAutostash || git.is_some_and(|v| v >= cli::PULL_AUTOSTASH_SINCE)
     }
 
     /// Pure metadata for a UI that already received the installed Git version from its worker.
@@ -136,7 +147,7 @@ impl Setting {
             Self::PushDefault => "simple",
             Self::ConflictStyle => crate::ConflictStyle::default().value(git),
             Self::InitialBranch => "main",
-            Self::CommitCleanup => "whitespace",
+            Self::CommitCleanup => "default",
             Self::Autocrlf => {
                 if cfg!(windows) {
                     "true"
@@ -144,7 +155,8 @@ impl Setting {
                     "input"
                 }
             }
-            Self::SigningFormat => "ssh",
+            Self::SigningFormat if git.is_some_and(|v| v >= cli::SSH_SIGNING_SINCE) => "ssh",
+            Self::SigningFormat => "openpgp",
         }
     }
 }

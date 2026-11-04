@@ -235,12 +235,14 @@ impl Repo {
     }
 
     /// A fetched pull uses merge or rebase directly, so carry pull.autoStash's precedence over
-    /// their strategy-specific configuration into an explicit flag.
+    /// their strategy-specific configuration into an explicit flag. Git before 2.51 does not read
+    /// `pull.autoStash`, so neither does Canopy there.
     pub(crate) fn pull_autostash_flag(&self, rebase: bool) -> crate::Result<Option<&'static str>> {
         if !rebase && cli::version_number().is_none_or(|v| v < cli::MERGE_AUTOSTASH_SINCE) {
             return Ok(None);
         }
         if self.options().follow_config
+            && cli::version_number().is_some_and(|v| v >= cli::PULL_AUTOSTASH_SINCE)
             && let Some(entry) = crate::config::read_bool(self.workdir(), false, "pull.autoStash")?
         {
             return Ok(Some(flag(

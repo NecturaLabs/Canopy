@@ -372,7 +372,7 @@ impl CanopyApp {
                             ctx,
                             Topic::Attention,
                             "Git settings differ from the recommendation",
-                            lines.join("\n"),
+                            settings_screen::notice_body(&lines),
                             Offer::GitSettings,
                             &path,
                         );

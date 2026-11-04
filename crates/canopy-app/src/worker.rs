@@ -559,13 +559,17 @@ pub enum Event {
         result: Result<String, String>,
     },
     Failed(String),
-    /// A pull or rebase finished, but putting the uncommitted changes back (autostash) left
+    /// A pull, rebase or merge finished, but putting the uncommitted changes back (autostash) left
     /// conflicts to resolve.
     AutostashConflict,
     /// A pull waits for the user: the branches diverged, or it would likely conflict.
     PullDecision(Box<PullDecision>),
-    /// The operation `label` (a pull or a rebase) stopped on conflicts for the user to resolve.
-    Conflicted(String),
+    /// The operation `label` (a pull, rebase or merge) stopped on conflicts for the user to
+    /// resolve; `autostashed` when git holds the uncommitted changes aside meanwhile.
+    Conflicted {
+        label: String,
+        autostashed: bool,
+    },
 }
 
 /// What a pull asks before it runs ([`Op::Pull`]).
@@ -1183,11 +1187,12 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     }
                     let stage_all = matches!(op, Op::StageAll);
                     let announce = op.announce();
-                    // A pull or a rebase: it can autostash, and stopping on conflicts is not a
-                    // failure.
-                    let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_));
-                    // A merge stops on conflicts too, but never autostashes.
-                    let can_stop = integrates || matches!(op, Op::Merge(..));
+                    // A pull, a rebase or a merge: it can autostash, and stopping on conflicts is
+                    // not a failure.
+                    let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_) | Op::Merge(..));
+                    // A leftover autostash (an external `git merge --squash --autostash`) is
+                    // not this operation's: only one that appears during it is reported.
+                    let held_before = integrates && repo.autostash_held();
                     let pull = match op {
                         Op::Pull {
                             strategy,
@@ -1255,8 +1260,9 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(error = %redacted(&e), "conflicts not checked");
                             false
                         });
-                    let stopped =
-                        can_stop && result.is_err() && repo.stopped_on_conflicts().unwrap_or(false);
+                    let stopped = integrates
+                        && result.is_err()
+                        && repo.stopped_on_conflicts().unwrap_or(false);
                     // Only a fast-forward was allowed and the branches diverged after all: a
                     // choice to make, not a failure (a pull checked beforehand asks first). A
                     // failed fetch brought nothing to combine: its error is the answer.
@@ -1282,7 +1288,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         })));
                     } else if stopped {
                         // Not a failure: the conflicts are the user's to resolve.
-                        emit(Event::Conflicted(label));
+                        emit(Event::Conflicted {
+                            autostashed: !held_before && repo.autostash_held(),
+                            label,
+                        });
                     } else {
                         // Frequent and quiet, unless it left folders out.
                         let announce =
@@ -2933,6 +2942,7 @@ mod read_tests {
             git(&repo, &["config", k, v]);
         }
         std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        std::fs::write(repo.join("d.txt"), "d\n").expect("write");
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-q", "-m", "base"]);
         git(&repo, &["switch", "-q", "-c", "other"]);
@@ -2941,13 +2951,21 @@ mod read_tests {
         git(&repo, &["switch", "-q", "main"]);
         std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
         git(&repo, &["commit", "-q", "-am", "ours"]);
+        // Uncommitted changes, which Canopy's Autostash choice sets aside around the operation.
+        std::fs::write(repo.join("d.txt"), "d\nmy edit\n").expect("write");
         let worker = worker_with_canopys_choices(trusted(repo));
         worker.send(Job::Op(Op::Rebase("other".into())));
         let events = events_until(&worker, |e| {
-            matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
+            matches!(e, Event::Conflicted { .. } | Event::OpFinished { .. })
         });
         assert!(
-            matches!(events.last(), Some(Event::Conflicted(_))),
+            matches!(
+                events.last(),
+                Some(Event::Conflicted {
+                    autostashed: true,
+                    ..
+                })
+            ),
             "{events:?}"
         );
     }
@@ -2970,6 +2988,7 @@ mod read_tests {
             git(&repo, &["config", k, v]);
         }
         std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        std::fs::write(repo.join("d.txt"), "d\n").expect("write");
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-q", "-m", "base"]);
         git(&repo, &["switch", "-q", "-c", "other"]);
@@ -2978,18 +2997,96 @@ mod read_tests {
         git(&repo, &["switch", "-q", "main"]);
         std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
         git(&repo, &["commit", "-q", "-am", "ours"]);
+        // Uncommitted changes, which Canopy's Autostash choice sets aside around the operation.
+        std::fs::write(repo.join("d.txt"), "d\nmy edit\n").expect("write");
         let worker = worker_with_canopys_choices(trusted(repo));
         worker.send(Job::Op(Op::Merge(
             "other".into(),
             canopy_core::MergeMode::default(),
         )));
         let events = events_until(&worker, |e| {
-            matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
+            matches!(e, Event::Conflicted { .. } | Event::OpFinished { .. })
         });
         assert!(
-            matches!(events.last(), Some(Event::Conflicted(_))),
+            matches!(
+                events.last(),
+                Some(Event::Conflicted {
+                    autostashed: true,
+                    ..
+                })
+            ),
             "{events:?}"
         );
+    }
+
+    /// A leftover `.git/MERGE_AUTOSTASH` (an earlier `git merge --squash --autostash` outside
+    /// Canopy) is not this merge's: a merge that stops on conflicts without stashing anything
+    /// does not claim to hold the user's changes.
+    #[test]
+    fn a_leftover_autostash_is_not_reported_as_held_by_a_stopped_merge() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let repo = root.path().join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        std::fs::write(repo.join("d.txt"), "d\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["switch", "-q", "-c", "other"]);
+        std::fs::write(repo.join("a.txt"), "theirs\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "theirs"]);
+        git(&repo, &["switch", "-q", "-c", "side", "main"]);
+        std::fs::write(repo.join("s.txt"), "s\n").expect("write");
+        git(&repo, &["add", "s.txt"]);
+        git(&repo, &["commit", "-q", "-m", "side"]);
+        git(&repo, &["switch", "-q", "main"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "ours"]);
+        // Git's own squash with autostash leaves the stash unapplied in `.git/MERGE_AUTOSTASH`.
+        std::fs::write(repo.join("d.txt"), "d\nold edit\n").expect("write");
+        git(
+            &repo,
+            &[
+                "merge",
+                "--no-edit",
+                "--squash",
+                "--autostash",
+                "--",
+                "side",
+            ],
+        );
+        // Drop the squash's result without `git reset`, which would clear the leftover too.
+        git(&repo, &["rm", "-q", "-f", "--", "s.txt"]);
+        let leftover = repo.join(".git").join("MERGE_AUTOSTASH");
+        assert!(leftover.exists(), "the premise: a stale autostash");
+        let worker = worker_with_canopys_choices(trusted(repo));
+        worker.send(Job::Op(Op::Merge(
+            "other".into(),
+            canopy_core::MergeMode::default(),
+        )));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::Conflicted { .. } | Event::OpFinished { .. })
+        });
+        assert!(
+            matches!(
+                events.last(),
+                Some(Event::Conflicted {
+                    autostashed: false,
+                    ..
+                })
+            ),
+            "{events:?}"
+        );
+        assert!(leftover.exists(), "the leftover is not Canopy's to remove");
     }
 
     /// #92: the repository thread reads the commit template; a missing file is reported, not

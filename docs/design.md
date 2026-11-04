@@ -801,8 +801,9 @@ most 408 points wide, so five errors remain reachable even in a compact zoomed w
 notices lead the stack. Every card has one layout in every theme, padded `toast_pad` (tighter in
 Dense) and shaped like the other floating layers of the style: the kind's glyph (`icon_toast`,
 centred on the title's line), a semibold title that truncates, the body in `text_dim` at
-`meta_size` with 1.45 leading 4 points below it, and, only when the notification asks for a
-decision, a row of two buttons 10 points lower. A card has no close button: it goes on a click
+`meta_size` with 1.45 leading 4 points below it (a blank line in a body starts a paragraph, set 8
+points from the one before, so a notice that lists several things reads as a list), and, only
+when the notification asks for a decision, a row of two buttons 10 points lower. A card has no close button: it goes on a click
 (when it asks for nothing), on its buttons or on its timer. A finished operation says what happened in words (the commit's subject and id, the refs created,
 updated or removed, what a pull did to the branch); git's own text is kept for failures. Known
 failures lead with a plain explanation, any other error shows git's first line under its title, and git's full output is in

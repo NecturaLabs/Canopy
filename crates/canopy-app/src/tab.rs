@@ -56,6 +56,21 @@ pub enum SidebarItem {
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
+/// What a merge, rebase or pull that stopped on conflicts asks of the user. When git holds their
+/// uncommitted changes aside (`--autostash`), they are not in the stash list: it says where they
+/// are and when they come back.
+fn stopped_body(autostashed: bool) -> String {
+    let mut body = String::from(
+        "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.",
+    );
+    if autostashed {
+        body.push_str(
+            " Your uncommitted changes are held by git meanwhile and come back when you finish or abort.",
+        );
+    }
+    body
+}
+
 /// Whether `message`, a hosting error's text, is the host refusing the sign-in
 /// (`canopy_hosting::Error::Unauthorized`).
 fn credential_refused(message: &str) -> bool {
@@ -2782,7 +2797,7 @@ impl RepoTab {
                     self.progress = None;
                     self.pull_decision = Some(*decision);
                 }
-                Event::Conflicted(label) => {
+                Event::Conflicted { label, autostashed } => {
                     self.running = None;
                     self.running_kind = None;
                     self.progress = None;
@@ -2792,7 +2807,7 @@ impl RepoTab {
                         ok: false,
                         delivery: Delivery::Attention,
                         title: format!("{label} stopped on conflicts"),
-                        body: "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.".into(),
+                        body: stopped_body(autostashed),
                     });
                 }
                 Event::AutostashConflict => {
@@ -4886,7 +4901,13 @@ mod tests {
         };
         assert_eq!(delivery(&mut tab, stage)?, Delivery::Card, "the user's own");
         assert_eq!(
-            delivery(&mut tab, Event::Conflicted("Pulling".into()))?,
+            delivery(
+                &mut tab,
+                Event::Conflicted {
+                    label: "Pulling".into(),
+                    autostashed: false
+                }
+            )?,
             Delivery::Attention
         );
         assert_eq!(
@@ -5017,10 +5038,51 @@ mod tests {
         assert_eq!(tab.pull_decision, Some(decision));
         tab.running = Some("Pulling".into());
         tab.view = View::History;
-        events.send(Event::Conflicted("Pulling".into()))?;
+        events.send(Event::Conflicted {
+            label: "Pulling".into(),
+            autostashed: false,
+        })?;
         let notices = tab.poll(&[]);
         assert_eq!((tab.running.as_deref(), tab.view), (None, View::Changes));
         assert_eq!(notices.len(), 1);
+        Ok(())
+    }
+
+    /// A stop on conflicts says where uncommitted changes are when git holds them aside, and says
+    /// nothing of them when it does not.
+    #[test]
+    fn a_stop_on_conflicts_says_where_set_aside_changes_are() {
+        let plain = stopped_body(false);
+        assert!(plain.starts_with("Resolve each conflicted file in Changes"));
+        assert!(!plain.contains("uncommitted"), "{plain}");
+        let held = stopped_body(true);
+        assert!(held.starts_with(&plain), "{held}");
+        assert!(
+            held.contains("uncommitted changes are held by git")
+                && held.contains("come back when you finish or abort"),
+            "{held}"
+        );
+        assert!(!held.contains("\n\n"), "one paragraph: {held}");
+    }
+
+    /// The notice of a stop carries what [`stopped_body`] says for the event's `autostashed`.
+    #[test]
+    fn the_stopped_notice_follows_whether_changes_were_set_aside()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for autostashed in [false, true] {
+            let ctx = egui::Context::default();
+            let dir = tempfile::tempdir()?;
+            let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+            let (worker, events, _jobs) = Worker::detached();
+            tab.worker = worker;
+            events.send(Event::Conflicted {
+                label: "Merging".into(),
+                autostashed,
+            })?;
+            let notices = tab.poll(&[]);
+            assert_eq!(notices.len(), 1);
+            assert_eq!(notices[0].body, stopped_body(autostashed));
+        }
         Ok(())
     }
 

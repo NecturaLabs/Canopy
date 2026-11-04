@@ -240,6 +240,18 @@ fn signing_from(
 }
 
 impl GitFacts {
+    /// Drops what the installed git does not read: `pull.autoStash` before git 2.51 (or when the
+    /// version is unknown), so no note says the configuration decides what git ignores. The
+    /// editor's own row for the key still lists it, from `values`.
+    pub(crate) fn forget_ignored(&mut self) {
+        let git = self.git;
+        self.autostash.retain(|v| {
+            !v.key
+                .eq_ignore_ascii_case(canopy_core::config::Setting::PullAutostash.key())
+                || canopy_core::config::Setting::PullAutostash.read_by(git)
+        });
+    }
+
     /// Whether git signs commits (`commit.gpgsign`).
     pub fn signs_commits(&self) -> bool {
         self.gpg_sign
@@ -426,6 +438,7 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
             .borrow_mut()
             .push(format!("Editable configuration: {error}")),
     }
+    facts.forget_ignored();
     let errors = errors.into_inner();
     if !errors.is_empty() {
         facts.error = Some(errors.join("\n"));
