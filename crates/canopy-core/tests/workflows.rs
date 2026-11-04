@@ -1461,23 +1461,66 @@ fn discarding_a_submodule_refuses_to_delete_an_obstructing_ignored_path() {
     );
 }
 
-/// Case-insensitive and Unicode-normalizing filesystems can make names collide that Rust compares
-/// as different. If a tracked path must be restored, Discard conservatively refuses any possible
-/// obstruction rather than relying on a lexical comparison alone.
+/// Different spellings are unrelated on a case-sensitive filesystem. They are allowed and kept;
+/// on a case-insensitive or normalizing one the canonical-path preflight sees the collision.
 #[test]
-fn discarding_a_submodule_refuses_a_case_variant_obstruction() {
+fn discarding_a_submodule_allows_an_unrelated_case_variant_path() {
     let (dir, repo, sub) = submodule_fixture();
     let _ = dir;
     fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
     fs::create_dir(sub.join("A.TXT")).expect("make case-variant directory");
     fs::write(sub.join("A.TXT").join("notes"), "precious\n").expect("write note");
 
+    repo.discard(&submodule_row(&repo)).expect("discard");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("restored file"),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs::read_to_string(sub.join("A.TXT").join("notes")).expect("read note"),
+        "precious\n"
+    );
+}
+
+/// A staged deletion is restored by reset --hard too, and must not overwrite an untracked
+/// directory at that path.
+#[test]
+fn discarding_a_submodule_refuses_an_obstruction_after_a_staged_deletion() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    git(&sub, &["rm", "--cached", "-q", "a.txt"]);
+    fs::remove_file(sub.join("a.txt")).expect("remove untracked file");
+    fs::create_dir(sub.join("a.txt")).expect("make untracked directory");
+    fs::write(sub.join("a.txt").join("notes"), "precious\n").expect("write note");
+
     let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
 
     assert!(err.to_string().contains("obstruct"), "{err}");
     assert_eq!(
-        fs::read_to_string(sub.join("A.TXT").join("notes")).expect("read note"),
+        fs::read_to_string(sub.join("a.txt").join("notes")).expect("read note"),
         "precious\n"
+    );
+}
+
+/// An unrelated untracked file is not an obstruction just because another tracked file was
+/// deleted: reset restores the latter and leaves the former alone.
+#[test]
+fn discarding_a_submodule_allows_an_unrelated_untracked_file_beside_a_deletion() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+    fs::write(sub.join("notes.txt"), "unrelated\n").expect("write unrelated");
+
+    repo.discard(&submodule_row(&repo)).expect("discard");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("restored file"),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs::read_to_string(sub.join("notes.txt")).expect("read unrelated"),
+        "unrelated\n"
     );
 }
 

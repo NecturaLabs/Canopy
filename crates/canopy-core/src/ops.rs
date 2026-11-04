@@ -334,6 +334,24 @@ fn tree_paths(
     Ok(())
 }
 
+/// The untracked candidate at `candidate`, or one above or below it, when it resolves to the same
+/// path as `root` on this filesystem. Canonical paths catch case-insensitive and normalizing names
+/// without treating unrelated files as obstructions.
+fn resolves_to_same_path(
+    dir: &Path,
+    root: &Path,
+    candidates: &[(PathBuf, bool)],
+) -> Result<Option<(PathBuf, bool)>> {
+    let actual = std::fs::canonicalize(dir.join(root))?;
+    for (candidate, ignored) in candidates {
+        let other = std::fs::canonicalize(dir.join(candidate))?;
+        if other.starts_with(&actual) || actual.starts_with(&other) {
+            return Ok(Some((candidate.clone(), *ignored)));
+        }
+    }
+    Ok(None)
+}
+
 /// An untracked path `git reset --hard` would remove while restoring a tracked file, or an ignored
 /// one it would remove in either mode. Returning it lets Discard refuse before the first mutation.
 fn reset_obstruction(dir: &Path, keep_untracked: bool) -> Result<Option<(PathBuf, bool)>> {
@@ -348,30 +366,53 @@ fn reset_obstruction(dir: &Path, keep_untracked: bool) -> Result<Option<(PathBuf
         .include_ignored(true)
         .recurse_ignored_dirs(true);
     let statuses = repo.statuses(Some(&mut options))?;
-    // If a tracked path has to be restored, a case-insensitive or Unicode-normalizing filesystem
-    // can make an untracked spelling collide even when Rust's lexical Path comparison says it does
-    // not. Refuse any possible obstruction in that case instead of risking a destructive reset.
-    let restores_deleted = statuses.iter().any(|entry| {
-        entry
-            .status()
-            .intersects(git2::Status::WT_DELETED | git2::Status::WT_TYPECHANGE)
-    });
+    let mut candidates = Vec::new();
+    let mut deleted = Vec::new();
     for entry in statuses.iter() {
         let status = entry.status();
         let ignored = status.contains(git2::Status::IGNORED);
         let untracked = status.contains(git2::Status::WT_NEW);
-        if !(ignored || keep_untracked && untracked) {
-            continue;
+        if ignored || keep_untracked && untracked {
+            candidates.push((crate::paths::os_path(entry.path_bytes()), ignored));
         }
-        let candidate = crate::paths::os_path(entry.path_bytes());
-        if restores_deleted
-            || tracked.iter().any(|tracked| {
-                candidate == *tracked
-                    || candidate.starts_with(tracked)
-                    || tracked.starts_with(&candidate)
-            })
+        if status.intersects(
+            git2::Status::INDEX_DELETED
+                | git2::Status::WT_DELETED
+                | git2::Status::INDEX_TYPECHANGE
+                | git2::Status::WT_TYPECHANGE,
+        ) {
+            deleted.push(crate::paths::os_path(entry.path_bytes()));
+        }
+    }
+    for (candidate, ignored) in &candidates {
+        if tracked.iter().any(|tracked| {
+            *candidate == *tracked
+                || candidate.starts_with(tracked)
+                || tracked.starts_with(candidate)
+        }) {
+            return Ok(Some((candidate.clone(), *ignored)));
+        }
+    }
+    // A deleted path that exists under another spelling is visible through the filesystem's own
+    // resolution, including staged deletions. A non-directory ancestor blocks a tracked child.
+    for path in deleted {
+        if std::fs::symlink_metadata(dir.join(&path)).is_ok()
+            && let Some(found) = resolves_to_same_path(dir, &path, &candidates)?
         {
-            return Ok(Some((candidate, ignored)));
+            return Ok(Some(found));
+        }
+    }
+    for path in tracked {
+        for ancestor in path.ancestors().skip(1) {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            if std::fs::symlink_metadata(dir.join(ancestor))
+                .is_ok_and(|metadata| !metadata.is_dir())
+                && let Some(found) = resolves_to_same_path(dir, ancestor, &candidates)?
+            {
+                return Ok(Some(found));
+            }
         }
     }
     Ok(None)
