@@ -798,7 +798,8 @@ above.
 
 `UnderlineTabs` is the separate in-pane choice: text labels over a seam, with a 2 pt indicator
 that slides to the selected tab. Left and Right move between tabs, and Home and End choose the
-first and last. It has no repository-tab close button or title-bar cards.
+first and last. It uses no title-bar cards; `.closable(true)` can add a close button to each tab,
+and a middle click closes a tab too.
 
 ### Illustrations
 
