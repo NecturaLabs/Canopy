@@ -16,31 +16,29 @@ CONSTRUCTOR = re.compile(
 )
 NAMED = re.compile(r"\bColor32\s*::\s*([A-Z][A-Z0-9_]*)\b")
 # Exact non-design expressions: texture/alpha channels, black-or-white contrast selection, gallery
-# opacity/blur samples and text measurement. Matching the whole line keeps every other use a violation.
+# opacity/blur samples and text measurement. One complete, unique expression keeps every other use a violation.
 ALLOWED_CONSTANTS = {
     (LIBRARY + "contrast.rs", "BLACK"): [
-        ("Color32::BLACK", "black is one of the two contrast candidates"),
         (
-            "if worst(Color32::WHITE) >= worst(Color32::BLACK) {",
+            "if worst(Color32::WHITE) >= worst(Color32::BLACK) {\n        Color32::WHITE\n    } else {\n        Color32::BLACK\n    }",
             "black is one of the two contrast candidates",
-        ),
+        )
     ],
     (LIBRARY + "contrast.rs", "WHITE"): [
-        ("Color32::WHITE", "white is one of the two contrast candidates"),
         (
-            "if worst(Color32::WHITE) >= worst(Color32::BLACK) {",
+            "if worst(Color32::WHITE) >= worst(Color32::BLACK) {\n        Color32::WHITE\n    } else {\n        Color32::BLACK\n    }",
             "white is one of the two contrast candidates",
-        ),
+        )
     ],
     (LIBRARY + "kit/avatar.rs", "WHITE"): [
         (
-            "RectShape::filled(rect, radius, Color32::WHITE.gamma_multiply(shown))",
+            "RectShape::filled(rect, radius, Color32::WHITE.gamma_multiply(shown))\n                .with_texture(tex, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)))",
             "white carries a picture's alpha channel, not a theme colour",
         )
     ],
     (LIBRARY + "kit/paint.rs", "WHITE"): [
         (
-            "RectShape::filled(rect, radius, Color32::WHITE)",
+            "RectShape::filled(rect, radius, Color32::WHITE)\n        .with_texture(tex.id(), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)))",
             "white carries texture alpha, not a theme colour",
         ),
         (
@@ -49,14 +47,20 @@ ALLOWED_CONSTANTS = {
         ),
     ],
     (LIBRARY + "kit/glass/mod.rs", "BLACK"): [
-        ("Color32::BLACK", "the glass gallery uses black as opacity/blur test content"),
+        (
+            "let c = if k % 2 == 0 {\n            Color32::WHITE\n        } else {\n            Color32::BLACK\n        };",
+            "the glass gallery uses black as opacity/blur test content",
+        ),
         (
             "if row % 2 == 0 { p.text } else { Color32::BLACK },",
             "the glass gallery uses black as opacity/blur test content",
         ),
     ],
     (LIBRARY + "kit/glass/mod.rs", "WHITE"): [
-        ("Color32::WHITE", "the glass gallery uses white as opacity/blur test content")
+        (
+            "let c = if k % 2 == 0 {\n            Color32::WHITE\n        } else {\n            Color32::BLACK\n        };",
+            "the glass gallery uses white as opacity/blur test content",
+        )
     ],
     (PREFIX + "views/settings_screen.rs", "WHITE"): [
         (
@@ -163,13 +167,13 @@ def violations(name: str, source: str) -> list[tuple[int, str]]:
         constant = m[1]
         if constant in {"TRANSPARENT", "PLACEHOLDER"}:
             continue
-        line_start = runtime.rfind("\n", 0, m.start()) + 1
-        line_end = runtime.find("\n", m.end())
-        if line_end < 0:
-            line_end = len(runtime)
-        line = runtime[line_start:line_end].strip()
         allowed = ALLOWED_CONSTANTS.get((name, constant), [])
-        if any(line == expression for expression, _ in allowed):
+        if any(
+            runtime.count(expression) == 1
+            and runtime.find(expression) <= m.start()
+            and m.end() <= runtime.find(expression) + len(expression)
+            for expression, _ in allowed
+        ):
             continue
         problems.append((source.count("\n", 0, m.start()) + 1, m.group()))
     return problems
@@ -192,12 +196,9 @@ def check() -> int:
     names |= library
     failed = False
     for (name, constant), cases in ALLOWED_CONSTANTS.items():
-        runtime_lines = {
-            line.strip()
-            for line in runtime_code((ROOT / name).read_text(encoding="utf-8")).splitlines()
-        }
+        runtime = runtime_code((ROOT / name).read_text(encoding="utf-8"))
         for expression, reason in cases:
-            if expression not in runtime_lines:
+            if runtime.count(expression) != 1:
                 print(f"{name}: stale colour allowlist entry for Color32::{constant}: {reason}")
                 failed = True
     for name in sorted(names):
@@ -245,6 +246,10 @@ def selftest() -> int:
     assert violations(
         LIBRARY + "kit/paint.rs",
         "fn draw(painter: &Painter, rect: Rect) {\npainter.rect_filled(rect, CornerRadius::ZERO, Color32::WHITE);\n}",
+    ) == [(2, "Color32::WHITE")]
+    assert violations(
+        LIBRARY + "kit/paint.rs",
+        "fn white_rectangle(rect: Rect, radius: CornerRadius) -> RectShape {\n    RectShape::filled(rect, radius, Color32::WHITE)\n}",
     ) == [(2, "Color32::WHITE")]
     for (name, constant), cases in ALLOWED_CONSTANTS.items():
         for expression, reason in cases:
