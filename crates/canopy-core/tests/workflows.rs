@@ -1461,6 +1461,79 @@ fn discarding_a_submodule_refuses_to_delete_an_obstructing_ignored_path() {
     );
 }
 
+/// Case-insensitive and Unicode-normalizing filesystems can make names collide that Rust compares
+/// as different. If a tracked path must be restored, Discard conservatively refuses any possible
+/// obstruction rather than relying on a lexical comparison alone.
+#[test]
+fn discarding_a_submodule_refuses_a_case_variant_obstruction() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+    fs::create_dir(sub.join("A.TXT")).expect("make case-variant directory");
+    fs::write(sub.join("A.TXT").join("notes"), "precious\n").expect("write note");
+
+    let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+
+    assert!(err.to_string().contains("obstruct"), "{err}");
+    assert_eq!(
+        fs::read_to_string(sub.join("A.TXT").join("notes")).expect("read note"),
+        "precious\n"
+    );
+}
+
+/// All selected submodules are checked before the first one is reset: a later obstruction cannot
+/// turn a reported refusal into a partial Discard.
+#[test]
+fn discarding_multiple_submodules_checks_all_before_resetting_any() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    let url = dir.path().join("lib").to_string_lossy().into_owned();
+    git(
+        &sup,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            "--",
+            &url,
+            "deps/other",
+        ],
+    );
+    let other = sup.join("deps/other");
+    git(&other, &["checkout", "-q", "HEAD~1"]);
+    git(&sup, &["add", "deps/other"]);
+    git(&sup, &["commit", "-q", "-m", "feat: add another lib"]);
+    fs::write(sub.join("a.txt"), "first edit\n").expect("first edit");
+    fs::remove_file(other.join("a.txt")).expect("remove second tracked file");
+    fs::create_dir(other.join("a.txt")).expect("make second obstruction");
+    fs::write(other.join("a.txt").join("notes"), "precious\n").expect("write note");
+    let mut rows = repo
+        .snapshot(10)
+        .expect("snapshot")
+        .status
+        .unstaged
+        .into_iter()
+        .filter(|f| ["deps/lib", "deps/other"].contains(&f.path.as_str()))
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(rows.len(), 2);
+
+    let err = repo.discard(&rows).expect_err("refused");
+
+    assert!(err.to_string().contains("obstruct"), "{err}");
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("first file"),
+        "first edit\n",
+        "the earlier submodule was not reset"
+    );
+    assert_eq!(
+        fs::read_to_string(other.join("a.txt").join("notes")).expect("read note"),
+        "precious\n"
+    );
+}
+
 /// A submodule path is a literal path, never a pathspec that can select another submodule.
 #[test]
 fn discarding_a_submodule_with_glob_characters_touches_only_its_literal_path() {

@@ -348,6 +348,14 @@ fn reset_obstruction(dir: &Path, keep_untracked: bool) -> Result<Option<(PathBuf
         .include_ignored(true)
         .recurse_ignored_dirs(true);
     let statuses = repo.statuses(Some(&mut options))?;
+    // If a tracked path has to be restored, a case-insensitive or Unicode-normalizing filesystem
+    // can make an untracked spelling collide even when Rust's lexical Path comparison says it does
+    // not. Refuse any possible obstruction in that case instead of risking a destructive reset.
+    let restores_deleted = statuses.iter().any(|entry| {
+        entry
+            .status()
+            .intersects(git2::Status::WT_DELETED | git2::Status::WT_TYPECHANGE)
+    });
     for entry in statuses.iter() {
         let status = entry.status();
         let ignored = status.contains(git2::Status::IGNORED);
@@ -356,11 +364,13 @@ fn reset_obstruction(dir: &Path, keep_untracked: bool) -> Result<Option<(PathBuf
             continue;
         }
         let candidate = crate::paths::os_path(entry.path_bytes());
-        if tracked.iter().any(|tracked| {
-            candidate == *tracked
-                || candidate.starts_with(tracked)
-                || tracked.starts_with(&candidate)
-        }) {
+        if restores_deleted
+            || tracked.iter().any(|tracked| {
+                candidate == *tracked
+                    || candidate.starts_with(tracked)
+                    || tracked.starts_with(&candidate)
+            })
+        {
             return Ok(Some((candidate, ignored)));
         }
     }
@@ -469,6 +479,7 @@ impl Repo {
             .collect();
         for submodule in &inside {
             self.stranded_commit_check(submodule)?;
+            self.reset_obstruction_check(submodule)?;
         }
         for submodule in inside {
             self.discard_submodule(submodule)?;
@@ -522,6 +533,25 @@ impl Repo {
         Ok(())
     }
 
+    /// Refuses a reset that could delete an untracked or ignored path. Every selected submodule is
+    /// checked before the first reset; the check runs again immediately before that reset too.
+    fn reset_obstruction_check(&self, submodule: &crate::SubmoduleInfo) -> Result<()> {
+        let dir = self.workdir().join(&submodule.path_os);
+        if !dir.join(".git").exists() {
+            return Ok(());
+        }
+        let keep_untracked = !self.options().discard_untracked_in_submodules;
+        if let Some((path, ignored)) = reset_obstruction(&dir, keep_untracked)? {
+            let kind = if ignored { "ignored" } else { "untracked" };
+            return Err(Error::invalid(format!(
+                "{} has an {kind} path that obstructs a tracked path: {}. Move it aside before Discard so it is not deleted.",
+                submodule.path,
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
     /// Discards the changes to the tracked files inside `submodule` (`git reset --hard` there)
     /// and checks out the commit the index records (`git submodule update --checkout`, which
     /// ignores a configured update command). Untracked files inside stay unless
@@ -531,15 +561,8 @@ impl Repo {
         let dir = self.workdir().join(&submodule.path_os);
         // A deleted folder has nothing to reset: the update below checks it out again.
         if dir.join(".git").exists() {
+            self.reset_obstruction_check(submodule)?;
             let keep_untracked = !self.options().discard_untracked_in_submodules;
-            if let Some((path, ignored)) = reset_obstruction(&dir, keep_untracked)? {
-                let kind = if ignored { "ignored" } else { "untracked" };
-                return Err(Error::invalid(format!(
-                    "{} has an {kind} path that obstructs a tracked path: {}. Move it aside before Discard so it is not deleted.",
-                    submodule.path,
-                    path.display()
-                )));
-            }
             cli::run(
                 &dir,
                 &["-c", "submodule.recurse=false", "reset", "--hard", "-q"],
