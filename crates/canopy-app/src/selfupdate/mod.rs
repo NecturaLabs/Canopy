@@ -659,10 +659,14 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
             continue;
         }
         if !src.is_file() {
-            // Earlier builds also registered a scalable SVG; this one ships none. One that cannot
-            // be removed stays in the receipt, to be tried again.
+            // Earlier builds also registered a scalable SVG; this one ships none. Remove only the
+            // bytes one of those builds shipped, never an edited copy. One that cannot be removed
+            // stays in the receipt, to be tried again.
             if dst.ends_with(format!("hicolor/scalable/apps/{APP_ID}.svg"))
                 && dst.symlink_metadata().is_ok_and(|m| m.is_file())
+                && fs::read(dst).is_ok_and(|bytes| {
+                    SHIPPED_SVG_SHA256.contains(&updates::sha256_hex(&bytes).as_str())
+                })
                 && fs::remove_file(dst).is_err()
             {
                 notes.push(format!("could not remove {}", dst.display()));

@@ -618,7 +618,7 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
         )],
     );
     write(&png, "old png");
-    write(&svg, "old svg");
+    write(&svg, include_str!("legacy-test-icon.svg"));
     write(&other, "someone else's");
     let old = parse_receipt(&format!(
         "icon={}|{}\nicon={}|{}\nicon={}|{}\n",
@@ -641,6 +641,43 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
     assert_eq!(read(&other), "someone else's", "only Canopy's own icon");
     let receipt = parse_receipt(&read(&root.join(RECEIPT)));
     assert_eq!(receipt.icons.len(), 1);
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+/// A receipt line records where an icon was installed, not that its current bytes are still the
+/// ones Canopy shipped. An edited legacy SVG is the user's file and survives the upgrade.
+#[test]
+fn an_edited_registered_scalable_icon_is_preserved() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    let data = tmp.path().join("data");
+    let png = data.join("icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = data.join("icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    folder(
+        &root,
+        &[(
+            "share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png",
+            "new png",
+        )],
+    );
+    write(&png, "old png");
+    write(&svg, "the user's edited legacy svg");
+    let old = parse_receipt(&format!(
+        "icon={}|{}\nicon={}|{}\n",
+        png.display(),
+        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png")
+            .display(),
+        svg.display(),
+        root.join("share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg")
+            .display(),
+    ));
+
+    let mut notes = Vec::new();
+    integrate(&root, 413, &old, &mut notes);
+
+    assert_eq!(read(&svg), "the user's edited legacy svg");
+    assert_eq!(read(&png), "new png");
+    assert_eq!(parse_receipt(&read(&root.join(RECEIPT))).icons.len(), 1);
     assert!(notes.is_empty(), "{notes:?}");
 }
 
@@ -757,7 +794,7 @@ fn a_scalable_icon_that_cannot_be_removed_stays_registered() {
         .path()
         .join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
     folder(&root, &[("bin/canopy", "new")]);
-    write(&svg, "old svg");
+    write(&svg, include_str!("legacy-test-icon.svg"));
     let apps = svg.parent().expect("parent").to_owned();
     fs::set_permissions(&apps, fs::Permissions::from_mode(0o555)).expect("chmod");
     let old = parse_receipt(&format!(
