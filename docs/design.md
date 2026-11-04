@@ -589,29 +589,29 @@ section that describes its user-visible behaviour rather than duplicating that b
 
 | Type | Covered by |
 |---|---|
-| `AvatarSize`, `AvatarStack`, `Person` | **Avatar**: row, detail, large and card sizes; a person's initial or picture; overlapping stacks of at most three with a `+N` badge |
+| `AvatarSize`, `AvatarStack`, `Person` | **Avatar**: row (18/16 points), detail (24), large (30) and card (48) sizes; a person's single initial or picture; overlapping stacks of at most three with a `+N` badge |
 | `ButtonKind` | **Component library**: primary, secondary, ghost and danger buttons, their sizes and states |
 | `KeyChord` | **Popover and the smaller components** (`Keycap`) and **Component library** (keyboard reporting): one key or chord drawn as a keycap |
-| `DiffStat` | **Popover and the smaller components** (`Badge`, `CountBadge`): addition/deletion counts and their mono digits |
+| `DiffStat` | **Colour tokens** (diffstat): addition/deletion counts in diff colours and monospace, with an optional five-block proportional bar |
 | `UnderlineTabs` | **Document tabs**: tab-list keyboard and selected-state behavior, with an underline and sliding marker rather than repository-tab cards |
-| `TextArea`, `CodeArea` | **Text field**: multiline plain and code input, their accessible names, errors and focus treatment |
+| `TextArea`, `CodeArea` | **Text field**: multiline growth and submission, code editing, accessible names and focus treatment |
 | `RowKind` | **Component library**: List, File, History, Sidebar, Request and Palette row heights, grounds and label treatments |
 | `SectionHeader` | **Component library**: a disclosure row for a sidebar section, with its expanded state and row actions |
 | `SplitAxis` | **Layout** and **Component library** (split focus): horizontal or vertical split panes and dragging the seam |
-| `HeaderKind` | **Banner and callout** and the pane layout: Table, Detail and File header heights and top-edge treatment |
+| `HeaderKind` | **Layout**: Table, Detail and File header heights and the pane's top-edge treatment |
 | `InsetBox` | **Component library**: an inset surface for grouped content inside a card or pane |
-| `EmptyAction` | **Popover and the smaller components** (`EmptyState`): the primary action and optional link offered by an empty pane |
 | `ToastCard` | **Toast**: the bounded overlay card, its glyph, title, body, actions and accessible announcement |
 | `DialogWidth` | **Dialog**: the modal's width, margins and compact-window behavior |
-| `ExitMotion` | **Motion** and **Dialog**: popup, dialog and toast exit translation and fade durations |
+| `ExitMotion` | **Motion** and **Dialog**: popup and dialog scale/fade exits, and the toast's horizontal slide/fade |
 | `FadeEdge` | **Scroll edges** and **Document tabs**: the top, bottom, left or right band that fades clipped content into its ground |
 | `Flip` | **Motion**: keyed list rows entering, leaving and sliding to their new positions, landing at once with reduced motion |
-| `FocusReturn`, `TreeNav` | **Component library** (keyboard and screen readers): returning focus when an overlay closes and navigating a tree without making the chevron a Tab stop |
+| `FocusReturn` | **Component library** (keyboard and screen readers): returning focus when an overlay closes |
 
-`DialogResult`, `RowCtx`, `DocTabsEvent` and `ToastOutput` are implementation results or painting
-context, not separate user-visible components, so they intentionally have no section of their own.
-`DocTabsEvent` describes what a tab action did, `DialogResult` what a dialog returned, `RowCtx` the
-rectangles and colours a row paints with, and `ToastOutput` the result of showing a toast.
+`DialogResult`, `EmptyAction`, `TreeNav`, `DocTabsEvent`, `ToastOutput`, `RowCtx`, `KitResponse`,
+`ForceState` and `Interact` are implementation results or painting state, not separate user-visible
+components, so they intentionally have no section of their own. They describe what a dialog, empty
+state, tree row, document tab or toast returned, the rectangles and colours a row paints with, and
+the interaction state a component reports.
 
 ### Select
 
@@ -796,6 +796,10 @@ Widths glide over `FAST_OUT` when the squeeze changes. A closed tab collapses to
 tab with its selected state, the close button named "Close <name>", and the controls named as
 above.
 
+`UnderlineTabs` is the separate in-pane choice: text labels over a seam, with a 2 pt indicator
+that slides to the selected tab. Left and Right move between tabs, and Home and End choose the
+first and last. It has no repository-tab close button or title-bar cards.
+
 ### Illustrations
 
 Drawn in code in the theme's colours (`nectura-ui/src/art.rs`, `docs/art-prompts.md`): the logo mark, the
@@ -817,12 +821,11 @@ Hard reset marked in danger colour and confirmed before it runs.
 
 ### Avatar
 
-A circle, 20px in tables and 24px in details, filled with a lane colour chosen by hashing the
-displayed identity after case and punctuation are removed. A Git author name and matching host
-handle therefore get the same colour without needing an account lookup. At these sizes it shows
-one larger initial for legibility; larger circles can show two. Account pictures fill the same
-circle, with initials while unavailable or downloads are
-disabled. History and commit details share a twelve-hour local cache; a failed refresh retains
+A circle, 18/16 points in rows and lists, 24 in details, 30 in the large size and 48 on the
+author card, filled with a lane colour chosen by hashing the displayed identity after case and
+punctuation are removed. A Git author name and matching host handle therefore get the same colour
+without needing an account lookup. It always shows one initial; account pictures fill the same
+circle, with initials while unavailable or downloads are disabled. History and commit details share a twelve-hour local cache; a failed refresh retains
 the last picture, and an author without a picture keeps initials (never a generated pattern).
 
 ### Toast
