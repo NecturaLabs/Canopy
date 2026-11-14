@@ -617,7 +617,9 @@ the interaction state a component reports.
 
 Select lists stay inside their containing dialog, settings card or main panel. They open above
 the field when that side has more room, limit their width to the host and scroll when the options
-cannot fit. Pointer presses focus the field, so arrows, Home/End, typing and Enter work after
+cannot fit. The list lines up with its field: it starts at the field's left edge (at its right
+edge when it is wider than the field and would not fit to the right), is at least as wide as the
+field and grows to its longest row (label, badge, check), never past the host. Pointer presses focus the field, so arrows, Home/End, typing and Enter work after
 opening with the mouse as well as from the keyboard, and the highlighted option scrolls into
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
