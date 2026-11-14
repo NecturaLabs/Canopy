@@ -1,6 +1,6 @@
 name: Setup Rust
 description: >-
-  Installs the Rust toolchain named in rust-toolchain.toml and, when asked,
+  Installs the latest stable Rust toolchain and, when asked,
   restores the build cache. On the organisation's self-hosted runners, which
   share one home directory, each runner keeps its own rustup and cargo homes in
   its tool cache, so jobs on different runners never install or update a
@@ -140,29 +140,14 @@ runs:
           "CARGO_TARGET_DIR=$target" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         }
 
-    # The toolchain comes from rust-toolchain.toml, so CI and releases build with
-    # the toolchain the repository names rather than whatever this action defaults to.
-    - name: Read rust-toolchain.toml
-      id: toolchain
-      shell: bash
-      run: |
-        set -euo pipefail
-        file="$GITHUB_WORKSPACE/rust-toolchain.toml"
-        channel=$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | head -n1)
-        if [[ -z $channel ]]; then
-          echo "::error file=rust-toolchain.toml::No channel in $file"
-          exit 1
-        fi
-        echo "Toolchain: $channel"
-        echo "channel=$channel" >> "$GITHUB_OUTPUT"
-
-    - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+    # CI and releases build with the latest stable Rust, as local builds do.
+    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
       with:
-        toolchain: ${{ steps.toolchain.outputs.channel }}
+        toolchain: stable
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
 
-    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # GitHub-hosted runners only; self-hosted ones keep a target folder (above).
       if: inputs.cache == 'true' && inputs.isolated != 'true' && runner.environment != 'self-hosted'
       with:

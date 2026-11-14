@@ -9,9 +9,10 @@
 
 ## Checks
 
-- [ ] `cargo fmt --all --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace` (new Git operations are tested against a temporary repository)
+- [ ] `tools/check.sh` passes (formatting, `cargo clippy --workspace --all-targets --locked -- -D
+      warnings`, workspace tests and the repository's other gates)
+- [ ] New Git operations are tested against a temporary repository
 - [ ] Destructive actions ask for confirmation
 - [ ] Docs updated where affected: `docs/features.md`, `docs/architecture.md`, `docs/design.md`,
       `CHANGELOG.md` (Unreleased)
+- [ ] No credentials, tokens or personal repository paths
