@@ -5,10 +5,9 @@ agent; [AGENTS.md](AGENTS.md) has the full conventions.
 
 ## Setup
 
-1. Install Rust with [rustup](https://rustup.rs); `rust-toolchain.toml` pins the exact release
-   the lints are fitted to, with rustfmt and clippy, and rustup installs it on first use. The
-   minimum supported Rust version is 1.91. To move to a newer release, change the channel there
-   and fix what the new clippy reports in the same commit.
+1. Install stable Rust with [rustup](https://rustup.rs), with rustfmt and clippy. Canopy
+   builds with the latest stable release and pins none; when a new clippy reports something,
+   fix it in its own commit. The minimum supported Rust version is 1.91.
 2. Install `git` 2.32 or newer (required by the fixture scripts) and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
 3. Fetch the component library: `crates/nectura-ui` is a submodule of the private repository
