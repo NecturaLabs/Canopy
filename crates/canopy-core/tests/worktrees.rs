@@ -739,6 +739,59 @@ fn a_deinitialized_submodule_whose_repository_is_kept_blocks_removal() {
     assert!(modules.is_dir(), "the repository is kept");
 }
 
+/// An administrative folder whose name libgit2 refuses as a reference name (a space) still has a
+/// `HEAD` git reads: the preview and the list read the file, so the commit only that `HEAD` holds
+/// is counted, and one that cannot be read blocks instead of reporting nothing.
+#[test]
+fn a_forgotten_worktree_with_an_unusual_id_still_shows_its_head() {
+    let f = fixture();
+    let lonely = f.beside.join("lonely");
+    git(
+        &f.main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &lonely.to_string_lossy(),
+        ],
+    );
+    fs::write(lonely.join("a.txt"), "two\n").expect("edit");
+    git(&lonely, &["commit", "-q", "-am", "only here"]);
+    let tip = git(&lonely, &["rev-parse", "HEAD"]).trim().to_owned();
+    fs::remove_dir_all(&lonely).expect("delete by hand");
+    let worktrees = f.main.join(".git/worktrees");
+    fs::rename(worktrees.join("lonely"), worktrees.join("old wt")).expect("rename");
+
+    let listed = f
+        .repo
+        .worktrees()
+        .into_iter()
+        .find(|w| w.path.ends_with("lonely"))
+        .expect("listed");
+    assert_eq!(listed.state, WorktreeState::Missing);
+    assert_eq!(listed.head.map(|h| h.to_string()), Some(tip.clone()));
+
+    let preview = f.repo.forget_preview().expect("preview");
+    assert_eq!(preview.blocked, None, "{preview:?}");
+    assert_eq!(preview.entries.len(), 1, "{preview:?}");
+    let entry = &preview.entries[0];
+    assert_eq!(entry.id, "old wt");
+    assert_eq!(entry.head.map(|h| h.to_string()), Some(tip));
+    assert_eq!(entry.unreachable_commits, 1, "{preview:?}");
+
+    // A HEAD that cannot be read is never reported as nothing to lose.
+    fs::write(worktrees.join("old wt/HEAD"), "garbage\n").expect("break it");
+    let preview = f.repo.forget_preview().expect("preview");
+    let reason = preview.blocked.clone().unwrap_or_default();
+    assert!(
+        reason.contains("old wt") && reason.contains("HEAD"),
+        "{reason}"
+    );
+    assert!(f.repo.forget_worktrees(&preview).is_err());
+    assert!(worktrees.join("old wt").is_dir(), "nothing was forgotten");
+}
+
 /// A submodule that was never initialized is an empty folder: git removes the worktree, and so
 /// does Canopy.
 #[test]

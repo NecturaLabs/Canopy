@@ -342,9 +342,13 @@ impl Repo {
                 let mut info = opened.unwrap_or_else(|| {
                     // The folder cannot be opened: what git recorded about it stands in.
                     let path = worktree.path().to_path_buf();
-                    let head = common
+                    let (branch, head) = common
                         .as_ref()
-                        .and_then(|c| c.find_reference(&format!("worktrees/{name}/HEAD")).ok());
+                        .and_then(|c| {
+                            let admin = self.git.commondir().join("worktrees").join(name);
+                            crate::worktree::admin_head(c, &admin)
+                        })
+                        .unwrap_or_default();
                     WorktreeInfo {
                         state: if crate::worktree::folder_gone(&path) {
                             WorktreeState::Missing
@@ -352,12 +356,8 @@ impl Repo {
                             WorktreeState::Unreadable
                         },
                         path,
-                        branch: head
-                            .as_ref()
-                            .and_then(|h| h.symbolic_target().ok().flatten())
-                            .and_then(|t| t.strip_prefix("refs/heads/"))
-                            .map(str::to_owned),
-                        head: head.and_then(|h| h.resolve().ok()).and_then(|r| r.target()),
+                        branch,
+                        head,
                         current: false,
                         main: false,
                         locked: None,

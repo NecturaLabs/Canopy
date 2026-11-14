@@ -4,7 +4,7 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use git2::{Repository, Status, StatusOptions, Worktree, WorktreeLockStatus};
+use git2::{Oid, Repository, Status, StatusOptions, Worktree, WorktreeLockStatus};
 
 use crate::stale::worktree_index_protection;
 use crate::{
@@ -351,6 +351,7 @@ impl Repo {
         let common = Repository::open(self.git().commondir())?;
         let mut entries = Vec::new();
         let mut unknown = Vec::new();
+        let mut unreadable = Vec::new();
         // git words the line in the user's language; the folder name and the reason come after
         // the fixed `worktrees/` it is given.
         for line in String::from_utf8_lossy(&out.stdout)
@@ -365,14 +366,11 @@ impl Repo {
                 unknown.push(id.to_owned());
                 continue;
             };
-            let head = common.find_reference(&format!("worktrees/{id}/HEAD")).ok();
-            let branch = head
-                .as_ref()
-                .and_then(|h| h.symbolic_target().ok().flatten())
-                .and_then(|t| t.strip_prefix("refs/heads/"))
-                .map(str::to_owned);
-            let head = head.and_then(|h| h.resolve().ok()).and_then(|r| r.target());
             let admin = self.git().commondir().join("worktrees").join(id);
+            let (branch, head) = admin_head(&common, &admin).unwrap_or_else(|| {
+                unreadable.push(id.to_owned());
+                (None, None)
+            });
             let path = worktree.path().to_path_buf();
             entries.push(ForgottenWorktree {
                 id: id.to_owned(),
@@ -390,7 +388,12 @@ impl Repo {
             });
         }
         entries.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.id.cmp(&b.id)));
-        let blocked = if unknown.is_empty() {
+        let blocked = if !unreadable.is_empty() && unknown.is_empty() {
+            Some(format!(
+                "Canopy cannot read the HEAD of {} in the repository's worktrees folder, so it cannot say which commits forgetting would lose. Run git worktree prune -n -v to see them.",
+                unreadable.join(", ")
+            ))
+        } else if unknown.is_empty() {
             let outside: Vec<String> = entries
                 .iter()
                 .filter(|e| !e.gone)
@@ -461,7 +464,7 @@ impl Repo {
     }
 
     /// Commits reachable from `head` that no branch, remote branch or tag reaches.
-    fn commits_only_reached_by(&self, head: git2::Oid) -> Result<usize> {
+    fn commits_only_reached_by(&self, head: Oid) -> Result<usize> {
         let mut walk = self.git().revwalk()?;
         walk.push(head)?;
         for reference in self.git().references()? {
@@ -480,6 +483,28 @@ impl Repo {
         walk.try_fold(0, |count, commit| commit.map(|_| count + 1))
             .map_err(Into::into)
     }
+}
+
+/// The branch and commit a linked worktree's own `HEAD` file (`<admin>/HEAD`) names, or `None`
+/// when it cannot be read or parsed. The file is read directly: libgit2 refuses reference names
+/// with a space or other characters in the folder's name, and git does not.
+pub(crate) fn admin_head(
+    common: &Repository,
+    admin: &Path,
+) -> Option<(Option<String>, Option<Oid>)> {
+    let text = std::fs::read_to_string(admin.join("HEAD")).ok()?;
+    let text = text.trim();
+    if let Some(target) = text.strip_prefix("ref:") {
+        let target = target.trim();
+        let branch = target.strip_prefix("refs/heads/").map(str::to_owned);
+        let head = common
+            .find_reference(target)
+            .ok()
+            .and_then(|r| r.resolve().ok())
+            .and_then(|r| r.target());
+        return Some((branch, head));
+    }
+    Oid::from_str(text).ok().map(|oid| (None, Some(oid)))
 }
 
 /// Why a worktree with submodule repositories is not removed, or `None` when it has none. A
