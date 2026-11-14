@@ -69,7 +69,10 @@ commits since the previous build.
   another system) it clears nothing and says so in a notification; so does an update it refuses
   to clear because no Canopy would be left. A repository you open with a staging file an
   interrupted save left in its working tree gets one notification with the path; Canopy never
-  deletes it, nor Git's own lock files. Exporting patches now stages in the temporary folder
+  deletes it, nor Git's own lock files. An update whose roll-back could not put every old file
+  back keeps them, and the next start refuses to delete them instead of mistaking them for a
+  finished update's leftovers. The leftovers of a lock takeover that was itself killed are cleared
+  once their process is gone. Exporting patches now stages in the temporary folder
   instead of the folder you chose.
 - A Git setting that holds the recommended value says "(Recommended)" after it in its closed select,
   whether it was chosen by hand, written by Use recommended or read from your config, not only while

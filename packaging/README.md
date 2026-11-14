@@ -91,9 +91,15 @@ the folder exactly as the installed `uninstall.sh` sees itself.
 
 Re-running upgrades or reinstalls (idempotent). A lock folder (`.lock` in the install folder;
 `.Canopy-install.lock` next to the app on macOS) stops two installs or uninstalls running at
-once. It holds a `pid` file with the process id of its holder; on Linux a lock whose process no
-longer exists (a killed run never removes it) is taken over, and on any system a lock with no
-process id is never removed and the run stops, naming it. Nothing outside the folder is written where something else owns the name: the
+once. It holds a `pid` file with the process id of its holder; on Linux (`install.sh`) and
+Windows (`install.ps1`) a lock whose process no longer exists (a killed run never removes it) is
+taken over, and on any system a lock with no process id is never removed and the run stops, naming
+it. A takeover moves the dead lock to `.lock.stale.<pid>` and checks it is still the dead holder's
+before deleting it; a takeover that was itself killed leaves that folder, which the next run
+removes once the process in it is gone. `install.ps1`'s takeover has not been run: no PowerShell
+was available to test it. Known limits: a process id is compared in the namespace that can see
+`/proc` (a container or `hidepid` mount can make a running holder look gone), and a reused process
+id makes a dead holder look alive, which only leaves the lock for the user to remove. Nothing outside the folder is written where something else owns the name: the
 `~/.local/bin/canopy` symlink, the desktop entry (it must carry this install's
 `X-Canopy-Install-Dir`, which sits in the `[Desktop Entry]` group, the only group whose `Exec=` is
 rewritten) and the icons (they must be in this install's receipt) are skipped with a warning when

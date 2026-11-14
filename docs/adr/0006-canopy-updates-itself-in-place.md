@@ -66,6 +66,11 @@ Consequences:
 - The Windows install folder and the macOS app bundle are not updated natively. Windows would
   need the running executable renamed aside, and neither platform could be tested here; both run
   the installer.
+- Lock takeover judges a holder by its process id in `/proc`: a different process namespace or a
+  `hidepid` mount can make a running holder look gone, and a reused id makes a dead one look
+  alive (the lock then stays until the user removes it). Both are accepted limits.
+- A roll-back that cannot put every old file back marks its `.previous.*` folder (`.not-restored`);
+  the start sweep and the next update refuse to clear it, since it is the old version's only copy.
 - `tar`, `flate2` and `sha2` are direct dependencies. The archive is read with `tar` but every file
   is written by Canopy itself, never over another file, and links and special files are refused.
 - The download base can be changed only at compile time (`CANOPY_UPDATE_DOWNLOADS`), like the
