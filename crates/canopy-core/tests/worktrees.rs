@@ -820,3 +820,52 @@ fn a_folder_open_in_another_tab_is_refused_however_it_is_spelled() {
     assert!(!exists(&shared));
     assert!(exists(&sibling));
 }
+
+/// The confirmation shows a count and the first few names, but what the removal deletes is every
+/// one of them: a change anywhere in the list, however far down, or inside a folder git lists
+/// as one ignored item, is a change since the confirmation.
+#[test]
+fn a_change_past_the_first_shown_names_is_a_change_since_the_confirmation() {
+    let f = fixture();
+
+    // Twelve untracked files; one past the eighth is swapped for another, the count unchanged.
+    let wt = f.linked("many");
+    for n in 1..=12 {
+        fs::write(wt.join(format!("f{n:02}.txt")), "x").expect("file");
+    }
+    let seen = f.repo.worktree_removal(&wt, &[]).expect("inspect");
+    assert_eq!(seen.untracked.count, 12);
+    assert_eq!(seen.untracked.first.len(), 8, "only the first are shown");
+    fs::remove_file(wt.join("f11.txt")).expect("delete");
+    fs::write(wt.join("f13.txt"), "precious").expect("file");
+    let after = f.repo.worktree_removal(&wt, &[]).expect("inspect");
+    assert_eq!(after.untracked.count, seen.untracked.count);
+    assert_eq!(after.untracked.first, seen.untracked.first);
+    let error = f.repo.remove_worktree(&seen, &[]).expect_err("refused");
+    assert!(error.to_string().contains("changed since"), "{error}");
+    assert_eq!(
+        fs::read_to_string(wt.join("f13.txt")).expect("kept"),
+        "precious"
+    );
+
+    // New content inside an ignored folder, which is listed as the folder alone.
+    let cache = f.linked("cache");
+    fs::create_dir_all(cache.join("build/deep")).expect("folder");
+    fs::write(cache.join("build/deep/old.o"), "x").expect("file");
+    let seen = f.repo.worktree_removal(&cache, &[]).expect("inspect");
+    assert_eq!(seen.ignored.count, 1);
+    assert!(!seen.needs_force());
+    fs::write(
+        cache.join("build/deep/new.o"),
+        "a build artefact worth keeping",
+    )
+    .expect("file");
+    let error = f.repo.remove_worktree(&seen, &[]).expect_err("refused");
+    assert!(error.to_string().contains("changed since"), "{error}");
+    assert!(exists(&cache.join("build/deep/new.o")));
+
+    // Unchanged, it is removed.
+    let again = f.repo.worktree_removal(&cache, &[]).expect("inspect");
+    f.repo.remove_worktree(&again, &[]).expect("remove");
+    assert!(!exists(&cache));
+}

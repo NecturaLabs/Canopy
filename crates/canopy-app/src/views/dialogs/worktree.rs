@@ -343,6 +343,7 @@ mod tests {
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
             blocked: None,
+            fingerprint: 0,
         }
     }
 

@@ -171,6 +171,10 @@ pub struct WorktreeRemoval {
     pub unreachable_commits: usize,
     /// Why Canopy will not remove it, when it will not.
     pub blocked: Option<String>,
+    /// A hash of everything the removal deletes: every listed path with its status, not only the
+    /// few kept in the lists, and the names and sizes inside each ignored folder, which is listed
+    /// as one item. A reading that differs in any of it is a change since the confirmation.
+    pub fingerprint: u64,
 }
 
 /// A registered working folder that `git worktree prune` would forget.

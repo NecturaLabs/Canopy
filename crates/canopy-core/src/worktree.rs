@@ -1,6 +1,7 @@
 //! Removing a linked working folder and forgetting those that are gone: what the removal would
 //! delete, read before the user is asked and again right before git runs.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, Status, StatusOptions, Worktree, WorktreeLockStatus};
@@ -41,6 +42,31 @@ pub(crate) fn lock_reason(worktree: &Worktree) -> Option<String> {
             Some(reason.unwrap_or_default().trim_end().to_owned())
         }
         _ => None,
+    }
+}
+
+/// Adds to `hasher` the name and size of everything under `folder`, by name within each folder,
+/// without following links: what git deletes with an ignored folder, which `git status` lists as
+/// the folder alone.
+fn hash_folder(folder: &Path, hasher: &mut DefaultHasher) {
+    let mut pending = vec![folder.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            dir.hash(hasher);
+            continue;
+        };
+        let mut entries: Vec<_> = read.flatten().collect();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let Ok(meta) = entry.path().symlink_metadata() else {
+                continue;
+            };
+            entry.file_name().hash(hasher);
+            meta.len().hash(hasher);
+            if meta.is_dir() {
+                pending.push(entry.path());
+            }
+        }
     }
 }
 
@@ -99,6 +125,7 @@ impl Repo {
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
             blocked: None,
+            fingerprint: 0,
         };
         removal.blocked = if same_folder(&folder, self.workdir()) {
             Some(
@@ -187,6 +214,7 @@ impl Repo {
             | Status::INDEX_RENAMED
             | Status::INDEX_TYPECHANGE;
         let mut nested = Vec::new();
+        let mut hasher = DefaultHasher::new();
         for entry in statuses.iter() {
             let status = entry.status();
             if status.is_empty() {
@@ -200,7 +228,14 @@ impl Repo {
                 nested.push(path.to_owned());
                 continue;
             }
+            entry.path_bytes().hash(&mut hasher);
+            status.bits().hash(&mut hasher);
             if status.contains(Status::IGNORED) {
+                if entry.path_bytes().ends_with(b"/")
+                    && let Ok(path) = std::str::from_utf8(entry.path_bytes())
+                {
+                    hash_folder(&folder.join(path), &mut hasher);
+                }
                 removal.ignored.add(entry.path_bytes());
             } else if status.contains(Status::WT_NEW) && !status.intersects(index_changes) {
                 removal.untracked.add(entry.path_bytes());
@@ -208,6 +243,7 @@ impl Repo {
                 removal.modified.add(entry.path_bytes());
             }
         }
+        removal.fingerprint = hasher.finish();
         if !nested.is_empty() {
             removal.blocked = Some(format!(
                 "It contains another repository ({}). Removing the folder, which git does only with --force, would delete it with any work that is not pushed.",
