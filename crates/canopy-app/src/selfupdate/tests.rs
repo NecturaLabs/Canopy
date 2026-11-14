@@ -230,6 +230,19 @@ fn a_refused_download_address_is_shown_as_plain_short_text() {
 // ---------------------------------------------------------------------------------------------
 // Desktop entry
 
+/// Stand-in bytes for a scalable icon an earlier build shipped, and their SHA-256: the repository
+/// holds no SVG, so tests pass this digest where the real list would be.
+const STAND_IN_ICON: &str = "stand-in for a scalable icon an earlier build shipped";
+const STAND_IN_DIGEST: &str = "e4d176fcca8c1d656791f69e0cc8f495d325a01643e1d683ba214b3de049659d";
+
+#[test]
+fn the_stand_in_digest_matches_its_bytes() {
+    assert_eq!(
+        updates::sha256_hex(STAND_IN_ICON.as_bytes()),
+        STAND_IN_DIGEST
+    );
+}
+
 const DESKTOP: &str = "[Desktop Entry]\nName=Canopy\nExec=canopy %F\nIcon=io.necturalabs.Canopy\n\n[Desktop Action new-window]\nName=New Window\nExec=canopy --new-window\n";
 
 #[test]
@@ -618,7 +631,7 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
         )],
     );
     write(&png, "old png");
-    write(&svg, include_str!("legacy-test-icon.svg"));
+    write(&svg, STAND_IN_ICON);
     write(&other, "someone else's");
     let old = parse_receipt(&format!(
         "icon={}|{}\nicon={}|{}\nicon={}|{}\n",
@@ -634,7 +647,7 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
     ));
 
     let mut notes = Vec::new();
-    integrate(&root, 413, &old, &mut notes);
+    integrate_with(&root, 413, &old, &mut notes, &[STAND_IN_DIGEST]);
 
     assert_eq!(read(&png), "new png");
     assert!(!exists(&svg), "the old scalable icon is gone");
@@ -794,7 +807,7 @@ fn a_scalable_icon_that_cannot_be_removed_stays_registered() {
         .path()
         .join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
     folder(&root, &[("bin/canopy", "new")]);
-    write(&svg, include_str!("legacy-test-icon.svg"));
+    write(&svg, STAND_IN_ICON);
     let apps = svg.parent().expect("parent").to_owned();
     fs::set_permissions(&apps, fs::Permissions::from_mode(0o555)).expect("chmod");
     let old = parse_receipt(&format!(
@@ -805,7 +818,7 @@ fn a_scalable_icon_that_cannot_be_removed_stays_registered() {
     ));
 
     let mut notes = Vec::new();
-    integrate(&root, 413, &old, &mut notes);
+    integrate_with(&root, 413, &old, &mut notes, &[STAND_IN_DIGEST]);
     fs::set_permissions(&apps, fs::Permissions::from_mode(0o755)).expect("chmod back");
 
     if exists(&svg) {
