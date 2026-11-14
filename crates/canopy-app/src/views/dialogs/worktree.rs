@@ -153,8 +153,10 @@ pub(super) fn show(
                         Callout::new(
                             Tone::Danger,
                             format!(
-                                "{} no branch contains: only this folder's detached HEAD reaches them, and the removal deletes it. They stay in the repository until git cleans up, but nothing points to them.",
-                                plural(removal.unreachable_commits, "commit", "commits")
+                                "{} that no branch or tag contains: only this folder's detached HEAD reaches {n}, and the removal deletes it. {n_cap} in the repository until git cleans up, but nothing points to {n} afterwards.",
+                                plural(removal.unreachable_commits, "commit", "commits"),
+                                n = if removal.unreachable_commits == 1 { "it" } else { "them" },
+                                n_cap = if removal.unreachable_commits == 1 { "It stays" } else { "They stay" }
                             ),
                         )
                         .show(ui);
@@ -236,8 +238,13 @@ fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
         note(
             ui,
             format!(
-                "    {} no branch or tag contains lose their last reference with its HEAD",
-                plural(entry.unreachable_commits, "commit", "commits")
+                "    {} that no branch or tag contains: nothing points to {} once its HEAD is deleted",
+                plural(entry.unreachable_commits, "commit", "commits"),
+                if entry.unreachable_commits == 1 {
+                    "it"
+                } else {
+                    "them"
+                }
             ),
             p.danger,
         );
@@ -488,7 +495,7 @@ mod tests {
             "{nodes:?}"
         );
         assert!(said("HEAD and reflog, its index"));
-        assert!(said("2 commits no branch or tag contains"));
+        assert!(said("2 commits that no branch or tag contains"));
         assert!(said("a rebase in progress is lost"));
         assert!(said("submodule repositories are deleted"));
         assert!(!said("deletes nothing"), "no claim that nothing is deleted");
