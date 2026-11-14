@@ -76,6 +76,8 @@ commits since the previous build.
 
 ### Fixed
 
+- Custom command… stays in view below the programs in Settings → Integrations, past a separator,
+  however many programs the list shows; before, a long list hid it below the fold.
 - A push, pull or fetch the host refuses to sign in no longer offers Open Accounts, which cannot
   change how git signs in: the notice says the host did not accept the user name and password git
   sent, and that GitHub and GitLab take an access token as the password. Open Accounts now
