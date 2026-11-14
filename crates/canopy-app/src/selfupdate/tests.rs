@@ -230,6 +230,19 @@ fn a_refused_download_address_is_shown_as_plain_short_text() {
 // ---------------------------------------------------------------------------------------------
 // Desktop entry
 
+/// Stand-in bytes for a scalable icon an earlier build shipped, and their SHA-256: the repository
+/// holds no SVG, so tests pass this digest where the real list would be.
+const STAND_IN_ICON: &str = "stand-in for a scalable icon an earlier build shipped";
+const STAND_IN_DIGEST: &str = "e4d176fcca8c1d656791f69e0cc8f495d325a01643e1d683ba214b3de049659d";
+
+#[test]
+fn the_stand_in_digest_matches_its_bytes() {
+    assert_eq!(
+        updates::sha256_hex(STAND_IN_ICON.as_bytes()),
+        STAND_IN_DIGEST
+    );
+}
+
 const DESKTOP: &str = "[Desktop Entry]\nName=Canopy\nExec=canopy %F\nIcon=io.necturalabs.Canopy\n\n[Desktop Action new-window]\nName=New Window\nExec=canopy --new-window\n";
 
 #[test]
@@ -618,7 +631,7 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
         )],
     );
     write(&png, "old png");
-    write(&svg, "old svg");
+    write(&svg, STAND_IN_ICON);
     write(&other, "someone else's");
     let old = parse_receipt(&format!(
         "icon={}|{}\nicon={}|{}\nicon={}|{}\n",
@@ -634,13 +647,50 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
     ));
 
     let mut notes = Vec::new();
-    integrate(&root, 413, &old, &mut notes);
+    integrate_with(&root, 413, &old, &mut notes, &[STAND_IN_DIGEST]);
 
     assert_eq!(read(&png), "new png");
     assert!(!exists(&svg), "the old scalable icon is gone");
     assert_eq!(read(&other), "someone else's", "only Canopy's own icon");
     let receipt = parse_receipt(&read(&root.join(RECEIPT)));
     assert_eq!(receipt.icons.len(), 1);
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+/// A receipt line records where an icon was installed, not that its current bytes are still the
+/// ones Canopy shipped. An edited legacy SVG is the user's file and survives the upgrade.
+#[test]
+fn an_edited_registered_scalable_icon_is_preserved() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    let data = tmp.path().join("data");
+    let png = data.join("icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = data.join("icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    folder(
+        &root,
+        &[(
+            "share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png",
+            "new png",
+        )],
+    );
+    write(&png, "old png");
+    write(&svg, "the user's edited legacy svg");
+    let old = parse_receipt(&format!(
+        "icon={}|{}\nicon={}|{}\n",
+        png.display(),
+        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png")
+            .display(),
+        svg.display(),
+        root.join("share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg")
+            .display(),
+    ));
+
+    let mut notes = Vec::new();
+    integrate(&root, 413, &old, &mut notes);
+
+    assert_eq!(read(&svg), "the user's edited legacy svg");
+    assert_eq!(read(&png), "new png");
+    assert_eq!(parse_receipt(&read(&root.join(RECEIPT))).icons.len(), 1);
     assert!(notes.is_empty(), "{notes:?}");
 }
 
@@ -757,7 +807,7 @@ fn a_scalable_icon_that_cannot_be_removed_stays_registered() {
         .path()
         .join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
     folder(&root, &[("bin/canopy", "new")]);
-    write(&svg, "old svg");
+    write(&svg, STAND_IN_ICON);
     let apps = svg.parent().expect("parent").to_owned();
     fs::set_permissions(&apps, fs::Permissions::from_mode(0o555)).expect("chmod");
     let old = parse_receipt(&format!(
@@ -768,7 +818,7 @@ fn a_scalable_icon_that_cannot_be_removed_stays_registered() {
     ));
 
     let mut notes = Vec::new();
-    integrate(&root, 413, &old, &mut notes);
+    integrate_with(&root, 413, &old, &mut notes, &[STAND_IN_DIGEST]);
     fs::set_permissions(&apps, fs::Permissions::from_mode(0o755)).expect("chmod back");
 
     if exists(&svg) {
