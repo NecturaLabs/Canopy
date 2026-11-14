@@ -2461,7 +2461,7 @@ impl RepoTab {
                         self.awaiting_diff = false;
                         match result {
                             Ok(d) => {
-                                self.not_downloaded.remove(&(key.source, key.path.clone()));
+                                self.not_downloaded.remove(&(key.source, key.path));
                                 // The worker resends the same `Arc` when nothing changed.
                                 if !self.diff.as_ref().is_some_and(|old| Arc::ptr_eq(old, &d)) {
                                     self.line_sel = None;
