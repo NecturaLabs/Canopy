@@ -68,6 +68,8 @@ commits since the previous build.
 
 ### Fixed
 
+- The notification center keeps its margin above and below at the smallest window size and zoom, scrolling its list when the window is short.
+- A Settings row with both an explanation mark and a state remark (Download profile pictures) draws the remark in the accent colour with a gap, so the two marks no longer look alike.
 - Settings are written to a temporary file and renamed over the old one, on a thread of their own,
   so a crash or a full disk while saving no longer leaves a truncated file. A settings file Canopy
   cannot read is kept as `settings.json.bad` instead of being overwritten, Canopy starts with its
