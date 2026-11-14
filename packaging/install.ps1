@@ -348,20 +348,28 @@ installed build with an older one unless -Version asks for it.
         }
     }
 
+    # The process id lock folder $Lock names in its pid file, or 0 when it names none.
+    function Get-LockOwner([string]$Lock) {
+        $pidFile = Join-Path $Lock 'pid'
+        if (-not (Test-Path -LiteralPath $pidFile -PathType Leaf)) { return 0 }
+        $text = (Get-Content -LiteralPath $pidFile -TotalCount 1 -ErrorAction SilentlyContinue)
+        $owner = 0
+        if (-not [int]::TryParse(([string]$text).Trim(), [ref]$owner) -or $owner -le 0) { return 0 }
+        return $owner
+    }
+
     # Whether lock folder $Lock names, in its pid file, a process that certainly no longer exists:
     # a run that was killed leaves the lock behind. A lock without a readable process id is never
     # called stale.
     function Test-StaleLock([string]$Lock) {
-        $pidFile = Join-Path $Lock 'pid'
-        if (-not (Test-Path -LiteralPath $pidFile -PathType Leaf)) { return $false }
-        $text = (Get-Content -LiteralPath $pidFile -TotalCount 1 -ErrorAction SilentlyContinue)
-        $owner = 0
-        if (-not [int]::TryParse(([string]$text).Trim(), [ref]$owner) -or $owner -le 0) { return $false }
+        $owner = Get-LockOwner $Lock
+        if ($owner -le 0) { return $false }
         return -not (Get-Process -Id $owner -ErrorAction SilentlyContinue)
     }
 
     # Takes the install lock, shared by install and uninstall, records this process in it and
-    # returns its path. The lock of a killed run is taken over (see Test-StaleLock).
+    # returns its path. The lock of a killed run is taken over (see Test-StaleLock), and the
+    # leftovers of a takeover that was killed are removed.
     function Lock-Install([string]$Root) {
         $lock = Join-Path $Root '.lock'
         try {
@@ -370,14 +378,34 @@ installed build with an older one unless -Version asks for it.
             if (-not (Test-StaleLock $lock)) {
                 Fail "another Canopy install or uninstall is running, or was killed (remove $lock if it is not running)"
             }
+            $dead = Get-LockOwner $lock
+            # Moving is atomic, so of several runs finding the same dead lock only one gets it; it
+            # must still be the dead one's, else it was a live run's lock and goes back.
+            $stale = "$lock.stale.$PID"
             try {
-                Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction Stop
+                Move-Item -LiteralPath $lock -Destination $stale -ErrorAction Stop
+            } catch {
+                Fail "another Canopy install or uninstall is running (remove $lock if it is not)"
+            }
+            if ((Get-LockOwner $stale) -ne $dead) {
+                try { Move-Item -LiteralPath $stale -Destination $lock -ErrorAction Stop } catch { }
+                Fail "another Canopy install or uninstall is running (remove $lock if it is not)"
+            }
+            Remove-Item -LiteralPath $stale -Recurse -Force -ErrorAction SilentlyContinue
+            try {
                 [void](New-Item -ItemType Directory -Path $lock -ErrorAction Stop)
             } catch {
                 Fail "another Canopy install or uninstall is running (remove $lock if it is not)"
             }
         }
         Set-Content -LiteralPath (Join-Path $lock 'pid') -Value $PID -ErrorAction SilentlyContinue
+        # What a killed takeover left aside: a dead holder's lock that nothing needs. One that
+        # names no process, or a running one, is left (another run may be in its takeover).
+        foreach ($aside in @(Get-ChildItem -LiteralPath $Root -Directory -Filter '.lock.stale.*' -Force -ErrorAction SilentlyContinue)) {
+            if (Test-StaleLock $aside.FullName) {
+                Remove-Item -LiteralPath $aside.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
         return $lock
     }
 
