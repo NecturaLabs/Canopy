@@ -2241,12 +2241,12 @@ fn consent(
                 .icon(icon::FIRST_AID_KIT)
                 .width(DialogWidth::Form)
                 .blocking()
-                .description("If Canopy crashes, it can send a report to NecturaLabs so we can fix the problem. It also sends a short record of each session: when it started, how long it ran and how it ended.")
+                .description("If Canopy crashes, it can send a report to NecturaLabs so we can fix the problem.")
                 .body(|ui| {
                     for (glyph, text, color) in [
                         (icon::CHECK, "A report holds the error message, a stack trace, your Canopy version and your operating system.", p.success),
                         (icon::SHIELD_CHECK, "Canopy does not add your name, tokens, logs or repository files. An error message can name a file or branch.", p.accent),
-                        (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 90 days.", p.accent2),
+                        (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 30 days.", p.accent2),
                     ] {
                         bullet(ui, glyph, color, text);
                     }

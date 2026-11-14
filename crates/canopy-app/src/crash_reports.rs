@@ -7,7 +7,7 @@
 //! user and any request data, keeps only the operating system, Rust and processor-architecture
 //! contexts, and in every string hides the user's home folder (and other users' folders),
 //! credentials in URLs and access tokens (see [`scrub_text`]).
-//! Release health counts sessions under a random id that is never stored.
+//! Session tracking (release health) is off: nothing is sent unless Canopy crashes.
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
@@ -25,11 +25,11 @@ pub const DSN: &str = match option_env!("CANOPY_SENTRY_DSN") {
     }
 };
 
-/// Bumped whenever a crash report or session record starts carrying more than the Privacy Policy
+/// Bumped whenever a crash report starts carrying more than the Privacy Policy
 /// described when the user agreed. A user who said yes to an older version is asked again.
 pub const DATA_VERSION: u32 = 1;
 
-/// The client while reporting is on. Dropping it flushes and ends the session.
+/// The client while reporting is on. Dropping it flushes what is queued.
 static GUARD: Mutex<Option<sentry::ClientInitGuard>> = Mutex::new(None);
 
 /// Whether this build can send crash reports at all.
@@ -50,7 +50,7 @@ pub fn set_enabled(on: bool) {
     match (on && available(), guard.is_some()) {
         (true, false) => *guard = Some(init()),
         (false, true) => {
-            // Ends the session and stops the client; the panic hook stays but has nothing to
+            // Flushes and stops the client; the panic hook stays but has nothing to
             // send to.
             if let Some(g) = guard.take() {
                 drop(g);
@@ -61,7 +61,7 @@ pub fn set_enabled(on: bool) {
     }
 }
 
-/// Flushes and ends the session at exit.
+/// Flushes what is queued at exit.
 pub fn shutdown() {
     let mut guard = GUARD
         .lock()
@@ -87,8 +87,7 @@ fn options(home: String) -> sentry::ClientOptions {
     o.server_name = None;
     o.max_breadcrumbs = 0;
     o.attach_stacktrace = false;
-    o.auto_session_tracking = true;
-    o.session_mode = sentry::SessionMode::Application;
+    o.auto_session_tracking = false;
     o.before_send = Some(Arc::new(move |event| prepare_report(event, &home)));
     o.before_breadcrumb = Some(Arc::new(|_| None));
     // The default integrations, except that panics carry the file and line where they happened:
@@ -483,6 +482,13 @@ mod tests {
             options.transport.is_some(),
             "Sentry's own agent would be used"
         );
+    }
+
+    /// Only crash reports leave the computer: no session (release health) records, which the
+    /// Privacy Policy no longer describes.
+    #[test]
+    fn no_session_records_are_sent() {
+        assert!(!options(String::new()).auto_session_tracking);
     }
 
     #[test]

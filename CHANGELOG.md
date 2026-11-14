@@ -199,6 +199,11 @@ commits since the previous build.
   no longer look disabled; the commit summary shows its character count only once you type.
 - The Privacy Policy describes automatic submodule downloads and their Git settings controls;
   accepting the updated policy is required on the next launch.
+- Crash reporting sends only crash reports: the session records (when Canopy started, how long it
+  ran and how it ended) are no longer sent. The Privacy Policy, the crash report prompt and
+  Settings say Sentry deletes crash reports 30 days after it receives them (it said 90), and the
+  Terms name the law and courts of the country where NecturaLabs is established; accepting the
+  updated documents is required on the next launch.
 
 ### Added
 
