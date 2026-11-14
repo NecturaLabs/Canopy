@@ -11,6 +11,7 @@ mod build_info;
 mod crash_reports;
 mod highlight;
 mod hosting;
+mod housekeeping;
 mod identity_worker;
 mod keymap;
 mod lfs;
@@ -410,7 +411,7 @@ fn main() -> anyhow::Result<()> {
         Box::new(move |cc| Ok(Box::new(CanopyApp::new(cc, launch)))),
     )
     .map_err(|e| anyhow::anyhow!("could not start the window: {e}"));
-    // Ends the crash-report session (if reporting is on) and sends anything queued.
+    // Sends any queued crash report (if reporting is on).
     crash_reports::shutdown();
     selfupdate::run_requested_restart();
     result

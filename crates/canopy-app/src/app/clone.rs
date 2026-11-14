@@ -123,6 +123,8 @@ mod tests {
             opener: None,
             pending_opens: 0,
             config_reads: Vec::new(),
+            leftover_reads: Vec::new(),
+            swept: None,
             git_version: String::new(),
             updater: Updater::default(),
             identity_worker: None,

@@ -25,7 +25,7 @@ pub const TERMS: &str = include_str!("../../../../docs/legal/terms-of-service.md
 pub const PRIVACY: &str = include_str!("../../../../docs/legal/privacy-policy.md");
 
 /// "Last updated" of the Terms of Service, as `YYYY-MM-DD`.
-pub const TERMS_VERSION: &str = "2026-10-17";
+pub const TERMS_VERSION: &str = "2026-11-14";
 /// "Last updated" of the Privacy Policy, as `YYYY-MM-DD`.
 pub const PRIVACY_VERSION: &str = "2026-11-14";
 
@@ -479,7 +479,7 @@ mod tests {
         assert_eq!(last_updated(TERMS), TERMS_VERSION);
         assert_eq!(last_updated(PRIVACY), PRIVACY_VERSION);
         assert!(Document::Terms.body().starts_with("Last updated"));
-        assert_eq!(Document::Terms.updated(), "17 October 2026");
+        assert_eq!(Document::Terms.updated(), "14 November 2026");
     }
 
     /// Canopy keeps no token (ADR 0017), so no sentence may still speak of one it saved or that

@@ -72,6 +72,21 @@ commits since the previous build.
   so a crash or a full disk while saving no longer leaves a truncated file. A settings file Canopy
   cannot read is kept as `settings.json.bad` instead of being overwritten, Canopy starts with its
   default settings and the notification center says so once.
+- What a killed or failed Canopy leaves behind is cleaned up or reported, and nothing of yours is
+  deleted. At the next start Canopy removes its own staging files (the saved-token and avatar-cache
+  staging files, the patch export's and the update's folders in the temporary folder, an
+  interrupted update's staging in the install folder) once the process that made them is gone. An
+  update killed halfway through its swap is undone and the old version is back, with a
+  notification; the lock a killed update or install leaves in the install folder is taken over on
+  Linux, where Canopy can tell its process is gone. Where it cannot (no process id in the lock,
+  another system) it clears nothing and says so in a notification; so does an update it refuses
+  to clear because no Canopy would be left. A repository you open with a staging file an
+  interrupted save left in its working tree gets one notification with the path; Canopy never
+  deletes it, nor Git's own lock files. An update whose roll-back could not put every old file
+  back keeps them, and the next start refuses to delete them instead of mistaking them for a
+  finished update's leftovers. The leftovers of a lock takeover that was itself killed are cleared
+  once their process is gone. Exporting patches now stages in the temporary folder
+  instead of the folder you chose.
 - A Git setting that holds the recommended value says "(Recommended)" after it in its closed select,
   whether it was chosen by hand, written by Use recommended or read from your config, not only while
   it is unset; one that does not shows the bare value. The first branch field says "(Recommended)"
@@ -208,6 +223,11 @@ commits since the previous build.
   no longer look disabled; the commit summary shows its character count only once you type.
 - The Privacy Policy describes automatic submodule downloads and their Git settings controls;
   accepting the updated policy is required on the next launch.
+- Crash reporting sends only crash reports: the session records (when Canopy started, how long it
+  ran and how it ended) are no longer sent. The Privacy Policy, the crash report prompt and
+  Settings say Sentry deletes crash reports 30 days after it receives them (it said 90), and the
+  Terms name the law and courts of the country where NecturaLabs is established; accepting the
+  updated documents is required on the next launch.
 
 ### Added
 

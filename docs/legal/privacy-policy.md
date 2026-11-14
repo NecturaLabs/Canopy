@@ -19,7 +19,7 @@ To read this policy in Canopy, open Settings, choose Privacy and select Read nex
 
 ## What NecturaLabs receives
 
-If you turn on crash reports, Canopy sends us crash reports and session records, described below. If you leave them off, NecturaLabs receives nothing from Canopy.
+If you turn on crash reports, Canopy sends us crash reports, described below. If you leave them off, NecturaLabs receives nothing from Canopy.
 
 Canopy also records, on your computer, which versions of the Terms of Service and this policy you accepted and your answer about crash reports. This record stays on your computer.
 
@@ -40,17 +40,13 @@ Before sending a report, Canopy removes your computer's name and replaces your h
 
 The error message comes from the code that failed. It can name a file, folder, branch or remote that Canopy was working with, and occasionally quote other text it was handling. Canopy does not add your name, email address, Git identity, access tokens, logs or repository contents to a report.
 
-## Session records
-
-While crash reports are on, Canopy sends one session record each time it runs, when it closes or together with a crash report. A session record contains when the session started, how long it lasted, whether it ended normally or crashed, and the Canopy version and build type. It carries a random ID that Canopy creates at each start and never stores, so session records do not identify you and cannot be linked to each other.
-
 ## Your IP address
 
 Every internet connection reveals your IP address to the server at the other end, so Sentry sees it when Canopy sends crash data. Canopy does not put it in the data, and our Sentry project is set not to store it.
 
 ## How we use crash data
 
-We use crash reports and session records only to find and fix bugs and to see how stable each version of Canopy is. We do not use them for advertising or profiling, we do not combine them with other data, and we do not sell them. We make no automated decisions about you.
+We use crash reports only to find and fix bugs. We do not use them for advertising or profiling, we do not combine them with other data, and we do not sell them. We make no automated decisions about you.
 
 ## Legal basis
 
@@ -62,11 +58,11 @@ Sentry (Functional Software, Inc., United States) receives and stores crash data
 
 ## How long we keep crash data
 
-Sentry deletes crash reports and session records automatically 90 days after it receives them.
+Sentry deletes crash reports automatically 30 days after it receives them.
 
 ## Changing your answer
 
-To turn crash reports on or off, use Send crash reports in the Privacy section of Settings. The change takes effect immediately. When you turn reports off, Canopy sends the record of the current session and then stops sending.
+To turn crash reports on or off, use Send crash reports in the Privacy section of Settings. The change takes effect immediately.
 
 ## Update checks
 

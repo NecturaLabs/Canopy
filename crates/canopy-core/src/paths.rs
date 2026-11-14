@@ -163,9 +163,10 @@ pub(crate) fn write_atomic(dest: &Path, content: &[u8]) -> Result<()> {
         .unwrap_or_default();
     let mut attempt = 0u32;
     let (tmp, mut file) = loop {
-        let tmp: PathBuf = dir.join(format!(
-            ".{name}.canopy-{}-{attempt}.tmp",
-            std::process::id()
+        let tmp: PathBuf = dir.join(crate::leftovers::staging_file_name(
+            &name,
+            std::process::id(),
+            attempt,
         ));
         match std::fs::OpenOptions::new()
             .write(true)
@@ -282,5 +283,37 @@ mod tests {
         assert_eq!(std::fs::read(&f).unwrap(), b"two");
         let leftovers = std::fs::read_dir(dir.path().join("sub")).unwrap().count();
         assert_eq!(leftovers, 1, "no temporary files left behind");
+    }
+
+    #[test]
+    fn a_failed_write_removes_its_staging_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // The final rename cannot replace a folder, after the staging file was fully written.
+        let in_the_way = dir.path().join("f.txt");
+        std::fs::create_dir(&in_the_way).unwrap();
+        write_atomic(&in_the_way, b"content").unwrap_err();
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["f.txt"], "no staging file is left");
+    }
+
+    #[test]
+    fn a_staging_file_is_named_so_a_later_run_can_find_its_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp_name = crate::leftovers::staging_file_name("f.txt", std::process::id(), 0);
+        let f = dir.path().join("f.txt");
+        // Holding the first name makes `write_atomic` take the next attempt.
+        std::fs::write(dir.path().join(&tmp_name), "other").unwrap();
+        write_atomic(&f, b"x").unwrap();
+        assert!(
+            dir.path().join(&tmp_name).is_file(),
+            "the other file is untouched"
+        );
+        assert_eq!(
+            crate::leftovers::staging_file_owner(&tmp_name),
+            Some(std::process::id())
+        );
     }
 }
