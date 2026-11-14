@@ -411,12 +411,30 @@ installed build with an older one unless -Version asks for it.
         return $false
     }
 
+    # Deletes folder $Path and everything in it without ever entering a link, as `rm -rf` does:
+    # Windows PowerShell 5.1's Remove-Item -Recurse can follow a junction or symlink (logs or
+    # avatars may be one) and delete its target's files. A link is removed alone, a real folder is
+    # emptied first and then removed.
+    function Remove-TreeNoFollow([string]$Path) {
+        foreach ($child in @(Get-ChildItem -LiteralPath $Path -Force)) {
+            if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                if ($child.PSIsContainer) { [System.IO.Directory]::Delete($child.FullName, $false) }
+                else { [System.IO.File]::Delete($child.FullName) }
+            } elseif ($child.PSIsContainer) {
+                Remove-TreeNoFollow $child.FullName
+            } else {
+                Remove-Item -LiteralPath $child.FullName -Force
+            }
+        }
+        Remove-Item -LiteralPath $Path -Force
+    }
+
     function Invoke-Purge([bool]$Confirmed) {
         if ($Confirmed) {
             foreach ($t in Get-PurgeTargets) {
                 # Checked again: only what was listed and still qualifies goes.
                 if ((Get-PurgeVerdict $t) -eq 'delete') {
-                    Remove-Item -LiteralPath $t.Path -Recurse -Force
+                    Remove-TreeNoFollow $t.Path
                     Say "  removed $($t.Path)"
                 }
             }
