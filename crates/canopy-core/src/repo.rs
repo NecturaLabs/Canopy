@@ -187,6 +187,17 @@ impl Repo {
     /// ran into conflicts: files are conflicted while no merge, rebase or other operation is in
     /// progress. Git keeps those changes in the stash list as well until the stash is dropped.
     pub fn autostash_conflicted(&self) -> Result<bool> {
+        self.conflicted_without_operation()
+    }
+
+    /// Whether a stash applied or popped (`git stash apply`, `git stash pop`) stopped with
+    /// conflicts to resolve: files are conflicted while no operation is in progress, so there is
+    /// nothing to continue or abort. Git keeps the stash in the stash list.
+    pub fn stash_stopped_on_conflicts(&self) -> Result<bool> {
+        self.conflicted_without_operation()
+    }
+
+    fn conflicted_without_operation(&self) -> Result<bool> {
         Ok(self.state() == RepoState::Clean && self.index_conflicted()?)
     }
 
@@ -205,13 +216,17 @@ impl Repo {
         .any(|file| dir.join(file).exists())
     }
 
-    /// Whether a merge or rebase (a pull's, say) stopped with conflicts to resolve.
+    /// Whether a merge, rebase (a pull's, say), cherry-pick or revert stopped with conflicts to
+    /// resolve, to continue or abort.
     pub fn stopped_on_conflicts(&self) -> Result<bool> {
-        Ok(matches!(self.state(), RepoState::Merge | RepoState::Rebase)
-            && self.index_conflicted()?)
+        Ok(matches!(
+            self.state(),
+            RepoState::Merge | RepoState::Rebase | RepoState::CherryPick | RepoState::Revert
+        ) && self.index_conflicted()?)
     }
 
-    fn index_conflicted(&self) -> Result<bool> {
+    /// Whether any file is conflicted in the index, in whatever state the repository is.
+    pub fn index_conflicted(&self) -> Result<bool> {
         // git, not libgit2, wrote the index: read it from disk again.
         let mut index = self.git.index()?;
         index.read(true)?;
