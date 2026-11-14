@@ -1694,7 +1694,8 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
 }
 
 /// What Canopy's Message cleanup row says under its title.
-const MESSAGE_CLEANUP_HELP: &str = "What git removes from commit messages. Spaces and blank lines only keeps lines starting with #.";
+const MESSAGE_CLEANUP_HELP: &str =
+    "What git removes from commit messages. Spaces and blank lines keeps # lines.";
 
 /// What the Conflict style row says under its title; one line even at zoom 1.6, also in the
 /// smallest window (`help_fits_on_one_line`).
