@@ -1,6 +1,6 @@
 # ADR 0012: Canopy's git defaults are today's recommended practice, and pulls look before they leap
 
-**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration), 2026-10-11 (one pull recommendation), 2026-10-14 (audit of every recommendation against Git's documentation) and 2026-10-21 (second audit: `submodule.recurse` recommended off; Edit my git config, off by default)
+**Status:** accepted, amended 2026-10-10 (editable global and repository Git configuration), 2026-10-11 (one pull recommendation), 2026-10-14 (audit of every recommendation against Git's documentation), 2026-10-21 (second audit: `submodule.recurse` recommended off; Edit my git config, off by default) and 2026-11-04 (checked pull merge-commit subject)
 **Date:** 2026-10-06
 
 ## Context
@@ -151,8 +151,10 @@ planned defaults (`main`, SHA-256, reftable) change none of these keys. Every va
   rest, and Settings shows both. Turning Follow my git config off makes every outcome Canopy's.
 - A fast-forward-only default means diverged branches lead to a decision, never to a surprise
   merge commit or rewrite, unless the user's configuration chose a strategy.
-- A pull fetches once (the preview's fetch), so a credential prompt comes once too. Its merge
-  commit says "Merge remote-tracking branch 'origin/main'", where `git pull` names the URL.
+- A pull fetches once (the preview's fetch), so a credential prompt comes once too. An unchecked
+  merge keeps git's "Merge remote-tracking branch 'origin/main'" subject; a checked merge says
+  "Merge branch 'main' of origin", naming the upstream branch and remote rather than the URL while
+  merging exactly the checked commit.
 - `merge-tree --write-tree` needs git 2.38; with an older git the preview names only the files the
   incoming commits share with uncommitted changes. For a rebase the prediction merges the two
   tips: a rebase replays commit by commit and can still conflict in a commit between them.

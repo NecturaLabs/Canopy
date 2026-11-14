@@ -1334,6 +1334,11 @@ impl Repo {
             .collect();
         let tip = checked.map(|oid| oid.to_string());
         let target = tip.as_deref().unwrap_or("@{upstream}");
+        let merge_message = if tip.is_some() {
+            self.pull_merge_message()
+        } else {
+            None
+        };
         let fork_point = match (strategy, &tip) {
             (PullStrategy::Rebase | PullStrategy::RebaseMerges, Some(_)) => {
                 self.upstream_fork_point()
@@ -1359,6 +1364,9 @@ impl Repo {
             | PullStrategy::FastForwardOnly => {
                 args.extend(["merge", "--no-edit"]);
                 args.extend(self.pull_autostash_flag(false)?);
+                if let Some(message) = &merge_message {
+                    args.extend(["-m", message]);
+                }
                 args.push(match strategy {
                     PullStrategy::MergeNoFastForward => "--no-ff",
                     PullStrategy::FastForwardOnly => "--ff-only",

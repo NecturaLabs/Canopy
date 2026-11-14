@@ -413,9 +413,7 @@ impl CanopyApp {
                     if view.is_default() {
                         self.settings.repo_requests.remove(&repo);
                     } else {
-                        self.settings
-                            .repo_requests
-                            .insert(repo.clone(), view.clone());
+                        self.settings.repo_requests.insert(repo.clone(), view);
                     }
                 }
                 Action::SetRepoDiff { path, prefs } => {
