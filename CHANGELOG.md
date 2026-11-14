@@ -76,6 +76,8 @@ commits since the previous build.
 
 ### Fixed
 
+- Custom command… stays in view below the programs in Settings → Integrations, past a separator,
+  however many programs the list shows; before, a long list hid it below the fold.
 - Settings → Git and This repository no longer offer `matching` and `nothing` as Push destination
   choices: Canopy's own push understands `simple`, `upstream` and `current`, and `matching` pushes
   every branch with a same-named branch on the remote. A value your own git configuration holds
