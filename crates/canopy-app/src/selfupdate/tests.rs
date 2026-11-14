@@ -584,6 +584,35 @@ fn a_kill_while_moving_the_new_version_in_is_rolled_back_by_the_next_sweep() {
     );
 }
 
+/// Killed while moving the new version in, and the old version cannot be put back (here its
+/// folder cannot be read): the sweep refuses and keeps both halves for the installer to repair,
+/// instead of deleting the staged rest of the new version and the old one.
+#[cfg(unix)]
+#[test]
+fn a_halfway_swap_that_cannot_be_put_back_keeps_both_versions() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[
+            ("bin/canopy", "new binary"),
+            (".previous.1-1-0/bin/canopy", "old binary"),
+            (".previous.1-1-0/share/old", "old share"),
+            (".staging.1-1-1/new/share/new", "new share"),
+        ],
+    );
+    let previous = root.join(".previous.1-1-0");
+    fs::set_permissions(&previous, fs::Permissions::from_mode(0o000)).expect("lock");
+    let swept = sweep(&root);
+    fs::set_permissions(&previous, fs::Permissions::from_mode(0o755)).expect("unlock");
+    let refusal = swept.expect_err("refused");
+    assert!(refusal.contains("run the installer again"), "{refusal}");
+    assert_eq!(read(&root.join(".staging.1-1-1/new/share/new")), "new share");
+    assert_eq!(read(&previous.join("share/old")), "old share");
+    assert_eq!(read(&root.join("bin/canopy")), "new binary");
+}
+
 /// Killed after the swap finished, before the old files were deleted: the new version is whole
 /// and only the old copy is cleared.
 #[test]

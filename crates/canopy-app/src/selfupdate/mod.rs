@@ -1007,6 +1007,14 @@ fn sweep(root: &Path) -> Result<bool, String> {
             .filter_map(|entry| entry.file_name().map(ToOwned::to_owned))
             .collect();
         previous.retain(|dir| !put_back(root, dir, &waiting));
+        // The old version could not all be put back: `root` holds parts of both versions, and
+        // the staged rest of the new one and the old one are the only copies. Keep them.
+        if !previous.is_empty() {
+            return Err(format!(
+                "{} holds an update that was interrupted halfway and could not be undone: run the installer again to repair it",
+                root.display()
+            ));
+        }
     }
     let restored = previous.len() < found;
     if !previous.is_empty() && !root.join("bin/canopy").is_file() {
