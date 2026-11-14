@@ -59,6 +59,17 @@ pub enum Op {
         candidates: Vec<canopy_core::StaleCandidate>,
         older_than_days: u32,
     },
+    /// Remove a linked working folder (`git worktree remove`), provided it is still what the
+    /// user confirmed: it carries what the confirmation listed.
+    RemoveWorktree {
+        removal: Box<canopy_core::WorktreeRemoval>,
+        /// The folders the application's other tabs have open when the removal runs; the
+        /// application fills it in as the operation is sent.
+        open_in: Vec<canopy_core::OpenFolder>,
+    },
+    /// Forget the working folders that are gone (`git worktree prune`), provided they are still
+    /// the ones the user confirmed.
+    ForgetWorktrees(Box<canopy_core::WorktreeForget>),
     AddIgnore {
         rule: canopy_core::IgnoreRule,
         target: canopy_core::IgnoreTarget,
@@ -315,6 +326,18 @@ impl Op {
             ),
             Self::UpdateFromBase { base, .. } => format!("Updating from {base}"),
             Self::CleanStale { .. } => "Cleaning up stale worktrees and branches".into(),
+            Self::RemoveWorktree { removal, .. } => {
+                format!("Removing worktree {}", removal.path.display())
+            }
+            Self::ForgetWorktrees(forget) => format!(
+                "Forgetting {} missing {}",
+                forget.entries.len(),
+                if forget.entries.len() == 1 {
+                    "worktree"
+                } else {
+                    "worktrees"
+                }
+            ),
             Self::Stage(_) | Self::StageAll => "Staging".into(),
             Self::AddIgnore { .. } => "Adding ignore rule".into(),
             Self::StopTracking(path) => format!("Untracking {path}"),
@@ -447,6 +470,18 @@ pub enum Job {
     StaleCandidates {
         serial: u64,
         older_than_days: u32,
+    },
+    /// What removing the linked working folder `path` would delete; the serial ties the reply
+    /// to the newest request.
+    WorktreeRemoval {
+        serial: u64,
+        path: PathBuf,
+        /// The folders the application's other tabs have open.
+        open_in: Vec<canopy_core::OpenFolder>,
+    },
+    /// What `git worktree prune` would forget; the serial ties the reply to the newest request.
+    WorktreeForget {
+        serial: u64,
     },
     /// Local repository and branch metrics, loaded only when requested.
     Insights(u64),
@@ -588,6 +623,14 @@ pub enum Event {
     StaleCandidates {
         serial: u64,
         result: Result<Arc<[canopy_core::StaleCandidate]>, String>,
+    },
+    WorktreeRemoval {
+        serial: u64,
+        result: Result<Box<canopy_core::WorktreeRemoval>, String>,
+    },
+    WorktreeForget {
+        serial: u64,
+        result: Result<Box<canopy_core::WorktreeForget>, String>,
     },
     Insights {
         serial: u64,
@@ -1156,6 +1199,8 @@ impl Job {
             Self::RetryDownloads => "retry-downloads",
             Self::Ignore { .. } => "ignore",
             Self::StaleCandidates { .. } => "stale_candidates",
+            Self::WorktreeRemoval { .. } => "worktree_removal",
+            Self::WorktreeForget { .. } => "worktree_forget",
             Self::MergedBranches { .. } => "merged_branches",
             Self::BaseCompare { .. } => "base_compare",
             Self::RefreshStatus => "status",
@@ -1335,6 +1380,28 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         result: repo
                             .stale_candidates(older_than_days, chrono::Utc::now().timestamp())
                             .map(Arc::from)
+                            .map_err(|error| error.to_string()),
+                    });
+                }
+                Job::WorktreeRemoval {
+                    serial,
+                    path,
+                    open_in,
+                } => {
+                    emit(Event::WorktreeRemoval {
+                        serial,
+                        result: repo
+                            .worktree_removal(&path, &open_in)
+                            .map(Box::new)
+                            .map_err(|error| error.to_string()),
+                    });
+                }
+                Job::WorktreeForget { serial } => {
+                    emit(Event::WorktreeForget {
+                        serial,
+                        result: repo
+                            .forget_preview()
+                            .map(Box::new)
                             .map_err(|error| error.to_string()),
                     });
                 }
@@ -2172,6 +2239,20 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
                 candidates.len()
             ))
         }
+        Op::RemoveWorktree { removal, open_in } => repo
+            .remove_worktree(&removal, &open_in)
+            .map(|()| format!("Removed worktree {}", removal.path.display())),
+        Op::ForgetWorktrees(forget) => repo.forget_worktrees(&forget).map(|()| {
+            format!(
+                "Forgot {} missing {}",
+                forget.entries.len(),
+                if forget.entries.len() == 1 {
+                    "worktree"
+                } else {
+                    "worktrees"
+                }
+            )
+        }),
         Op::AddIgnore { rule, target } => repo.add_ignore_rule(&rule, target).map(|out| {
             format!(
                 "{} {} in {}.",
@@ -4518,6 +4599,22 @@ mod read_tests {
                 start: None,
                 checkout: true,
             },
+            Op::RemoveWorktree {
+                removal: Box::new(canopy_core::WorktreeRemoval {
+                    path: repo.join("../elsewhere"),
+                    branch: None,
+                    head: None,
+                    modified: canopy_core::WorktreeLoss::default(),
+                    untracked: canopy_core::WorktreeLoss::default(),
+                    ignored: canopy_core::WorktreeLoss::default(),
+                    unreachable_commits: 0,
+                    blocked: None,
+                    operation: None,
+                    fingerprint: 0,
+                }),
+                open_in: Vec::new(),
+            },
+            Op::ForgetWorktrees(Box::default()),
             // git-lfs is a program the repository's own configuration steers.
             Op::LfsPull,
             Op::LfsFetch,

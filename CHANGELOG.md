@@ -10,6 +10,24 @@ commits since the previous build.
 
 ### Added
 
+- Remove a linked worktree: Remove worktree... in the Worktrees section's row menu and in the
+  command palette. The confirmation names the folder, says its branch stays with its commits, and
+  lists what the removal deletes: modified and untracked files, ignored files and folders, commits
+  only a detached `HEAD` there reaches, a rebase or bisect in progress, and the folder's `HEAD`
+  reflog, `config.worktree` and `refs/worktree/*` (commits only that reflog holds are lost). A
+  folder with changes or untracked files asks a second time before git deletes them
+  (`git worktree remove --force`); a clean one is removed without `--force`. The checks run again
+  just before git, and a folder that changed since the confirmation is refused. Not removed: the
+  main folder, the one open in this tab or in another, a locked one, one with submodule
+  repositories (initialized, or kept after `git submodule deinit`), and one with another
+  repository or worktree inside it, also in an ignored folder.
+- The Worktrees section lists folders that are missing and locked ones with git's reason. Forget
+  missing worktrees... (`git worktree prune`) asks git which ones it would forget (in English, so
+  the answer parses in any language), lists each with git's reason, says what forgetting deletes in
+  the repository (`HEAD` and reflog, index, `config.worktree`, `refs/worktree/*`, submodule
+  repositories, rebase or bisect state) and names the ones holding commits no branch, remote branch
+  or tag has. It refuses when git would forget more than was shown, a `HEAD` cannot be read, or a
+  folder's name in the repository cannot be told apart from another's (#90).
 - Tabs that are open but not shown load only when you first show them. Restoring a session, or
   opening several repositories from the command line, loads the tab you see at once and lists the
   others by name in the tab strip; each one reads its repository, starts watching its files and

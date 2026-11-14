@@ -36,6 +36,20 @@ impl CanopyApp {
                         self.dialogs.open(Dialog::CleanStale(Box::new(form)));
                     }
                 }
+                Action::RemoveWorktree(path) => {
+                    if let Some(tab) = self.tab() {
+                        let serial = tab.read_worktree_removal(path.clone());
+                        let form = dialogs::RemoveWorktreeForm::new(tab.path.clone(), path, serial);
+                        self.dialogs.open(Dialog::RemoveWorktree(Box::new(form)));
+                    }
+                }
+                Action::ForgetWorktrees => {
+                    if let Some(tab) = self.tab() {
+                        let serial = tab.read_worktree_forget();
+                        let form = dialogs::ForgetWorktreesForm::new(tab.path.clone(), serial);
+                        self.dialogs.open(Dialog::ForgetWorktrees(Box::new(form)));
+                    }
+                }
                 Action::CleanMerged => {
                     if let Some(tab) = self.tab() {
                         let serial = tab.read_merged(true);
@@ -79,7 +93,20 @@ impl CanopyApp {
                         t.op(op);
                     }
                 }
-                Action::OpIn { repo, op } => {
+                Action::OpIn { repo, mut op } => {
+                    // The folders other tabs have open are read as the removal is sent, so a tab
+                    // opened since the confirmation counts.
+                    if let Op::RemoveWorktree { open_in, .. } = &mut op {
+                        *open_in = self
+                            .tabs
+                            .iter()
+                            .filter(|t| t.path != repo)
+                            .map(|t| canopy_core::OpenFolder {
+                                path: t.path.clone(),
+                                name: t.name.clone(),
+                            })
+                            .collect();
+                    }
                     if let Some(t) = self.tab_at(&repo) {
                         t.op(op);
                     }
@@ -975,6 +1002,158 @@ mod tests {
             .expect("new reply");
         app.tabs[0].poll(&[]);
         assert!(matches!(&app.tabs[0].stale_result, Some(Ok(rows)) if rows.is_empty()));
+    }
+
+    /// #90: removing a worktree asks the repository thread what it would delete (a fresh answer
+    /// for every request, older ones dropped) and carries which other tab has the folder open.
+    #[test]
+    fn removing_a_worktree_reads_what_it_would_delete_and_knows_other_tabs() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let (worker, events, jobs) = crate::worker::Worker::detached();
+        let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+        let path = tab.path.clone();
+        tab.worker = worker;
+        tab.open_elsewhere = vec![(PathBuf::from("/work/wt-b"), "Review".into())];
+        app.tabs.push(tab);
+        let folder = PathBuf::from("/work/wt-a");
+        app.apply(&ctx, vec![Action::RemoveWorktree(folder.clone())]);
+        let Job::WorktreeRemoval {
+            serial: first,
+            path: asked,
+            open_in,
+        } = jobs.recv().expect("reading")
+        else {
+            panic!("the reading runs on the repository worker")
+        };
+        assert_eq!(asked, folder);
+        assert_eq!(
+            open_in,
+            vec![canopy_core::OpenFolder {
+                path: PathBuf::from("/work/wt-b"),
+                name: "Review".into()
+            }],
+            "core is told which folders other tabs hold"
+        );
+        assert!(
+            matches!(app.dialogs.current(), Some(Dialog::RemoveWorktree(form)) if form.repo == path && form.path == folder)
+        );
+        app.apply(
+            &ctx,
+            vec![Action::RemoveWorktree(PathBuf::from("/work/wt-b"))],
+        );
+        let Job::WorktreeRemoval { serial: second, .. } = jobs.recv().expect("fresh reading")
+        else {
+            panic!("fresh reading")
+        };
+        assert_ne!(first, second);
+        events
+            .send(crate::worker::Event::WorktreeRemoval {
+                serial: first,
+                result: Err("old".into()),
+            })
+            .expect("old reply");
+        app.tabs[0].poll(&[]);
+        assert!(app.tabs[0].worktree_removal.is_none());
+        events
+            .send(crate::worker::Event::WorktreeRemoval {
+                serial: second,
+                result: Err("new".into()),
+            })
+            .expect("new reply");
+        app.tabs[0].poll(&[]);
+        assert!(matches!(&app.tabs[0].worktree_removal, Some(Err(e)) if e == "new"));
+    }
+
+    /// #90: the folders other tabs have open are read as the removal is sent, so a tab opened
+    /// between the confirmation and the click still holds its folder.
+    #[test]
+    fn a_removal_is_sent_with_the_folders_other_tabs_have_open_now() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let (worker, _events, jobs) = crate::worker::Worker::detached();
+        let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+        let repo = tab.path.clone();
+        tab.worker = worker;
+        app.tabs.push(tab);
+        let mut other = test_tab(canopy_core::RepoSnapshot::default());
+        other.path = PathBuf::from("/work/wt-b");
+        other.name = "Review".into();
+        app.tabs.push(other);
+        let removal = canopy_core::WorktreeRemoval {
+            path: PathBuf::from("/work/wt-b"),
+            branch: None,
+            head: None,
+            modified: canopy_core::WorktreeLoss::default(),
+            untracked: canopy_core::WorktreeLoss::default(),
+            ignored: canopy_core::WorktreeLoss::default(),
+            unreachable_commits: 0,
+            blocked: None,
+            operation: None,
+            fingerprint: 0,
+        };
+        app.apply(
+            &ctx,
+            vec![Action::OpIn {
+                repo,
+                op: Op::RemoveWorktree {
+                    removal: Box::new(removal),
+                    open_in: Vec::new(),
+                },
+            }],
+        );
+        let Job::Op(Op::RemoveWorktree { open_in, .. }) = jobs.recv().expect("the operation")
+        else {
+            panic!("the removal runs on the repository worker")
+        };
+        assert_eq!(
+            open_in,
+            vec![canopy_core::OpenFolder {
+                path: PathBuf::from("/work/wt-b"),
+                name: "Review".into()
+            }]
+        );
+    }
+
+    /// #90: forgetting asks the repository thread what git would forget (a fresh answer for every
+    /// request, older ones dropped) instead of listing what the snapshot thinks is missing.
+    #[test]
+    fn forgetting_worktrees_reads_what_git_would_forget() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let (worker, events, jobs) = crate::worker::Worker::detached();
+        let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+        let path = tab.path.clone();
+        tab.worker = worker;
+        app.tabs.push(tab);
+        app.apply(&ctx, vec![Action::ForgetWorktrees]);
+        let Job::WorktreeForget { serial: first } = jobs.recv().expect("reading") else {
+            panic!("the reading runs on the repository worker")
+        };
+        assert!(
+            matches!(app.dialogs.current(), Some(Dialog::ForgetWorktrees(form)) if form.repo == path)
+        );
+        app.apply(&ctx, vec![Action::ForgetWorktrees]);
+        let Job::WorktreeForget { serial: second } = jobs.recv().expect("fresh reading") else {
+            panic!("fresh reading")
+        };
+        assert_ne!(first, second);
+        events
+            .send(crate::worker::Event::WorktreeForget {
+                serial: first,
+                result: Err("old".into()),
+            })
+            .expect("old reply");
+        app.tabs[0].poll(&[]);
+        assert!(app.tabs[0].worktree_forget.is_none());
+        events
+            .send(crate::worker::Event::WorktreeForget {
+                serial: second,
+                result: Ok(Box::default()),
+            })
+            .expect("new reply");
+        app.tabs[0].poll(&[]);
+        assert!(matches!(&app.tabs[0].worktree_forget, Some(Ok(f)) if f.entries.is_empty()));
     }
 
     /// The force push question names the branch and where it goes, which the repository thread

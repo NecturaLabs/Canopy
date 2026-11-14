@@ -88,6 +88,12 @@ pub const OVERLAYS: &[&str] = &[
     "lfs-locks",
     "search-changes",
     "clean-stale",
+    "remove-worktree",
+    "remove-worktree-dirty",
+    "remove-worktree-delete",
+    "forget-worktrees",
+    "worktrees",
+    "menu-worktree",
     "clean-merged",
     "update-from-base",
     "flow-init",
@@ -223,6 +229,9 @@ pub struct CanopyApp {
     settings: Settings,
     tabs: Vec<RepoTab>,
     active: usize,
+    /// What the other tabs' folders were hashed to when the active tab was last told them, so
+    /// the list is rebuilt only when a tab opens, closes, moves or is chosen.
+    elsewhere_key: u64,
     /// The dialog on screen and those waiting behind it (start-up notices after the consent,
     /// dialogs that arrived while a credential prompt was open).
     dialogs: DialogStack,
@@ -421,6 +430,7 @@ impl CanopyApp {
             settings,
             tabs: Vec::new(),
             active: 0,
+            elsewhere_key: 0,
             dialogs: DialogStack::default(),
             settings_screen: None,
             folder_picker: crate::ui::folder_picker::FolderPicker::default(),
@@ -1132,6 +1142,29 @@ impl eframe::App for CanopyApp {
                     &mut actions,
                 );
             });
+        // The sidebar says which tab holds a working folder that cannot be removed from here.
+        let elsewhere_key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.active.hash(&mut hasher);
+            for tab in &self.tabs {
+                (&tab.path, &tab.name).hash(&mut hasher);
+            }
+            hasher.finish()
+        };
+        if elsewhere_key != self.elsewhere_key {
+            self.elsewhere_key = elsewhere_key;
+            let elsewhere: Vec<(PathBuf, String)> = self
+                .tabs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != self.active)
+                .map(|(_, t)| (t.path.clone(), t.name.clone()))
+                .collect();
+            if let Some(tab) = self.tabs.get_mut(self.active) {
+                tab.open_elsewhere = elsewhere;
+            }
+        }
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
                 .exact_size(m.action_bar_height)
@@ -1318,6 +1351,8 @@ impl eframe::App for CanopyApp {
                 Dialog::Ignore(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::Lfs(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::CleanStale(form) => self.tabs.iter().find(|t| t.path == form.repo),
+                Dialog::RemoveWorktree(form) => self.tabs.iter().find(|t| t.path == form.repo),
+                Dialog::ForgetWorktrees(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 _ => self.tabs.get(self.active),
             };
             match dialogs::show(
@@ -1718,6 +1753,7 @@ pub(super) fn test_app() -> CanopyApp {
         settings: Settings::default(),
         tabs: Vec::new(),
         active: 0,
+        elsewhere_key: 0,
         dialogs: DialogStack::default(),
         settings_screen: None,
         folder_picker: crate::ui::folder_picker::FolderPicker::default(),

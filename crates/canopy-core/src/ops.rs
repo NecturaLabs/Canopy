@@ -818,7 +818,9 @@ impl Repo {
 
     /// Switches to a local branch.
     pub fn checkout_branch(&self, name: &str) -> Result<()> {
-        self.switch_cmd(&["-q", "--", name]).map(drop)
+        self.switch_cmd(&["-q", "--", name])
+            .map(drop)
+            .map_err(|error| self.explain_missing_worktree(error))
     }
 
     /// Checks out a remote branch: switches to the local branch of the same name if it exists,

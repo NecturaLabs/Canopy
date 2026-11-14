@@ -44,6 +44,7 @@ pub mod status;
 pub mod submodule;
 pub mod tools;
 pub mod update;
+mod worktree;
 
 pub use blame::{Blame, BlameCommit, BlameLine};
 pub use conflict::{

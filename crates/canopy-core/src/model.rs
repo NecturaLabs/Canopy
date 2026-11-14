@@ -110,6 +110,129 @@ pub struct WorktreeInfo {
     pub current: bool,
     /// It is the main working folder, the one the others were added from.
     pub main: bool,
+    /// Whether the folder can be opened.
+    pub state: WorktreeState,
+    /// `git worktree lock`ed: the reason, empty when none was given. A locked folder is never
+    /// removed or forgotten by Canopy (it may be on a drive that is not plugged in).
+    pub locked: Option<String>,
+}
+
+/// Whether a registered working folder can be opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeState {
+    /// The folder exists and is readable.
+    Ready,
+    /// Git knows the folder but it, or the `.git` file in it, is gone (deleted or moved by hand,
+    /// or on a drive that is not plugged in). `git worktree prune` forgets it unless it is
+    /// locked.
+    Missing,
+    /// The folder exists but Canopy cannot read it as a working folder (not a Git checkout any
+    /// more, or owned by someone else).
+    Unreadable,
+}
+
+/// A working folder another tab of the application has open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenFolder {
+    /// The folder, as that tab spells it.
+    pub path: PathBuf,
+    /// What the tab is called.
+    pub name: String,
+}
+
+/// A kind of change a worktree removal would lose: how many, and the first few of them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorktreeLoss {
+    /// How many files (ignored: files or folders git reports as one item) there are.
+    pub count: usize,
+    /// The first of them, relative to the working folder, as text for display (a name that is
+    /// not valid UTF-8 is shown with replacement characters).
+    pub first: Vec<String>,
+}
+
+/// What removing a linked working folder would delete, read before asking the user and again
+/// right before git runs ([`crate::Repo::remove_worktree`] refuses when it differs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeRemoval {
+    /// The working folder.
+    pub path: PathBuf,
+    /// The branch checked out there, which stays after the removal; `None` when detached.
+    pub branch: Option<String>,
+    /// The commit its `HEAD` is at.
+    pub head: Option<Oid>,
+    /// Tracked files with changes, staged or not, and conflicted ones.
+    pub modified: WorktreeLoss,
+    /// Files git does not track and does not ignore.
+    pub untracked: WorktreeLoss,
+    /// Ignored files and folders, which git deletes without asking.
+    pub ignored: WorktreeLoss,
+    /// Commits only this folder's detached `HEAD` reaches (none when a branch is checked out
+    /// there): no branch contains them, and the removal deletes the `HEAD` and its reflog.
+    pub unreachable_commits: usize,
+    /// Why Canopy will not remove it, when it will not.
+    pub blocked: Option<String>,
+    /// A rebase, bisect, merge, cherry-pick or revert in progress in this folder: its state is
+    /// kept in the folder's administrative files, which the removal deletes.
+    pub operation: Option<String>,
+    /// A hash of everything the removal deletes: every listed path with its status, not only the
+    /// few kept in the lists, and the names and sizes inside each ignored folder, which is listed
+    /// as one item. A reading that differs in any of it is a change since the confirmation.
+    pub fingerprint: u64,
+}
+
+/// A registered working folder that `git worktree prune` would forget.
+///
+/// Forgetting deletes the administrative folder `.git/worktrees/<id>`: its `HEAD` and reflog, its
+/// index, any submodule repositories under `modules/` and any rebase or bisect state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgottenWorktree {
+    /// The folder's name inside `.git/worktrees`.
+    pub id: String,
+    /// The working folder it points to.
+    pub path: PathBuf,
+    /// Git's reason for forgetting it.
+    pub reason: String,
+    /// Canopy also sees its folder as gone (the `.git` file is not there), and it is unlocked.
+    /// One that is not (it exists but cannot be read, say) is forgotten by git all the same, which
+    /// blocks the forgetting: the user was not told it was missing.
+    pub gone: bool,
+    /// The branch its `HEAD` names; `None` when detached.
+    pub branch: Option<String>,
+    /// The commit its `HEAD` is at.
+    pub head: Option<Oid>,
+    /// Commits only this folder's detached `HEAD` reaches: no branch, remote branch or tag
+    /// contains them, and forgetting it deletes the `HEAD`.
+    pub unreachable_commits: usize,
+    /// It has submodule repositories under `.git/worktrees/<id>/modules`.
+    pub submodule_repositories: bool,
+    /// A rebase, bisect, merge, cherry-pick or revert is in progress there, and is lost.
+    pub operation: Option<String>,
+}
+
+/// What `git worktree prune` would forget.
+///
+/// Read right before asking the user and again right before git runs
+/// ([`crate::Repo::forget_worktrees`] refuses when it differs).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorktreeForget {
+    /// Git's own set, by id.
+    pub entries: Vec<ForgottenWorktree>,
+    /// Why Canopy will not run it, when it will not.
+    pub blocked: Option<String>,
+}
+
+impl WorktreeRemoval {
+    /// Git refuses to remove it without `--force`: it holds changes or untracked files.
+    #[must_use]
+    pub const fn needs_force(&self) -> bool {
+        self.modified.count + self.untracked.count > 0
+    }
+
+    /// How many changed and untracked files `--force` would delete.
+    #[must_use]
+    pub const fn changed_files(&self) -> usize {
+        self.modified.count + self.untracked.count
+    }
 }
 
 /// The kind of repository item offered for stale cleanup.

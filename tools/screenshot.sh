@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|consent-updated|crash-consent|legal|credential|host-key|merge|identity|settings-git|settings-git-pull|settings-git-commits|settings-git-config|clear-identity|update-installed|update-running|trust-prompt|trust-banner|trust-safety-off|privacy-trust-off|diff-options|settings-integrations|settings-integrations-custom|settings-accounts|settings-updates|settings-notifications|settings-keyboard|settings-backup|settings-repository|settings-repository-pull|settings-repository-diffs|settings-search|settings-search-none|about|repository-insights|file-history|file-history-commit|lfs|lfs-patterns|lfs-locks|search-changes|clean-stale|author-card|request-filters|request-sort|commit-expanded|commit-compact|amend-commit|toasts|notifications|branch-selected|long-message|gallery|menu-branch|menu-commit|menu-file|menu-lfs-file|blame|<dialog>]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|consent-updated|crash-consent|legal|credential|host-key|merge|identity|settings-git|settings-git-pull|settings-git-commits|settings-git-config|clear-identity|update-installed|update-running|trust-prompt|trust-banner|trust-safety-off|privacy-trust-off|diff-options|settings-integrations|settings-integrations-custom|settings-accounts|settings-updates|settings-notifications|settings-keyboard|settings-backup|settings-repository|settings-repository-pull|settings-repository-diffs|settings-search|settings-search-none|about|repository-insights|file-history|file-history-commit|lfs|lfs-patterns|lfs-locks|search-changes|clean-stale|remove-worktree|remove-worktree-dirty|remove-worktree-delete|forget-worktrees|worktrees|menu-worktree|author-card|request-filters|request-sort|commit-expanded|commit-compact|amend-commit|toasts|notifications|branch-selected|long-message|gallery|menu-branch|menu-commit|menu-file|menu-lfs-file|blame|<dialog>]
 #                            [--style standard|deeper] [--density comfortable|dense] [--request-density comfortable|dense]
 #                            [--translucent on|off]
 #                            [--contrast on|off] [--custom-theme SPEC]
@@ -14,6 +14,12 @@
 # menu-* opens a context menu by a right click once the window has settled: the feature/auth
 # branch row's, the top commit row's or the src/main.rs changed file row's (the
 # showcase fixture's names).
+#
+# worktrees opens the sidebar's Worktrees section; menu-worktree also right-clicks the first row
+# named wt-... (create linked folders beside the repository with git worktree add). remove-worktree
+# opens the removal confirmation for the first removable linked folder, remove-worktree-dirty and
+# remove-worktree-delete (the second, destructive question) for the last one; forget-worktrees
+# asks to forget the missing ones.
 #
 # blame clicks the Blame button of the file the Changes view selects first, and shows its blame.
 #

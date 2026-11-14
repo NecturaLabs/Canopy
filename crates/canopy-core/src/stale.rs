@@ -250,7 +250,7 @@ impl Repo {
 
 /// Git status and even non-force worktree removal trust these flags. Refuse the worktree
 /// rather than treating skipped file checks as proof that all tracked files are unchanged.
-fn worktree_index_protection(repo: &Repository) -> Result<Option<String>> {
+pub(crate) fn worktree_index_protection(repo: &Repository) -> Result<Option<String>> {
     let mut index = repo.index()?;
     index.read(true)?;
     for entry in index.iter() {
