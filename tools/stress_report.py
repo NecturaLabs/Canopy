@@ -32,7 +32,7 @@ from collections import Counter, defaultdict
 LIMITS = {
     "all_loaded_s": 120.0,  # last tab's first snapshot, seconds after start
     "repo_loaded_s": 60.0,  # p95 of the tabs' first snapshots
-    "first_frame_ms": 2000.0,  # needs the `first frame` event (not logged yet)
+    "first_frame_ms": 2000.0,  # the `first frame` event (INFO)
     "idle_cpu_median": 2.0,  # percent of one core, 100 tabs idle
     "idle_cpu_p95": 5.0,
     "rss_peak_mib": 4096.0,
@@ -590,8 +590,8 @@ def main():
             verdict.check("first frame", log.first_frame_ms <= LIMITS["first_frame_ms"],
                           f"{log.first_frame_ms:.0f} ms", f"<= {LIMITS['first_frame_ms']:g} ms")
         else:
-            print("  first frame: not logged (the app has no `first frame` event yet)")
-            verdict.na("first frame", "app does not log it yet")
+            print("  first frame: no `first frame` event (an older build, or the run's window starts after it)")
+            verdict.na("first frame", "no `first frame` event in the log")
         if log.tabs_loaded_event:
             print(f"  `tabs loaded` event: {head(json.dumps(log.tabs_loaded_event[1]), 120)}")
 
@@ -678,12 +678,12 @@ def main():
         if expect and len(log.repo_events) < expect:
             print(f"  only {len(log.repo_events)} of {expect} repositories logged anything")
 
-        # frames (instrumentation not in the app yet)
+        # frames: DEBUG `frame stats` events, about every 5 s while frames are produced
         section("Frame times   [message `frame stats`]")
         if not log.frames:
-            print("  none: the app does not log frame times yet (needed instrumentation, see")
-            print("  docs/stress-test.md). Judge scrolling and tab switching by eye until it does.")
-            verdict.na("frame times", "app does not log them yet")
+            print("  none: no `frame stats` events (they are DEBUG: run with the Detailed log level, see")
+            print("  docs/stress-test.md; an idle app produces no frames and so no events).")
+            verdict.na("frame times", "no `frame stats` events (log level too low, or no frames)")
         else:
             total = hitches = 0
             worst = []
@@ -901,7 +901,7 @@ def main():
     review = sum(1 for v in verdict.items if v[1] == "REVIEW")
     print(f"  {sum(1 for v in verdict.items if v[1] == 'PASS')} passed, {fails} failed, "
           f"{review} to review, {na} not measurable")
-    print("  Criteria that need app instrumentation (frame times, first frame) are `n/a` until it exists.")
+    print("  Criteria whose events are missing from the log (frame times, first frame, other instrumentation) are `n/a`.")
 
     if args.json:
         summary["verdict"] = [dict(name=n, status=s, value=str(v), limit=l) for n, s, v, l in verdict.items]

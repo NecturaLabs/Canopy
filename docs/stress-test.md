@@ -38,23 +38,31 @@ detail) sets the detail; `tools/stress.sh open` sets `CANOPY_LOG` to the Detaile
 | `job done` | DEBUG | `job` (`details`, `diff`, `conflict`, `head-message`, `squash-message`, `operation`), `ms` | Detailed | job durations |
 | `operation started` / `operation succeeded` / `operation failed` | INFO / INFO / WARN | `operation` (a label such as `Fetching` or `Checking out feature/x`), `ms`, `error` | Normal | operation durations, hung operations |
 | `git finished` / `git failed` | DEBUG / WARN | `command`, `args`, `ms`, `exit`, `stderr` | Detailed | git command durations |
+| `frame stats` | DEBUG | `frames`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`, `hitches_33` (frames over 33 ms), `hitches_100` | Detailed | frame times, about every 5 s while frames are produced (below) |
+| `first frame` | INFO | `ms` since process start | Normal | start-up criterion |
 | `cannot open the repository`, `snapshot failed` | WARN | `error` | Normal | tabs that did not load |
 | `log size limit reached` | WARN | none | Normal | the log stopped growing at 20 MiB |
+
+### Frame events
+
+`frame stats` and `first frame` are logged by `crates/canopy-app/src/frame_stats.rs`. A frame's
+time is the CPU time eframe reports for it: the UI pass, tessellation and painting, without the
+wait for the display. The percentiles come from a fixed histogram with 0.25 ms buckets up to
+100 ms (a percentile is the upper edge of its bucket, never above `max_ms`; `max_ms` is exact), so
+recording a frame is one array increment and allocates nothing. A `frame stats` event covers the
+frames of the 5 s since a window's first frame and is written by the first frame after that; an
+idle window produces no frames and no event, and the frames left when the window goes idle are
+written when the next one arrives. The event has no `context` field: a window mixes views, so
+judge scrolling or tab switching by the minutes (`report --from/--until`). `first frame` is
+logged once, when the first frame's UI pass has finished, with the time since the start of `main`.
+The report ranks the slowest windows under "Frame times".
 
 ### Instrumentation the app does not have yet
 
 The requirements below depend on these. None exists today; the report prints `n/a` for the
-criteria that need them, and does not invent numbers. They are needed before this test can
-verify the frame-time criteria.
+criteria that need them, and does not invent numbers. The numbering is kept from when frame
+times and the first frame (items 1 and 2) were on this list too.
 
-1. **Frame times.** Nothing logs how long a frame takes. Needed: a DEBUG event `frame stats`
-   about every 5 s while frames are being produced, with fields `frames`, `p50_ms`, `p95_ms`,
-   `p99_ms`, `max_ms`, `hitches_33` (frames over 33 ms), `hitches_100` and optionally `context`
-   (the view or `switching`). The report already parses this shape. Until then judge scrolling and
-   tab switching by eye and watch `top -H -p <pid>`: a UI thread pinned at 100 % means it is
-   CPU-bound.
-2. **First frame.** An INFO event `first frame` with `ms` since process start, for the
-   start-up criterion.
 3. **Tabs loaded.** Optional: an INFO event `tabs loaded` with `tabs` and `ms`. The report derives
    the same from the first `snapshot` of each repository, so this is a convenience.
 4. **Watcher failures.** `worker.rs` `watch()` returns `None` without a log line when the inotify
@@ -301,7 +309,7 @@ xdotool key --repeat 600 --delay 30 ctrl+Tab       # about 33 switches a second
 ```
 
 Watch for: any visible stall, tabs that show stale or empty content after switching, the
-strip itself being slow with 100 tabs. Frame criteria need instrumentation item 1.
+strip itself being slow with 100 tabs. The frame criteria read `frame stats`.
 
 ### (c) Heavy views on the monstrous repositories
 
@@ -334,9 +342,10 @@ Record the slowest actions. The log gives `details`, `diff` and `Staging` durati
 Two things at once, for 10 to 15 minutes, with all 100 tabs open:
 
 1. **Fetch in many tabs.** Easiest and most demanding: set Settings -> Git -> **Fetch in the
-   background** to the shortest option (every 5 minutes). Every tab's timer starts when it opens,
-   so all tabs with a remote fetch at nearly the same moment: a thundering herd. For a second
-   round, press `f` (fetch) in tabs by hand or with
+   background** to the shortest option (every 5 minutes). Every tab's timer starts when it opens;
+   a tab's first automatic fetch waits an extra share of the interval by its position among the
+   tabs (the first tab none, the last nearly a whole interval), so the fetches spread over a
+   second interval instead of one herd. For a burst, press `f` (fetch) in tabs by hand or with
    `for i in $(seq 100); do xdotool key --delay 150 ctrl+Tab f; done`. This uses the network:
    failures from GitHub throttling are not Canopy's; use a local mirror (`--base-url`) when you
    need to separate the two.
@@ -409,9 +418,9 @@ progress or prepared conflict, so nothing fights the person resolving. Afterward
 
 | What | How | Where it ends up |
 |---|---|---|
-| Start-up to first frame | not available (instrumentation item 2); until then stopwatch from launch to a drawn window | by hand |
+| Start-up to first frame | `first frame` event (`ms` since process start) | `report`, "Loading" |
 | Start-up to all tabs loaded | first `snapshot` event per repository, relative to `canopy started` | `report`, "Loading" |
-| Frame times p50/p95/p99, hitches over 33 ms | not available (item 1); `frame stats` events when they exist | `report`, "Frame times" |
+| Frame times p50/p95/p99, hitches over 33 ms | `frame stats` events | `report`, "Frame times" |
 | RSS over time (total, heap `RssAnon`, mapped files `RssFile`) | `/proc/<pid>/status`, every second | `samples.csv` |
 | Thread count | `/proc/<pid>/status` `Threads`; names every 5 min | `samples.csv`, `threads.txt` |
 | Open file descriptors | entries in `/proc/<pid>/fd` | `samples.csv` |
@@ -437,12 +446,12 @@ fails.
 | Canopy exit | clean (status 0, or 143 when stopped by `--duration`) | all |
 | Warnings | each read and explained; unexpected ones fail the run (REVIEW until judged) | all |
 | Every repository opens (no `cannot open the repository`) | 100 of 100 | a |
-| First frame | at most 2 s (needs item 2) | a |
+| First frame | at most 2 s | a |
 | All tabs loaded (first snapshot of the last one) | at most 120 s; 95 % of tabs within 60 s | a |
-| UI usable while tabs load (no frozen window) | by eye until frame stats exist | a |
-| Frames while tab switching | none over 100 ms; at most 1 % over 33 ms (needs item 1) | b |
-| Frames while scrolling history | p95 at most 16.7 ms, p99 at most 33 ms, none over 100 ms (needs item 1; use `--from/--until`) | c |
-| Share of frames over 33 ms over the whole run | at most 1 % (needs item 1) | all |
+| UI usable while tabs load (no frozen window) | `frame stats` (no window with `max_ms` over 100) and by eye | a |
+| Frames while tab switching | none over 100 ms; at most 1 % over 33 ms | b |
+| Frames while scrolling history | p95 at most 16.7 ms, p99 at most 33 ms, none over 100 ms (use `--from/--until`) | c |
+| Share of frames over 33 ms over the whole run | at most 1 % | all |
 | `details` and `diff` jobs | p95 at most 500 ms, max at most 10 s | c, d |
 | `snapshot` (history refresh) | p95 at most 2 s, max at most 30 s | all |
 | Local operations (stage, commit, checkout, merge, ...) | p95 at most 5 s, max at most 60 s | d, f |

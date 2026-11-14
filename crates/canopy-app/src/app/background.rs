@@ -625,13 +625,18 @@ impl CanopyApp {
     }
 
     /// Queues background fetches for tabs whose auto-fetch interval has passed. A repository
-    /// that is not trusted is read-only, so it is not fetched.
+    /// that is not trusted is read-only, so it is not fetched. A tab's first automatic fetch
+    /// waits an extra part of the interval by its position among the tabs ([`stagger_offset`]),
+    /// so tabs opened together spread their fetches over the interval instead of all falling due
+    /// at once; each tab then keeps the interval.
     pub(super) fn auto_fetch(&mut self, ctx: &egui::Context) {
         if self.screenshot.is_some() {
             return;
         }
+        let count = self.tabs.len();
         let mut any = false;
-        for t in &mut self.tabs {
+        let mut wake = AUTO_FETCH_POLL;
+        for (position, t) in self.tabs.iter_mut().enumerate() {
             let minutes = self.settings.auto_fetch_for(&t.path);
             if minutes == 0 {
                 continue;
@@ -640,14 +645,22 @@ impl CanopyApp {
             let every = Duration::from_secs(u64::from(minutes) * 60);
             let idle = t.running.is_none() && t.trust != RepoTrust::Untrusted;
             let has_remote = t.snap.as_ref().is_some_and(|s| !s.remotes.is_empty());
-            if idle && has_remote && t.last_fetch.elapsed() >= every {
+            if !idle || !has_remote {
+                continue;
+            }
+            let wait = fetch_wait(every, (!t.fetched).then_some((position, count)));
+            let elapsed = t.last_fetch.elapsed();
+            if elapsed >= wait {
                 t.last_fetch = Instant::now();
+                t.fetched = true;
                 let prune = self.settings.prune_for(&t.path);
                 t.op(Op::Fetch { prune, quiet: true });
+            } else {
+                wake = wake.min(wait.saturating_sub(elapsed));
             }
         }
         if any {
-            ctx.request_repaint_after(Duration::from_secs(30));
+            ctx.request_repaint_after(wake);
         }
     }
 
@@ -666,6 +679,31 @@ impl CanopyApp {
             ctx.request_repaint_after(next);
         }
     }
+}
+
+/// How often the frame loop wakes to look for a tab whose fetch is due, at most.
+const AUTO_FETCH_POLL: Duration = Duration::from_secs(30);
+
+/// The extra wait before the first automatic fetch of the tab at `position` of `count`: its
+/// share of the interval, from nothing for the first tab to just under the interval for the last.
+fn stagger_offset(position: usize, count: usize, every: Duration) -> Duration {
+    let count = count.max(1);
+    let position = position.min(count - 1);
+    match (u32::try_from(position), u32::try_from(count)) {
+        (Ok(position), Ok(count)) => every
+            .checked_mul(position)
+            .map_or(every, |share| share / count),
+        _ => Duration::ZERO,
+    }
+}
+
+/// How long after its last fetch (or opening) a tab fetches again: the interval, plus, for a
+/// tab's first automatic fetch (`first` is its position and the tab count), its stagger offset.
+fn fetch_wait(every: Duration, first: Option<(usize, usize)>) -> Duration {
+    every
+        + first.map_or(Duration::ZERO, |(position, count)| {
+            stagger_offset(position, count, every)
+        })
 }
 
 /// How often the open request list refreshes when the background fetch runs every `minutes`
@@ -891,6 +929,114 @@ mod tests {
                 .try_iter()
                 .any(|job| matches!(job, Job::Op(Op::Fetch { quiet: true, .. }))),
             "trusted: fetched"
+        );
+    }
+
+    #[test]
+    fn stagger_offsets_spread_tabs_over_the_interval() {
+        let every = Duration::from_secs(600);
+        let offsets: Vec<u64> = (0..4)
+            .map(|position| stagger_offset(position, 4, every).as_secs())
+            .collect();
+        assert_eq!(
+            offsets,
+            [0, 150, 300, 450],
+            "an even share each, all under the interval"
+        );
+        assert_eq!(
+            stagger_offset(0, 1, every),
+            Duration::ZERO,
+            "a lone tab is not delayed"
+        );
+        assert_eq!(stagger_offset(0, 0, every), Duration::ZERO, "no tabs");
+        assert_eq!(
+            stagger_offset(9, 3, every),
+            stagger_offset(2, 3, every),
+            "a position past the end counts as the last"
+        );
+        let hundred: Vec<Duration> = (0..100).map(|p| stagger_offset(p, 100, every)).collect();
+        assert!(
+            hundred.windows(2).all(|w| w[0] < w[1]),
+            "every tab has its own offset"
+        );
+        assert!(hundred.iter().all(|o| *o < every));
+    }
+
+    #[test]
+    fn only_a_tabs_first_automatic_fetch_is_staggered() {
+        let every = Duration::from_secs(300);
+        assert_eq!(fetch_wait(every, None), every);
+        assert_eq!(fetch_wait(every, Some((1, 2))), every + every / 2);
+    }
+
+    /// Tabs opened together fall due one after another, not at once, then keep the interval.
+    #[test]
+    fn tabs_opened_together_fetch_at_staggered_times() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.settings.auto_fetch_minutes = 10;
+        let mut queues = Vec::new();
+        for _ in 0..4 {
+            let (worker, _events, jobs) = crate::worker::Worker::detached();
+            let snap = canopy_core::RepoSnapshot {
+                remotes: vec![canopy_core::RemoteInfo {
+                    name: "origin".into(),
+                    url: None,
+                    default_branch: None,
+                }],
+                ..canopy_core::RepoSnapshot::default()
+            };
+            let mut tab = test_tab(snap);
+            tab.worker = worker;
+            app.tabs.push(tab);
+            queues.push(jobs);
+        }
+        let fetches = |queues: &[Receiver<Job>]| -> Vec<bool> {
+            queues
+                .iter()
+                .map(|q| {
+                    q.try_iter()
+                        .any(|job| matches!(job, Job::Op(Op::Fetch { quiet: true, .. })))
+                })
+                .collect()
+        };
+        let opened = Instant::now();
+        let set_age = |app: &mut CanopyApp, minutes: u64| {
+            for tab in &mut app.tabs {
+                tab.last_fetch = opened
+                    .checked_sub(Duration::from_secs(minutes * 60))
+                    .expect("in the past");
+            }
+        };
+        // Ten minutes after opening: the interval has passed, but only the first tab's offset has.
+        set_age(&mut app, 10);
+        app.auto_fetch(&ctx);
+        assert_eq!(fetches(&queues), [true, false, false, false]);
+        // Twelve and a half minutes: the second tab's turn (offset 2.5 minutes).
+        for tab in app.tabs.iter_mut().skip(1) {
+            tab.last_fetch = opened
+                .checked_sub(Duration::from_secs(750))
+                .expect("in the past");
+        }
+        app.auto_fetch(&ctx);
+        assert_eq!(fetches(&queues), [false, true, false, false]);
+        // Past the longest offset every remaining tab is due, and the first tab, just fetched,
+        // waits a whole interval, not an offset more.
+        for tab in app.tabs.iter_mut().skip(2) {
+            tab.last_fetch = opened
+                .checked_sub(Duration::from_mins(20))
+                .expect("in the past");
+        }
+        app.auto_fetch(&ctx);
+        assert_eq!(fetches(&queues), [false, false, true, true]);
+        app.tabs[0].last_fetch = Instant::now()
+            .checked_sub(Duration::from_secs(600))
+            .expect("in the past");
+        app.auto_fetch(&ctx);
+        assert_eq!(
+            fetches(&queues),
+            [true, false, false, false],
+            "no offset after the first"
         );
     }
 

@@ -9,6 +9,7 @@ mod avatars;
 mod branch_tree;
 mod build_info;
 mod crash_reports;
+mod frame_stats;
 mod highlight;
 #[cfg(test)]
 #[cfg(unix)]
@@ -359,6 +360,7 @@ fn validate_screenshot_launch(launch: &Launch, isolated: bool) -> Result<(), &'s
 }
 
 fn main() -> anyhow::Result<()> {
+    frame_stats::mark_process_start();
     // Started by git or ssh to ask for a credential: answer through the running app and exit,
     // before touching logs or windows.
     if askpass::is_client() {

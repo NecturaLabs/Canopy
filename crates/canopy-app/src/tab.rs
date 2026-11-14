@@ -1260,6 +1260,9 @@ pub struct RepoTab {
     pub avatars: crate::avatars::Avatars,
     /// The last fetch, for auto-fetch.
     pub last_fetch: Instant,
+    /// Whether a fetch has run since the tab opened. Until one has, the tab's first automatic
+    /// fetch waits an extra offset, so tabs opened together do not fetch together.
+    pub fetched: bool,
 }
 
 impl RepoTab {
@@ -1388,6 +1391,7 @@ impl RepoTab {
             trust_version: 0,
             avatars: crate::avatars::Avatars::default(),
             last_fetch: Instant::now(),
+            fetched: false,
         }
     }
 
@@ -2894,6 +2898,7 @@ impl RepoTab {
                             }
                             if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
+                                self.fetched = true;
                                 self.auto_fetch_failure = None;
                             }
                             // The remote moved, or Canopy moved it: its requests may have too.

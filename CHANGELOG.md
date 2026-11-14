@@ -197,6 +197,9 @@ commits since the previous build.
 
 ### Changed
 
+- Background fetching no longer fires in every tab at the same moment. A tab's first automatic fetch
+  waits an extra part of the interval, from nothing for the first tab to nearly a whole interval for
+  the last, so tabs opened together spread their fetches out; each tab then keeps its interval.
 - Canopy no longer changes your git configuration unless you turn on Settings → Git → Edit my git
   config (off by default). Until then the git configuration in Settings is read only and Use
   recommended is hidden; Canopy still passes its own choices to every git command. A settings file
