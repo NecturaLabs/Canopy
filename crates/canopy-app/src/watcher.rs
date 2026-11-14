@@ -171,7 +171,8 @@ fn run<B: Backend>(
                 .collect();
             hub.remove(&gone);
             while let Some(command) = pending.pop_front() {
-                // A panic inside `add` is told through the tab it already holds.
+                // A panic inside `Tab::open` (git2) is told through `opening`; one inside `add`
+                // through the tab it already holds.
                 *opening.borrow_mut() = Some(command.jobs.clone());
                 let tab = Tab::open(command);
                 *opening.borrow_mut() = None;
@@ -385,7 +386,8 @@ impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
     /// Runs `step`; if it panics (inside the backend, say), the tabs watched until then are told
     /// their changes are no longer picked up and leave, and the backend is dropped so the next
     /// repository starts a fresh one.
-    /// Whether `step` finished without a panic.
+    ///
+    /// Returns whether `step` finished without a panic.
     fn guarded(&mut self, step: impl FnOnce(&mut Self)) -> bool {
         if std::panic::catch_unwind(AssertUnwindSafe(|| step(self))).is_ok() {
             return true;
@@ -1150,6 +1152,10 @@ mod tests {
                 format!("{job:?}"),
                 "WatchFailed(\"Canopy's file watcher stopped.\")"
             );
+        }
+        // Each is told once, the first one (which panicked) included.
+        for rx in &receivers {
+            assert!(rx.try_recv().is_err(), "told twice");
         }
         drop(commands_tx);
         drop(keep);

@@ -1042,9 +1042,9 @@ thread_local! {
 static ENDING: Mutex<Vec<Receiver<()>>> = Mutex::new(Vec::new());
 
 impl Drop for Worker {
-    /// Stops the repository thread and its watch without waiting (closing a tab never stalls the UI); the
-    /// process waits for them before it exits ([`wait_for_threads`]). A test binary, which has no
-    /// such moment, waits here.
+    /// Stops the repository thread and its watch without waiting (closing a tab never stalls
+    /// the UI); the process waits for them before it exits ([`wait_for_threads`]). A test binary,
+    /// which has no such moment, waits here.
     fn drop(&mut self) {
         // Dropping the senders ends the watch (the shared watcher drops its copy of the jobs
         // sender), then the repository thread once that copy has gone too.
