@@ -2572,11 +2572,16 @@ impl RepoTab {
                     // An answer older than a change this tab knows of is out of date; the worker
                     // answers the change next.
                     if version >= self.trust_version {
+                        let was = self.trust;
                         self.trust = if trusted {
                             RepoTrust::Trusted
                         } else {
                             RepoTrust::Untrusted
                         };
+                        // The squash check is skipped until the folder is trusted.
+                        if trusted && was != RepoTrust::Trusted {
+                            self.read_merged(true);
+                        }
                     }
                 }
                 Event::Signature { oid, status } => {
@@ -4997,8 +5002,8 @@ mod tests {
         Ok(())
     }
 
-    /// An automatic fetch that fails the same way every interval (an untrusted folder's guard,
-    /// a server that is down) is shown once; a different failure, or a fetch that works, shows
+    /// An automatic fetch that fails the same way every interval (a server that is down) is shown
+    /// once; a different failure, or a fetch that works, shows
     /// again.
     #[test]
     fn an_automatic_fetch_failure_is_shown_once() -> Result<(), Box<dyn std::error::Error>> {
@@ -5017,7 +5022,7 @@ mod tests {
             events.send(e)?;
             Ok(tab.poll(&[]).len())
         };
-        let refusal = "Auto-fetch skipped: this repository's own files run programs";
+        let refusal = "could not read from the remote repository";
         assert_eq!(shown(&mut tab, finished(false, Err(refusal)))?, 1);
         assert_eq!(
             shown(&mut tab, finished(false, Err(refusal)))?,
@@ -5090,6 +5095,57 @@ mod tests {
             delivery(&mut tab, Event::AutostashConflict)?,
             Delivery::Attention
         );
+        Ok(())
+    }
+
+    /// The squash check is skipped while a repository is not trusted, so trusting it reads the
+    /// markers again; an answer that changes nothing (still untrusted, already trusted) does not.
+    #[test]
+    fn trusting_a_repository_reads_the_merged_markers_again()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot {
+            workflow: canopy_core::WorkflowInfo {
+                base: Some(canopy_core::BranchBase {
+                    references: vec!["main".into()],
+                    protected: vec!["main".into()],
+                }),
+                ..canopy_core::WorkflowInfo::default()
+            },
+            ..RepoSnapshot::default()
+        }));
+        let asked = |jobs: &crossbeam_channel::Receiver<Job>| {
+            jobs.try_iter()
+                .filter(|j| matches!(j, Job::MergedBranches { .. }))
+                .count()
+        };
+        tab.read_merged(false);
+        assert_eq!(asked(&jobs), 1);
+
+        events.send(Event::Trust {
+            trusted: false,
+            version: 1,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(asked(&jobs), 0, "still not trusted");
+
+        events.send(Event::Trust {
+            trusted: true,
+            version: 2,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(asked(&jobs), 1, "trusted now: the squash check can run");
+
+        events.send(Event::Trust {
+            trusted: true,
+            version: 3,
+        })?;
+        tab.poll(&[]);
+        assert_eq!(asked(&jobs), 0, "already trusted");
         Ok(())
     }
 
