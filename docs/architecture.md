@@ -384,7 +384,7 @@ which covers file systems where watching is unreliable (network mounts, some WSL
 
 Files live in per-OS folders (`storage.rs`, ADR 0018): config, data, state and cache, each owner-only
 (0700 on Unix) and claimed with the marker `.canopy-data`, which the installers' `--purge` looks
-for. Linux: `$XDG_CONFIG_HOME/canopy`, `$XDG_DATA_HOME/canopy`, `$XDG_STATE_HOME/canopy`,
+for (a folder holding someone else's file is used but left unmarked, and `--purge` leaves it). Linux: `$XDG_CONFIG_HOME/canopy`, `$XDG_DATA_HOME/canopy`, `$XDG_STATE_HOME/canopy`,
 `$XDG_CACHE_HOME/canopy`; macOS and Windows: the table in `packaging/README.md`. Settings
 (appearance, Git and integration preferences, the terms and crash-report answers, recent and open
 repositories) are `settings.json` in the config folder, `{"schema": 1, "settings": {…}}`

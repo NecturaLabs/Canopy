@@ -184,8 +184,9 @@ commits since the previous build.
 
 - Canopy keeps its files in a folder for each kind of data (settings, saved tokens, logs and crash
   reports, picture cache) following each system's convention, owner-only and marked `.canopy-data`
-  so the installers' `--purge` finds them, and moves what earlier builds kept in two other folders
-  the first time it starts. The privacy policy lists the folders.
+  (unless a folder already holds someone else's files) so the installers' `--purge` finds them, and
+  moves what earlier builds kept in two other folders the first time it starts, never replacing a
+  file. The privacy policy lists the folders.
 - Canopy no longer changes your git configuration unless you turn on Settings → Git → Edit my git
   config (off by default). Until then the git configuration in Settings is read only and Use
   recommended is hidden; Canopy still passes its own choices to every git command. A settings file
