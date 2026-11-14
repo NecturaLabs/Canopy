@@ -1,6 +1,6 @@
 # Terms of Service
 
-Last updated: 3 October 2026
+Last updated: 14 November 2026
 
 These terms are an agreement between you and NecturaLabs about Canopy (the "software"). You accept them by choosing I agree in Canopy. If you do not accept them, choose Quit and do not use the software.
 
@@ -70,7 +70,7 @@ You can end this agreement at any time by uninstalling the software and deleting
 
 ## Governing law
 
-These terms are governed by the law of the country where NecturaLabs has its registered office, without its conflict-of-law rules and excluding the UN Convention on Contracts for the International Sale of Goods. If you are a consumer, you also keep the protection of the mandatory laws of the country where you live, and you may bring a claim in its courts. Otherwise, disputes go to the courts of the place where NecturaLabs has its registered office.
+These terms are governed by the law of the country where NecturaLabs is established, without its conflict-of-law rules and excluding the UN Convention on Contracts for the International Sale of Goods. If you are a consumer, you also keep the protection of the mandatory laws of the country where you live, and you may bring a claim in its courts. Otherwise, disputes go to the courts of the place where NecturaLabs is established.
 
 ## Changes to these terms
 
