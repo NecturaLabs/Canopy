@@ -1627,6 +1627,68 @@ fn rollup_redirects_are_never_followed() {
     assert!(other.requests().is_empty(), "{:?}", other.requests());
 }
 
+/// The port of a test server's address, to reach it by another name for the same machine.
+fn port_of(server: &Server) -> &str {
+    server.base.rsplit(':').next().expect("a port")
+}
+
+/// Builds a client for a test server, with or without a token.
+type ClientFor = fn(&Server, Option<&str>) -> Client;
+
+#[test]
+fn a_rest_redirect_to_another_host_never_carries_the_token() {
+    let clients: [(ClientFor, &str); 2] = [(github, "/user"), (gitlab, "/api/v4/user")];
+    for (client_for, path) in clients {
+        let server = Server::start();
+        let other = Server::start();
+        // `localhost` and `127.0.0.1` are two hosts to the client, though one machine.
+        let elsewhere = format!("http://localhost:{}/stolen", port_of(&other));
+        server.route_with_headers("GET", path, 307, &[("Location", &elsewhere)], "");
+        other.route(
+            "GET",
+            "/stolen",
+            200,
+            r#"{"login":"octocat","username":"octocat"}"#,
+        );
+
+        client_for(&server, Some(TOKEN))
+            .viewer()
+            .expect("the redirect is followed");
+
+        let first = server.requests();
+        assert!(
+            first
+                .iter()
+                .any(|r| r.header("authorization").is_some() || r.header("private-token").is_some()),
+            "the first request is authenticated: {first:?}"
+        );
+        let followed = other.requests();
+        assert_eq!(followed.len(), 1, "{followed:?}");
+        for (name, value) in &followed[0].headers {
+            assert!(!value.contains(TOKEN), "{name} forwards the token");
+        }
+        assert_eq!(followed[0].header("authorization"), None);
+        assert_eq!(followed[0].header("private-token"), None);
+    }
+}
+
+#[test]
+fn a_rest_redirect_on_the_same_host_keeps_the_token() {
+    // GitHub redirects a renamed repository to the same host; the sign-in must survive that.
+    let server = Server::start();
+    let moved = Server::start();
+    let same_host = format!("http://127.0.0.1:{}/user", port_of(&moved));
+    server.route_with_headers("GET", "/user", 301, &[("Location", &same_host)], "");
+    moved.route("GET", "/user", 200, r#"{"login":"octocat"}"#);
+    github(&server, Some(TOKEN)).viewer().expect("viewer");
+    let followed = moved.requests();
+    assert_eq!(followed.len(), 1, "{followed:?}");
+    assert!(
+        followed[0].header("authorization").is_some(),
+        "{followed:?}"
+    );
+}
+
 /// Whether an error's server-derived text is fit to show and log: at most 300 characters, with no
 /// control character and nothing that hides or reorders text.
 fn is_plain_server_text(text: &str) -> bool {

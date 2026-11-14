@@ -481,8 +481,17 @@ cmd_open() {
   RUN=$RESULTS/run-$(date -u +%Y%m%dT%H%M%SZ)
   mkdir -p -- "$RUN"
   ln -sfn -- "$RUN" "$RESULTS/latest"
-  local data
-  if ((REAL_DATA)); then data=${XDG_DATA_HOME:-$HOME/.local/share}; else data=$RESULTS/data; fi
+  # Canopy keeps its files in four XDG folders; the isolated run gives it all four under $data.
+  local data state
+  local -a folders=()
+  if ((REAL_DATA)); then
+    data=${XDG_DATA_HOME:-$HOME/.local/share}
+    state=${XDG_STATE_HOME:-$HOME/.local/state}
+  else
+    data=$RESULTS/data
+    state=$data/state
+    folders=(XDG_DATA_HOME="$data" XDG_STATE_HOME="$state" XDG_CONFIG_HOME="$data/config" XDG_CACHE_HOME="$data/cache")
+  fi
   mkdir -p -- "$data"
   printf '%s\n' "${paths[@]}" >"$RUN/repos.txt"
   write_meta "$RUN/meta.txt" "${#paths[@]}" "$data"
@@ -491,7 +500,7 @@ cmd_open() {
 
   info "run folder: $RUN"
   info "launching $BIN with ${#paths[@]} tabs (CANOPY_LOG=$LOG_FILTER)"
-  env XDG_DATA_HOME="$data" CANOPY_LOG="$LOG_FILTER" "$BIN" "${paths[@]}" \
+  env "${folders[@]}" CANOPY_LOG="$LOG_FILTER" "$BIN" "${paths[@]}" \
     >"$RUN/stdout.txt" 2>"$RUN/stderr.txt" &
   PID=$!
   echo "pid=$PID" >>"$RUN/meta.txt"
@@ -562,13 +571,13 @@ cmd_open() {
 
   # The app's own log (one file per run, named with the process id), and crash reports.
   local logfile
-  logfile=$(find "$data/canopy/logs" -name "canopy-*-$PID.jsonl" 2>/dev/null | tail -n 1 || true)
+  logfile=$(find "$state/canopy/logs" -name "canopy-*-$PID.jsonl" 2>/dev/null | tail -n 1 || true)
   if [[ -n $logfile ]]; then
     cp -- "$logfile" "$RUN/canopy.jsonl"
   else
-    info "warning: no log file found for pid $PID under $data/canopy/logs"
+    info "warning: no log file found for pid $PID under $state/canopy/logs"
   fi
-  find "$data"/canopy/crashes -name 'crash-*.txt' -newer "$RUN/.start" 2>/dev/null >"$RUN/crashes.txt" || true
+  find "$state"/canopy/crashes -name 'crash-*.txt' -newer "$RUN/.start" 2>/dev/null >"$RUN/crashes.txt" || true
   # Standard error carries the same events as text; keep only its tail if it grew large.
   if [[ -f $RUN/stderr.txt && $(stat -c %s "$RUN/stderr.txt") -gt 52428800 ]]; then
     tail -c 5242880 "$RUN/stderr.txt" >"$RUN/stderr.tail" && mv -- "$RUN/stderr.tail" "$RUN/stderr.txt"

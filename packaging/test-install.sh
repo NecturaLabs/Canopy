@@ -708,6 +708,37 @@ edited" ]
     run_status --uninstall --purge --yes
     check "eframe folder without Canopy's files kept" [ -f "$home/.local/share/canopy/app.ron" ]
     rm -rf "$home/.local/share/canopy"
+    # Canopy's data folder on Linux is also the old eframe folder: Canopy's files beside someone
+    # else's file are not enough to delete it unmarked (the marker is what makes it Canopy's).
+    mkdir -p "$home/.local/share/canopy/logs" "$home/.local/share/io.necturalabs.canopy"
+    echo "log" >"$home/.local/share/canopy/logs/canopy-1.jsonl"
+    echo "not Canopy's" >"$home/.local/share/canopy/notes.txt"
+    echo "window" >"$home/.local/share/io.necturalabs.canopy/app.ron"
+    run_status --uninstall --purge --yes
+    check "unmarked data folder with a foreign file kept" [ -f "$home/.local/share/canopy/notes.txt" ]
+    check "unmarked data folder keeps Canopy's files too" [ -f "$home/.local/share/canopy/logs/canopy-1.jsonl" ]
+    check "unmarked data folder listed as left" out_has "$home/.local/share/canopy"
+    check "leftover app-id folder purged" [ ! -e "$home/.local/share/io.necturalabs.canopy" ]
+    touch "$home/.local/share/canopy/.canopy-data"
+    run_status --uninstall --purge --yes
+    check "the same folder with the marker is purged" [ ! -e "$home/.local/share/canopy" ]
+    # Only the exact names Canopy writes count as its own (the app and both installers share the
+    # list): a stranger's look-alike keeps an unmarked folder, Canopy's own leftovers do not.
+    for foreign in x.moving settings.json.mine app.ron.old settings.json.1x.tmp canopy-1.jsonl; do
+        mkdir -p "$home/.local/share/canopy/logs"
+        echo "log" >"$home/.local/share/canopy/logs/canopy-1.jsonl"
+        echo "theirs" >"$home/.local/share/canopy/$foreign"
+        run_status --uninstall --purge --yes
+        check "unmarked folder with $foreign kept" [ -f "$home/.local/share/canopy/$foreign" ]
+        rm -rf "$home/.local/share/canopy"
+    done
+    mkdir -p "$home/.local/share/canopy/logs"
+    echo "log" >"$home/.local/share/canopy/logs/canopy-1.jsonl"
+    for own in settings.json settings.json.bad settings.json.42.tmp app.ron.42.moving tokens.json.tmp; do
+        echo "ours" >"$home/.local/share/canopy/$own"
+    done
+    run_status --uninstall --purge --yes
+    check "unmarked folder with only Canopy's own file names purged" [ ! -e "$home/.local/share/canopy" ]
     check "home is empty of files" [ -z "$(cd "$home" && find . -type f -o -type l)" ]
 
     echo "== a non-empty folder not made by the installer is refused"

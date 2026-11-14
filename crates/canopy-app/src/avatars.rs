@@ -553,7 +553,7 @@ pub fn load(
     email: &str,
     enabled: &AtomicBool,
 ) -> Cached {
-    let dir = eframe::storage_dir("canopy").map(|p| p.join("avatars"));
+    let dir = crate::storage::layout().map(|l| l.avatars.clone());
     if let Some(dir) = &dir {
         PRUNED.call_once(|| {
             prune(dir, SystemTime::now(), PRUNE_AFTER);

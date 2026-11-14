@@ -141,28 +141,39 @@ Their list is in one marked block near the top of each script (`purge_targets`,
 `Get-PurgeTargets`). `--purge` lists what it will delete and what it leaves, asks, and never
 follows a symlink (or junction). It deletes:
 
-- a folder with a **vendor-specific name** (`io.necturalabs.Canopy`, `NecturaLabs\Canopy`) when it
-  exists;
+- a folder with a **vendor-specific name** (`io.necturalabs.Canopy`, `NecturaLabs\Canopy`, and the
+  leftover app-id folder of earlier builds: `${XDG_DATA_HOME:-~/.local/share}/io.necturalabs.canopy`
+  on Linux, `%APPDATA%\io.necturalabs.Canopy` on Windows) when it exists;
 - a folder with a **generic name** (anything called just `canopy` or `Canopy`) only when it holds
-  the marker file `.canopy-data`; for today's eframe folder (below), also when it holds Canopy's
-  own files: an `app.ron` with Canopy's settings key `canopy-settings-v1`,
-  `logs/canopy-*.jsonl` or `crashes/crash-*.txt`. Any other generically named folder is listed and
-  left, since another program may own it.
+  the marker file `.canopy-data`; for the folder eframe used (`canopy`, which is also Linux's data
+  folder), also when it holds Canopy's own files and nothing else: an `app.ron` with Canopy's
+  settings key `canopy-settings-v1`, `logs/canopy-*.jsonl` or `crashes/crash-*.txt`, and no entry
+  named other than `tokens.json` (an old build's, which the app deletes), `settings.json*`,
+  `app.ron*`, `logs`, `crashes` and `avatars`. A folder with a file of someone else's beside
+  Canopy's is listed and left. Any other generically named folder is listed and left too, since
+  another program may own it.
 
-Today the app writes only `eframe::storage_dir("canopy")` (eframe 0.36): Linux
-`$XDG_DATA_HOME/canopy` (`~/.local/share/canopy` when unset or relative), macOS
-`~/Library/Application Support/canopy`, Windows `%APPDATA%\canopy\data` (`%APPDATA%\canopy` goes
-too once that left it empty).
+The app creates these folders itself and puts `.canopy-data` (empty, 0600) in each one that is
+empty or holds only its own files (`crates/canopy-app/src/storage.rs`, ADR 0018); a folder with a
+file of someone else's is used but left unmarked, and `--purge` leaves it. Builds before that wrote only `eframe::storage_dir("canopy")` (Linux `$XDG_DATA_HOME/canopy`, macOS
+`~/Library/Application Support/canopy`, Windows `%APPDATA%\canopy\data`) and the folder named
+after the app id (`app.ron`); the app moves their contents on its first start, and the installers
+still recognise the old `canopy` folder by its contents, for a user who never started the new build.
 
-**Contract for the planned move of the app's data (#44).** The installers already purge these
-folders; the app must create the marker file `.canopy-data` (empty is fine) in each one it
-creates, including every one with a generic name, or `--purge` will leave it:
+**Contract for the app's folders (#40).** The installers purge these folders; the app creates the
+marker file `.canopy-data` in each one it creates, including every one with a generic name, or
+`--purge` will leave it:
 
 | | Folders |
 |---|---|
 | Linux | `$XDG_CONFIG_HOME/canopy`, `$XDG_DATA_HOME/canopy`, `$XDG_STATE_HOME/canopy`, `$XDG_CACHE_HOME/canopy` (defaults `~/.config`, `~/.local/share`, `~/.local/state`, `~/.cache`; a relative value is ignored, as the XDG spec says) |
 | macOS | `~/Library/Application Support/io.necturalabs.Canopy`, `~/Library/Logs/Canopy`, `~/Library/Caches/io.necturalabs.Canopy` |
 | Windows | `%APPDATA%\NecturaLabs\Canopy`, `%LOCALAPPDATA%\NecturaLabs\Canopy` (an emptied `NecturaLabs` parent goes too) |
+
+The leftover app-id folders of earlier builds (Linux `$XDG_DATA_HOME/io.necturalabs.canopy`,
+Windows `%APPDATA%\io.necturalabs.Canopy`, which the app empties but may not remove when something
+else is in them) are purged by their vendor-specific name; on macOS the app-id folder is the config
+folder above.
 
 A new folder, or a new name, needs the same change in both scripts and in this table.
 

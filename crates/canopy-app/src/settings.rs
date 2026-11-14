@@ -1,5 +1,5 @@
-//! Preferences persisted between runs through eframe's storage
-//! (`~/.local/share/canopy/` on Linux). Every field has a default (`#[serde(default)]`), so
+//! Preferences persisted between runs in `settings.json` (`settings_store.rs`; `~/.config/canopy/`
+//! on Linux). Every field has a default (`#[serde(default)]`), so
 //! settings written by an older version load with the new fields at their defaults. A saved
 //! theme or option this build no longer has reads as its default, and a setting it no longer has
 //! is ignored; the first save after launch (eframe saves every 30 seconds) writes the file again
