@@ -397,10 +397,45 @@ git_report() {
     fi
 }
 
-# Takes the install lock, folder $1, shared by install and uninstall.
+# True when lock folder $1 names, in its pid file, a process that certainly no longer exists: a
+# run that was killed leaves the lock behind. Only Linux can say so (/proc lists every process);
+# a lock without a readable process id, or on another system, is never called stale.
+lock_is_stale() {
+    [ -d /proc/self ] || return 1
+    lock_pid=$(cat -- "$1/pid" 2>/dev/null) || return 1
+    case $lock_pid in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    [ "$lock_pid" -gt 0 ] && [ ! -e "/proc/$lock_pid" ]
+}
+
+# Takes the install lock, folder $1, shared by install and uninstall, and records this process in
+# it. The lock of a killed run is taken over (see lock_is_stale).
 take_lock() {
-    mkdir "$1" 2>/dev/null || die "another Canopy install or uninstall is running (remove $1 if it is not)"
+    if ! mkdir "$1" 2>/dev/null; then
+        lock_is_stale "$1" || die "another Canopy install or uninstall is running, or was killed (remove $1 if it is not running)"
+        # Renaming is atomic, so of several runs finding the same dead lock only one gets it; it
+        # must still be the dead one's, else it was a live run's lock and goes back.
+        stale=$1.stale.$$
+        mv -- "$1" "$stale" 2>/dev/null || die "another Canopy install or uninstall is running (remove $1 if it is not)"
+        if [ "$(cat -- "$stale/pid" 2>/dev/null)" != "$lock_pid" ]; then
+            mv -- "$stale" "$1" 2>/dev/null || true
+            die "another Canopy install or uninstall is running (remove $1 if it is not)"
+        fi
+        rm -rf -- "$stale"
+        mkdir "$1" 2>/dev/null || die "another Canopy install or uninstall is running (remove $1 if it is not)"
+    fi
     LOCK=$1
+    printf '%s\n' "$$" >"$LOCK/pid" || die "could not write $LOCK/pid"
+}
+
+# Releases the lock taken by take_lock.
+release_lock() {
+    if [ -n "$LOCK" ]; then
+        rm -f -- "$LOCK/pid"
+        rmdir -- "$LOCK" 2>/dev/null || true
+    fi
+    LOCK=
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -479,8 +514,7 @@ uninstall_linux() {
     for e in "$ROOT"/.staging.* "$ROOT"/.previous.*; do
         if [ -e "$e" ] || [ -L "$e" ]; then rm -rf -- "$e"; fi
     done
-    rmdir -- "$LOCK" 2>/dev/null || true
-    LOCK=
+    release_lock
     if rmdir -- "$ROOT" 2>/dev/null; then
         say "  removed $ROOT"
     else
@@ -599,7 +633,7 @@ cleanup() {
         fi
     fi
     if [ -n "$WORK" ]; then rm -rf -- "$WORK"; fi
-    if [ -n "$LOCK" ]; then rmdir -- "$LOCK" 2>/dev/null || true; fi
+    release_lock
     remove_created_dirs
     return 0
 }

@@ -375,6 +375,30 @@ edited" ]
     check "the user's file survives an upgrade" [ "$(cat "$opt/notes.txt" 2>/dev/null)" = "my notes" ]
     rm -f "$opt/notes.txt"
 
+    echo "== a lock whose process is running, or unknown, is respected"
+    mkdir "$opt/.lock"
+    echo "$$" >"$opt/.lock/pid"
+    run_status
+    check "a live owner's lock refuses the install" [ "$status" != 0 ]
+    check "it says so" out_has "another Canopy install or uninstall is running"
+    check "the live lock stays" [ "$(cat "$opt/.lock/pid")" = "$$" ]
+    rm -f "$opt/.lock/pid"
+    run_status
+    check "a lock without a process id refuses the install" [ "$status" != 0 ]
+    check "the unknown lock stays" [ -d "$opt/.lock" ]
+    rmdir "$opt/.lock"
+
+    # Only where /proc lists every process can a dead owner be told from a live one.
+    if [ -d /proc/self ]; then
+        echo "== the lock a killed install left behind is taken over"
+        dead=$(sh -c 'echo $$')
+        mkdir "$opt/.lock"
+        echo "$dead" >"$opt/.lock/pid"
+        run_status
+        check "the install runs" [ "$status" = 0 ]
+        check "the lock is released" no_leftovers "$opt"
+    fi
+
     echo "== checksum mismatch is refused"
     make_release 106
     publish latest 106 0000000000000000000000000000000000000000000000000000000000000000

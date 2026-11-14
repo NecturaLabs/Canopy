@@ -348,14 +348,36 @@ installed build with an older one unless -Version asks for it.
         }
     }
 
-    # Takes the install lock, shared by install and uninstall; returns its path.
+    # Whether lock folder $Lock names, in its pid file, a process that certainly no longer exists:
+    # a run that was killed leaves the lock behind. A lock without a readable process id is never
+    # called stale.
+    function Test-StaleLock([string]$Lock) {
+        $pidFile = Join-Path $Lock 'pid'
+        if (-not (Test-Path -LiteralPath $pidFile -PathType Leaf)) { return $false }
+        $text = (Get-Content -LiteralPath $pidFile -TotalCount 1 -ErrorAction SilentlyContinue)
+        $owner = 0
+        if (-not [int]::TryParse(([string]$text).Trim(), [ref]$owner) -or $owner -le 0) { return $false }
+        return -not (Get-Process -Id $owner -ErrorAction SilentlyContinue)
+    }
+
+    # Takes the install lock, shared by install and uninstall, records this process in it and
+    # returns its path. The lock of a killed run is taken over (see Test-StaleLock).
     function Lock-Install([string]$Root) {
         $lock = Join-Path $Root '.lock'
         try {
             [void](New-Item -ItemType Directory -Path $lock -ErrorAction Stop)
         } catch {
-            Fail "another Canopy install or uninstall is running (remove $lock if it is not)"
+            if (-not (Test-StaleLock $lock)) {
+                Fail "another Canopy install or uninstall is running, or was killed (remove $lock if it is not running)"
+            }
+            try {
+                Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction Stop
+                [void](New-Item -ItemType Directory -Path $lock -ErrorAction Stop)
+            } catch {
+                Fail "another Canopy install or uninstall is running (remove $lock if it is not)"
+            }
         }
+        Set-Content -LiteralPath (Join-Path $lock 'pid') -Value $PID -ErrorAction SilentlyContinue
         return $lock
     }
 
@@ -452,7 +474,7 @@ installed build with an older one unless -Version asks for it.
                 Get-ChildItem -LiteralPath $Root -Force | Where-Object { $_.Name -like '.staging.*' -or $_.Name -like '.previous.*' } |
                     ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
             } finally {
-                Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
             }
             $left = @(Get-ChildItem -LiteralPath $Root -Force)
             if ($left.Count -eq 0) {
@@ -750,7 +772,7 @@ installed build with an older one unless -Version asks for it.
                 }
             }
             Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
-            if ($lock) { Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue }
+            if ($lock) { Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue }
             if (-not $succeeded) {
                 foreach ($d in $createdDirs) {
                     if ((Test-Path -LiteralPath $d -PathType Container) -and -not (Get-ChildItem -LiteralPath $d -Force)) {

@@ -91,7 +91,9 @@ the folder exactly as the installed `uninstall.sh` sees itself.
 
 Re-running upgrades or reinstalls (idempotent). A lock folder (`.lock` in the install folder;
 `.Canopy-install.lock` next to the app on macOS) stops two installs or uninstalls running at
-once. Nothing outside the folder is written where something else owns the name: the
+once. It holds a `pid` file with the process id of its holder; on Linux a lock whose process no
+longer exists (a killed run never removes it) is taken over, and on any system a lock with no
+process id is never removed and the run stops, naming it. Nothing outside the folder is written where something else owns the name: the
 `~/.local/bin/canopy` symlink, the desktop entry (it must carry this install's
 `X-Canopy-Install-Dir`, which sits in the `[Desktop Entry]` group, the only group whose `Exec=` is
 rewritten) and the icons (they must be in this install's receipt) are skipped with a warning when
