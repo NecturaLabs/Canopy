@@ -18,6 +18,10 @@ const COMMIT_TEMPLATE_LIMIT: u64 = 256 * 1024;
 /// The most commits one patch export covers.
 pub const MAX_PATCH_SERIES: usize = 50;
 
+/// The mode of a patch export's staging folder in the temporary folder: the owner only.
+#[cfg(unix)]
+const PRIVATE_DIR_MODE: u32 = 0o700;
+
 /// Distinguishes concurrent exports in this process; exclusive creation also handles leftovers.
 static PATCH_EXPORT_NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -1058,7 +1062,7 @@ impl Repo {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
+                builder.mode(PRIVATE_DIR_MODE);
             }
             match builder.create(&path) {
                 Ok(()) => break path,
