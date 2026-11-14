@@ -158,6 +158,7 @@ run_raw() {
 # The installer against the fake feed.
 run_status() { run_raw CANOPY_INSTALL_BASE_URL="$base" "$SH" "$installer" "$@"; }
 out_has() { grep -qF -- "$1" "$tmp/out"; }
+out_lacks() { ! grep -qiF -- "$1" "$tmp/out"; }
 # Shows the installer output of the step above, indented, so the log reads like a session.
 show() { sed 's/^/  | /' "$tmp/out"; }
 # Whether line $2 of desktop entry $1 sits in its [Desktop Entry] group, before the action group.
@@ -653,7 +654,7 @@ edited" ]
     run_status --uninstall --purge --yes
     check "purge exits 0" [ "$status" = 0 ]
     show
-    check "purge exits 0 (2)" out_has "tokens.json"
+    check "purge says nothing about saved tokens" out_lacks "token"
     check "purge also uninstalled" [ ! -e "$opt" ]
     check "eframe folder with Canopy's settings purged" [ ! -e "$home/.local/share/canopy" ]
     check "marked folder purged" [ ! -e "$home/.config/canopy" ]

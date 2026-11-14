@@ -21,7 +21,7 @@ use canopy_hosting::{
     ReviewDecision, Rollup, StateFilter,
 };
 
-use crate::hosting::{HostWorker, TokenSource};
+use crate::hosting::HostWorker;
 use crate::request_view::{DraftChoice, RequestSort, RequestView};
 use crate::tab::RepoTab;
 
@@ -30,7 +30,7 @@ static CHOSEN: OnceLock<Scenario> = OnceLock::new();
 
 /// What `--demo-requests` accepts, for `--help` and the error message.
 pub const SPECS: &str = "list, list-all, list-closed, list-unchecked, list-overflow, list-more, list-search, filtered, no-match, \
-<number>, busy, loading, details-loading, details-error, error, no-token or empty; prefix gitlab: for \
+<number>, busy, loading, details-loading, details-error, error, signed-out or empty; prefix gitlab: for \
 merge requests";
 
 /// Which part of the requests view to show.
@@ -62,8 +62,8 @@ enum Scene {
     DetailsError,
     /// The list failed with a server error.
     Error,
-    /// The list failed because Canopy has no token.
-    NoToken,
+    /// The list failed because the CLI is not signed in.
+    SignedOut,
     /// A project without requests.
     Empty,
 }
@@ -115,7 +115,7 @@ impl Scenario {
             "details-loading" => Scene::DetailsLoading,
             "details-error" => Scene::DetailsError,
             "error" => Scene::Error,
-            "no-token" => Scene::NoToken,
+            "signed-out" => Scene::SignedOut,
             "empty" => Scene::Empty,
             number => {
                 let Ok(number) = number.parse::<u64>() else {
@@ -175,8 +175,12 @@ impl Scenario {
         if !installed {
             self.install(ctx, tab, now);
         }
-        // No thread reports a token: the scenario decides what is known.
-        tab.requests.token = Some((self.scene != Scene::NoToken).then_some(TokenSource::Saved));
+        // No thread asks the CLI: the scenario decides what is known.
+        tab.requests.cli = Some(if self.scene == Scene::SignedOut {
+            crate::hosting::signed_out(self.kind, &forge.host)
+        } else {
+            Ok(crate::hosting::demo_account())
+        });
         true
     }
 
@@ -281,7 +285,7 @@ impl Scenario {
                 }
                 .to_string()));
             }
-            Scene::NoToken => {
+            Scene::SignedOut => {
                 requests.list = Some(Err(
                     canopy_hosting::Error::NotFound("Not Found".into()).to_string()
                 ));
@@ -979,7 +983,7 @@ mod tests {
             "details-loading",
             "details-error",
             "error",
-            "no-token",
+            "signed-out",
             "empty",
             "gitlab:list",
             "gitlab:428",
@@ -1001,7 +1005,7 @@ mod tests {
             assert!(Scenario::parse(spec).is_err(), "{spec}");
         }
         let message = Scenario::parse("nope").unwrap_err();
-        assert!(message.contains("no-token") && message.contains("gitlab:"));
+        assert!(message.contains("signed-out") && message.contains("gitlab:"));
         assert!(Scenario::parse("99999").unwrap_err().contains("428"));
     }
 
@@ -1218,7 +1222,14 @@ mod tests {
     /// request to the real host. The demo's handle has no thread, so none of its jobs can run.
     #[test]
     fn the_demo_has_no_api_thread_to_reach_the_network_with() {
-        for spec in ["list", "428", "gitlab:427", "loading", "error", "no-token"] {
+        for spec in [
+            "list",
+            "428",
+            "gitlab:427",
+            "loading",
+            "error",
+            "signed-out",
+        ] {
             let (mut tab, ctx) = demo_tab(spec);
             assert!(!has_thread(&tab), "{spec} started an API thread");
             // What the view does on a click, and on a repository refresh.
@@ -1226,7 +1237,7 @@ mod tests {
             tab.select_request(425);
             tab.host_job(crate::hosting::HostJob::List(StateFilter::All.into()));
             tab.host_job(crate::hosting::HostJob::Details(425, 0));
-            tab.ensure_host(&ctx, Some("not-a-token".into()), true);
+            tab.ensure_host(&ctx, true);
             assert!(!has_thread(&tab), "{spec}: a click started an API thread");
             assert!(
                 tab.host

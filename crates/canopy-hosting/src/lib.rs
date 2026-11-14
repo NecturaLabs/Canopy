@@ -13,12 +13,11 @@
 //!   ([`avatars`]), without credentials.
 //!   Canopy's own update manifest ([`updates`]) is fetched anonymously from the public
 //!   `NecturaLabs/app-updates` repository.
-//! - It authenticates only with a token the user supplied: the sign-in of the `gh` or `glab` CLI
-//!   ([`login_from_cli`], held in memory only), an environment variable
-//!   ([`token_from_env_for`], which offers `GH_TOKEN` only to github.com and `GITLAB_TOKEN` only
-//!   to gitlab.com, `GITLAB_HOST` or a host the user listed), git's own credential helpers
-//!   ([`token_from_git_credentials`]) or a token entered in Canopy. The token travels only in an
-//!   `Authorization: Bearer` header, never in a URL, a log line or any `Debug` output.
+//! - It authenticates only with the sign-in of the `gh` or `glab` CLI ([`login_from_cli`]): the
+//!   token it holds for the repository's host is kept in memory, travels only in an
+//!   `Authorization: Bearer` header to that host, and never reaches a URL, a log line, a file or
+//!   any `Debug` output. No token is typed, saved, or read from the environment or git's
+//!   credential helpers.
 //! - Every call is blocking (no async runtime), with a 10 s connect and 30 s total timeout, and
 //!   is meant to run on a background worker thread. TLS is rustls with the operating system's
 //!   certificate verifier, so a self-hosted GitLab behind a corporate CA works; the standard
@@ -41,7 +40,7 @@ mod token;
 mod transport;
 pub mod updates;
 
-pub use cli_token::{CliError, CliLogin, login_from_cli};
+pub use cli_token::{CliAccount, CliError, CliLogin, install_page, login_command, login_from_cli};
 pub use client::{Client, SEARCH_WORDS, is_login};
 pub use error::{Error, Result};
 pub use http::{is_loopback_base, plain_text, set_build};
@@ -51,5 +50,5 @@ pub use model::{
     checkout_ref,
 };
 pub use preview::{PREVIEW_CHARS, description_preview};
-pub use token::{TOKEN_PREFIXES, token_from_env_for, token_from_git_credentials};
+pub use token::TOKEN_PREFIXES;
 pub use transport::default_agent;

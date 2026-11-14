@@ -18,9 +18,10 @@ use egui_phosphor::regular as icon;
 use canopy_core::config::Setting;
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_core::identity::{Field, Identity, Scope, Source};
+use canopy_hosting::CliError;
 
 use crate::action::Action;
-use crate::hosting::{self, TokenStore};
+use crate::hosting;
 use crate::keymap::{Command, Section as KeySection};
 use crate::repo_config::{ConfigValue, GitFacts, SigningProblem};
 use crate::settings::{
@@ -111,21 +112,19 @@ impl Section {
     }
 }
 
-#[derive(Debug)]
-enum TokenTest {
-    Running(Receiver<Result<String, String>>),
-    Done(Result<String, String>),
-}
-
 /// State of the open settings screen.
 #[derive(Default)]
 pub struct SettingsScreen {
     section: Section,
     zoom_preview: Option<f32>,
     picker: crate::ui::folder_picker::FolderPicker,
-    token_input: HashMap<String, String>,
-    tests: HashMap<String, TokenTest>,
-    token_error: Option<String>,
+    /// What the CLIs said about each host on the Accounts page, by `host[:port]` in lower case.
+    checks: HashMap<String, CliCheck>,
+    /// Hosts whose completed check was explicitly requested with Check again. A renewed token can
+    /// have the same account and scopes, so an open tab is restarted even when `CliState` matches.
+    rechecks: HashSet<String>,
+    /// The Accounts page's hosts, with what they were built from (`AccountHosts::source`).
+    account_hosts: Option<(u64, Arc<AccountHosts>)>,
     identity_for: Option<PathBuf>,
     loaded_identity: Option<Identity>,
     identity_name: String,
@@ -174,7 +173,7 @@ pub struct SettingsScreen {
 pub struct PictureNote {
     pub title: String,
     pub detail: String,
-    /// A token under Accounts would bring the pictures (`Fix::Accounts`).
+    /// A sign-in under Accounts would bring the pictures (`Fix::Accounts`).
     pub open_accounts: bool,
 }
 
@@ -308,13 +307,10 @@ impl Search {
 }
 
 impl std::fmt::Debug for SettingsScreen {
-    // The token fields hold secrets being typed: show only which hosts have one.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SettingsScreen")
             .field("section", &self.section)
-            .field("token_input", &self.token_input.keys().collect::<Vec<_>>())
-            .field("tests", &self.tests)
-            .field("token_error", &self.token_error)
+            .field("checks", &self.checks)
             .field("identity_scope", &self.identity_scope)
             .field("search", &self.search)
             .finish_non_exhaustive()
@@ -411,7 +407,9 @@ impl SettingsScreen {
 #[derive(Debug, Default)]
 pub struct SettingsResult {
     pub close: bool,
-    pub tokens_changed: bool,
+    /// Hosts (`host[:port]`, lower case) whose CLI sign-in is not what an open tab on them
+    /// started with.
+    pub sign_in_changed: Vec<String>,
 }
 
 pub struct IdentityView<'a> {
@@ -452,7 +450,6 @@ pub fn show(
     ctx: &egui::Context,
     screen: &mut SettingsScreen,
     settings: &mut Settings,
-    tokens: &mut TokenStore,
     data: &SettingsData<'_>,
     actions: &mut Vec<Action>,
 ) -> SettingsResult {
@@ -551,10 +548,9 @@ pub fn show(
                             let mut page = Page {
                                 screen,
                                 settings,
-                                tokens,
                                 data,
                                 actions,
-                                tokens_changed: false,
+                                sign_in_changed: Vec::new(),
                             };
                             page.trust_notice(ui);
                             if words.is_empty() {
@@ -573,7 +569,7 @@ pub fn show(
                             } else {
                                 page.results(ui, &words, body.height());
                             }
-                            result.tokens_changed |= page.tokens_changed;
+                            result.sign_in_changed.append(&mut page.sign_in_changed);
                             reveal_focus(ui);
                         });
                 },
@@ -679,10 +675,9 @@ fn reveal_focus(ui: &Ui) {
 struct Page<'a, 'd> {
     screen: &'a mut SettingsScreen,
     settings: &'a mut Settings,
-    tokens: &'a mut TokenStore,
     data: &'a SettingsData<'d>,
     actions: &'a mut Vec<Action>,
-    tokens_changed: bool,
+    sign_in_changed: Vec<String>,
 }
 
 impl Page<'_, '_> {
@@ -698,10 +693,9 @@ impl Page<'_, '_> {
         let Self {
             screen,
             settings,
-            tokens,
             data,
             actions,
-            tokens_changed,
+            sign_in_changed,
         } = self;
         match section {
             Section::Appearance => appearance(ui, settings, &mut screen.zoom_preview),
@@ -718,23 +712,7 @@ impl Page<'_, '_> {
                 );
             }
             Section::Accounts => {
-                let forges = data
-                    .tabs
-                    .iter()
-                    .flat_map(|t| t.forges.iter().map(|(_, f)| f));
-                // Which source gave each host's token on the open tabs, so a card says what is in use.
-                let sources: HashMap<String, hosting::TokenSource> = data
-                    .tabs
-                    .iter()
-                    .filter_map(|t| {
-                        Some((
-                            t.host.as_ref()?.forge.authority().to_lowercase(),
-                            t.requests.token??,
-                        ))
-                    })
-                    .collect();
-                *tokens_changed |=
-                    accounts(ui, screen, settings, tokens, forges, &sources, actions);
+                sign_in_changed.append(&mut accounts(ui, screen, settings, data.tabs, actions));
             }
             Section::Updates => updates(ui, settings, data.update, actions),
             Section::Privacy => {
@@ -956,7 +934,7 @@ fn synonyms(title: &str) -> &'static str {
         }
         "Reset all settings" => "defaults factory start over restore clear",
         "Check for updates" | "Include beta builds" => "update upgrade version release beta",
-        "Tokens" => "token account sign in personal access github gitlab api pat credential",
+        "Sign-in" => "account sign in login github gitlab gh glab cli credential",
         "Version" => "update upgrade version release check now what's new",
         _ => "",
     }
@@ -3921,7 +3899,7 @@ fn repository(
     if block(
         ui,
         "Pull and merge requests",
-        "hosting account token github gitlab",
+        "hosting account sign in github gitlab",
     ) && let Some(tab) = data.tabs.iter().find(|t| t.path == path)
     {
         hosting_account(ui, screen, s, tab);
@@ -4408,47 +4386,42 @@ fn repo_diff_rows(ui: &mut Ui, s: &Settings, path: &Path, actions: &mut Vec<Acti
 }
 
 /// What Settings can say about loading the repository's pull or merge requests right now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum HostingStatus {
     /// Integrations → Pull and merge requests is off.
     Off,
-    /// The host refused the credential on the newest read.
-    Rejected(Option<hosting::TokenSource>),
+    /// The host refused the CLI's sign-in on the newest read.
+    Rejected,
     /// The host asked Canopy to wait; the timed refresh resumes when the limit lifts.
     RateLimited,
-    /// Reads work with this credential.
-    Working(hosting::TokenSource),
-    /// Nothing supplies a credential: public repositories load, private ones do not.
-    NoCredential,
+    /// Reads work with the CLI's sign-in, as this account when the CLI said.
+    Working(Option<String>),
+    /// The CLI gave no credential: public repositories load, private ones do not.
+    NoCredential(CliError),
     /// The tab has not asked the host yet.
     Unknown,
 }
 
 /// The state of the tab's host, outcome first: an off switch beats a refusal, a refusal beats a
-/// rate limit, and only then does the credential in use matter.
-#[expect(
-    clippy::option_option,
-    reason = "the tab's token: not yet known, known to be absent, or known"
-)]
+/// rate limit, and only then does the sign-in in use matter.
 fn hosting_status(
     enabled: bool,
-    token: Option<Option<hosting::TokenSource>>,
+    cli: Option<&hosting::CliState>,
     rejected: bool,
     limited: bool,
 ) -> HostingStatus {
-    let source = token.flatten();
     if !enabled {
         HostingStatus::Off
     } else if rejected {
-        HostingStatus::Rejected(source)
+        HostingStatus::Rejected
     } else if limited {
         HostingStatus::RateLimited
-    } else if let Some(source) = source {
-        HostingStatus::Working(source)
-    } else if token.is_some() {
-        HostingStatus::NoCredential
     } else {
-        HostingStatus::Unknown
+        match cli {
+            Some(Ok(account)) => HostingStatus::Working(account.user.clone()),
+            Some(Err(error)) => HostingStatus::NoCredential(error.clone()),
+            None => HostingStatus::Unknown,
+        }
     }
 }
 
@@ -4473,6 +4446,7 @@ fn hosting_account(
         return;
     };
     let host = forge.authority();
+    let cli = format!("{} CLI", forge.kind.name());
     let plural = format!("{}s", forge.kind.request_noun());
     let sentence = {
         let mut chars = plural.chars();
@@ -4487,7 +4461,7 @@ fn hosting_account(
         .is_some_and(|until| Instant::now() < until);
     let status = hosting_status(
         s.hosting_api,
-        tab.requests.token,
+        tab.requests.cli.as_ref(),
         tab.requests.token_rejected,
         limited,
     );
@@ -4497,11 +4471,8 @@ fn hosting_account(
             p.text_faint,
             Some(("Open Integrations", Section::Integrations)),
         ),
-        HostingStatus::Rejected(source) => (
-            format!(
-                "{host} refused the credential{}, so {plural} cannot load.",
-                source.map_or(String::new(), |s| format!(" ({})", s.label())),
-            ),
+        HostingStatus::Rejected => (
+            format!("{host} refused the {cli}'s sign-in, so {plural} cannot load."),
             p.danger,
             Some(("Open Accounts", Section::Accounts)),
         ),
@@ -4510,21 +4481,28 @@ fn hosting_account(
             p.warning,
             Some(("Open Accounts", Section::Accounts)),
         ),
-        HostingStatus::Working(source) => (
+        HostingStatus::Working(user) => (
             format!(
-                "{sentence} load from {host} using the credential {}.",
-                source.label()
+                "{sentence} load from {host} using the {cli}'s sign-in{}.",
+                user.map_or_else(String::new, |user| format!(" as {user}"))
             ),
             p.success,
             Some(("Open Accounts", Section::Accounts)),
         ),
-        HostingStatus::NoCredential => (
-            format!(
-                "No credential for {host}: public repositories load, private ones need a token."
-            ),
-            p.text_faint,
-            Some(("Add a token", Section::Accounts)),
-        ),
+        HostingStatus::NoCredential(error) => {
+            let (status, _) = account_status(forge.kind, &Err(error.clone()));
+            let why = match &error {
+                CliError::Failed { message, .. } => {
+                    format!("{status}: {}", message.trim_end_matches('.'))
+                }
+                _ => status,
+            };
+            (
+                format!("{why}. Public repositories load; private ones do not."),
+                p.text_faint,
+                Some(("Open Accounts", Section::Accounts)),
+            )
+        }
         HostingStatus::Unknown => (
             format!("{sentence} have not been requested from {host} yet."),
             p.text_faint,
@@ -4819,7 +4797,7 @@ fn integrations(
         ui,
         "Pull and merge requests",
         "Loads pull and merge requests through the GitHub and GitLab APIs. Off keeps Canopy offline apart from git.",
-        "Requests load when you open a repository hosted on GitHub or GitLab.",
+        "Requests load when you open a repository hosted on GitHub or GitLab, using the sign-in of the gh or glab CLI.",
         |ui| {
             revert(
                 ui,
@@ -5053,217 +5031,433 @@ fn launcher_row(
     }
 }
 
-/// The line on a host's card and whether it names a token that works. The CLI's sign-in comes
-/// before the environment, which comes before the saved token (ADR 0013); `source` is the one a
-/// tab on this host is using, when one is open.
-fn account_status(
-    kind: ForgeKind,
-    source: Option<hosting::TokenSource>,
-    env: bool,
-    saved: bool,
-) -> (String, bool) {
-    match source {
-        Some(hosting::TokenSource::Cli(cli)) => {
-            return (format!("Using the {} CLI's sign-in", cli.name()), true);
-        }
-        _ if env => {
-            let name = if kind == ForgeKind::GitHub {
-                "GH_TOKEN"
-            } else {
-                "GITLAB_TOKEN"
-            };
-            return (format!("Using the {name} environment variable"), true);
-        }
-        _ if saved => return ("Token saved".into(), true),
-        _ => {}
-    }
-    (
-        "No saved token (the git credential helper is tried)".into(),
-        false,
-    )
+/// A host's check of the CLI sign-in: under way, or what it found.
+#[derive(Debug)]
+enum CliCheck {
+    Running(Receiver<hosting::CliState>),
+    Done(hosting::CliState),
 }
 
-/// Returns true when a token was saved or removed.
-fn accounts<'f>(
+/// The program that signs in to `kind`'s hosts.
+const fn cli_program(kind: ForgeKind) -> &'static str {
+    match kind {
+        ForgeKind::GitHub => "gh",
+        ForgeKind::GitLab => "glab",
+    }
+}
+
+/// What a host's card says about the CLI's sign-in, and the tone of the line.
+pub(crate) fn account_status(kind: ForgeKind, state: &hosting::CliState) -> (String, Tone) {
+    let cli = format!("{} CLI", kind.name());
+    match state {
+        Ok(account) => (
+            format!(
+                "Using the {cli}'s sign-in{}",
+                account
+                    .user
+                    .as_ref()
+                    .map_or_else(String::new, |user| format!(" as {user}"))
+            ),
+            Tone::Success,
+        ),
+        Err(CliError::NotInstalled { .. }) => {
+            (format!("The {cli} is not installed"), Tone::Neutral)
+        }
+        Err(CliError::SignedOut { .. }) => (format!("Not signed in with the {cli}"), Tone::Warning),
+        Err(CliError::MissingScope { scope, user, .. }) => (
+            format!(
+                "Signed in{} with the {cli}, without the {scope} scope",
+                user.as_ref()
+                    .map_or_else(String::new, |user| format!(" as {user}"))
+            ),
+            Tone::Warning,
+        ),
+        Err(CliError::Failed { .. }) => (format!("The {cli} could not be used"), Tone::Danger),
+    }
+}
+
+/// The line under the status of a signed-in card: the scopes the sign-in has, when the CLI lists
+/// them.
+fn scopes_line(account: &canopy_hosting::CliAccount) -> Option<String> {
+    account
+        .scopes
+        .as_ref()
+        .map(|scopes| format!("Scopes: {}", scopes.join(", ")))
+}
+
+/// A command to run in a terminal, on a line of its own with a button that copies it.
+fn command_line(ui: &mut Ui, command: &str, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    ui.horizontal_wrapped(|ui| {
+        ui.add(
+            egui::Label::new(
+                RichText::new(command)
+                    .monospace()
+                    .size(m.mono_size)
+                    .color(p.text),
+            )
+            .selectable(true),
+        );
+        if IconButton::new(icon::COPY, "Copy the command")
+            .size(Size::Xs)
+            .id_salt(("account-copy", command))
+            .show(ui)
+            .clicked()
+        {
+            actions.push(Action::Copy(command.to_owned()));
+        }
+    });
+}
+
+/// What a host's card shows under its status line for each state, and what the user can do.
+fn account_actions(
+    ui: &mut Ui,
+    kind: ForgeKind,
+    state: &hosting::CliState,
+    actions: &mut Vec<Action>,
+) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let detail = |ui: &mut Ui, text: &str| {
+        ui.add(egui::Label::new(RichText::new(text).size(m.small_size).color(p.text_faint)).wrap());
+    };
+    match state {
+        Ok(account) => {
+            if let Some(line) = scopes_line(account) {
+                detail(ui, &line);
+            }
+        }
+        Err(CliError::NotInstalled { .. }) => {
+            detail(
+                ui,
+                &format!(
+                    "Install it, sign in with it ({} auth login), then check again.",
+                    cli_program(kind)
+                ),
+            );
+            let page = canopy_hosting::install_page(kind);
+            if LinkButton::new(format!("Install {} CLI", kind.name()))
+                .url(page)
+                .text_size(m.small_size)
+                .show(ui)
+                .clicked()
+            {
+                actions.push(Action::OpenUrl(page.to_owned()));
+            }
+        }
+        Err(error @ (CliError::SignedOut { .. } | CliError::MissingScope { .. })) => {
+            detail(
+                ui,
+                &error.fix_note().map_or_else(
+                    || "Run this in a terminal, then check again.".to_owned(),
+                    |note| format!("Run this in a terminal and {note}, then check again."),
+                ),
+            );
+            if let Some(command) = error.fix_command() {
+                command_line(ui, &command, actions);
+            }
+        }
+        Err(CliError::Failed { message, .. }) => detail(ui, message),
+    }
+}
+
+/// The most sign-in checks the Accounts page runs at once; the other hosts wait their turn.
+const MAX_CHECKS: usize = 4;
+/// The most cards for hosts that only open repositories' remotes name; the rest are counted.
+const MAX_REPO_HOSTS: usize = 4;
+
+/// The hosts the Accounts page shows: github.com, gitlab.com and the GitLab hosts listed in
+/// Integrations always, then those of open repositories up to [`MAX_REPO_HOSTS`]. A host on a
+/// non-default port is its own entry.
+#[derive(Debug, Default)]
+struct AccountHosts {
+    hosts: Vec<Forge>,
+    /// Hosts of open repositories left out.
+    more: usize,
+    /// What a settings search finds the page by.
+    search: String,
+}
+
+impl AccountHosts {
+    fn of(settings: &Settings, tabs: &[crate::tab::RepoTab]) -> Self {
+        let account = |kind, host: &str| Forge {
+            kind,
+            host: host.to_lowercase(),
+            port: None,
+            path: String::new(),
+        };
+        let mut hosts: Vec<Forge> = vec![
+            account(ForgeKind::GitHub, "github.com"),
+            account(ForgeKind::GitLab, "gitlab.com"),
+        ];
+        for (host, port) in settings
+            .gitlab_host_list()
+            .iter()
+            .filter_map(|h| canopy_core::forge::normalise_host_with_port(h))
+        {
+            hosts.push(Forge {
+                kind: ForgeKind::GitLab,
+                host,
+                port,
+                path: String::new(),
+            });
+        }
+        let mut seen = HashSet::new();
+        hosts.retain(|f| seen.insert(f.authority().to_lowercase()));
+        let listed = hosts.len();
+        let mut more = 0;
+        for f in tabs.iter().flat_map(|t| t.forges.iter().map(|(_, f)| f)) {
+            if !seen.insert(f.authority().to_lowercase()) {
+                continue;
+            }
+            if hosts.len() - listed < MAX_REPO_HOSTS {
+                hosts.push(Forge {
+                    path: String::new(),
+                    ..f.clone()
+                });
+            } else {
+                more += 1;
+            }
+        }
+        let search = hosts
+            .iter()
+            .map(|f| f.host.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        Self {
+            hosts,
+            more,
+            search,
+        }
+    }
+
+    /// What the list is made from, so it is built again only when that changes.
+    fn source(settings: &Settings, tabs: &[crate::tab::RepoTab]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        settings.gitlab_hosts.hash(&mut h);
+        for (_, f) in tabs.iter().flat_map(|t| t.forges.iter()) {
+            (f.kind, &f.host, f.port).hash(&mut h);
+        }
+        h.finish()
+    }
+}
+
+/// The hosts whose check starts now: those not checked yet, in page order, while fewer than
+/// [`MAX_CHECKS`] run process-wide, including checks started by a Settings screen since closed.
+fn checks_to_start<'a>(
+    hosts: &'a [Forge],
+    checks: &HashMap<String, CliCheck>,
+    running: usize,
+) -> Vec<&'a Forge> {
+    hosts
+        .iter()
+        .filter(|f| !checks.contains_key(&f.authority().to_lowercase()))
+        .take(MAX_CHECKS.saturating_sub(running))
+        .collect()
+}
+
+/// The hosts' sign-in under Accounts. Returns the hosts (`host[:port]`, lower case) whose sign-in
+/// is not what an open tab on that host started with, so the app can restart those tabs' hosting
+/// threads.
+fn accounts(
     ui: &mut Ui,
     screen: &mut SettingsScreen,
     settings: &Settings,
-    tokens: &mut TokenStore,
-    forges: impl Iterator<Item = &'f Forge> + Clone,
-    sources: &HashMap<String, hosting::TokenSource>,
+    tabs: &[crate::tab::RepoTab],
     actions: &mut Vec<Action>,
-) -> bool {
-    const ABOUT: &str =
-        "Tokens let Canopy list and act on pull and merge requests, and go only to their own host.";
+) -> Vec<String> {
+    const ABOUT: [&str; 2] = [
+        "Pull and merge requests use the sign-in of the GitHub CLI (gh) and the GitLab CLI (glab).",
+        "Canopy stores no token. Public repositories load without signing in.",
+    ];
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    let mut changed = false;
-    let hosts_text = std::iter::once("github.com gitlab.com".to_owned())
-        .chain(settings.gitlab_host_list())
-        .chain(forges.clone().map(|f| f.host.clone()))
-        .collect::<Vec<_>>()
-        .join(" ");
-    // The page is one block: a search for any host or for tokens shows all of it.
-    if !block(ui, "Tokens", &format!("{ABOUT} {hosts_text}")) {
-        return false;
+    let mut changed = Vec::new();
+    let source = AccountHosts::source(settings, tabs);
+    if screen
+        .account_hosts
+        .as_ref()
+        .is_none_or(|(s, _)| *s != source)
+    {
+        screen.account_hosts = Some((source, Arc::new(AccountHosts::of(settings, tabs))));
     }
-    help_label(ui, ABOUT);
+    let Some(page) = screen.account_hosts.as_ref().map(|(_, h)| Arc::clone(h)) else {
+        return changed;
+    };
+    // The page is one block: a search for any host or for the CLIs shows all of it.
+    if !block(
+        ui,
+        "Sign-in",
+        &format!("{} {}", ABOUT.join(" "), page.search),
+    ) {
+        return changed;
+    }
+    for line in ABOUT {
+        help_label(ui, line);
+    }
+    // The CLI is run (and contacts its host) only while pull and merge requests are on and the
+    // start-up questions are answered, as for a tab's own hosting thread.
+    let live = settings.hosting_api && crate::ui::legal::pending(settings).is_none();
     if !settings.hosting_api {
         ui.add_space(theme::SM);
         Callout::new(
             Tone::Neutral,
-            "Pull and merge requests are turned off in Integrations.",
+            "Pull and merge requests are turned off in Integrations, so Canopy does not run the CLIs.",
         )
         .icon(icon::INFO)
         .show(ui);
     }
     ui.add_space(theme::MD);
-    // Hosts: the two public ones, configured GitLab hosts and those of open repositories. Tokens
-    // are kept per authority, so a host on a non-default port gets its own entry.
-    let account = |kind, host: &str| Forge {
-        kind,
-        host: host.to_lowercase(),
-        port: None,
-        path: String::new(),
-    };
-    let mut hosts: Vec<Forge> = vec![
-        account(ForgeKind::GitHub, "github.com"),
-        account(ForgeKind::GitLab, "gitlab.com"),
-    ];
-    for h in settings.gitlab_host_list() {
-        hosts.push(account(ForgeKind::GitLab, &h));
-    }
-    for f in forges {
-        hosts.push(Forge {
-            path: String::new(),
-            ..f.clone()
-        });
-    }
-    let mut seen = HashSet::new();
-    hosts.retain(|f| seen.insert(f.authority()));
 
-    // Collect finished token tests.
-    for test in screen.tests.values_mut() {
-        if let TokenTest::Running(rx) = test
-            && let Ok(r) = rx.try_recv()
-        {
-            *test = TokenTest::Done(r);
+    // Collect every finished check first, including one whose host left the page, so a freed slot
+    // is taken in this frame and an old Settings screen cannot strand a running check.
+    let finished: Vec<(String, Option<hosting::CliState>)> = screen
+        .checks
+        .iter()
+        .filter_map(|(key, check)| {
+            let CliCheck::Running(rx) = check else {
+                return None;
+            };
+            match rx.try_recv() {
+                Ok(state) => Some((key.clone(), Some(state))),
+                Err(crossbeam_channel::TryRecvError::Empty) => None,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => Some((key.clone(), None)),
+            }
+        })
+        .collect();
+    for (key, state) in finished {
+        let state = if let Some(state) = state {
+            state
+        } else {
+            let Some(forge) = page
+                .hosts
+                .iter()
+                .find(|forge| forge.authority().eq_ignore_ascii_case(&key))
+            else {
+                screen.checks.remove(&key);
+                screen.rechecks.remove(&key);
+                continue;
+            };
+            Err(CliError::Failed {
+                kind: forge.kind,
+                message: "the check could not be run".into(),
+            })
+        };
+        // A tab that started with another answer holds a stale credential, even when its host is
+        // no longer one of the few repository hosts the page has room to show. An explicit recheck
+        // also replaces a renewed token, which the account-and-scopes state cannot distinguish.
+        let rechecked = screen.rechecks.remove(&key);
+        let stale = tabs.iter().any(|t| {
+            t.host
+                .as_ref()
+                .is_some_and(|h| h.forge.authority().to_lowercase() == key)
+                && (rechecked
+                    || t.requests.token_rejected
+                    || t.requests.cli.as_ref().is_some_and(|had| *had != state))
+        });
+        if stale {
+            changed.push(key.clone());
+        }
+        screen.checks.insert(key, CliCheck::Done(state));
+    }
+    // Ask the CLI when the page first shows a host, and again on "Check again".
+    if live {
+        for forge in checks_to_start(&page.hosts, &screen.checks, hosting::cli_checks_running()) {
+            let rx = hosting::check_cli(forge.clone(), ui.ctx().clone());
+            screen
+                .checks
+                .insert(forge.authority().to_lowercase(), CliCheck::Running(rx));
         }
     }
 
     let width = ui.available_width() - theme::SM;
-    for forge in hosts {
+    for forge in &page.hosts {
         let kind = forge.kind;
         let host = forge.authority();
+        let key = host.to_lowercase();
         Card::new()
             .width(width)
-            .id_salt(("token-card", &host))
+            .id_salt(("account-card", &host))
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = theme::SM;
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(forge_icon(kind)).size(m.icon_lg).color(p.text));
-                    ui.label(RichText::new(&host).font(theme::heading(m.subtitle_size)).color(p.text));
-                    let saved = tokens.get_for(&forge).is_some();
-                    let env = canopy_hosting::token_from_env_for(kind, &forge.host, &settings.gitlab_host_list()).is_some();
-                    let (status, works) = account_status(kind, sources.get(&host.to_lowercase()).copied(), env, saved);
-                    let color = if works { p.success } else { p.text_faint };
-                    let status = format!("{}  {status}", if works { icon::CHECK_CIRCLE } else { icon::KEY });
-                    ui.label(RichText::new(status).size(m.meta_size).color(color));
+                    ui.label(
+                        RichText::new(forge_icon(kind))
+                            .size(m.icon_lg)
+                            .color(p.text),
+                    );
+                    ui.label(
+                        RichText::new(&host)
+                            .font(theme::heading(m.subtitle_size))
+                            .color(p.text),
+                    );
                 });
-                let input = screen.token_input.entry(host.clone()).or_default();
-                ui.horizontal_wrapped(|ui| {
-                    TextField::new(input)
-                        .password(true)
-                        .placeholder("Paste a personal access token…")
-                        .width(FIELD_WIDTH)
-                        .name(format!("Token for {host}"))
-                        .id_salt(("token", &host))
-                        .show(ui);
-                    let has_input = !input.trim().is_empty();
-                    if Button::new("Save")
-                        .icon(icon::FLOPPY_DISK)
-                        .enabled(has_input)
-                        .disabled_reason("Paste a token first.")
-                        .id_salt(("token-save", &host))
-                        .show(ui)
-                        .clicked()
+                match screen.checks.get(&key) {
+                    // Waiting for a free slot reads the same as running: the check is on its way.
+                    Some(CliCheck::Running(_)) | None
+                        if live || screen.checks.contains_key(&key) =>
                     {
-                        match tokens.set(&host, input) {
-                            Ok(()) => {
-                                changed = true;
-                                screen.token_error = None;
-                                let rx = hosting::test_token(forge.clone(), input.trim().to_owned(), ui.ctx().clone());
-                                screen.tests.insert(host.clone(), TokenTest::Running(rx));
-                                input.clear();
-                            }
-                            Err(e) => screen.token_error = Some(format!("Could not save the token: {e}")),
-                        }
-                    }
-                    if tokens.get_for(&forge).is_some() {
-                        if Button::new("Test")
-                            .icon(icon::PLUGS)
-                            .id_salt(("token-test", &host))
-                            .show(ui)
-                            .clicked()
-                            && let Some(t) = tokens.get_for(&forge)
-                        {
-                            let rx = hosting::test_token(forge.clone(), t.to_owned(), ui.ctx().clone());
-                            screen.tests.insert(host.clone(), TokenTest::Running(rx));
-                        }
-                        if Button::new("Remove")
-                            .icon(icon::TRASH)
-                            .icon_tone(Tone::Danger)
-                            .id_salt(("token-remove", &host))
-                            .show(ui)
-                            .clicked()
-                        {
-                            match tokens.set(&host, "") {
-                                Ok(()) => {
-                                    changed = true;
-                                    screen.tests.remove(&host);
-                                }
-                                Err(e) => screen.token_error = Some(format!("Could not remove the token: {e}")),
-                            }
-                        }
-                    }
-                });
-                match screen.tests.get(&host) {
-                    Some(TokenTest::Running(_)) => {
                         ui.horizontal(|ui| {
                             Spinner::new()
                                 .size(Size::Sm)
-                                .label("the token check")
+                                .label("the sign-in check")
                                 .show(ui);
-                            ui.label(RichText::new("Checking the token…").size(m.meta_size).color(p.text_dim));
+                            ui.label(
+                                RichText::new(format!("Checking the {} CLI…", kind.name()))
+                                    .size(m.meta_size)
+                                    .color(p.text_dim),
+                            );
                         });
                     }
-                    Some(TokenTest::Done(Ok(user))) => {
-                        ui.label(RichText::new(format!("{}  Signed in as {user}", icon::CHECK)).size(m.meta_size).color(p.success));
+                    Some(CliCheck::Done(state)) => {
+                        let (status, tone) = account_status(kind, state);
+                        let glyph = match tone {
+                            Tone::Success => icon::CHECK_CIRCLE,
+                            Tone::Danger => icon::WARNING_OCTAGON,
+                            Tone::Warning => icon::WARNING,
+                            _ => icon::KEY,
+                        };
+                        ui.label(
+                            RichText::new(format!("{glyph}  {status}"))
+                                .size(m.meta_size)
+                                .color(tone.color(p)),
+                        );
+                        account_actions(ui, kind, state, actions);
                     }
-                    Some(TokenTest::Done(Err(e))) => {
-                        ui.label(RichText::new(format!("{}  {e}", icon::WARNING)).size(m.meta_size).color(p.danger));
+                    _ => {
+                        ui.label(
+                            RichText::new("Not checked while pull and merge requests are off.")
+                                .size(m.meta_size)
+                                .color(p.text_faint),
+                        );
                     }
-                    None => {}
                 }
-                let scopes = match kind {
-                    ForgeKind::GitHub => "Needs the repo scope (classic token), or Pull requests: read and write plus Contents: read (fine-grained).",
-                    ForgeKind::GitLab => "Needs the api scope (read_api is enough to only browse).",
-                };
-                ui.add(egui::Label::new(RichText::new(scopes).size(m.small_size).color(p.text_faint)).wrap());
-                let page = hosting::token_page(kind, &host);
-                if LinkButton::new("Create a token")
-                    .url(page.clone())
-                    .text_size(m.small_size)
-                    .show(ui)
-                    .clicked()
+                let busy = !matches!(screen.checks.get(&key), Some(CliCheck::Done(_)));
+                if live
+                    && Button::new("Check again")
+                        .icon(icon::ARROW_CLOCKWISE)
+                        .enabled(!busy)
+                        .disabled_reason("Checking the sign-in now.")
+                        .id_salt(("account-recheck", &host))
+                        .show(ui)
+                        .clicked()
                 {
-                    actions.push(Action::OpenUrl(page));
+                    // Queued: it starts on the next frame, when a slot is free. Its completion
+                    // restarts tabs even if the account and scopes are unchanged (token renewal).
+                    screen.rechecks.insert(key.clone());
+                    screen.checks.remove(&key);
+                    ui.ctx().request_repaint();
                 }
             });
         ui.add_space(m.card_gap);
     }
-    if let Some(e) = &screen.token_error {
-        Callout::new(Tone::Danger, e.as_str()).show(ui);
+    if page.more > 0 {
+        help_label(
+            ui,
+            &format!("And {} more hosts of open repositories.", page.more),
+        );
     }
     changed
 }
@@ -5721,8 +5915,8 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row_explained(
         ui,
         "Export settings",
-        "Saves your preferences to a file, without tokens or consent.",
-        "Left out: tokens, consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings.",
+        "Saves your preferences to a file, without consent.",
+        "Left out: consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Export…" })
                 .icon(icon::EXPORT)
@@ -5746,7 +5940,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
         ui,
         "Import settings",
         "Loads preferences from a settings file.",
-        "What the file leaves out stays as it is. A file never chooses the programs Canopy runs or the hosts a token goes to, and never turns a network feature on.",
+        "What the file leaves out stays as it is. A file never chooses the programs Canopy runs or the GitLab hosts Canopy signs in to, and never turns a network feature on.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Import…" })
                 .icon(icon::DOWNLOAD_SIMPLE)
@@ -5764,7 +5958,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Reset all settings",
-        "Restores every preference to its recommended value. Tokens, trusted folders, repositories and consent stay.",
+        "Restores every preference to its recommended value. Trusted folders, repositories and consent stay.",
         |ui| {
             if confirm_button(ui, "reset-all-settings", "Reset all", "Reset every setting") {
                 match crate::settings_file::reset(s) {
@@ -6062,20 +6256,577 @@ mod tests {
     use crate::repo_config::Signing;
     use canopy_core::{cli, config};
 
+    /// Each state of a host's card has a line of its own, in a tone that says how it stands.
     #[test]
-    fn a_cli_token_in_use_is_not_called_saved() {
-        use hosting::TokenSource;
-        let cli = Some(TokenSource::Cli(ForgeKind::GitLab));
-        // A saved token that is not the one in use is not what the card names.
-        assert_eq!(
-            account_status(ForgeKind::GitLab, cli, false, true),
-            ("Using the GitLab CLI's sign-in".into(), true)
+    fn each_cli_state_has_its_own_status_line() {
+        let (gh, glab) = (ForgeKind::GitHub, ForgeKind::GitLab);
+        let account = |user: Option<&str>| {
+            Ok(canopy_hosting::CliAccount {
+                user: user.map(str::to_owned),
+                scopes: None,
+            })
+        };
+        let missing = CliError::MissingScope {
+            kind: gh,
+            host: "github.com".into(),
+            user: Some("octocat".into()),
+            scope: "repo",
+        };
+        let cases = [
+            (
+                account(Some("tanuki")),
+                glab,
+                "Using the GitLab CLI's sign-in as tanuki",
+                Tone::Success,
+            ),
+            (
+                account(None),
+                gh,
+                "Using the GitHub CLI's sign-in",
+                Tone::Success,
+            ),
+            (
+                Err(CliError::NotInstalled { kind: gh }),
+                gh,
+                "The GitHub CLI is not installed",
+                Tone::Neutral,
+            ),
+            (
+                hosting::signed_out(glab, "gitlab.corp"),
+                glab,
+                "Not signed in with the GitLab CLI",
+                Tone::Warning,
+            ),
+            (
+                Err(missing),
+                gh,
+                "Signed in as octocat with the GitHub CLI, without the repo scope",
+                Tone::Warning,
+            ),
+            (
+                Err(CliError::Failed {
+                    kind: glab,
+                    message: "it took longer than 10 seconds".into(),
+                }),
+                glab,
+                "The GitLab CLI could not be used",
+                Tone::Danger,
+            ),
+        ];
+        for (state, kind, line, tone) in cases {
+            assert_eq!(account_status(kind, &state), (line.to_owned(), tone));
+        }
+    }
+
+    /// The scopes line of a signed-in card lists what the CLI listed, and nothing for a CLI that
+    /// lists none (`glab`).
+    #[test]
+    fn a_signed_in_card_lists_the_scopes_the_cli_listed() {
+        let scoped = canopy_hosting::CliAccount {
+            user: None,
+            scopes: Some(vec!["gist".into(), "repo".into()]),
+        };
+        assert_eq!(scopes_line(&scoped).as_deref(), Some("Scopes: gist, repo"));
+        let bare = canopy_hosting::CliAccount {
+            scopes: None,
+            ..scoped
+        };
+        assert_eq!(scopes_line(&bare), None);
+    }
+
+    /// Settings with the start-up questions answered, so the Accounts page may run the CLIs.
+    fn answered() -> Settings {
+        Settings {
+            accepted_terms: crate::ui::legal::TERMS_VERSION.to_owned(),
+            accepted_privacy: crate::ui::legal::PRIVACY_VERSION.to_owned(),
+            crash_reports: Some(false),
+            crash_reports_version: crate::crash_reports::DATA_VERSION,
+            ..Settings::default()
+        }
+    }
+
+    /// One frame of the Accounts page: what it speaks, and the hosts it says are stale. Every
+    /// host the page lists needs an entry in `screen.checks` first, or the page would run the real
+    /// CLI for it.
+    fn accounts_frame(
+        ctx: &egui::Context,
+        screen: &mut SettingsScreen,
+        settings: &Settings,
+        tabs: &[crate::tab::RepoTab],
+        actions: &mut Vec<Action>,
+    ) -> (Vec<crate::ui::kit::testkit::Spoken>, Vec<String>) {
+        let mut changed = Vec::new();
+        let spoken = crate::ui::kit::testkit::spoken(ctx, |ui| {
+            changed = accounts(ui, screen, settings, tabs, actions);
+        });
+        (spoken, changed)
+    }
+
+    /// Whether any node's name or words contain `part`.
+    fn said(spoken: &[crate::ui::kit::testkit::Spoken], part: &str) -> bool {
+        spoken.iter().any(|n| {
+            [&n.label, &n.value]
+                .into_iter()
+                .flatten()
+                .any(|t| t.contains(part))
+        })
+    }
+
+    fn seeded(states: Vec<(&str, hosting::CliState)>) -> SettingsScreen {
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        for (host, state) in states {
+            screen.checks.insert(host.to_owned(), CliCheck::Done(state));
+        }
+        screen
+    }
+
+    /// Each state of a host's card says what is wrong in words of its own and offers the one
+    /// action that fixes it; the actions work.
+    #[test]
+    fn every_account_state_has_its_words_and_its_action() {
+        use crate::ui::kit::testkit::{self, find};
+        let ctx = testkit::ctx();
+        let settings = answered();
+        let mut screen = seeded(vec![
+            (
+                "github.com",
+                Err(CliError::NotInstalled {
+                    kind: ForgeKind::GitHub,
+                }),
+            ),
+            (
+                "gitlab.com",
+                hosting::signed_out(ForgeKind::GitLab, "gitlab.com"),
+            ),
+        ]);
+        let mut actions = Vec::new();
+        accounts_frame(&ctx, &mut screen, &settings, &[], &mut actions);
+        let (words, changed) = accounts_frame(&ctx, &mut screen, &settings, &[], &mut actions);
+        assert_eq!(changed, Vec::<String>::new());
+        assert!(said(&words, "The GitHub CLI is not installed"));
+        assert!(said(&words, "Not signed in with the GitLab CLI"));
+        assert!(said(&words, "glab auth login --hostname gitlab.com"));
+        assert!(find(&words, "Install GitHub CLI").is_some());
+        assert!(find(&words, "Copy the command").is_some());
+        let rechecks = words
+            .iter()
+            .filter(|n| n.label.as_deref() == Some("Check again"))
+            .count();
+        assert_eq!(rechecks, 2, "one on each card");
+        // No token is asked for or accepted anywhere on the page.
+        for word in ["Paste", "paste", "Save", "Create a token"] {
+            assert!(!said(&words, word), "{word}");
+        }
+        let centre = |label: &str| find(&words, label).and_then(|n| n.bounds).unwrap().center();
+        for label in ["Install GitHub CLI", "Copy the command"] {
+            testkit::click(&ctx, centre(label), |ui| {
+                accounts(ui, &mut screen, &settings, &[], &mut actions);
+            });
+        }
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::OpenUrl(url) if url == "https://cli.github.com")),
+            "{actions:?}"
         );
-        assert_eq!(
-            account_status(ForgeKind::GitHub, None, false, true),
-            ("Token saved".into(), true)
+        assert!(
+            actions.iter().any(|a| matches!(
+                a,
+                Action::Copy(text) if text == "glab auth login --hostname gitlab.com"
+            )),
+            "{actions:?}"
         );
-        assert!(!account_status(ForgeKind::GitHub, None, false, false).1);
+    }
+
+    #[test]
+    fn a_signed_in_card_names_the_account_and_its_scopes() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let settings = answered();
+        let mut screen = seeded(vec![
+            (
+                "github.com",
+                Ok(canopy_hosting::CliAccount {
+                    user: Some("octocat".into()),
+                    scopes: Some(vec!["gist".into(), "repo".into()]),
+                }),
+            ),
+            (
+                "gitlab.com",
+                Err(CliError::MissingScope {
+                    kind: ForgeKind::GitLab,
+                    host: "gitlab.com".into(),
+                    user: Some("tanuki".into()),
+                    scope: "api",
+                }),
+            ),
+        ]);
+        let mut actions = Vec::new();
+        accounts_frame(&ctx, &mut screen, &settings, &[], &mut actions);
+        let (words, _) = accounts_frame(&ctx, &mut screen, &settings, &[], &mut actions);
+        assert!(said(&words, "Using the GitHub CLI's sign-in as octocat"));
+        assert!(said(&words, "Scopes: gist, repo"));
+        assert!(said(
+            &words,
+            "Signed in as tanuki with the GitLab CLI, without the api scope"
+        ));
+        assert!(said(&words, "glab auth login --hostname gitlab.com"));
+        // GitLab's sign-in asks which scopes to grant: the card says to allow the missing one.
+        assert!(
+            said(
+                &words,
+                "Run this in a terminal and allow the api scope, then check again."
+            ),
+            "{words:#?}"
+        );
+    }
+
+    /// While pull and merge requests are off, or before the start-up questions are answered, the
+    /// page runs no CLI (it would contact the host) and says so.
+    #[test]
+    fn the_page_runs_no_cli_while_requests_are_off_or_unanswered() {
+        use crate::ui::kit::testkit;
+        for settings in [
+            Settings {
+                hosting_api: false,
+                ..answered()
+            },
+            Settings::default(),
+        ] {
+            let ctx = testkit::ctx();
+            let mut screen = SettingsScreen::at(Section::Accounts);
+            let mut actions = Vec::new();
+            let (words, changed) = accounts_frame(&ctx, &mut screen, &settings, &[], &mut actions);
+            assert!(screen.checks.is_empty(), "a CLI was started");
+            assert_eq!(changed, Vec::<String>::new());
+            assert!(said(
+                &words,
+                "Not checked while pull and merge requests are off"
+            ));
+            assert!(
+                !words
+                    .iter()
+                    .any(|n| n.label.as_deref() == Some("Check again")),
+                "nothing to check again"
+            );
+        }
+    }
+
+    /// A tab with 200 remotes on 200 GitLab hosts.
+    fn tab_with_many_hosts() -> crate::tab::RepoTab {
+        let (worker, _events, _jobs) = crate::worker::Worker::detached();
+        let mut tab = crate::tab::RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.forges = (0..200)
+            .map(|n| {
+                (
+                    format!("r{n}"),
+                    Forge {
+                        kind: ForgeKind::GitLab,
+                        host: format!("gitlab-{n}.example"),
+                        port: None,
+                        path: "x/y".into(),
+                    },
+                )
+            })
+            .collect();
+        tab
+    }
+
+    /// A repository with hundreds of remotes on as many hosts starts at most [`MAX_CHECKS`] CLIs
+    /// at once, and only for the hosts it shows: the listed ones and [`MAX_REPO_HOSTS`] of the
+    /// repository's, the rest counted in one line.
+    #[test]
+    fn many_repository_hosts_are_capped() {
+        use crate::ui::kit::testkit;
+        let tab = tab_with_many_hosts();
+        let tabs = std::slice::from_ref(&tab);
+        let page = AccountHosts::of(&answered(), tabs);
+        assert_eq!(page.hosts.len(), 2 + MAX_REPO_HOSTS);
+        assert_eq!(page.more, 200 - MAX_REPO_HOSTS);
+        // Nothing checked yet: the first MAX_CHECKS start, then one per slot that frees.
+        let mut checks = HashMap::new();
+        assert_eq!(checks_to_start(&page.hosts, &checks, 0).len(), MAX_CHECKS);
+        let running: Vec<_> = (0..MAX_CHECKS - 1)
+            .map(|_| crossbeam_channel::unbounded::<hosting::CliState>())
+            .collect();
+        for (n, (_, rx)) in running.iter().enumerate() {
+            checks.insert(page.hosts[n].authority(), CliCheck::Running(rx.clone()));
+        }
+        let next = checks_to_start(&page.hosts, &checks, MAX_CHECKS - 1);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].host, page.hosts[MAX_CHECKS - 1].host);
+        let (_, rx) = crossbeam_channel::unbounded::<hosting::CliState>();
+        checks.insert(next[0].authority(), CliCheck::Running(rx));
+        assert_eq!(
+            checks_to_start(&page.hosts, &checks, MAX_CHECKS),
+            Vec::<&Forge>::new()
+        );
+
+        // Entries left by a page that closed are not how availability is measured: the counter of
+        // real threads is. Stale map entries alone must neither consume nor invent free slots.
+        let mut orphaned = HashMap::new();
+        for (_, rx) in running {
+            orphaned.insert(format!("orphan-{}", orphaned.len()), CliCheck::Running(rx));
+        }
+        assert_eq!(checks_to_start(&page.hosts, &orphaned, 0).len(), MAX_CHECKS);
+        assert_eq!(
+            checks_to_start(&page.hosts, &orphaned, MAX_CHECKS),
+            Vec::<&Forge>::new()
+        );
+
+        // The page shows those cards and counts the rest; with every shown host answered it
+        // starts nothing for the hidden ones.
+        let ctx = testkit::ctx();
+        let settings = Settings {
+            hosting_api: true,
+            ..answered()
+        };
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        for forge in &page.hosts {
+            screen.checks.insert(
+                forge.authority(),
+                CliCheck::Done(hosting::signed_out(forge.kind, &forge.host)),
+            );
+        }
+        let (words, _) = accounts_frame(&ctx, &mut screen, &settings, tabs, &mut Vec::new());
+        assert_eq!(
+            screen.checks.len(),
+            2 + MAX_REPO_HOSTS,
+            "no check for a hidden host"
+        );
+        assert!(said(&words, "gitlab-3.example"));
+        assert!(!said(&words, "gitlab-4.example"));
+        assert!(said(&words, "And 196 more hosts of open repositories."));
+        let cards = words
+            .iter()
+            .filter(|n| n.label.as_deref() == Some("Check again"))
+            .count();
+        assert_eq!(cards, 2 + MAX_REPO_HOSTS);
+    }
+
+    /// A configured GitLab authority includes its web port in the CLI check, including when no
+    /// open repository can supply a correctly ported remote.
+    #[test]
+    fn configured_gitlab_hosts_keep_their_non_default_ports() {
+        let settings = Settings {
+            gitlab_hosts: "GitLab.Corp:8443, https://gitlab.other:9443/root".into(),
+            ..answered()
+        };
+        let page = AccountHosts::of(&settings, &[]);
+        let corp = page
+            .hosts
+            .iter()
+            .find(|forge| forge.host == "gitlab.corp")
+            .expect("configured host");
+        assert_eq!(corp.port, Some(8443));
+        assert_eq!(corp.authority(), "gitlab.corp:8443");
+        let other = page
+            .hosts
+            .iter()
+            .find(|forge| forge.host == "gitlab.other")
+            .expect("configured host with a path");
+        assert_eq!(other.port, Some(9443));
+    }
+
+    /// The page's host list is built once and kept while the settings and the tabs' remotes stay
+    /// the same, not every frame.
+    #[test]
+    fn the_account_hosts_are_built_again_only_when_they_change() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let tab = tab_with_many_hosts();
+        let tabs = std::slice::from_ref(&tab);
+        // Off, so no CLI runs.
+        let mut settings = Settings {
+            hosting_api: false,
+            ..answered()
+        };
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        let built = |screen: &SettingsScreen| Arc::clone(&screen.account_hosts.as_ref().unwrap().1);
+        accounts_frame(&ctx, &mut screen, &settings, tabs, &mut Vec::new());
+        let first = built(&screen);
+        accounts_frame(&ctx, &mut screen, &settings, tabs, &mut Vec::new());
+        assert!(Arc::ptr_eq(&first, &built(&screen)), "kept between frames");
+        settings.gitlab_hosts = "gitlab.corp".into();
+        accounts_frame(&ctx, &mut screen, &settings, tabs, &mut Vec::new());
+        let second = built(&screen);
+        assert!(!Arc::ptr_eq(&first, &second), "built again for a new host");
+        assert!(second.hosts.iter().any(|f| f.host == "gitlab.corp"));
+    }
+
+    /// A check that finds another answer than the one a tab's hosting thread started with marks
+    /// that host, so the app restarts the tab; an answer that agrees marks nothing.
+    #[test]
+    fn a_changed_sign_in_marks_the_host_of_the_tab_that_holds_the_old_one() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let settings = answered();
+        let forge = Forge::parse("https://github.com/acme/demo.git", &[]).unwrap();
+        let (worker, _events, _jobs) = crate::worker::Worker::detached();
+        let mut tab = crate::tab::RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.forges = vec![("origin".to_owned(), forge.clone())];
+        tab.host = Some(hosting::HostWorker::detached(forge).0);
+        tab.requests.cli = Some(hosting::signed_out(ForgeKind::GitHub, "github.com"));
+        let signed_in: hosting::CliState = Ok(hosting::demo_account());
+        for (answer, stale) in [
+            (hosting::signed_out(ForgeKind::GitHub, "github.com"), false),
+            (signed_in, true),
+        ] {
+            let mut screen = SettingsScreen::at(Section::Accounts);
+            let (tx, rx) = crossbeam_channel::unbounded();
+            screen
+                .checks
+                .insert("github.com".into(), CliCheck::Running(rx));
+            screen.checks.insert(
+                "gitlab.com".into(),
+                CliCheck::Done(hosting::signed_out(ForgeKind::GitLab, "gitlab.com")),
+            );
+            tx.send(answer).unwrap();
+            let mut actions = Vec::new();
+            let (_, changed) = accounts_frame(
+                &ctx,
+                &mut screen,
+                &settings,
+                std::slice::from_ref(&tab),
+                &mut actions,
+            );
+            assert_eq!(
+                changed,
+                if stale {
+                    vec!["github.com".to_owned()]
+                } else {
+                    vec![]
+                }
+            );
+            assert!(matches!(
+                screen.checks.get("github.com"),
+                Some(CliCheck::Done(_))
+            ));
+        }
+    }
+
+    /// A rejected credential must be replaced even when the CLI comes back with the same account
+    /// and scopes: the token itself may have been renewed.
+    #[test]
+    fn a_rejected_credential_is_retried_when_the_account_did_not_change() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let settings = answered();
+        let forge = Forge::parse("https://github.com/acme/demo.git", &[]).unwrap();
+        let (worker, _events, _jobs) = crate::worker::Worker::detached();
+        let mut tab = crate::tab::RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.forges = vec![("origin".to_owned(), forge.clone())];
+        tab.host = Some(hosting::HostWorker::detached(forge).0);
+        let signed_in: hosting::CliState = Ok(hosting::demo_account());
+        tab.requests.cli = Some(signed_in.clone());
+        tab.requests.token_rejected = true;
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        screen
+            .checks
+            .insert("github.com".into(), CliCheck::Running(rx));
+        tx.send(signed_in).unwrap();
+
+        let (_, changed) = accounts_frame(
+            &ctx,
+            &mut screen,
+            &settings,
+            std::slice::from_ref(&tab),
+            &mut Vec::new(),
+        );
+
+        assert_eq!(changed, vec!["github.com".to_owned()]);
+    }
+
+    /// Check again replaces the worker's token even when reauthentication returned the identical
+    /// account metadata, which is the usual shape of a token renewal.
+    #[test]
+    fn check_again_restarts_a_tab_with_the_same_account_and_scopes() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let settings = answered();
+        let forge = Forge::parse("https://github.com/acme/demo.git", &[]).unwrap();
+        let (worker, _events, _jobs) = crate::worker::Worker::detached();
+        let mut tab = crate::tab::RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.forges = vec![("origin".to_owned(), forge.clone())];
+        tab.host = Some(hosting::HostWorker::detached(forge).0);
+        let signed_in: hosting::CliState = Ok(hosting::demo_account());
+        tab.requests.cli = Some(signed_in.clone());
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        screen.rechecks.insert("github.com".into());
+        let (tx, rx) = crossbeam_channel::unbounded();
+        screen
+            .checks
+            .insert("github.com".into(), CliCheck::Running(rx));
+        tx.send(signed_in).unwrap();
+
+        let (_, changed) = accounts_frame(
+            &ctx,
+            &mut screen,
+            &settings,
+            std::slice::from_ref(&tab),
+            &mut Vec::new(),
+        );
+
+        assert_eq!(changed, vec!["github.com".to_owned()]);
+        assert!(!screen.rechecks.contains("github.com"));
+    }
+
+    /// A host that drops off the page while its check runs still has its answer collected, so its
+    /// tab restarts and an orphaned check cannot hold a slot forever.
+    #[test]
+    fn a_finished_check_is_collected_after_its_host_leaves_the_page() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let settings = Settings {
+            hosting_api: false,
+            ..answered()
+        };
+        let mut tab = tab_with_many_hosts();
+        let hidden = tab.forges[100].1.clone();
+        tab.host = Some(hosting::HostWorker::detached(hidden.clone()).0);
+        tab.requests.cli = Some(hosting::signed_out(hidden.kind, &hidden.host));
+        let key = hidden.authority().to_lowercase();
+        assert!(
+            !AccountHosts::of(&settings, std::slice::from_ref(&tab))
+                .hosts
+                .iter()
+                .any(|forge| forge.authority().eq_ignore_ascii_case(&key))
+        );
+
+        let mut screen = SettingsScreen::at(Section::Accounts);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        screen.checks.insert(key.clone(), CliCheck::Running(rx));
+        tx.send(Ok(hosting::demo_account())).unwrap();
+        let (_, changed) = accounts_frame(
+            &ctx,
+            &mut screen,
+            &settings,
+            std::slice::from_ref(&tab),
+            &mut Vec::new(),
+        );
+        assert_eq!(changed, vec![key.clone()]);
+        assert!(matches!(screen.checks.get(&key), Some(CliCheck::Done(_))));
     }
 
     /// Every preview theme needs an outlined selection marker; merely changing the
@@ -6286,7 +7037,6 @@ mod tests {
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 560.0));
         let mut settings = Settings::default();
-        let mut tokens = TokenStore::default();
         let mut screen = SettingsScreen::at(Section::Appearance);
         // The clock moves a second a frame, so a scroll's glide ends between frames.
         let mut time = 0.0;
@@ -6304,7 +7054,6 @@ mod tests {
                         ui.ctx(),
                         &mut screen,
                         &mut settings,
-                        &mut tokens,
                         &SettingsData {
                             tabs: &[],
                             update: &UpdateState::Idle,
@@ -6390,7 +7139,6 @@ mod tests {
                     ..Settings::default()
                 }
             };
-            let mut tokens = TokenStore::default();
             let mut screen = SettingsScreen::at(section);
             // No git configuration is read: what it sets would decide the rows.
             screen.facts.global.asked = true;
@@ -6410,7 +7158,6 @@ mod tests {
                             ui.ctx(),
                             &mut screen,
                             &mut settings,
-                            &mut tokens,
                             &SettingsData {
                                 tabs: &[],
                                 update: &UpdateState::Idle,
@@ -6513,7 +7260,6 @@ mod tests {
             follow_git_config: false,
             ..Settings::default()
         };
-        let mut tokens = TokenStore::default();
         let mut screen = SettingsScreen::at(Section::Git);
         // No git configuration is read: what it sets would decide the row.
         screen.facts.global.asked = true;
@@ -6533,7 +7279,6 @@ mod tests {
                         ui.ctx(),
                         &mut screen,
                         settings,
-                        &mut tokens,
                         &SettingsData {
                             tabs: &[],
                             update: &UpdateState::Idle,
@@ -6624,7 +7369,6 @@ mod tests {
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
         let mut settings = Settings::default();
-        let mut tokens = TokenStore::default();
         for section in Section::ALL {
             let mut screen = SettingsScreen::at(section);
             for _ in 0..4 {
@@ -6638,7 +7382,6 @@ mod tests {
                             ui.ctx(),
                             &mut screen,
                             &mut settings,
-                            &mut tokens,
                             &SettingsData {
                                 tabs: &[],
                                 update: &UpdateState::Idle,
@@ -6682,7 +7425,6 @@ mod tests {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
-        let mut tokens = TokenStore::default();
         for _ in 0..3 {
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -6694,7 +7436,6 @@ mod tests {
                         ui.ctx(),
                         &mut screen,
                         settings,
-                        &mut tokens,
                         &SettingsData {
                             tabs: &[],
                             update: &UpdateState::Idle,
@@ -6724,7 +7465,6 @@ mod tests {
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
-        let mut tokens = TokenStore::default();
         let mut actions = Vec::new();
         let mut top = None;
         for _ in 0..3 {
@@ -6738,7 +7478,6 @@ mod tests {
                         ui.ctx(),
                         &mut screen,
                         &mut settings,
-                        &mut tokens,
                         &SettingsData {
                             tabs: &[],
                             update: &UpdateState::Idle,
@@ -6775,7 +7514,6 @@ mod tests {
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let mut screen = SettingsScreen::default();
         let mut settings = Settings::default();
-        let mut tokens = TokenStore::default();
         let mut actions = Vec::new();
         for _ in 0..3 {
             let mut output = ctx.run_ui(
@@ -6788,7 +7526,6 @@ mod tests {
                         ui.ctx(),
                         &mut screen,
                         &mut settings,
-                        &mut tokens,
                         &SettingsData {
                             tabs: &[],
                             update: &UpdateState::Idle,
@@ -6820,7 +7557,6 @@ mod tests {
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let mut screen = SettingsScreen::default();
         let mut settings = Settings::default();
-        let mut tokens = TokenStore::default();
         let mut frame = |events: Vec<egui::Event>| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -6833,7 +7569,6 @@ mod tests {
                         ui.ctx(),
                         &mut screen,
                         &mut settings,
-                        &mut tokens,
                         &SettingsData {
                             tabs: &[],
                             update: &UpdateState::Idle,
@@ -7088,8 +7823,8 @@ mod tests {
         let mut settings = Settings::default();
         let mut screen = SettingsScreen::at(Section::Privacy);
         screen.set_picture_note(Some(PictureNote {
-            title: "No token for github.com".to_owned(),
-            detail: "Add a token under Accounts to load authors' pictures.".to_owned(),
+            title: "No sign-in for github.com".to_owned(),
+            detail: "Sign in under Accounts to load authors' pictures.".to_owned(),
             open_accounts: true,
         }));
         let screen = draw_screen(screen, &mut settings);
@@ -7668,7 +8403,6 @@ mod tests {
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let m = theme::metrics();
         let mut settings = Settings::default();
-        let mut tokens = TokenStore::default();
         for size in [
             vec2(1024.0, 700.0),
             vec2(1440.0, 900.0),
@@ -7687,7 +8421,6 @@ mod tests {
                             ui.ctx(),
                             &mut screen,
                             &mut settings,
-                            &mut tokens,
                             &SettingsData {
                                 tabs: &[],
                                 update: &UpdateState::Idle,
@@ -8575,7 +9308,6 @@ mod tests {
         ctx.enable_accesskit();
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let repo = Some(Path::new("/work/canopy"));
-        let mut tokens = TokenStore::default();
         let mut screen = SettingsScreen::at(Section::Repository);
         screen.facts.global.asked = true;
         screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
@@ -8596,7 +9328,6 @@ mod tests {
                         ui.ctx(),
                         &mut screen,
                         &mut settings,
-                        &mut tokens,
                         &SettingsData {
                             tabs: &[],
                             update: &UpdateState::Idle,
@@ -9365,41 +10096,37 @@ mod tests {
 
     #[test]
     fn the_hosting_status_names_one_outcome_per_state() {
-        use crate::hosting::TokenSource::{Environment, Saved};
         let status = hosting_status;
+        let working: hosting::CliState = Ok(hosting::demo_account());
+        let signed_out = hosting::signed_out(ForgeKind::GitHub, "github.com");
         assert_eq!(
-            status(false, Some(Some(Saved)), true, true),
+            status(false, Some(&working), true, true),
             HostingStatus::Off
         );
         assert_eq!(
-            status(true, Some(Some(Saved)), true, true),
-            HostingStatus::Rejected(Some(Saved))
+            status(true, Some(&working), true, true),
+            HostingStatus::Rejected
         );
         assert_eq!(
-            status(true, Some(Some(Saved)), false, true),
+            status(true, Some(&working), false, true),
             HostingStatus::RateLimited
         );
         assert_eq!(
-            status(true, Some(Some(Environment)), false, false),
-            HostingStatus::Working(Environment)
+            status(true, Some(&working), false, false),
+            HostingStatus::Working(Some("octocat".into()))
         );
         assert_eq!(
-            status(true, Some(None), false, false),
-            HostingStatus::NoCredential
+            status(true, Some(&signed_out), false, false),
+            HostingStatus::NoCredential(CliError::SignedOut {
+                kind: ForgeKind::GitHub,
+                host: "github.com".into()
+            })
         );
         assert_eq!(status(true, None, false, false), HostingStatus::Unknown);
     }
 
     /// The words the hosting block shows for a tab whose requests are in the given state.
-    #[expect(
-        clippy::option_option,
-        reason = "the tab's token: not yet known, known to be absent, or known"
-    )]
-    fn hosting_words(
-        enabled: bool,
-        token: Option<Option<hosting::TokenSource>>,
-        rejected: bool,
-    ) -> String {
+    fn hosting_words(enabled: bool, cli: Option<hosting::CliState>, rejected: bool) -> String {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
@@ -9422,7 +10149,7 @@ mod tests {
             Some((name.to_owned(), Forge::parse(url, &[])?))
         })
         .collect();
-        tab.requests.token = token;
+        tab.requests.cli = cli;
         tab.requests.token_rejected = rejected;
         let settings = Settings {
             hosting_api: enabled,
@@ -9456,28 +10183,45 @@ mod tests {
 
     #[test]
     fn the_hosting_block_says_the_outcome_the_remote_and_the_other_remotes() {
-        use crate::hosting::TokenSource::{GitCredentials, Saved};
-        let working = hosting_words(true, Some(Some(GitCredentials)), false);
+        let working = hosting_words(true, Some(Ok(hosting::demo_account())), false);
         assert!(
-            working.contains(
-                "load from github.com using the credential from your git credential helper"
-            ),
+            working.contains("load from github.com using the GitHub CLI's sign-in as octocat"),
             "{working}"
         );
         assert!(working.contains("remote origin"), "{working}");
         assert!(working.contains("up (gitlab.com)"), "{working}");
         assert!(working.contains("Open Accounts"), "{working}");
-        let rejected = hosting_words(true, Some(Some(Saved)), true);
+        let rejected = hosting_words(true, Some(Ok(hosting::demo_account())), true);
         assert!(
             rejected.contains(
-                "github.com refused the credential (saved in Canopy), so pull requests cannot load."
+                "github.com refused the GitHub CLI's sign-in, so pull requests cannot load."
             ),
             "{rejected}"
         );
-        let bare = hosting_words(true, Some(None), false);
-        assert!(bare.contains("No credential for github.com"), "{bare}");
-        assert!(bare.contains("Add a token"), "{bare}");
-        let off = hosting_words(false, Some(Some(Saved)), false);
+        let bare = hosting_words(
+            true,
+            Some(hosting::signed_out(ForgeKind::GitHub, "github.com")),
+            false,
+        );
+        assert!(
+            bare.contains(
+                "Not signed in with the GitHub CLI. Public repositories load; private ones do not."
+            ),
+            "{bare}"
+        );
+        let missing = hosting_words(
+            true,
+            Some(Err(CliError::NotInstalled {
+                kind: ForgeKind::GitHub,
+            })),
+            false,
+        );
+        assert!(
+            missing.contains("The GitHub CLI is not installed. Public repositories load"),
+            "{missing}"
+        );
+        assert!(!bare.contains("token") && !missing.contains("token"));
+        let off = hosting_words(false, Some(Ok(hosting::demo_account())), false);
         assert!(
             off.contains("Pull requests are off: Canopy does not contact github.com."),
             "{off}"
@@ -9509,7 +10253,6 @@ mod tests {
                 follow_git_config: follow,
                 ..Settings::default()
             };
-            let mut tokens = TokenStore::default();
             let mut screen = SettingsScreen::at(section);
             screen.facts.global.asked = true;
             screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
@@ -9532,7 +10275,6 @@ mod tests {
                             ui.ctx(),
                             &mut screen,
                             &mut settings,
-                            &mut tokens,
                             &SettingsData {
                                 tabs: &[],
                                 update: &UpdateState::Idle,
