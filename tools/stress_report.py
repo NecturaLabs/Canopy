@@ -45,6 +45,7 @@ LIMITS = {
     "fds_frac_of_limit": 0.70,
     "fds_growth": 50.0,
     "watches_frac_of_limit": 0.90,
+    "inotify_instances": 1.0,  # one watcher serves every tab (watcher.rs)
     "job_p95_ms": 500.0,  # details, diff, conflict, ...
     "job_max_ms": 10000.0,
     "snapshot_p95_ms": 2000.0,
@@ -179,6 +180,7 @@ class LogData:
         self.panics = 0
         self.log_capped = False
         self.cannot_open = Counter()
+        self.watch_failures = Counter()  # repository -> "no file watcher..." warnings
         self.jobs = defaultdict(Dist)  # kind -> ms
         self.snapshots = Dist()
         self.snapshot_commits = Dist()
@@ -292,6 +294,8 @@ def read_log(path, t_from, t_until):
                 d.repo_problems[repo] += 1
             if msg == "cannot open the repository":
                 d.cannot_open[repo or "?"] += 1
+            if msg.startswith("no file watcher"):
+                d.watch_failures[repo or "?"] += 1
 
         if msg == "job done" and ms is not None:
             kind = str(obj.get("job", "?"))
@@ -556,6 +560,8 @@ def main():
         verdict.check("log not truncated", not log.log_capped, "capped" if log.log_capped else "complete")
         verdict.check("every repository opened", not log.cannot_open,
                       f"{len(log.cannot_open)} failed", "0")
+        verdict.check("every repository watched", not log.watch_failures,
+                      f"{sum(log.watch_failures.values())} watch failures", "0")
 
     crashes = meta_path and os.path.join(os.path.dirname(meta_path), "crashes.txt")
     if crashes and os.path.exists(crashes):
@@ -797,9 +803,9 @@ def main():
         elif fd_peak:
             verdict.na("peak descriptors", "meta.txt has no ulimit_nofile_soft")
         ifd = peak("inotify_fds")
-        if ifd and expect:
-            verdict.check("a file watcher per tab", ifd[0] >= expect, f"{ifd[0]:.0f} instances for {expect} tabs",
-                          ">= tabs (a missing one means a watcher failed silently)")
+        if ifd:
+            verdict.check("one shared file watcher", ifd[0] == LIMITS["inotify_instances"],
+                          f"{ifd[0]:.0f} instances", f"{LIMITS['inotify_instances']:g}, whatever the number of tabs")
         iw = peak("inotify_watches")
         wlim = as_float(meta.get("inotify_max_user_watches"))
         if iw and wlim:

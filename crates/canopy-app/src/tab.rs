@@ -3052,6 +3052,12 @@ impl RepoTab {
                         body: "Canopy set your uncommitted changes aside for this, and putting them back conflicts with the new commits. Resolve the conflicted files in Changes. Your changes also stay in the stash list until you drop that stash.".into(),
                     });
                 }
+                Event::WatchFailed(e) => notices.push(Notice {
+                    ok: false,
+                    delivery: Delivery::Quiet,
+                    title: "Changes on disk are not picked up".into(),
+                    body: format!("{e} {}", crate::watcher::WATCH_FAILED_HINT),
+                }),
                 Event::Failed(e) => {
                     self.auto_fetch_pending = false;
                     if self.snap.is_none() {
@@ -5906,6 +5912,29 @@ mod tests {
 
         events.send(Event::ToolsMissing(vec![missing("git-lfs-test-tool")]))?;
         assert!(tab.poll(&[]).is_empty(), "already reported");
+        Ok(())
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_watched_is_a_quiet_notice() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        events.send(Event::WatchFailed(
+            "The system's limit on watched folders is reached.".into(),
+        ))?;
+        let notices = tab.poll(&[]);
+        assert_eq!(notices.len(), 1);
+        assert!(!notices[0].ok);
+        assert_eq!(notices[0].delivery, Delivery::Quiet);
+        assert_eq!(notices[0].title, "Changes on disk are not picked up");
+        assert_eq!(
+            notices[0].body,
+            "The system's limit on watched folders is reached. Canopy shows changes on disk after a Refresh."
+        );
         Ok(())
     }
 

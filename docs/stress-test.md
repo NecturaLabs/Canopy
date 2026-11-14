@@ -68,10 +68,9 @@ times and the first frame (items 1 and 2) were on this list too.
 
 3. **Tabs loaded.** Optional: an INFO event `tabs loaded` with `tabs` and `ms`. The report derives
    the same from the first `snapshot` of each repository, so this is a convenience.
-4. **Watcher failures.** `worker.rs` `watch()` returns `None` without a log line when the inotify
-   instance or watch limit is hit, and the tab then silently never refreshes. Needed: a WARN
-   `file watcher failed` with the error. The sampler's inotify count is a stand-in: the report
-   fails the run when there are fewer inotify instances than tabs.
+4. **Watcher failures.** Logged: a WARN starting `no file watcher` (`watcher.rs`) when the watcher
+   cannot start or a folder cannot be watched (the inotify watch limit), and the tab says so. The
+   report fails the run on any of them ("every repository watched").
 5. **Status refreshes.** A working-tree change triggers a `RefreshStatus` that is not logged (only
    full snapshots are). Needed: a DEBUG `status` event with `ms`, so refresh lag after file churn
    can be measured, not only after changes under `.git`.
@@ -243,12 +242,12 @@ downloads them; to skip, run the clone as `GIT_LFS_SKIP_SMUDGE=1 tools/stress.sh
 
 1. **Build**: `cargo build --release -p canopy-app` (the stress binary is the release one). The
    script reads `target/release/canopy`, or `--bin`, or `$CANOPY_BIN`.
-2. **Raise the limits.** Each tab uses one inotify instance (the default limit is 128 per user)
-   and a recursive watch on its whole tree including `.git`, so large trees need many watches.
+2. **Raise the limits.** One inotify instance serves every tab, but each tab's whole tree,
+   including `.git`, is watched folder by folder, so large trees need many watches.
    For this session:
 
    ```sh
-   sudo sysctl fs.inotify.max_user_instances=1024 fs.inotify.max_user_watches=2097152
+   sudo sysctl fs.inotify.max_user_watches=2097152
    ulimit -n 65535        # in the shell that starts Canopy
    ```
 
@@ -297,8 +296,8 @@ tools/stress.sh report
 
 **Tabs load when first shown (#62).** Canopy loads the active tab at once and lists the other 99
 by name only: no repository thread, file watcher or snapshot until a tab is first shown. So a run
-that touches nothing measures one loaded tab (threads and inotify instances are about 1 per
-loaded tab plus the shared threads). To load them all, show each tab once, for example holding
+that touches nothing measures one loaded tab (threads are about 1 per loaded tab plus the shared
+threads; one inotify instance serves them all). To load them all, show each tab once, for example holding
 `Ctrl+Tab` (or `xdotool key --repeat 100 --delay 300 ctrl+Tab`). The report's "all tabs loaded"
 criterion fails until every tab has been shown; each tab's load time runs from the moment it was
 first shown (the `loading the tab shown for the first time` event) to its first snapshot, so the
@@ -485,21 +484,21 @@ fails.
 | Fetch, pull, push | none longer than 10 min; none unfinished at exit | d |
 | Hung operations | 0 | all |
 | Refresh lag after a change under `.git` | p95 at most 5 s; no change without a refresh within 30 s | d, e |
-| A file watcher per tab | inotify instances at least the number of tabs | a |
+| One shared file watcher | exactly 1 inotify instance, whatever the number of tabs; no `no file watcher` warning | a |
 | inotify watches | at most 90 % of `max_user_watches` | a |
 | Idle CPU, 100 tabs, nothing happening | median at most 2 %, p95 at most 5 % of one core | a, e |
 | RSS in the minute after all tabs loaded | at most 2 GiB | a |
 | Peak RSS over the whole run | at most 4 GiB | all |
 | Heap growth during the soak | last five idle minutes at most 10 % and 50 MiB above the first five | e |
-| Threads | peak at most 450 (about 3 per tab plus the UI); back within 20 of baseline after churn | e |
+| Threads | peak at most 450 (about 1 per loaded tab, plus the UI and the shared watcher); back within 20 of baseline after churn | e |
 | Child processes (git) | peak at most 12 when nothing is started by hand: at most 4 automatic fetches at once, 4 limited background reads, the shown tab's work (`--limit children_peak=N` for a run that includes the burst of fetches by hand in (d), which are never limited) | a, b, c, d (timer only), e |
 | Open descriptors | peak at most 70 % of `ulimit -n`; back within 50 of baseline | e |
 | Log not truncated | the 20 MiB cap not reached | all |
 
-The memory and thread figures are first estimates from reading the code (one worker thread,
-one watcher thread and one inotify backend thread per tab that has been shown; a tab that has not
-been shown has none, see "Tabs load when first shown" under (a)). The thread figure counts threads
-that exist, which the limits on background work (below) do not change: they bound how many of them
+The memory and thread figures are first estimates from reading the code (one worker thread per
+tab that has been shown, and one watcher thread and one inotify backend thread in all; a tab that
+has not been shown has none, see "Tabs load when first shown" under (a)). The thread figure counts
+threads that exist, which the limits on background work do not change: they bound how many of them
 run git at once, so the child-process figure, not the thread one, shows them. The first real run
 should set all of these properly. Tighten them to what the first clean run shows, with headroom, and write the values here.
 
