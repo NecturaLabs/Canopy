@@ -682,6 +682,23 @@ edited" ]
     touch "$home/.local/share/canopy/.canopy-data"
     run_status --uninstall --purge --yes
     check "the same folder with the marker is purged" [ ! -e "$home/.local/share/canopy" ]
+    # Only the exact names Canopy writes count as its own (the app and both installers share the
+    # list): a stranger's look-alike keeps an unmarked folder, Canopy's own leftovers do not.
+    for foreign in x.moving settings.json.mine app.ron.old settings.json.1x.tmp canopy-1.jsonl; do
+        mkdir -p "$home/.local/share/canopy/logs"
+        echo "log" >"$home/.local/share/canopy/logs/canopy-1.jsonl"
+        echo "theirs" >"$home/.local/share/canopy/$foreign"
+        run_status --uninstall --purge --yes
+        check "unmarked folder with $foreign kept" [ -f "$home/.local/share/canopy/$foreign" ]
+        rm -rf "$home/.local/share/canopy"
+    done
+    mkdir -p "$home/.local/share/canopy/logs"
+    echo "log" >"$home/.local/share/canopy/logs/canopy-1.jsonl"
+    for own in settings.json settings.json.bad settings.json.42.tmp app.ron.42.moving tokens.json.tmp; do
+        echo "ours" >"$home/.local/share/canopy/$own"
+    done
+    run_status --uninstall --purge --yes
+    check "unmarked folder with only Canopy's own file names purged" [ ! -e "$home/.local/share/canopy" ]
     check "home is empty of files" [ -z "$(cd "$home" && find . -type f -o -type l)" ]
 
     echo "== a non-empty folder not made by the installer is refused"

@@ -61,6 +61,48 @@ purge_targets() {
     esac
 }
 
+# Whether $1 is all digits (a process id).
+is_digits() {
+    case $1 in '' | *[!0-9]*) return 1 ;; esac
+    return 0
+}
+
+# Whether $1 is a run log's name, canopy-<UTC start>-<pid>.jsonl.
+is_run_log_name() {
+    case $1 in canopy-*.jsonl) ;; *) return 1 ;; esac
+    rest=${1#canopy-}
+    rest=${rest%.jsonl}
+    case ${rest%-*} in
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
+        *) return 1 ;;
+    esac
+    is_digits "${rest##*-}"
+}
+
+# Whether $1 is exactly a name Canopy writes in its folders, never merely one that looks like it
+# (a stranger's x.moving or settings.json.mine is not). The same list is in the app
+# (is_canopy_name in crates/canopy-app/src/storage.rs) and in install.ps1 (Test-CanopyName);
+# change the three together.
+is_canopy_name() {
+    case $1 in
+        tokens.json | tokens.json.tmp | settings.json | settings.json.bad | app.ron | logs | crashes | avatars | .canopy-data) return 0 ;;
+        settings.json.*.tmp)
+            rest=${1#settings.json.}
+            is_digits "${rest%.tmp}"
+            return ;;
+        app.ron.*.moving)
+            rest=${1#app.ron.}
+            is_digits "${rest%.moving}"
+            return ;;
+        canopy-*.jsonl) is_run_log_name "$1"; return ;;
+        canopy-*.jsonl.*.moving)
+            rest=${1%.moving}
+            is_digits "${rest##*.}" && is_run_log_name "${rest%.*}"
+            return ;;
+    esac
+    return 1
+}
+
 # Whether eframe folder $1 is Canopy's alone: it holds recognisable Canopy data (its settings key,
 # or logs and crash reports named the way Canopy names them) and every entry in it is a name
 # Canopy itself writes (an old tokens.json, which the app deletes, included), so a stranger's file
@@ -74,10 +116,7 @@ is_eframe_canopy() {
     [ "$found" = 0 ] || return 1
     for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do
         if [ ! -e "$f" ] && [ ! -L "$f" ]; then continue; fi
-        case ${f##*/} in
-            tokens.json | settings.json | settings.json.* | app.ron | app.ron.* | logs | crashes | avatars | .canopy-data) ;;
-            *) return 1 ;;
-        esac
+        is_canopy_name "${f##*/}" || return 1
     done
     return 0
 }

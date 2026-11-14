@@ -95,11 +95,18 @@ param(
         }
         if (-not $found) { return $false }
         # Recognisable data is not enough: a stranger's file beside it keeps the folder.
-        $own = @('tokens.json', 'settings.json', 'app.ron', 'logs', 'crashes', 'avatars', '.canopy-data')
         foreach ($item in Get-ChildItem -LiteralPath $Dir -Force) {
-            if (($own -notcontains $item.Name) -and ($item.Name -notlike 'settings.json.*') -and ($item.Name -notlike 'app.ron.*')) { return $false }
+            if (-not (Test-CanopyName $item.Name)) { return $false }
         }
         return $true
+    }
+
+    # Whether $Name is exactly a name Canopy writes in its folders, never merely one that looks
+    # like it (a stranger's x.moving or settings.json.mine is not). The same list is in the app
+    # (is_canopy_name in crates/canopy-app/src/storage.rs) and in install.sh (is_canopy_name);
+    # change the three together.
+    function Test-CanopyName([string]$Name) {
+        $Name -cmatch '^(tokens\.json(\.tmp)?|settings\.json(\.bad|\.[0-9]+\.tmp)?|app\.ron(\.[0-9]+\.moving)?|logs|crashes|avatars|\.canopy-data|canopy-[0-9]{8}T[0-9]{6}Z-[0-9]+\.jsonl(\.[0-9]+\.moving)?)$'
     }
     # -------------------------------------------------------------------------------------------
 

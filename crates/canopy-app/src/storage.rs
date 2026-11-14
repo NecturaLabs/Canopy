@@ -310,7 +310,7 @@ pub fn prepare_folders(layout: &Layout) -> io::Result<Vec<PathBuf>> {
     let mut result = Ok(());
     let mut unmarked = Vec::new();
     for folder in layout.folders() {
-        match create_private_dir(folder).and_then(|()| claim(folder)) {
+        match create_private_dir(folder).and_then(|()| claim(folder, folder == layout.logs)) {
             Ok(true) => {}
             Ok(false) => unmarked.push(folder.to_path_buf()),
             Err(e) => result = result.and(Err(e)),
@@ -334,11 +334,11 @@ pub fn create_private_dir(dir: &Path) -> io::Result<()> {
 /// Puts [`MARKER`] in `dir` when the folder is empty or holds only Canopy's own files, and makes
 /// it owner-only on Unix; `false` when it holds someone else's files and is left as it is, so
 /// the installers' `--purge` leaves it too.
-fn claim(dir: &Path) -> io::Result<bool> {
+fn claim(dir: &Path, holds_logs: bool) -> io::Result<bool> {
     if dir.join(MARKER).exists() {
         return Ok(true);
     }
-    if !holds_only_canopy_files(dir)? {
+    if !holds_only_canopy_files(dir, holds_logs)? {
         return Ok(false);
     }
     #[cfg(unix)]
@@ -350,23 +350,83 @@ fn claim(dir: &Path) -> io::Result<bool> {
     Ok(true)
 }
 
-fn holds_only_canopy_files(dir: &Path) -> io::Result<bool> {
+/// Whether every name in `dir` is one Canopy writes. `holds_logs` is true for the folder the run
+/// logs go in, the only one that may hold them.
+fn holds_only_canopy_files(dir: &Path, holds_logs: bool) -> io::Result<bool> {
     for entry in fs::read_dir(dir)? {
         let name = entry?.file_name();
-        let name = name.to_string_lossy();
-        // The logs sit in the state folder itself on macOS, and a move that was cut short leaves
-        // its temporary copy.
-        let own = OWN_FILES.contains(&name.as_ref())
-            || name.starts_with("settings.json.")
-            || name.starts_with("app.ron.")
-            || (name.starts_with("canopy-") && name.ends_with(".jsonl"))
-            || name.ends_with(".moving");
-        if !own {
+        if !is_canopy_name(&name.to_string_lossy(), holds_logs) {
             return Ok(false);
         }
     }
     Ok(true)
 }
+
+/// Whether `name` is exactly a name Canopy writes in one of its folders, never merely one that
+/// looks like it: a stranger's `x.moving` or `settings.json.mine` is not. The installers'
+/// `--purge` checks the same list: `is_canopy_name` in `packaging/install.sh` and
+/// `Test-CanopyName` in `packaging/install.ps1`; change the three together.
+///
+/// - the files and folders in [`OWN_FILES`], `settings.json.bad` (a damaged settings file kept
+///   aside), `tokens.json.tmp` and `settings.json.<pid>.tmp` (an interrupted write);
+/// - `app.ron.<pid>.moving`, the temporary copy of a file move that was cut short;
+/// - where `holds_logs`, the run logs `canopy-<UTC start>-<pid>.jsonl` and their temporary copy
+///   `canopy-<UTC start>-<pid>.jsonl.<pid>.moving` (the logs are in the state folder itself on
+///   macOS).
+fn is_canopy_name(name: &str, holds_logs: bool) -> bool {
+    if OWN_FILES.contains(&name) || matches!(name, "settings.json.bad" | "tokens.json.tmp") {
+        return true;
+    }
+    if let Some(pid) = name
+        .strip_prefix("settings.json.")
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+    {
+        return is_digits(pid);
+    }
+    if let Some(pid) = name
+        .strip_prefix("app.ron.")
+        .and_then(|rest| rest.strip_suffix(".moving"))
+    {
+        return is_digits(pid);
+    }
+    if !holds_logs {
+        return false;
+    }
+    let log = match name
+        .strip_suffix(".moving")
+        .and_then(|n| n.rsplit_once('.'))
+    {
+        Some((log, pid)) if is_digits(pid) => log,
+        Some(_) => return false,
+        None => name,
+    };
+    is_run_log_name(log)
+}
+
+fn is_digits(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `canopy-<YYYYMMDD>T<HHMMSS>Z-<pid>.jsonl`, the name `logging.rs` gives a run's log.
+fn is_run_log_name(name: &str) -> bool {
+    let Some((stamp, pid)) = name
+        .strip_prefix("canopy-")
+        .and_then(|rest| rest.strip_suffix(".jsonl"))
+        .and_then(|rest| rest.rsplit_once('-'))
+    else {
+        return false;
+    };
+    let stamp = stamp.as_bytes();
+    stamp.len() == STAMP_LEN
+        && stamp[..8].iter().all(u8::is_ascii_digit)
+        && stamp[8] == b'T'
+        && stamp[9..15].iter().all(u8::is_ascii_digit)
+        && stamp[15] == b'Z'
+        && is_digits(pid)
+}
+
+/// The length of `20260101T000000Z`.
+const STAMP_LEN: usize = 16;
 
 /// Moves what the previous layout kept into `layout`'s places. Safe to repeat and to interrupt.
 pub fn migrate(legacy: &Legacy, layout: &Layout) -> Migration {
@@ -468,10 +528,24 @@ enum Placed {
 /// check and the claim, and the old name goes only afterwards. Where a link cannot be made (another
 /// file system, a share without links) the file is copied instead.
 fn place(from: &Path, to: &Path) -> io::Result<Placed> {
-    let placed = match fs::hard_link(from, to) {
+    place_with(from, to, &hard_link)
+}
+
+fn hard_link(from: &Path, to: &Path) -> io::Result<()> {
+    fs::hard_link(from, to)
+}
+
+/// [`place`] with the way to make a hard link given, so a test can make links fail the way
+/// another file system does.
+fn place_with(
+    from: &Path,
+    to: &Path,
+    link: &impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<Placed> {
+    let placed = match link(from, to) {
         Ok(()) => Placed::Moved,
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(Placed::Exists),
-        Err(_) => match copy_into_place(from, to)? {
+        Err(_) => match copy_into_place(from, to, link)? {
             Placed::Exists => return Ok(Placed::Exists),
             Placed::Moved => Placed::Moved,
         },
@@ -490,12 +564,16 @@ fn place(from: &Path, to: &Path) -> io::Result<Placed> {
 
 /// Copies `from` to `to` through a temporary name of this process beside it, flushed to disk
 /// before it takes its place, so `to` is either absent or complete. Leaves `from` alone.
-fn copy_into_place(from: &Path, to: &Path) -> io::Result<Placed> {
+fn copy_into_place(
+    from: &Path,
+    to: &Path,
+    link: &impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<Placed> {
     let name = to
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     let temp = to.with_file_name(format!("{name}.{}.moving", std::process::id()));
-    let placed = copy_flushed(from, &temp).and_then(|()| publish(&temp, to));
+    let placed = copy_flushed(from, &temp).and_then(|()| publish(&temp, to, link));
     // After a link the temporary name is still there; after a rename this finds nothing.
     let _ = fs::remove_file(&temp);
     placed
@@ -517,8 +595,12 @@ fn copy_flushed(from: &Path, temp: &Path) -> io::Result<()> {
 }
 
 /// Gives the finished temporary file its real name unless that name is taken.
-fn publish(temp: &Path, to: &Path) -> io::Result<Placed> {
-    match fs::hard_link(temp, to) {
+fn publish(
+    temp: &Path,
+    to: &Path,
+    link: &impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<Placed> {
+    match link(temp, to) {
         Ok(()) => Ok(Placed::Moved),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(Placed::Exists),
         // No links here either: look once more, then rename. Only a file created in the instant
@@ -677,8 +759,14 @@ mod tests {
             &legacy.settings.join("app.ron"),
             "{\"canopy-settings-v1\": \"x\"}",
         );
-        write(&legacy.data.join("logs/canopy-1.jsonl"), "log 1");
-        write(&legacy.data.join("logs/canopy-2.jsonl"), "log 2");
+        write(
+            &legacy.data.join("logs/canopy-20260101T000000Z-1.jsonl"),
+            "log 1",
+        );
+        write(
+            &legacy.data.join("logs/canopy-20260101T000000Z-2.jsonl"),
+            "log 2",
+        );
         write(&legacy.data.join("crashes/crash-1.txt"), "crash");
         write(&legacy.data.join("avatars/ab/cd.json"), "picture");
     }
@@ -700,7 +788,10 @@ mod tests {
             read(&layout.window_file()),
             "{\"canopy-settings-v1\": \"x\"}"
         );
-        assert_eq!(read(&layout.logs.join("canopy-2.jsonl")), "log 2");
+        assert_eq!(
+            read(&layout.logs.join("canopy-20260101T000000Z-2.jsonl")),
+            "log 2"
+        );
         assert_eq!(read(&layout.crashes.join("crash-1.txt")), "crash");
         assert_eq!(read(&layout.avatars.join("ab/cd.json")), "picture");
         assert!(
@@ -724,7 +815,10 @@ mod tests {
         migrate(&legacy, &layout);
         let again = migrate(&legacy, &layout);
         assert_eq!(again, Migration::default());
-        assert_eq!(read(&layout.logs.join("canopy-1.jsonl")), "log 1");
+        assert_eq!(
+            read(&layout.logs.join("canopy-20260101T000000Z-1.jsonl")),
+            "log 1"
+        );
     }
 
     #[test]
@@ -734,17 +828,30 @@ mod tests {
         populate(&legacy);
         // The first run got through one log before it stopped; a log written since by the new
         // build has a name the old folder also has.
-        write(&layout.logs.join("canopy-1.jsonl"), "log 1");
-        fs::remove_file(legacy.data.join("logs/canopy-1.jsonl")).expect("moved already");
-        write(&layout.logs.join("canopy-2.jsonl"), "newer log 2");
+        write(
+            &layout.logs.join("canopy-20260101T000000Z-1.jsonl"),
+            "log 1",
+        );
+        fs::remove_file(legacy.data.join("logs/canopy-20260101T000000Z-1.jsonl"))
+            .expect("moved already");
+        write(
+            &layout.logs.join("canopy-20260101T000000Z-2.jsonl"),
+            "newer log 2",
+        );
         // A copy the interrupted run left behind under its temporary name.
         write(&layout.avatars.join("ab/cd.json.moving"), "half");
         let report = migrate(&legacy, &layout);
         assert_eq!(report.failed, Vec::new());
-        assert_eq!(read(&layout.logs.join("canopy-1.jsonl")), "log 1");
-        assert_eq!(read(&layout.logs.join("canopy-2.jsonl")), "newer log 2");
         assert_eq!(
-            read(&legacy.data.join("logs/canopy-2.jsonl")),
+            read(&layout.logs.join("canopy-20260101T000000Z-1.jsonl")),
+            "log 1"
+        );
+        assert_eq!(
+            read(&layout.logs.join("canopy-20260101T000000Z-2.jsonl")),
+            "newer log 2"
+        );
+        assert_eq!(
+            read(&legacy.data.join("logs/canopy-20260101T000000Z-2.jsonl")),
             "log 2",
             "the old copy of a file that has a newer namesake stays"
         );
@@ -793,7 +900,10 @@ mod tests {
         populate(&legacy);
         let report = migrate(&legacy, &layout);
         assert_eq!(report.failed, Vec::new());
-        assert_eq!(read(&layout.logs.join("canopy-1.jsonl")), "log 1");
+        assert_eq!(
+            read(&layout.logs.join("canopy-20260101T000000Z-1.jsonl")),
+            "log 1"
+        );
         assert!(!root.path().join("appdata/canopy").exists());
         assert!(!root.path().join("appdata/io.necturalabs.Canopy").exists());
     }
@@ -811,7 +921,10 @@ mod tests {
             read(&layout.window_file()),
             "{\"canopy-settings-v1\": \"x\"}"
         );
-        assert_eq!(read(&layout.logs.join("canopy-1.jsonl")), "log 1");
+        assert_eq!(
+            read(&layout.logs.join("canopy-20260101T000000Z-1.jsonl")),
+            "log 1"
+        );
     }
 
     /// Saved tokens are gone (ADR 0017): `hosting::remove_saved_tokens` deletes the old file from
@@ -856,7 +969,10 @@ mod tests {
         let to = root.path().join("new/a.json");
         write(&from, "old");
         write(&to, "newer");
-        assert_eq!(copy_into_place(&from, &to).expect("copy"), Placed::Exists);
+        assert_eq!(
+            copy_into_place(&from, &to, &hard_link).expect("copy"),
+            Placed::Exists
+        );
         assert_eq!(read(&to), "newer");
         let names: Vec<_> = fs::read_dir(root.path().join("new"))
             .expect("dir")
@@ -864,13 +980,109 @@ mod tests {
             .collect();
         assert_eq!(names, ["a.json"], "no temporary left");
         fs::remove_file(&to).expect("remove");
-        assert_eq!(copy_into_place(&from, &to).expect("copy"), Placed::Moved);
+        assert_eq!(
+            copy_into_place(&from, &to, &hard_link).expect("copy"),
+            Placed::Moved
+        );
         assert_eq!(read(&to), "old");
         assert_eq!(read(&from), "old", "the caller removes the source");
         assert_eq!(
             fs::read_dir(root.path().join("new")).expect("dir").count(),
             1
         );
+    }
+
+    /// Another file system refuses hard links between its mounts (EXDEV); the file is then
+    /// copied through this process's temporary name and linked into place from there.
+    #[test]
+    fn a_move_across_file_systems_copies_through_the_per_process_temporary_name() {
+        let root = tempfile::tempdir().expect("tmp");
+        let from = root.path().join("old/app.ron");
+        let to = root.path().join("new/app.ron");
+        write(&from, "window");
+        create_private_dir(to.parent().expect("parent")).expect("dir");
+        let temp = to.with_file_name(format!("app.ron.{}.moving", std::process::id()));
+        let linked = std::cell::RefCell::new(Vec::new());
+        let link = |a: &Path, b: &Path| -> io::Result<()> {
+            linked.borrow_mut().push((a.to_path_buf(), b.to_path_buf()));
+            if a == from {
+                return Err(io::Error::other("cross-device link"));
+            }
+            assert_eq!(a, temp, "the copy is linked in from the temporary name");
+            assert_eq!(read(a), "window", "the temporary copy is complete");
+            fs::hard_link(a, b)
+        };
+        assert_eq!(place_with(&from, &to, &link).expect("place"), Placed::Moved);
+        assert_eq!(
+            *linked.borrow(),
+            [(from.clone(), to.clone()), (temp.clone(), to.clone())]
+        );
+        assert_eq!(read(&to), "window");
+        assert!(!from.exists(), "the old name goes after the new one exists");
+        assert!(!temp.exists(), "no temporary is left");
+        assert!(is_canopy_name(
+            temp.file_name().and_then(|n| n.to_str()).expect("name"),
+            false
+        ));
+    }
+
+    #[test]
+    fn only_the_exact_names_canopy_writes_count_as_its_own() {
+        let log = "canopy-20260101T000000Z-123.jsonl";
+        for name in [
+            "settings.json",
+            "settings.json.bad",
+            "settings.json.123.tmp",
+            "tokens.json.tmp",
+            "app.ron",
+            "app.ron.123.moving",
+            "logs",
+            ".canopy-data",
+        ] {
+            assert!(is_canopy_name(name, false), "{name}");
+        }
+        for name in [
+            "x.moving",
+            "settings.json.mine",
+            "settings.json.tmp",
+            "settings.json.1x.tmp",
+            "settings.json.123.moving",
+            "app.ron.bak",
+            "app.ron.moving",
+            "app.ron.1.2.moving",
+            "canopy-1.jsonl",
+            "canopy-notes.jsonl",
+            "canopy-20260101T000000Z-x.jsonl",
+            "canopy-20260101T000000Z-1.jsonl.moving",
+            "canopy-20260101T000000Z-1.jsonl.x.moving",
+            "other.jsonl",
+        ] {
+            assert!(!is_canopy_name(name, true), "{name}");
+        }
+        assert!(
+            !is_canopy_name(log, false),
+            "logs belong in the logs folder only"
+        );
+        assert!(is_canopy_name(log, true));
+        assert!(is_canopy_name(&format!("{log}.99.moving"), true));
+    }
+
+    #[test]
+    fn a_stranger_s_look_alike_file_keeps_the_folder_unmarked() {
+        for name in [
+            "x.moving",
+            "settings.json.mine",
+            "app.ron.old",
+            "canopy-1.jsonl",
+        ] {
+            let root = tempfile::tempdir().expect("tmp");
+            let layout = Layout::resolve(Os::Linux, &env(root.path())).expect("layout");
+            write(&layout.config.join("settings.json"), "{}");
+            write(&layout.config.join(name), "theirs");
+            let unmarked = prepare_folders(&layout).expect("prepare");
+            assert_eq!(unmarked, std::slice::from_ref(&layout.config), "{name}");
+            assert!(!layout.config.join(MARKER).exists(), "{name}");
+        }
     }
 
     #[test]
@@ -894,7 +1106,12 @@ mod tests {
         populate(&legacy);
         let report = migrate(&legacy, &layout);
         assert_eq!(report.failed, Vec::new());
-        assert!(layout.logs.join("canopy-1.jsonl").is_file());
+        assert!(
+            layout
+                .logs
+                .join("canopy-20260101T000000Z-1.jsonl")
+                .is_file()
+        );
         assert!(layout.crashes.join("crash-1.txt").is_file());
         let unmarked = prepare_folders(&layout).expect("prepare");
         assert_eq!(unmarked, Vec::<PathBuf>::new());
