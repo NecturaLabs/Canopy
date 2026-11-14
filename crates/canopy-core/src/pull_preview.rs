@@ -109,6 +109,20 @@ impl Repo {
         Ok(Some(preview))
     }
 
+    /// The merge-commit subject for a checked pull, naming the upstream branch and its remote
+    /// without using the remote's URL. `None` when the upstream's remote cannot be identified.
+    pub(crate) fn pull_merge_message(&self) -> Option<String> {
+        let upstream = self.head_upstream()?;
+        match upstream.remote.as_deref() {
+            Some(".") => Some(format!("Merge branch '{}'", upstream.shown)),
+            Some(remote) => {
+                let branch = upstream.shown.strip_prefix(remote)?.strip_prefix('/')?;
+                Some(format!("Merge branch '{branch}' of {remote}"))
+            }
+            None => None,
+        }
+    }
+
     /// The checked-out branch's upstream; `None` without one or on a detached `HEAD`.
     fn head_upstream(&self) -> Option<Upstream> {
         let git = self.git();
