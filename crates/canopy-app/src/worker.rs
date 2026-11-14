@@ -851,6 +851,10 @@ impl OpKind {
 }
 
 /// The UI's handle on a repository thread.
+///
+/// A worker made with [`Worker::lazy`] has no thread and no file watcher yet: [`Worker::start`]
+/// (the first time its tab is shown) starts them. Until then jobs sent to it are dropped, so a
+/// tab nobody has looked at costs nothing and never touches its repository.
 #[derive(Debug)]
 pub struct Worker {
     jobs: Sender<Job>,
@@ -860,11 +864,85 @@ pub struct Worker {
     stop_watcher: Sender<()>,
     /// Disconnects once the repository thread and the file watcher's have both ended.
     ended: Receiver<()>,
+    /// What [`Worker::start`] needs; `None` once the worker is running.
+    unstarted: Option<Unstarted>,
+}
+
+/// What a worker that has not started yet remembers.
+#[derive(Debug)]
+struct Unstarted {
+    path: PathBuf,
+    ctx: egui::Context,
+    /// Whether starting spawns the threads (tests start a worker with no threads).
+    threads: bool,
+}
+
+/// The channels and thread handles of a running worker.
+struct Running {
+    jobs: Sender<Job>,
+    events: Receiver<Event>,
+    stop_watcher: Sender<()>,
+    ended: Receiver<()>,
 }
 
 impl Worker {
     /// Starts the thread (and a file watcher) for the repository at `path`.
+    #[cfg(test)]
     pub fn spawn(path: PathBuf, ctx: &egui::Context) -> Self {
+        let running = Self::spawn_threads(path, ctx);
+        Self {
+            jobs: running.jobs,
+            events: running.events,
+            stop_watcher: running.stop_watcher,
+            ended: running.ended,
+            unstarted: None,
+        }
+    }
+
+    /// A worker that starts its thread and watcher only when [`Worker::start`] is called.
+    pub fn lazy(path: PathBuf, ctx: &egui::Context) -> Self {
+        Self::not_started(Unstarted {
+            path,
+            ctx: ctx.clone(),
+            threads: true,
+        })
+    }
+
+    fn not_started(unstarted: Unstarted) -> Self {
+        // Channels with no other end: nothing arrives and nothing is kept.
+        let (stop_watcher, _) = crossbeam_channel::bounded(0);
+        let (_, ended) = crossbeam_channel::bounded(0);
+        Self {
+            jobs: unbounded().0,
+            events: unbounded().1,
+            stop_watcher,
+            ended,
+            unstarted: Some(unstarted),
+        }
+    }
+
+    /// Whether the thread and the watcher run (a worker from [`Worker::spawn`] always does).
+    pub fn is_started(&self) -> bool {
+        self.unstarted.is_none()
+    }
+
+    /// Starts the thread and the watcher of a [`Worker::lazy`] worker. Returns whether it started
+    /// them now: `false` when it was running already, so a caller sends the first job once.
+    pub fn start(&mut self) -> bool {
+        let Some(unstarted) = self.unstarted.take() else {
+            return false;
+        };
+        if unstarted.threads {
+            let running = Self::spawn_threads(unstarted.path, &unstarted.ctx);
+            self.jobs = running.jobs;
+            self.events = running.events;
+            self.stop_watcher = running.stop_watcher;
+            self.ended = running.ended;
+        }
+        true
+    }
+
+    fn spawn_threads(path: PathBuf, ctx: &egui::Context) -> Running {
         let (jobs, job_rx) = unbounded::<Job>();
         let (ev_tx, events) = unbounded::<Event>();
         let thread_ctx = ctx.clone();
@@ -888,7 +966,7 @@ impl Worker {
         }
         let (stop_watcher, stop) = crossbeam_channel::bounded(0);
         watch(path, jobs.clone(), stop, ended_tx);
-        Self {
+        Running {
             jobs,
             events,
             stop_watcher,
@@ -908,12 +986,31 @@ impl Worker {
             events,
             stop_watcher,
             ended,
+            unstarted: None,
         };
         (worker, ev_tx, job_rx)
     }
 
-    /// Queues a job.
+    /// A [`Worker::lazy`] worker with no threads either: [`Worker::start`] only marks it started,
+    /// and the channels behave as [`Worker::detached`]'s.
+    #[cfg(test)]
+    pub fn lazy_detached(path: PathBuf) -> (Self, Sender<Event>, Receiver<Job>) {
+        let (mut worker, ev_tx, job_rx) = Self::detached();
+        worker.unstarted = Some(Unstarted {
+            path,
+            ctx: egui::Context::default(),
+            threads: false,
+        });
+        (worker, ev_tx, job_rx)
+    }
+
+    /// Queues a job. A worker that has not started drops it: its tab has loaded nothing, and
+    /// loads everything when it starts.
     pub fn send(&self, job: Job) {
+        if self.unstarted.is_some() {
+            tracing::trace!(job = job.kind(), "dropped for a tab that is not loaded yet");
+            return;
+        }
         let _ = self.jobs.send(job);
     }
 }
@@ -934,6 +1031,10 @@ impl Drop for Worker {
         ));
         drop(std::mem::replace(&mut self.jobs, unbounded().0));
         let ended = std::mem::replace(&mut self.ended, crossbeam_channel::bounded(0).1);
+        if self.unstarted.is_some() {
+            // No threads ever ran: nothing to wait for.
+            return;
+        }
         if cfg!(test) {
             let _ = ended.recv_timeout(Duration::from_secs(1));
         } else {
@@ -2392,6 +2493,68 @@ mod tests {
             .status()
             .is_ok_and(|s| s.success());
         assert!(ok, "git {args:?}");
+    }
+
+    /// A tab nobody has shown has no repository thread and no file watcher: a job sent to its
+    /// worker goes nowhere, and starting it runs the thread, which then answers once.
+    #[test]
+    fn a_lazy_worker_runs_nothing_until_it_starts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.path().join("a.txt"), "a\n").expect("write");
+        git(dir.path(), &["add", "."]);
+        git(
+            dir.path(),
+            &[
+                "-c",
+                "user.name=Ada",
+                "-c",
+                "user.email=ada@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "first",
+            ],
+        );
+        let ctx = egui::Context::default();
+        let mut worker = super::Worker::lazy(dir.path().to_path_buf(), &ctx);
+        assert!(!worker.is_started());
+        worker.send(Job::Refresh(10));
+        std::fs::write(dir.path().join("b.txt"), "b\n").expect("write");
+        assert!(
+            worker
+                .events
+                .recv_timeout(Duration::from_millis(400))
+                .is_err(),
+            "an unstarted worker answers nothing, and a file change reaches no watcher"
+        );
+
+        assert!(worker.start(), "the first start starts it");
+        assert!(!worker.start(), "a second start does nothing");
+        assert!(worker.is_started());
+        worker.send(Job::Refresh(10));
+        let end = Instant::now() + Duration::from_secs(60);
+        let mut snapshots = 0;
+        while let Some(left) = end.checked_duration_since(Instant::now()) {
+            match worker.events.recv_timeout(left.min(Duration::from_secs(2))) {
+                Ok(super::Event::Snapshot(_)) => snapshots += 1,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        assert!(snapshots >= 1, "the started worker sent its snapshot");
+    }
+
+    /// Closing a tab that never loaded ends nothing it never started, and does not wait for it.
+    #[test]
+    fn dropping_a_lazy_worker_does_not_wait() {
+        let worker = super::Worker::lazy(
+            std::path::PathBuf::from("/does/not/exist"),
+            &egui::Context::default(),
+        );
+        let started = Instant::now();
+        drop(worker);
+        assert!(started.elapsed() < Duration::from_millis(500));
     }
 
     /// Standard output of `git` in `dir`, without its final newline.

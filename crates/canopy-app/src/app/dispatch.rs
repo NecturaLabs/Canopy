@@ -184,8 +184,12 @@ impl CanopyApp {
                 Action::SwitchTab(i) => {
                     if i < self.tabs.len() {
                         self.active = i;
-                        self.tabs[i].refresh();
-                        self.request_identity(IdentityJob::ReadRepo(self.tabs[i].path.clone()));
+                        // A tab shown for the first time loads in full instead
+                        // ([`CanopyApp::load_active_tab`]).
+                        if self.tabs[i].is_loaded() {
+                            self.tabs[i].refresh();
+                            self.request_identity(IdentityJob::ReadRepo(self.tabs[i].path.clone()));
+                        }
                     }
                 }
                 Action::SetView(v) => {
@@ -767,7 +771,9 @@ impl CanopyApp {
             }
             t.pull = self.settings.pull_for(&t.path);
             let options = self.settings.git_options();
-            if t.git_options != Some(options) {
+            // A tab that has not loaded has no thread to tell: it hears of them in the frame
+            // that loads it, as a new tab always did.
+            if t.is_loaded() && t.git_options != Some(options) {
                 t.git_options = Some(options);
                 t.worker.send(Job::Options(options));
             }

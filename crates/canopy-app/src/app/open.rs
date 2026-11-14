@@ -339,7 +339,7 @@ impl CanopyApp {
 
     fn new_tab(&self, ctx: &egui::Context, root: PathBuf) -> RepoTab {
         let prefs = self.settings.diff_for(&root);
-        let mut tab = RepoTab::new(root, ctx, self.settings.commit_page, prefs);
+        let mut tab = RepoTab::unloaded(root, ctx, self.settings.commit_page, prefs);
         restore_draft(ctx, &mut tab);
         tab.split_diff = self.settings.split_diff;
         tab.request_density = self.settings.request_density;
@@ -442,15 +442,11 @@ impl CanopyApp {
         } else {
             let tab = self.new_tab(ctx, root.clone());
             self.tabs.push(tab);
-            self.read_config_for(ctx, &root);
-            self.read_leftovers_for(ctx, &root);
             if focus || self.tabs.len() == 1 {
                 self.active = self.tabs.len() - 1;
             }
         }
-        let identity_path = root.clone();
         self.settings.touch_recent(root);
-        self.request_identity(IdentityJob::ReadRepo(identity_path));
     }
 
     /// Replaces the worktree in its existing tab, never a tab the user subsequently switched to.
@@ -471,8 +467,6 @@ impl CanopyApp {
             let mut tab = self.new_tab(ctx, root.clone());
             tab.view = view;
             self.tabs.insert(source, tab);
-            self.read_config_for(ctx, &root);
-            self.read_leftovers_for(ctx, &root);
         }
         let next_focus = if focused.as_deref() == Some(from) {
             Some(&root)
@@ -484,9 +478,26 @@ impl CanopyApp {
         } else {
             self.active = self.active.min(self.tabs.len().saturating_sub(1));
         }
-        let identity_path = root.clone();
         self.settings.touch_recent(root);
-        self.request_identity(IdentityJob::ReadRepo(identity_path));
+    }
+
+    /// Loads the active tab if it has not been shown before: starts its repository thread and
+    /// file watcher, asks for its first snapshot, and starts the reads that go with a repository
+    /// (its Git identity, configuration and leftover files). Every other tab waits for its turn
+    /// with its name in the strip only, so opening a hundred repositories starts one thread, not a
+    /// hundred. Runs every frame; this one place covers every way a tab becomes the active one.
+    pub(super) fn load_active_tab(&mut self, ctx: &egui::Context) {
+        let Some(tab) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        if !tab.load() {
+            return;
+        }
+        let path = tab.path.clone();
+        tracing::debug!(path = %path.display(), "loading the tab shown for the first time");
+        self.read_config_for(ctx, &path);
+        self.read_leftovers_for(ctx, &path);
+        self.request_identity(IdentityJob::ReadRepo(path));
     }
 }
 
@@ -1202,5 +1213,148 @@ mod tests {
         app.add_tab(&ctx, root, true);
         assert_eq!(app.tabs[0].commit_summary, "Fix the parser");
         assert_eq!(app.tabs[0].commit_body, "It read past the end.");
+    }
+
+    /// Waits for the configuration and leftover reads a load started on threads of their own, so
+    /// none is still inside libgit2 when the test process exits.
+    fn settle_reads(app: &mut CanopyApp) {
+        let limit = Duration::from_secs(30);
+        for (_, rx) in std::mem::take(&mut app.config_reads) {
+            let _ = rx.recv_timeout(limit);
+        }
+        for (_, rx) in std::mem::take(&mut app.leftover_reads) {
+            let _ = rx.recv_timeout(limit);
+        }
+    }
+
+    /// A worker with no threads in place of tab `index`'s, and what the app sends it.
+    fn lazy_tab(app: &mut CanopyApp, index: usize) -> Receiver<Job> {
+        let (worker, _events, jobs) = crate::worker::Worker::lazy_detached(PathBuf::from("lazy"));
+        app.tabs[index].worker = worker;
+        jobs
+    }
+
+    /// #62: a restore opens its tabs by name; only the first, the shown one, loads. The others
+    /// load, once each, when they are first shown, and a tab shown again is not loaded again.
+    #[test]
+    fn a_background_tab_loads_when_it_is_first_shown_and_once() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let mut app = test_app();
+        let paths: Vec<_> = ["a", "b", "c"]
+            .iter()
+            .map(|name| {
+                let path = dir.path().join(name);
+                std::fs::create_dir(&path).expect("folder");
+                path
+            })
+            .collect();
+        for (i, path) in paths.iter().enumerate() {
+            app.add_tab(&ctx, path.clone(), i == 0);
+        }
+        assert_eq!(app.active, 0);
+        assert!(
+            app.tabs.iter().all(|t| !t.is_loaded()),
+            "opening a tab starts no thread and no watcher"
+        );
+        let queues: Vec<_> = (0..3).map(|i| lazy_tab(&mut app, i)).collect();
+
+        app.load_active_tab(&ctx);
+        assert!(app.tabs[0].is_loaded() && !app.tabs[1].is_loaded() && !app.tabs[2].is_loaded());
+        let first: Vec<_> = queues[0].try_iter().collect();
+        assert!(
+            matches!(first.as_slice(), [Job::Refresh(limit)] if *limit == app.tabs[0].commit_limit),
+            "the shown tab asks for its first snapshot: {first:?}"
+        );
+        assert!(queues[1].is_empty() && queues[2].is_empty());
+
+        // Background chores that reach every tab leave the unloaded ones alone.
+        app.apply_repo_looks();
+        app.auto_fetch(&ctx);
+        app.tabs[1].refresh();
+        assert!(queues[1].is_empty() && queues[2].is_empty());
+        let opened = app.tabs[2].last_fetch;
+        assert_eq!(
+            app.tabs[1].git_options, None,
+            "its git options are sent when it loads"
+        );
+
+        app.apply(&ctx, vec![Action::SwitchTab(2)]);
+        assert!(queues[2].is_empty(), "the switch itself loads nothing");
+        app.load_active_tab(&ctx);
+        app.load_active_tab(&ctx);
+        assert!(
+            app.tabs[2].last_fetch > opened,
+            "the fetch interval counts from the load"
+        );
+        let third: Vec<_> = queues[2].try_iter().collect();
+        assert!(
+            matches!(third.as_slice(), [Job::Refresh(_)]),
+            "one load: {third:?}"
+        );
+        assert!(!app.tabs[1].is_loaded() && queues[1].is_empty());
+
+        // Back to the first tab: its git options (sent once, on the frame after it loaded) and a
+        // refresh, not a second load.
+        app.apply(&ctx, vec![Action::SwitchTab(0)]);
+        app.load_active_tab(&ctx);
+        let again: Vec<_> = queues[0].try_iter().collect();
+        assert!(
+            matches!(again.as_slice(), [Job::Options(_), Job::Refresh(_)]),
+            "{again:?}"
+        );
+        settle_reads(&mut app);
+    }
+
+    /// #62: an unloaded tab closes cleanly, without waiting for threads it never had, and the
+    /// tabs around it keep their state.
+    #[test]
+    fn closing_an_unloaded_tab_is_clean() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let mut app = test_app();
+        for (i, name) in ["a", "b", "c"].iter().enumerate() {
+            let path = dir.path().join(name);
+            std::fs::create_dir(&path).expect("folder");
+            app.add_tab(&ctx, path, i == 0);
+        }
+        app.load_active_tab(&ctx);
+        let started = Instant::now();
+        app.apply(&ctx, vec![Action::CloseTab(1)]);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.tabs[1].name, "c");
+        assert!(app.tabs[0].is_loaded() && !app.tabs[1].is_loaded());
+        app.apply(&ctx, vec![Action::CloseTab(0)]);
+        app.load_active_tab(&ctx);
+        assert!(
+            app.tabs[0].is_loaded(),
+            "the tab that moved up is shown, so it loads"
+        );
+        settle_reads(&mut app);
+    }
+
+    /// #62: nothing aimed at a tab that has not loaded runs: an operation, a trust change or a
+    /// refresh is dropped, so a repository that is not trusted is never touched before it is shown.
+    #[test]
+    fn nothing_runs_for_a_tab_that_has_not_loaded() {
+        let ctx = egui::Context::default();
+        let mut tab = RepoTab::unloaded(
+            PathBuf::from("/src/untrusted"),
+            &ctx,
+            100,
+            settings::DiffPrefs::default(),
+        );
+        let (worker, _events, jobs) = crate::worker::Worker::lazy_detached(PathBuf::from("lazy"));
+        tab.worker = worker;
+        tab.op(Op::Fetch {
+            prune: false,
+            quiet: true,
+        });
+        tab.trust_changed(1);
+        tab.refresh();
+        tab.reload_diff();
+        assert!(jobs.is_empty(), "{:?}", jobs.try_iter().collect::<Vec<_>>());
+        assert!(tab.snap.is_none() && !tab.is_loaded());
     }
 }

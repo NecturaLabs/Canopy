@@ -279,9 +279,19 @@ used below. By hand works equally.
 ```sh
 sync; echo 3 | sudo tee /proc/sys/vm/drop_caches     # cold cache; skip for a warm run
 tools/stress.sh open --label a-cold --duration 600
-# touch nothing for the first five minutes, then close Canopy or let --duration do it
+# touch nothing for the first minute (one tab loaded), then show every tab once (see below),
+# leave it idle for five minutes, then close Canopy or let --duration do it
 tools/stress.sh report
 ```
+
+**Tabs load when first shown (#62).** Canopy loads the active tab at once and lists the other 99
+by name only: no repository thread, file watcher or snapshot until a tab is first shown. So a run
+that touches nothing measures one loaded tab (threads and inotify instances are about 1 per
+loaded tab plus the shared threads). To load them all, show each tab once, for example holding
+`Ctrl+Tab` (or `xdotool key --repeat 100 --delay 300 ctrl+Tab`). The report's "all tabs loaded"
+criterion fails until every tab has been shown, and its times run from the start of the process,
+so show them promptly. Every other scenario below starts from "everything loaded" and therefore
+from this step.
 
 Watch: how long until the tabs fill in (the report's "Loading" section: first snapshot per
 repository), whether the window stays responsive while loading (try moving and resizing it),
@@ -460,7 +470,8 @@ fails.
 | Log not truncated | the 20 MiB cap not reached | all |
 
 The memory and thread figures are first estimates from reading the code (one worker thread,
-one watcher thread and one inotify backend thread per tab): the first real run should set them
+one watcher thread and one inotify backend thread per tab that has been shown; a tab that has not
+been shown has none, see "Tabs load when first shown" under (a)): the first real run should set them
 properly. Tighten them to what the first clean run shows, with headroom, and write the values here.
 
 ## Reporting results

@@ -575,7 +575,9 @@ def main():
             for t, r in slow:
                 print(f"    {t:8.1f} s  {short_repo(r)}")
             all_loaded = (expect is None or len(times) >= expect)
-            verdict.check("all tabs loaded", all_loaded,
+            # Canopy loads a tab when it is first shown (#62): a run that never showed some tabs
+            # fails here by design (docs/stress-test.md, scenario (a)).
+            verdict.check("all tabs loaded (each tab shown once)", all_loaded,
                           f"{len(times)}" + (f"/{expect}" if expect else ""), str(expect or "all"))
             verdict.check("all tabs loaded in time", times[-1] <= LIMITS["all_loaded_s"],
                           f"{times[-1]:.1f} s", f"<= {LIMITS['all_loaded_s']:g} s")
