@@ -643,6 +643,8 @@ tallest so the scroll stays uniform. The accessible name is the full label throu
 
 An option can be unavailable (`unavailable(value, "Not installed")`): its label is dimmed (`disabled_text`) and a neutral badge with the note ends the row where the Recommended badge would; the arrow keys, Home, End and typing pass over it, a click or Enter does nothing, and it is spoken as disabled with the note as its description. It can still be the current value (a saved choice that has gone): the closed control shows the label dimmed with the same badge before the caret, widens to hold it, with its tag, and carries the note as its accessible description. The kit gallery shows both states.
 
+`pin_last()` keeps the last option below the others, past a menu separator, in view however long the list scrolls: Settings → Integrations pins Custom command… under its programs. The keys reach it in order (End lands on it, Up from it scrolls the row above into view).
+
 Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
 open and closed, the launcher selects too (they do not stop at the 280-pixel text-field width, so a
 long program name shows whole). Number fields are

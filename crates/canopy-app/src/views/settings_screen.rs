@@ -5041,7 +5041,9 @@ fn launcher_row(
             .described(LaunchChoice::System, "Default")
             .width(select_width(ui, options.iter().map(|(_, l)| *l)))
             .name(title)
-            .id_salt(("launcher", title));
+            .id_salt(("launcher", title))
+            // Custom command… stays in view below a long list of programs (#280).
+            .pin_last();
         for i in 0..missing.len() {
             select = select.unavailable(LaunchChoice::Missing(i), "Not installed");
         }
