@@ -358,6 +358,9 @@ impl CanopyApp {
         // Before any tab opens, so a repository thread never sees an empty list.
         crate::trust::publish(&settings);
         crate::trust::install_gate();
+        // The editor, terminal and file manager the open actions use when Settings names none, and
+        // which saved commands name a program file that is gone.
+        crate::system_apps::refresh(None, &settings.launcher_commands());
         crate::ui::fonts::install(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         if let Some(style) = launch.style {

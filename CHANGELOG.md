@@ -10,6 +10,13 @@ commits since the previous build.
 
 ### Added
 
+- Settings → Integrations lists the well-known editors, terminals and file managers that are not
+  installed after the installed ones, dimmed and tagged Not installed, so you see what exists; they
+  cannot be picked, and the keyboard passes over them (Linux and macOS; Windows lists the installed
+  programs only). A program you chose that has since been uninstalled shows the same way (also when its
+  saved command is a path to a file that is gone; a path to a file that is there runs as typed),
+  and opening falls back to your system's program and says so. A well-known program found only on `PATH`
+  is now listed as installed (Linux and macOS).
 - Git LFS is visible and usable. Files stored with LFS carry an `LFS` tag in the Changes lists and
   commit details, and a file that holds only its pointer says "not downloaded", with one entry in
   the status bar that downloads the missing files. The diff of an LFS file is a card with each

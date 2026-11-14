@@ -387,9 +387,6 @@ fn main() -> anyhow::Result<()> {
     storage::log_setup();
     canopy_hosting::set_build(build_info::NUMBER);
 
-    // The editor, terminal and file manager the open actions use when Settings names none.
-    system_apps::refresh(None);
-
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Canopy")
         .with_app_id("io.necturalabs.Canopy")
