@@ -576,12 +576,24 @@ pub(crate) fn run_answer(
 pub fn run_streaming(
     workdir: Option<&Path>,
     args: &[&str],
+    progress: impl FnMut(&str),
+) -> Result<String> {
+    run_streaming_env(workdir, args, &[], progress)
+}
+
+/// [`run_streaming`] with extra environment variables for the command (`GIT_LFS_FORCE_PROGRESS`
+/// for git-lfs, which shows no progress unless it writes to a terminal).
+pub fn run_streaming_env(
+    workdir: Option<&Path>,
+    args: &[&str],
+    env: &[(&str, &str)],
     mut progress: impl FnMut(&str),
 ) -> Result<String> {
     let started = Instant::now();
     tracing::info!(command = %subcommand(args), args = ?loggable(args), "git started");
     let mut child = command(workdir)
         .args(args)
+        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

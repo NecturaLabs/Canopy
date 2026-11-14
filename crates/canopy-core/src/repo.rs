@@ -397,9 +397,20 @@ impl Repo {
         Ok(out)
     }
 
+    /// The remote to measure against and its default branch: `origin` when it has one, else the
+    /// first remote that has.
+    pub(crate) fn default_remote_branch(&self) -> Option<(String, String)> {
+        let remotes = self.git.remotes().ok()?;
+        let mut names: Vec<&str> = remotes.iter().flatten().flatten().collect();
+        names.sort_by_key(|n| *n != "origin");
+        names
+            .into_iter()
+            .find_map(|n| Some((n.to_owned(), self.remote_default_branch(n)?)))
+    }
+
     /// The branch `refs/remotes/<remote>/HEAD` points at (set by `git clone` and
     /// `git remote set-head`), without the `<remote>/` prefix.
-    fn remote_default_branch(&self, remote: &str) -> Option<String> {
+    pub(crate) fn remote_default_branch(&self, remote: &str) -> Option<String> {
         let head = self
             .git
             .find_reference(&format!("refs/remotes/{remote}/HEAD"))
@@ -554,6 +565,7 @@ impl Repo {
             labels.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.name.cmp(&b.name)));
         }
 
+        let workflow = self.workflow_info(head.branch.as_deref());
         Ok(RepoSnapshot {
             workdir: self.workdir.clone(),
             common_dir: self.git.commondir().to_path_buf(),
@@ -573,7 +585,28 @@ impl Repo {
             refs,
             truncated,
             status_unavailable,
+            workflow,
         })
+    }
+
+    /// The feature-branch facts of a snapshot; whatever cannot be read is left out, as a broken
+    /// configuration must not hide the repository.
+    fn workflow_info(&self, head_branch: Option<&str>) -> crate::WorkflowInfo {
+        let flow = self.flow_config().unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not read the git-flow configuration");
+            None
+        });
+        let base = self.branch_base().unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not find the base branch");
+            None
+        });
+        let head_base = head_branch.and_then(|b| self.update_base(b).ok().flatten());
+        crate::WorkflowInfo {
+            flow,
+            base,
+            head_base,
+            finish_unavailable: crate::flow_finish_unavailable(),
+        }
     }
 
     /// Fills in the status of a snapshot that has none ([`RepoSnapshot::status_unavailable`]),
@@ -895,6 +928,9 @@ impl Repo {
         missing: MissingObjects,
     ) -> Result<FileDiff> {
         self.read_diff(source, path, old_path, missing, || {
+            if crate::lfs::is_lfs(&self.git, Path::new(path)) {
+                return self.lfs_file_diff(source, path, old_path, context, whitespace);
+            }
             let d = self.raw_diff(source, path, old_path, context, whitespace)?;
             let mut out = diff::to_file_diff(&d, path)?;
             if out.kind == Some(ChangeKind::Typechange) && out.hunks.is_empty() {

@@ -459,6 +459,23 @@ pub struct RepoSnapshot {
     /// Set when `status` is empty only because it could not be read: a partial clone that has
     /// not downloaded the tree of `HEAD`. History never depends on it.
     pub status_unavailable: Option<StatusUnavailable>,
+    /// What the feature-branch features (git-flow, merged markers, update from base) need.
+    pub workflow: WorkflowInfo,
+}
+
+/// The repository facts behind the feature-branch features, read with every snapshot (a few
+/// configuration and reference lookups) so views never ask git.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkflowInfo {
+    /// The git-flow configuration; `None` until git-flow is initialised.
+    pub flow: Option<crate::FlowConfig>,
+    /// What merged-ness is measured against, and the branches never cleaned up; `None` when the
+    /// repository has no `main`, `master` or remote default branch.
+    pub base: Option<crate::BranchBase>,
+    /// Where the checked-out branch takes its latest changes from ([`crate::Repo::update_base`]).
+    pub head_base: Option<String>,
+    /// Why finishing a git-flow branch is unavailable with the installed Git.
+    pub finish_unavailable: Option<&'static str>,
 }
 
 /// Why a [`RepoSnapshot`] has no working tree status.

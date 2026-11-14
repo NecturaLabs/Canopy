@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 git2.workspace = true
 same-file.workspace = true
+sha2 = "0.11"
 thiserror.workspace = true
 tracing.workspace = true
 
