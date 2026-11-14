@@ -48,6 +48,10 @@ commits since the previous build.
 
 ### Fixed
 
+- A push whose commits record a submodule commit that is on no remote now stops before sending
+  anything and names the submodules to push first, instead of failing with git's "src refspec must
+  name a ref" while Update submodules is on, or publishing a commit nobody can fetch while it is
+  off. A `push.recurseSubmodules` in your git configuration decides instead.
 - Settings → Integrations marks the program your system would use as "<name> (Default)" instead of
   "Recommended", and no longer names the `$TERMINAL`, `$VISUAL` or `$EDITOR` it came from. The desktop's
   default text editor is offered only when it is installed, like the other defaults. Searching
