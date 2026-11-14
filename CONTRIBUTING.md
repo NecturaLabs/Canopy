@@ -5,10 +5,9 @@ agent; [AGENTS.md](AGENTS.md) has the full conventions.
 
 ## Setup
 
-1. Install Rust with [rustup](https://rustup.rs); `rust-toolchain.toml` pins the exact release
-   the lints are fitted to, with rustfmt and clippy, and rustup installs it on first use. The
-   minimum supported Rust version is 1.91. To move to a newer release, change the channel there
-   and fix what the new clippy reports in the same commit.
+1. Install stable Rust with [rustup](https://rustup.rs), with rustfmt and clippy. Canopy
+   builds with the latest stable release and pins none; when a new clippy reports something,
+   fix it in its own commit. The minimum supported Rust version is 1.91.
 2. Install `git` 2.32 or newer (required by the fixture scripts) and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
 3. Fetch the component library: `crates/nectura-ui` is a submodule of the private repository
@@ -60,6 +59,9 @@ Use [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues) for all backlo
 Use a specific, action-oriented title without type or priority prefixes. State the problem or
 deliverable, relevant files and constraints, and checkable acceptance criteria. Bugs need observed
 and expected behaviour, reproduction steps and environment details. Say when facts are unknown.
+When it makes verification concrete, add "Where to see it": a safe fixture, the workflow and the
+exact command to run. Record each owner decision with its date, answer and alternatives, and keep
+requirements that remain unresolved.
 
 Write direct statements. Remove vague praise, canned summaries, repeated instructions and stale
 status text. Keep evidence links and unresolved requirements. Progress notes should name the
