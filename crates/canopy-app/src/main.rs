@@ -33,6 +33,7 @@ mod trust;
 mod ui;
 mod updater;
 mod views;
+mod watcher;
 mod worker;
 
 use std::path::PathBuf;

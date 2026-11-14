@@ -473,6 +473,8 @@ pub enum Job {
     RetryDownloads,
     /// Status only (working tree changed).
     RefreshStatus,
+    /// A folder of the repository could not be watched (from the file watcher): tell the user.
+    WatchFailed(String),
     /// Details of one commit.
     Details(Oid),
     /// Whether one commit's signature verifies (runs gpg or ssh-keygen: trusted folders only).
@@ -688,6 +690,8 @@ pub enum Event {
         result: Result<String, String>,
     },
     Failed(String),
+    /// Changes on disk are not watched (a folder could not be watched): from [`Job::WatchFailed`].
+    WatchFailed(String),
     /// A pull, rebase or merge finished, but putting the uncommitted changes back (autostash) left
     /// conflicts to resolve.
     AutostashConflict,
@@ -887,7 +891,7 @@ impl Worker {
             ctx.request_repaint();
         }
         let (stop_watcher, stop) = crossbeam_channel::bounded(0);
-        watch(path, jobs.clone(), stop, ended_tx);
+        crate::watcher::watch(path, jobs.clone(), stop, ended_tx);
         Self {
             jobs,
             events,
@@ -967,6 +971,7 @@ impl Job {
             Self::MergedBranches { .. } => "merged_branches",
             Self::BaseCompare { .. } => "base_compare",
             Self::RefreshStatus => "status",
+            Self::WatchFailed(_) => "watch failed",
             Self::Details(_) => "details",
             Self::Signature(_) => "signature",
             Self::Diff(_) => "diff",
@@ -1035,6 +1040,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     want_full = Some(0);
                 }
                 Job::RefreshStatus => want_status = true,
+                Job::WatchFailed(error) => emit(Event::WatchFailed(error)),
                 other => rest.push(other),
             }
         }
@@ -1544,7 +1550,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     }
                     mutated = true;
                 }
-                Job::Refresh(_) | Job::RetryDownloads | Job::RefreshStatus => {}
+                Job::Refresh(_)
+                | Job::RetryDownloads
+                | Job::RefreshStatus
+                | Job::WatchFailed(_) => {}
             }
             tracing::debug!(
                 job = kind,
@@ -2224,124 +2233,10 @@ fn read_ignore(repo: &Repo, query: &IgnoreQuery) -> canopy_core::Result<IgnoreDa
     }
 }
 
-/// Whether a changed path inside `.git` affects what Canopy shows.
-fn relevant_git_path(rel: &Path) -> bool {
-    let s = rel.to_string_lossy();
-    !(s.starts_with("objects")
-        || s.starts_with("logs")
-        || s.ends_with(".lock")
-        || s.contains("fsmonitor"))
-}
-
-/// Watches the working tree and the repository's own folders on a thread of its own, so a large
-/// tree never stalls the UI while the watches are registered. Changes in a git folder trigger a
-/// full refresh, other changes a status refresh, both debounced; ignored files are skipped.
-/// Symbolic links are not followed. A linked worktree's or submodule's git folder (and the
-/// common folder it shares) lives outside the working tree, so it gets watches of its own. The
-/// thread ends when `stop`'s sender (held by [`Worker`]) is dropped, and drops `ended` then.
-fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>, ended: Sender<()>) {
-    let spawned = std::thread::Builder::new()
-        .name("watcher".into())
-        .spawn(move || {
-            use notify::{Config, RecursiveMode, Watcher};
-            let _ended = ended;
-            let repo = match git2::Repository::open(&path) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(error = %e.message(), "no file watcher: cannot open the repository");
-                    return;
-                }
-            };
-            let Some(root) = repo.workdir().map(Path::to_path_buf) else {
-                return;
-            };
-            let mut git_dirs = vec![repo.path().to_path_buf()];
-            if !git_dirs.iter().any(|d| d == repo.commondir()) {
-                git_dirs.push(repo.commondir().to_path_buf());
-            }
-            let (tx, rx) = unbounded::<notify::Result<notify::Event>>();
-            let config = Config::default().with_follow_symlinks(false);
-            let mut watcher = match notify::RecommendedWatcher::new(
-                move |e| {
-                    let _ = tx.send(e);
-                },
-                config,
-            ) {
-                Ok(w) => w,
-                Err(e) => {
-                    tracing::warn!(error = %e, "no file watcher");
-                    return;
-                }
-            };
-            if let Err(e) = watcher.watch(&root, RecursiveMode::Recursive) {
-                tracing::warn!(error = %e, "no file watcher for the working tree");
-                return;
-            }
-            for dir in git_dirs.iter().filter(|d| !d.starts_with(&root)) {
-                if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
-                    tracing::warn!(error = %e, "no file watcher for the git folder");
-                }
-            }
-            loop {
-                let first = crossbeam_channel::select! {
-                    recv(rx) -> e => match e {
-                        Ok(e) => e,
-                        Err(_) => break,
-                    },
-                    recv(stop) -> _ => break,
-                };
-                let mut full = false;
-                let mut status = false;
-                let mut classify = |e: notify::Result<notify::Event>| {
-                    let Ok(e) = e else { return };
-                    if matches!(e.kind, notify::EventKind::Access(_)) {
-                        return;
-                    }
-                    for p in e.paths {
-                        if let Some(rel) = git_dirs.iter().find_map(|d| p.strip_prefix(d).ok()) {
-                            full |= relevant_git_path(rel);
-                        } else if let Ok(rel) = p.strip_prefix(&root) {
-                            status |= !repo.is_path_ignored(rel).unwrap_or(false);
-                        }
-                    }
-                };
-                classify(first);
-                // Debounce: wait for a quiet period, unless told to stop.
-                let mut stopped = false;
-                loop {
-                    crossbeam_channel::select! {
-                        recv(rx) -> e => match e {
-                            Ok(e) => classify(e),
-                            Err(_) => break,
-                        },
-                        recv(stop) -> _ => {
-                            stopped = true;
-                            break;
-                        },
-                        default(Duration::from_millis(350)) => break,
-                    }
-                }
-                if stopped {
-                    break;
-                }
-                if full {
-                    if jobs.send(Job::Refresh(0)).is_err() {
-                        break;
-                    }
-                } else if status && jobs.send(Job::RefreshStatus).is_err() {
-                    break;
-                }
-            }
-            drop(watcher);
-        });
-    if let Err(e) = spawned {
-        tracing::warn!("no file watcher: cannot start its thread: {e}");
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Job, Op, OpKind, PullStrategy, read_only_message, watch};
+    use super::{Job, Op, OpKind, PullStrategy, read_only_message};
+    use crate::watcher::watch;
     use std::path::Path;
     use std::process::Command;
     use std::time::{Duration, Instant};
@@ -2708,6 +2603,24 @@ mod tests {
             Duration::from_secs(10)
         ));
         Ok(())
+    }
+
+    #[test]
+    fn a_watch_failure_reaches_the_tab() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        git(dir.path(), &["init", "-q"]);
+        let worker = super::Worker::spawn(dir.path().to_path_buf(), &egui::Context::default());
+        worker.send(Job::WatchFailed("limit reached".into()));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let super::Event::WatchFailed(error) = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+            {
+                assert_eq!(error, "limit reached");
+                return Ok(());
+            }
+        }
     }
 
     #[test]

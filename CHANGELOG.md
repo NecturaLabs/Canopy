@@ -201,6 +201,9 @@ commits since the previous build.
 
 ### Changed
 
+- One file watcher serves every open repository instead of one per tab, so many open tabs no
+  longer run into the system's limit on watchers. A tab whose files cannot be watched says so once:
+  changes on disk then show after a Refresh.
 - Canopy keeps its files in a folder for each kind of data (settings, logs and crash reports,
   picture cache) following each system's convention, owner-only on Linux and macOS and marked `.canopy-data`
   (unless a folder already holds someone else's files) so the installers' `--purge` finds them, and
