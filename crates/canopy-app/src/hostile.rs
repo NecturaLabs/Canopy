@@ -555,3 +555,114 @@ fn an_untrusted_repository_starts_no_program_and_a_trusted_one_runs_the_users_ow
         drop(server);
     }
 }
+
+/// Arms the `merge=probe` driver of the arena's attributes, so any merge git computes for
+/// `a.txt` (both branches changed it) starts the program.
+fn arm_merge_driver(arena: &Arena, label: &str) {
+    let program = arena.program(label, "exit 0");
+    arena.config(
+        "merge.probe.driver",
+        &format!("{} %O %A %B", program.display()),
+    );
+}
+
+/// The squash check of the merged-branches read runs `git merge-tree`, which runs merge
+/// drivers: opening an untrusted folder asks for it on every snapshot, so it is not made there
+/// (the reachable and upstream-gone marks come from libgit2 and stay). Trusted, it runs as in a
+/// terminal.
+#[test]
+fn the_merged_branches_read_runs_no_merge_driver_while_untrusted() {
+    if !in_isolated_git_env(
+        "hostile::the_merged_branches_read_runs_no_merge_driver_while_untrusted",
+    ) {
+        return;
+    }
+    let label = "merge driver merged";
+    let control = Arena::new();
+    arm_merge_driver(&control, label);
+    control.git(&["merge-tree", "--write-tree", "main", "topic"]);
+    assert!(
+        control.ran(label),
+        "ordinary git never ran the driver, so the case proves nothing"
+    );
+
+    let arena = Arena::new();
+    arm_merge_driver(&arena, label);
+    let worker = Worker::spawn(arena.repo.clone(), &egui::Context::default());
+    let read = |serial| {
+        worker.send(Job::MergedBranches {
+            serial,
+            bases: vec!["main".into()],
+            squash: true,
+        });
+        let events = events_until(&worker, |e| matches!(e, Event::MergedBranches { .. }));
+        match events.into_iter().last() {
+            Some(Event::MergedBranches { result, .. }) => result.expect("the read answers"),
+            other => panic!("{other:?}"),
+        }
+    };
+    let rows = read(1);
+    assert!(
+        rows.iter().any(|row| row.name == "topic"),
+        "the other branches are still listed: {rows:?}"
+    );
+    assert!(
+        !arena.ran(label),
+        "the squash check ran the merge driver of an untrusted repository"
+    );
+
+    crate::trust::add_for_tests(arena.root.path().to_path_buf());
+    read(2);
+    assert!(
+        arena.ran(label),
+        "a trusted repository runs the squash check, as in a terminal"
+    );
+}
+
+/// The base comparison predicts conflicts with `git merge-tree`, which runs merge drivers: an
+/// untrusted repository refuses it, naming the source, and a trusted one runs it as in a
+/// terminal.
+#[test]
+fn the_base_comparison_runs_no_merge_driver_while_untrusted() {
+    if !in_isolated_git_env("hostile::the_base_comparison_runs_no_merge_driver_while_untrusted") {
+        return;
+    }
+    let label = "merge driver base";
+    let control = Arena::new();
+    arm_merge_driver(&control, label);
+    control.git(&["merge-tree", "--write-tree", "main", "topic"]);
+    assert!(
+        control.ran(label),
+        "ordinary git never ran the driver, so the case proves nothing"
+    );
+
+    let arena = Arena::new();
+    arm_merge_driver(&arena, label);
+    let worker = Worker::spawn(arena.repo.clone(), &egui::Context::default());
+    let compare = |serial| {
+        worker.send(Job::BaseCompare {
+            serial,
+            base: "topic".into(),
+        });
+        let events = events_until(&worker, |e| matches!(e, Event::BaseCompare { .. }));
+        match events.into_iter().last() {
+            Some(Event::BaseCompare { result, .. }) => result,
+            other => panic!("{other:?}"),
+        }
+    };
+    let refused = compare(1).expect_err("an untrusted repository refuses the comparison");
+    assert!(refused.starts_with(READ_ONLY), "{refused}");
+    assert!(refused.contains("merge.probe.driver"), "{refused}");
+    assert!(
+        !arena.ran(label),
+        "the comparison ran the merge driver of an untrusted repository"
+    );
+
+    crate::trust::add_for_tests(arena.root.path().to_path_buf());
+    let preview = compare(2).expect("a trusted repository compares");
+    assert_eq!(preview.conflicts, Some(Vec::new()), "{preview:?}");
+    assert!(
+        arena.ran(label),
+        "a trusted repository runs it, as in a terminal"
+    );
+}

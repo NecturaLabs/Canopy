@@ -1080,8 +1080,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     bases,
                     squash,
                 } => {
+                    // The squash check is `git merge-tree`, which runs the repository's merge
+                    // drivers: not in a repository that is not trusted, asked now like the
+                    // other jobs. The marks libgit2 gives stay.
                     let result = repo
-                        .merged_branches_among(&bases, squash)
+                        .merged_branches_among(&bases, squash && allowed())
                         .map(Arc::from)
                         .map_err(|error| error.to_string());
                     emit(Event::MergedBranches {
@@ -1091,10 +1094,13 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     });
                 }
                 Job::BaseCompare { serial, base } => {
-                    emit(Event::BaseCompare {
-                        serial,
-                        result: repo.compare_base(&base).map_err(|error| error.to_string()),
-                    });
+                    // Its conflict prediction is `git merge-tree`, which runs merge drivers.
+                    let result = if allowed() {
+                        repo.compare_base(&base).map_err(|error| error.to_string())
+                    } else {
+                        Err(read_only_message(&repo.programs()))
+                    };
+                    emit(Event::BaseCompare { serial, result });
                 }
                 Job::StaleCandidates {
                     serial,
