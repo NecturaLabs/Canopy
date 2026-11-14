@@ -85,6 +85,8 @@ commits since the previous build.
   starts at the control's left edge (its right edge when it is wider and would not fit to the
   right), is as wide as the control or its longest entry, whichever is more, with no 200-point
   minimum of its own, and stays inside the window or dialog (#225).
+- In the Observatory dark theme, the dimmed name of a program that is not installed reads at
+  4.5:1 or more in an open list, glass included (it was 4.2:1 to 4.4:1 on the plain list).
 - The notification center keeps its margin above and below at the smallest window size and zoom, scrolling its list when the window is short.
 - A Settings row with both an explanation mark and a state remark (Download profile pictures) draws the remark in the accent colour with a gap, so the two marks no longer look alike.
 - Settings are written to a temporary file and renamed over the old one, on a thread of their own,
