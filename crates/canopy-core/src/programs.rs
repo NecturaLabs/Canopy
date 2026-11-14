@@ -405,8 +405,12 @@ mod reads {
         );
     }
 
+    /// A lock-in, not a regression test: `git log --follow --name-status` runs neither program
+    /// even without the two flags (only patch output does, which the controls ask for), so this
+    /// passes with or without them. It fails when a change to the history's command makes git
+    /// print patches or otherwise run a diff program.
     #[test]
-    fn a_files_history_runs_no_external_diff_and_no_textconv() {
+    fn a_files_history_keeps_running_neither_external_diff_nor_textconv() {
         for (label, key, control) in [
             (
                 "textconv history",
