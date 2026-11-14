@@ -55,6 +55,10 @@ pub enum Action {
     ShowFileVersion(canopy_core::FileHistoryEntry),
     /// Show who last changed each line of the selected file, in place of its diff.
     BlameFile,
+    /// Open the Git LFS dialog on one page and read its lists.
+    Lfs(crate::views::dialogs::LfsPage),
+    /// Read the Git LFS dialog's lists again (the LFS server is asked for its locks).
+    LfsLists,
     ReadIgnore {
         repo: PathBuf,
         query: crate::worker::IgnoreQuery,

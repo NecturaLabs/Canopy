@@ -35,6 +35,7 @@ mod credential;
 mod file_history;
 mod ignore;
 mod insights;
+mod lfs;
 mod reader;
 mod search_changes;
 mod stack;
@@ -50,6 +51,7 @@ use common::{
 };
 use credential::credential;
 pub use ignore::IgnoreForm;
+pub use lfs::{LfsForm, LfsPage};
 pub use stack::DialogStack;
 pub use stale::StaleForm;
 pub use start::Start;
@@ -151,6 +153,8 @@ pub enum Dialog {
         searched: bool,
     },
     Ignore(Box<IgnoreForm>),
+    /// Files not downloaded, tracked patterns and locks of Git LFS.
+    Lfs(Box<LfsForm>),
     Open {
         path: String,
         /// Recently opened repositories, offered under the field.
@@ -518,6 +522,7 @@ pub fn show(
         Dialog::FileHistory { .. } => return file_history::show(ctx, dialog, tab),
         Dialog::SearchChanges { .. } => return search_changes::show(ctx, dialog, tab),
         Dialog::Ignore(form) => return ignore::show(ctx, salt, form, tab),
+        Dialog::Lfs(form) => return lfs::show(ctx, salt, form, tab),
         Dialog::Identity {
             name,
             email,

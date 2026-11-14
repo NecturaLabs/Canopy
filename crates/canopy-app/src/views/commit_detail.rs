@@ -958,10 +958,10 @@ pub fn file_list_row(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
-    not_downloaded: bool,
+    not_downloaded: impl Into<Missing>,
     id: egui::Id,
 ) -> egui::Response {
-    file_list_row_inner(ui, f, selected, not_downloaded, id, 0.0, None)
+    file_list_row_inner(ui, f, selected, not_downloaded.into(), id, 0.0, None)
 }
 
 /// [`file_list_row`] with actions revealed at its right end while it is hovered, selected or
@@ -972,7 +972,7 @@ pub fn file_list_row_with<'a>(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
-    not_downloaded: bool,
+    not_downloaded: impl Into<Missing>,
     id: egui::Id,
     actions_width: f32,
     actions: impl FnOnce(&mut Ui) + 'a,
@@ -981,7 +981,7 @@ pub fn file_list_row_with<'a>(
         ui,
         f,
         selected,
-        not_downloaded,
+        not_downloaded.into(),
         id,
         actions_width,
         Some(Box::new(actions)),
@@ -994,6 +994,27 @@ pub fn icon_actions_width() -> f32 {
     (theme::metrics().control_sm + 2.0) * 2.0
 }
 
+/// Why a file row says its content is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Missing {
+    No,
+    /// A partial clone could not download the file.
+    PartialClone,
+    /// The file is stored with Git LFS and its object is not downloaded: the working tree holds
+    /// the pointer.
+    LfsObject,
+}
+
+impl From<bool> for Missing {
+    fn from(not_downloaded: bool) -> Self {
+        if not_downloaded {
+            Self::PartialClone
+        } else {
+            Self::No
+        }
+    }
+}
+
 /// A file row's hover-revealed actions.
 type RowActions<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
 
@@ -1001,7 +1022,7 @@ fn file_list_row_inner(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
-    not_downloaded: bool,
+    missing: Missing,
     id: egui::Id,
     actions_width: f32,
     actions: Option<RowActions<'_>>,
@@ -1022,8 +1043,15 @@ fn file_list_row_inner(
         Some(old) => format!("{} → {}", old, f.path),
         None => f.path.clone(),
     };
-    if not_downloaded {
-        tip.push_str(" (not downloaded; open it to retry)");
+    match missing {
+        Missing::No => {}
+        Missing::PartialClone => tip.push_str(" (not downloaded; open it to retry)"),
+        Missing::LfsObject => {
+            tip.push_str(" (stored with Git LFS, not downloaded: the file holds only its pointer)");
+        }
+    }
+    if f.lfs && missing != Missing::LfsObject {
+        tip.push_str(" (stored with Git LFS)");
     }
     let mut row = ListRow::new(id)
         .kind(RowKind::File)
@@ -1047,7 +1075,7 @@ fn file_list_row_inner(
             badge_ink,
         );
         let mut right = rc.content.right() - reserve;
-        if not_downloaded {
+        if missing != Missing::No {
             let glyph = painter.layout_no_wrap(
                 icon::CLOUD_SLASH.to_owned(),
                 FontId::proportional(m.body_size),
@@ -1061,6 +1089,9 @@ fn file_list_row_inner(
             right -= g.size().x;
             painter.galley(pos2(right, cy - g.size().y / 2.0), g, p.text);
             right -= ROW_GAP;
+        }
+        if f.lfs {
+            right = paint_lfs_tag(painter, right, cy, p) - ROW_GAP;
         }
         let x = badge.right() + ROW_GAP;
         let end = paint_line(painter, x, right, cy, name, name_font, rc.text);
@@ -1077,14 +1108,47 @@ fn file_list_row_inner(
         }
     });
     // The row paints its own columns; screen readers get the file's path.
-    let spoken = if not_downloaded {
-        format!("{}, not downloaded", f.path)
-    } else {
-        f.path.clone()
-    };
+    let mut spoken = f.path.clone();
+    if f.lfs {
+        spoken.push_str(", stored with Git LFS");
+    }
+    if missing != Missing::No {
+        spoken.push_str(", not downloaded");
+    }
     ui.ctx()
         .accesskit_node_builder(response.id, |n| n.set_label(spoken));
     response
+}
+
+/// The text of the badge on a file stored with Git LFS.
+pub(crate) const LFS_TAG: &str = "LFS";
+
+/// Paints the "LFS" tag with its right edge at `right`; returns its left edge. The letters are
+/// text, so the tag does not rest on colour alone.
+fn paint_lfs_tag(painter: &egui::Painter, right: f32, cy: f32, p: &theme::Palette) -> f32 {
+    let m = theme::metrics();
+    let g = painter.layout_no_wrap(
+        LFS_TAG.to_owned(),
+        FontId::new(m.sha_size, egui::FontFamily::Monospace),
+        p.text_dim,
+    );
+    let pad = theme::XS;
+    let rect = Rect::from_min_max(
+        pos2(right - g.size().x - 2.0 * pad, cy - g.size().y / 2.0 - 1.0),
+        pos2(right, cy + g.size().y / 2.0 + 1.0),
+    );
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(4),
+        egui::Stroke::new(1.0, p.text_faint),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(
+        pos2(rect.left() + pad, cy - g.size().y / 2.0),
+        g,
+        p.text_dim,
+    );
+    rect.left()
 }
 
 /// The status letter's square (concept 1's `.fs`, as `kit::git::ChangeBadge`) and its letter.

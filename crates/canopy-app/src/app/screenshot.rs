@@ -66,6 +66,7 @@ impl MenuShot {
             "menu-branch" => ("feature/auth", View::History, secondary),
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
+            "menu-lfs-file" => ("art/hero.psd", View::Changes, secondary),
             "blame" => ("Blame", View::Changes, egui::PointerButton::Primary),
             "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
             "amend-commit" => (
@@ -202,6 +203,14 @@ impl CanopyApp {
             }
             tab.read_file_history(*from, path.clone());
         }
+        if let Some(Dialog::Lfs(form)) = self.dialogs.current_mut()
+            && let Some(tab) = self.tabs.get_mut(self.active)
+            && form.repo.as_os_str().is_empty()
+            && tab.snap.is_some()
+        {
+            form.repo.clone_from(&tab.path);
+            tab.read_lfs_lists();
+        }
         if matches!(self.dialogs.current(), Some(Dialog::CleanStale(form)) if form.repo.as_os_str().is_empty())
             && !self.tabs.is_empty()
         {
@@ -261,6 +270,11 @@ impl CanopyApp {
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.file_history.is_some());
+        let lfs_ready = !self.dialogs.any(|d| matches!(d, Dialog::Lfs(_)))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.lfs.patterns.is_some() && t.lfs.locks.is_some());
         let stale_ready = !self.dialogs.any(|d| matches!(d, Dialog::CleanStale(_)))
             || self
                 .tabs
@@ -268,6 +282,7 @@ impl CanopyApp {
                 .is_some_and(|t| t.stale_result.is_some());
         let ready = insights_ready
             && file_history_ready
+            && lfs_ready
             && search_ready
             && stale_ready
             && demo_shown
@@ -392,6 +407,20 @@ impl CanopyApp {
                 // A placeholder: the selected commit replaces it once the tab has one.
                 from: (name == "file-history-commit").then_some(canopy_core::Oid::ZERO_SHA1),
             });
+            return;
+        }
+        if let Some(page) = match name {
+            "lfs" => Some(dialogs::LfsPage::Files),
+            "lfs-patterns" => Some(dialogs::LfsPage::Patterns),
+            "lfs-locks" => Some(dialogs::LfsPage::Locks),
+            _ => None,
+        } {
+            // The repository of the first tab replaces the placeholder once it is open.
+            self.dialogs
+                .open(Dialog::Lfs(Box::new(dialogs::LfsForm::new(
+                    PathBuf::new(),
+                    page,
+                ))));
             return;
         }
         if name == "search-changes" {
