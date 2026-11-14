@@ -153,6 +153,25 @@ fn force_push_dialog(repo: &std::path::Path, target: canopy_core::PushTarget) ->
 }
 
 impl CanopyApp {
+    /// Whether Settings may write the git configuration (Edit my git config); when not, says so
+    /// and settles the screen, which never offers a write then.
+    pub(super) fn may_edit_git_config(&mut self, ctx: &egui::Context) -> bool {
+        if self.settings.edit_git_config {
+            return true;
+        }
+        if let Some(screen) = &mut self.settings_screen {
+            screen.git_config_finished();
+        }
+        self.toasts.push(
+            ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Git settings were not saved",
+            "Edit my git config is off in Settings → Git.",
+        );
+        false
+    }
+
     pub(super) fn request_git_config(&mut self, ctx: &egui::Context, job: IdentityJob) {
         if self
             .identity_worker
@@ -765,6 +784,21 @@ mod tests {
             Some(Dialog::Trust { folders, .. }) => Some(folders.clone()),
             _ => None,
         }
+    }
+
+    /// A write to the git configuration that reaches the app while Edit my git config is off
+    /// (off by default) is refused with a notice; once it is on, it goes ahead.
+    #[test]
+    fn git_configuration_writes_wait_for_edit_my_git_config() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        assert!(!app.settings.edit_git_config);
+        let (_, before) = app.toasts.counts();
+        assert!(!app.may_edit_git_config(&ctx));
+        assert_eq!(app.toasts.counts().1, before + 1, "the refusal is reported");
+        app.settings.edit_git_config = true;
+        assert!(app.may_edit_git_config(&ctx));
+        assert_eq!(app.toasts.counts().1, before + 1);
     }
 
     /// #228: the active tab is asked once; the others are read-only until they are active, and a

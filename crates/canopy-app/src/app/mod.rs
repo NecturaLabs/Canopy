@@ -68,6 +68,7 @@ pub const OVERLAYS: &[&str] = &[
     "privacy-trust-off",
     "diff-options",
     "settings-integrations",
+    "settings-integrations-custom",
     "settings-accounts",
     "settings-updates",
     "settings-notifications",
@@ -82,8 +83,16 @@ pub const OVERLAYS: &[&str] = &[
     "repository-insights",
     "file-history",
     "file-history-commit",
+    "lfs",
+    "lfs-patterns",
+    "lfs-locks",
     "search-changes",
     "clean-stale",
+    "clean-merged",
+    "update-from-base",
+    "flow-init",
+    "flow-start",
+    "flow-finish",
     "author-card",
     "request-filters",
     "request-sort",
@@ -98,6 +107,7 @@ pub const OVERLAYS: &[&str] = &[
     "menu-branch",
     "menu-commit",
     "menu-file",
+    "menu-lfs-file",
     "blame",
     "open",
     "open-error",
@@ -112,6 +122,7 @@ pub const OVERLAYS: &[&str] = &[
     "add-submodule",
     "git-missing",
     "remove-submodule",
+    "discard-submodule",
     "new-tag",
     "stash",
     "export-patch",
@@ -306,6 +317,9 @@ impl CanopyApp {
         // Before any tab opens, so a repository thread never sees an empty list.
         crate::trust::publish(&settings);
         crate::trust::install_gate();
+        // The editor, terminal and file manager the open actions use when Settings names none, and
+        // which saved commands name a program file that is gone.
+        crate::system_apps::refresh(None, &settings.launcher_commands());
         crate::ui::fonts::install(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         if let Some(style) = launch.style {
@@ -431,6 +445,14 @@ impl CanopyApp {
                 ));
             }
             Some("settings-integrations") => {
+                app.settings_screen =
+                    Some(SettingsScreen::at(settings_screen::Section::Integrations));
+            }
+            // Chosen commands, which show the help for the placeholders each one takes.
+            Some("settings-integrations-custom") => {
+                "code --wait %f".clone_into(&mut app.settings.editor);
+                "wezterm start --cwd %d".clone_into(&mut app.settings.terminal);
+                "nautilus %d".clone_into(&mut app.settings.file_manager);
                 app.settings_screen =
                     Some(SettingsScreen::at(settings_screen::Section::Integrations));
             }
@@ -1185,6 +1207,7 @@ impl eframe::App for CanopyApp {
                 | Dialog::FileHistory { repo, .. }
                 | Dialog::SearchChanges { repo, .. } => self.tabs.iter().find(|t| t.path == *repo),
                 Dialog::Ignore(form) => self.tabs.iter().find(|t| t.path == form.repo),
+                Dialog::Lfs(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::CleanStale(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 _ => self.tabs.get(self.active),
             };
@@ -1620,6 +1643,7 @@ pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
         settings::DiffPrefs::default(),
         worker,
     );
+    tab.snap_index = crate::tab::SnapIndex::new(&snap);
     tab.snap = Some(std::sync::Arc::new(snap));
     tab
 }

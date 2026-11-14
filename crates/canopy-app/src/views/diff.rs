@@ -371,6 +371,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         submodule_card(ui, change);
         return;
     }
+    if let Some(lfs) = &d.lfs {
+        lfs_card(ui, tab, lfs, actions);
+        if d.hunks.is_empty() {
+            return;
+        }
+    }
     if let Some(text) = metadata_note(&d) {
         ui.add_space(theme::SM);
         ui.horizontal_wrapped(|ui| {
@@ -446,8 +452,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         editable: !sel.conflicted
             && !matches!(sel.source, DiffSource::Commit(_))
             && d.kind != Some(ChangeKind::Typechange)
+            // A hunk of the working file is not a change to the pointer Git stores.
+            && d.lfs.is_none()
             && tab.diff_prefs.whitespace == WhitespaceMode::Show,
-        whole_file: d.kind == Some(ChangeKind::Typechange),
+        whole_file: d.kind == Some(ChangeKind::Typechange) || d.lfs.is_some(),
         context: tab.diff_prefs.context,
         highlights: highlights.as_deref(),
         mono,
@@ -1465,6 +1473,142 @@ fn submodule_card(ui: &mut Ui, change: &canopy_core::SubmoduleChange) {
                 note(ui, "No commits between the two.");
             }
         });
+}
+
+/// What the diff of a path stored with Git LFS shows in place of the file: each side's size and
+/// object id, old to new, and why the content is not compared when it is not. The pointer text
+/// is one toggle away.
+fn lfs_card(ui: &mut Ui, tab: &mut RepoTab, lfs: &canopy_core::LfsDiff, actions: &mut Vec<Action>) {
+    use canopy_core::LfsOmitted;
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let note = |ui: &mut Ui, text: &str, color: Color32| {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(theme::MD);
+            ui.label(RichText::new(text).size(m.meta_size).color(color));
+        });
+    };
+    ui.add_space(theme::MD);
+    ui.horizontal(|ui| {
+        ui.add_space(theme::MD);
+        ui.label(
+            RichText::new(icon::HARD_DRIVES)
+                .size(m.icon_md)
+                .color(p.text_dim),
+        );
+        ui.label(
+            RichText::new("Stored with Git LFS")
+                .size(m.body_size)
+                .strong()
+                .color(p.text),
+        );
+    });
+    ui.add_space(theme::XS);
+    let mono = FontId::monospace(m.mono_size);
+    for (label, side, none) in [
+        ("Before", &lfs.old, "none (the file is new)"),
+        ("After", &lfs.new, "none (the file is deleted)"),
+    ] {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(theme::MD);
+            ui.label(RichText::new(label).size(m.meta_size).color(p.text_faint));
+            let Some(side) = side else {
+                ui.label(RichText::new(none).size(m.meta_size).color(p.text_dim));
+                return;
+            };
+            ui.label(
+                RichText::new(crate::lfs::human_size(side.size))
+                    .size(m.body_size)
+                    .color(p.text),
+            );
+            match &side.oid {
+                Some(oid) => {
+                    ui.label(
+                        RichText::new(crate::lfs::short_oid(oid))
+                            .font(mono.clone())
+                            .color(p.text_dim),
+                    )
+                    .kit_tooltip(oid)
+                    .show();
+                }
+                None => {
+                    ui.label(
+                        RichText::new("working file")
+                            .size(m.meta_size)
+                            .color(p.text_dim),
+                    );
+                }
+            }
+            if side.pointer.is_some() && !side.downloaded {
+                ui.label(
+                    RichText::new(format!("{}  Not downloaded", icon::CLOUD_SLASH))
+                        .size(m.meta_size)
+                        .color(p.warning),
+                );
+            }
+        });
+    }
+    ui.add_space(theme::XS);
+    match lfs.omitted {
+        Some(LfsOmitted::NotDownloaded) => note(
+            ui,
+            "The content is not on this computer, so only the pointers are compared.",
+            p.text_dim,
+        ),
+        Some(LfsOmitted::Binary) => note(ui, "Binary content is not compared.", p.text_dim),
+        Some(LfsOmitted::TooLarge) => {
+            note(ui, "The content is too large to compare here.", p.text_dim);
+        }
+        None => {}
+    }
+    if lfs.pointer_only() {
+        let reason = tab.lfs.unavailable();
+        ui.horizontal(|ui| {
+            ui.add_space(theme::MD);
+            let download = Button::new("Download LFS files")
+                .secondary()
+                .size(Size::Sm)
+                .icon(icon::DOWNLOAD_SIMPLE)
+                .enabled(reason.is_none() && tab.running.is_none())
+                .disabled_reason(
+                    reason
+                        .clone()
+                        .unwrap_or_else(|| "Another operation is still running".to_owned()),
+                )
+                .tooltip("git lfs pull: download the objects and write them into the files")
+                .show(ui);
+            if download.clicked() && reason.is_none() {
+                actions.push(Action::Op(Op::LfsPull));
+            }
+        });
+    }
+    let pointers: Vec<&str> = [&lfs.old, &lfs.new]
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s.pointer.as_deref())
+        .collect();
+    if !pointers.is_empty() {
+        ui.add_space(theme::XS);
+        ui.horizontal(|ui| {
+            ui.add_space(theme::MD);
+            crate::ui::kit::toggle::Checkbox::new(&mut tab.lfs.show_pointer, "Show pointer text")
+                .tooltip("The small text Git stores in place of the file")
+                .show(ui);
+        });
+        if tab.lfs.show_pointer {
+            for text in pointers {
+                ui.horizontal(|ui| {
+                    ui.add_space(theme::MD);
+                    ui.label(
+                        RichText::new(text.trim_end())
+                            .font(mono.clone())
+                            .color(p.text_dim),
+                    );
+                });
+            }
+        }
+    }
+    ui.add_space(theme::SM);
 }
 
 fn empty(ui: &mut Ui, glyph: &str, title: &str, body: &str) {

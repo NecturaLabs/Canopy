@@ -21,7 +21,19 @@ pub(super) struct Screenshot {
     /// `--overlay trust-banner`: the prompt about the first tab's repository counts as answered
     /// with Don't trust, which leaves the banner.
     pub(super) declines_trust: bool,
+    /// `--overlay` of a dialog that reads the repository (flow, merged, update from base): it
+    /// opens, as the user would open it, once the first tab has its snapshot.
+    pub(super) pending_dialog: Option<&'static str>,
 }
+
+/// The `--overlay` names of the dialogs that open from the repository's own state.
+const REPOSITORY_DIALOGS: [&str; 5] = [
+    "clean-merged",
+    "update-from-base",
+    "flow-init",
+    "flow-start",
+    "flow-finish",
+];
 
 impl Screenshot {
     /// A picture saved to `path`, of `overlay` when that is one this module opens itself.
@@ -37,6 +49,8 @@ impl Screenshot {
             menu: overlay.and_then(MenuShot::of),
             long_message: overlay == Some("long-message"),
             declines_trust: overlay == Some("trust-banner"),
+            pending_dialog: overlay
+                .and_then(|name| REPOSITORY_DIALOGS.iter().copied().find(|d| *d == name)),
         }
     }
 }
@@ -66,6 +80,7 @@ impl MenuShot {
             "menu-branch" => ("feature/auth", View::History, secondary),
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
+            "menu-lfs-file" => ("art/hero.psd", View::Changes, secondary),
             "blame" => ("Blame", View::Changes, egui::PointerButton::Primary),
             "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
             "amend-commit" => (
@@ -202,11 +217,38 @@ impl CanopyApp {
             }
             tab.read_file_history(*from, path.clone());
         }
+        if let Some(Dialog::Lfs(form)) = self.dialogs.current_mut()
+            && let Some(tab) = self.tabs.get_mut(self.active)
+            && form.repo.as_os_str().is_empty()
+            && tab.snap.is_some()
+        {
+            form.repo.clone_from(&tab.path);
+            tab.read_lfs_lists();
+        }
         if matches!(self.dialogs.current(), Some(Dialog::CleanStale(form)) if form.repo.as_os_str().is_empty())
             && !self.tabs.is_empty()
         {
             self.dialogs.close();
             self.apply(ctx, vec![Action::CleanStale]);
+        }
+        if let Some(name) = self.screenshot.as_ref().and_then(|s| s.pending_dialog)
+            && self.tabs.get(self.active).is_some_and(|t| t.snap.is_some())
+        {
+            if let Some(shot) = &mut self.screenshot {
+                shot.pending_dialog = None;
+            }
+            let action = match name {
+                "clean-merged" => Action::CleanMerged,
+                "update-from-base" => Action::UpdateFromBase,
+                "flow-init" => Action::FlowInit,
+                "flow-start" => Action::FlowStart(None),
+                _ => Action::FlowFinish(None),
+            };
+            self.apply(ctx, vec![action]);
+            // A name for the picture, so the preview line shows what it will create.
+            if let Some(Dialog::FlowStart(form)) = self.dialogs.current_mut() {
+                "payments".clone_into(&mut form.name);
+            }
         }
         if self.screenshot.as_ref().is_some_and(|s| s.long_message)
             && let Some(tab) = self.tabs.get_mut(self.active)
@@ -261,13 +303,32 @@ impl CanopyApp {
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.file_history.is_some());
+        let lfs_ready = !self.dialogs.any(|d| matches!(d, Dialog::Lfs(_)))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.lfs.patterns.is_some() && t.lfs.locks.is_some());
         let stale_ready = !self.dialogs.any(|d| matches!(d, Dialog::CleanStale(_)))
             || self
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.stale_result.is_some());
+        let merged_ready = !self.dialogs.any(|d| matches!(d, Dialog::CleanMerged(_)))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.merged.is_some() && t.merged_applied == t.merged_serial);
+        let base_ready = !self.dialogs.any(|d| matches!(d, Dialog::UpdateFromBase(_)))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.base_result.is_some());
         let ready = insights_ready
+            && merged_ready
+            && base_ready
+            && shot.pending_dialog.is_none()
             && file_history_ready
+            && lfs_ready
             && search_ready
             && stale_ready
             && demo_shown
@@ -346,6 +407,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "add-submodule",
     "git-missing",
     "remove-submodule",
+    "discard-submodule",
     "new-tag",
     "stash",
     "export-patch",
@@ -392,6 +454,20 @@ impl CanopyApp {
                 // A placeholder: the selected commit replaces it once the tab has one.
                 from: (name == "file-history-commit").then_some(canopy_core::Oid::ZERO_SHA1),
             });
+            return;
+        }
+        if let Some(page) = match name {
+            "lfs" => Some(dialogs::LfsPage::Files),
+            "lfs-patterns" => Some(dialogs::LfsPage::Patterns),
+            "lfs-locks" => Some(dialogs::LfsPage::Locks),
+            _ => None,
+        } {
+            // The repository of the first tab replaces the placeholder once it is open.
+            self.dialogs
+                .open(Dialog::Lfs(Box::new(dialogs::LfsForm::new(
+                    PathBuf::new(),
+                    page,
+                ))));
             return;
         }
         if name == "search-changes" {
@@ -507,6 +583,14 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             danger: true,
             repo: PathBuf::new(),
             op: Op::SubmoduleRemove("vendor/tidepool-ui".into()),
+        },
+        "discard-submodule" => Dialog::Confirm {
+            title: "Discard changes to vendor/tidepool-ui?".into(),
+            body: changes::submodule_discard(false).into(),
+            confirm: "Discard changes".into(),
+            danger: true,
+            repo: PathBuf::new(),
+            op: Op::Discard(Vec::new()),
         },
         "new-tag" => Dialog::NewTag {
             name: "v1.4.0".into(),

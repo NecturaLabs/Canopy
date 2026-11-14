@@ -97,6 +97,7 @@ pub struct GitChoices {
     autostash: bool,
     follow_tags: bool,
     recurse_submodules: bool,
+    discard_untracked_in_submodules: bool,
     push_default: PushMode,
     conflict_style: ConflictMode,
     cleanup: CleanupMode,
@@ -115,6 +116,7 @@ impl Settings {
             autostash: self.autostash,
             follow_tags: self.follow_tags,
             recurse_submodules: self.recurse_submodules,
+            discard_untracked_in_submodules: self.discard_untracked_in_submodules,
             push_default: self.push_default,
             conflict_style: self.conflict_style,
             cleanup: self.cleanup,
@@ -133,6 +135,7 @@ impl Settings {
             autostash,
             follow_tags,
             recurse_submodules,
+            discard_untracked_in_submodules,
             push_default,
             conflict_style,
             cleanup,
@@ -147,6 +150,7 @@ impl Settings {
         self.autostash = autostash;
         self.follow_tags = follow_tags;
         self.recurse_submodules = recurse_submodules;
+        self.discard_untracked_in_submodules = discard_untracked_in_submodules;
         self.push_default = push_default;
         self.conflict_style = conflict_style;
         self.cleanup = cleanup;
@@ -484,6 +488,10 @@ pub struct Settings {
     /// below (the pull strategy among them), it decides; each choice here applies where it sets
     /// none. On by default.
     pub follow_git_config: bool,
+    /// Edit my git config: Settings may write the git configuration (the editor's values and
+    /// Use recommended). Off by default: Canopy passes its choices to each git command and never
+    /// needs a value written. A permission, not a git choice, so Use recommended leaves it.
+    pub edit_git_config: bool,
     /// Canopy's pull strategy; while `follow_git_config` is on, only where the git configuration
     /// sets none.
     #[serde(deserialize_with = "known")]
@@ -506,6 +514,9 @@ pub struct Settings {
     /// After a pull or checkout, and in a new clone, submodules follow the commits the
     /// repository records (`git submodule update --init --recursive`).
     pub recurse_submodules: bool,
+    /// Discard on a submodule also deletes the untracked files inside it; off (recommended),
+    /// they stay.
+    pub discard_untracked_in_submodules: bool,
     /// How conflicts are written into files (`merge.conflictStyle`).
     #[serde(deserialize_with = "known")]
     pub conflict_style: ConflictMode,
@@ -631,6 +642,7 @@ impl Default for Settings {
             motion: MotionPref::System,
             reduce_motion: None,
             follow_git_config: true,
+            edit_git_config: false,
             pull_mode: PullMode::FastForwardOnly,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
@@ -640,6 +652,7 @@ impl Default for Settings {
             autostash: true,
             follow_tags: true,
             recurse_submodules: true,
+            discard_untracked_in_submodules: false,
             conflict_style: ConflictMode::Zdiff3,
             push_default: PushMode::Simple,
             cleanup: CleanupMode::Whitespace,
@@ -770,6 +783,11 @@ impl Settings {
         }
     }
 
+    /// The commands the editor, terminal and file manager settings hold, in that order.
+    pub fn launcher_commands(&self) -> [&str; 3] {
+        [&self.editor, &self.terminal, &self.file_manager].map(String::as_str)
+    }
+
     /// How Canopy has git fetch, pull, push, commit, rebase and write conflicts.
     pub fn git_options(&self) -> GitOptions {
         GitOptions {
@@ -781,6 +799,7 @@ impl Settings {
             cleanup: self.cleanup.cleanup(),
             prune_tags: self.prune_tags,
             recurse_submodules: self.recurse_submodules,
+            discard_untracked_in_submodules: self.discard_untracked_in_submodules,
         }
     }
 
@@ -909,6 +928,17 @@ fn expand_home_in(typed: &str, home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_launcher_commands_are_the_editor_terminal_and_file_manager_settings() {
+        let s = Settings {
+            editor: "zed".to_owned(),
+            terminal: "kitty".to_owned(),
+            file_manager: "thunar %d".to_owned(),
+            ..Settings::default()
+        };
+        assert_eq!(s.launcher_commands(), ["zed", "kitty", "thunar %d"]);
+    }
+
+    #[test]
     fn use_recommended_resets_every_git_choice_and_nothing_else() {
         let mut s = Settings {
             follow_git_config: false,
@@ -918,6 +948,7 @@ mod tests {
             autostash: false,
             follow_tags: false,
             recurse_submodules: false,
+            discard_untracked_in_submodules: true,
             push_default: PushMode::Current,
             conflict_style: ConflictMode::Merge,
             cleanup: CleanupMode::Strip,
@@ -944,6 +975,10 @@ mod tests {
             (
                 s.recurse_submodules != default.recurse_submodules,
                 "recurse_submodules",
+            ),
+            (
+                s.discard_untracked_in_submodules != default.discard_untracked_in_submodules,
+                "discard_untracked_in_submodules",
             ),
             (s.push_default != default.push_default, "push_default"),
             (s.conflict_style != default.conflict_style, "conflict_style"),
@@ -1302,6 +1337,7 @@ mod tests {
                 cleanup: Cleanup::Whitespace,
                 prune_tags: false,
                 recurse_submodules: true,
+                discard_untracked_in_submodules: false,
             }
         );
         assert_eq!(s.git_options(), GitOptions::default());
@@ -1311,7 +1347,8 @@ mod tests {
     /// Canopy's own choices (Settings → Git with Follow my git config off) are the recommendations
     /// of ADR 0012's audit: for every git key that has a Canopy choice, what `Settings::default`
     /// says is the value `Setting::recommendation_for` gives. Line endings and signing have no
-    /// Canopy choice: Canopy leaves them to git.
+    /// Canopy choice: Canopy leaves them to git. Update submodules is on while git's own
+    /// `submodule.recurse` is recommended off.
     #[test]
     fn canopys_defaults_agree_with_the_recommendation_for_every_key() {
         use canopy_core::config::Setting;
@@ -1345,7 +1382,6 @@ mod tests {
                     Setting::FetchPrune => Some(on(s.prune_on_fetch).into()),
                     Setting::FetchPruneTags => Some(on(o.prune_tags).into()),
                     Setting::PushFollowTags => Some(on(o.follow_tags).into()),
-                    Setting::SubmoduleRecurse => Some(on(o.recurse_submodules).into()),
                     Setting::PushDefault => Some(o.push_default.value().into()),
                     Setting::ConflictStyle => Some(o.conflict_style.value(git).into()),
                     Setting::InitialBranch => Some(s.initial_branch().into()),
@@ -1359,7 +1395,12 @@ mod tests {
                         }
                         .into(),
                     ),
-                    Setting::Autocrlf | Setting::CommitSigning | Setting::SigningFormat => None,
+                    // Canopy updates submodules itself (`git submodule update`, which keeps edits
+                    // inside them); git's own recursion is recommended off.
+                    Setting::SubmoduleRecurse
+                    | Setting::Autocrlf
+                    | Setting::CommitSigning
+                    | Setting::SigningFormat => None,
                 };
                 let Some(canopy) = canopy else {
                     without.push(setting);
@@ -1375,6 +1416,7 @@ mod tests {
             assert_eq!(
                 without,
                 [
+                    Setting::SubmoduleRecurse,
                     Setting::Autocrlf,
                     Setting::CommitSigning,
                     Setting::SigningFormat
@@ -1394,6 +1436,7 @@ mod tests {
             cleanup: CleanupMode::Strip,
             prune_tags: true,
             recurse_submodules: false,
+            discard_untracked_in_submodules: true,
             initial_branch: "  trunk ".into(),
             ..Settings::default()
         };
@@ -1408,6 +1451,7 @@ mod tests {
                 cleanup: Cleanup::Strip,
                 prune_tags: true,
                 recurse_submodules: false,
+                discard_untracked_in_submodules: true,
             }
         );
         assert_eq!(s.initial_branch(), "trunk");

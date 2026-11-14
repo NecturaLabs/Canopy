@@ -54,8 +54,10 @@ These come from the owner and override anything else in the repository.
   value and where it is set. Covered: pull strategy, prune, tag pruning, autostash,
   follow-tags, submodule updates, `push.default`, conflict style, the first branch of `init`, commit cleanup; the
   notification center also reports configured values that differ from the recommendations.
-  Supported Git values are editable at global or repository scope; recommendations write global
-  Git configuration after confirmation and preserve signing, hooks, identity and line endings. A pull
+  Canopy writes no git configuration unless Settings → Git → Edit my git config is on (off by
+  default; owner, 2026-10-21); then supported values are editable at global or repository scope,
+  and Use recommended writes global Git configuration after confirmation, preserving signing,
+  hooks, identity and line endings, and writes only values that are safe for git outside Canopy too. A pull
   checks first and asks before it would diverge or conflict.
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: in-app illustrations are drawn in code from the active theme (`nectura-ui/src/art.rs`,

@@ -79,7 +79,7 @@ impl Setting {
             Self::RebaseAutostash => "Autostash before rebase",
             Self::MergeAutostash => "Autostash before merge",
             Self::PushFollowTags => "Push annotated tags",
-            Self::SubmoduleRecurse => "Update submodules",
+            Self::SubmoduleRecurse => "Recurse into submodules",
             Self::PushDefault => "Push destination",
             Self::ConflictStyle => "Conflict markers",
             Self::InitialBranch => "First branch name",
@@ -112,16 +112,21 @@ impl Setting {
     /// since git 2.34, and `pull.rebase = false` keeps older git merging instead of rebasing;
     /// Canopy then asks Rebase (recommended) or Merge. Commit cleanup is git's own `default`: a
     /// message written in an editor loses its `#` lines, Canopy's own commits (never edited) keep
-    /// them.
+    /// them. `submodule.recurse` stays off: a recursive switch drops uncommitted edits inside a
+    /// submodule, and Canopy updates submodules itself, keeping them.
     pub fn recommendation(self) -> &'static str {
         self.recommendation_for(cli::version_number())
     }
 
     /// What Use recommended writes: every recommendation except line endings and signing, which
-    /// stay as the user chose them.
+    /// stay as the user chose them, and `submodule.recurse`, which it removes where the global
+    /// file turns it on ([`apply_recommended`]): a written `false` would decide that Canopy's own
+    /// Update submodules does nothing while it follows the git configuration.
     pub fn recommended_write(self) -> Option<&'static str> {
         match self {
-            Self::Autocrlf | Self::CommitSigning | Self::SigningFormat => None,
+            Self::Autocrlf | Self::CommitSigning | Self::SigningFormat | Self::SubmoduleRecurse => {
+                None
+            }
             _ => Some(self.recommendation()),
         }
     }
@@ -136,14 +141,16 @@ impl Setting {
     /// Pure metadata for a UI that already received the installed Git version from its worker.
     pub fn recommendation_for(self, git: Option<(u32, u32)>) -> &'static str {
         match self {
-            Self::FetchPruneTags | Self::PullRebase | Self::CommitSigning => "false",
+            Self::FetchPruneTags
+            | Self::PullRebase
+            | Self::CommitSigning
+            | Self::SubmoduleRecurse => "false",
             Self::PullFastForward => "only",
             Self::PullAutostash
             | Self::FetchPrune
             | Self::RebaseAutostash
             | Self::MergeAutostash
-            | Self::PushFollowTags
-            | Self::SubmoduleRecurse => "true",
+            | Self::PushFollowTags => "true",
             Self::PushDefault => "simple",
             Self::ConflictStyle => crate::ConflictStyle::default().value(git),
             Self::InitialBranch => "main",
@@ -216,8 +223,20 @@ pub(crate) fn validate_branch(dir: &Path, branch: &str) -> Result<()> {
 }
 
 /// Write the recommended non-sensitive choices globally; repository overrides stay in place.
-/// A failed write reports how many preceding settings were saved.
+///
+/// A `submodule.recurse` the main global file turns on is removed. A failed write reports how
+/// many preceding settings were saved.
 pub fn apply_recommended(dir: &Path) -> Result<()> {
+    let recurse = Setting::SubmoduleRecurse.key();
+    let direct = read_scoped(dir, Some(Scope::Global), false, Query::Get(recurse), true)
+        .map_err(|err| Error::invalid(format!("Could not read {recurse}: {err}")))?;
+    if direct
+        .iter()
+        .any(|entry| entry.value.as_deref() == Some("true"))
+    {
+        set(dir, Scope::Global, Setting::SubmoduleRecurse, None)
+            .map_err(|err| Error::invalid(format!("Could not remove {recurse}: {err}")))?;
+    }
     for (saved, (setting, value)) in Setting::ALL
         .into_iter()
         .filter_map(|setting| setting.recommended_write().map(|value| (setting, value)))

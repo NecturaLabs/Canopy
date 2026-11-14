@@ -15,6 +15,7 @@ use crate::updater::{InstallState, UpdateState};
 use crate::views::commit_detail::without_icons;
 use crate::views::dialogs::Dialog;
 use crate::views::settings_screen::Section;
+use crate::worker::Op;
 
 /// Room between the status bar's items, and at its ends.
 const ITEM_GAP: f32 = 14.0;
@@ -130,6 +131,35 @@ pub fn show(
                 // A download for a read in a partial clone, outside any operation.
                 spinner(ui, "files");
                 ui.label(small(line.clone(), p.accent));
+            }
+            let missing = tab.lfs.not_downloaded();
+            if missing > 0 && tab.running.is_none() {
+                let label = format!(
+                    "{missing} LFS file{} not downloaded  ·  Download",
+                    if missing == 1 { "" } else { "s" }
+                );
+                let reason = tab.lfs.unavailable();
+                let resp = chip(
+                    ui,
+                    Chip::new(label.clone())
+                        .icon(icon::CLOUD_SLASH)
+                        .tone(Tone::Warning)
+                        .id_salt("status-lfs")
+                        .tooltip(reason.clone().unwrap_or_else(|| {
+                            "These files hold only a pointer. Click to download their content \
+                             (git lfs pull)."
+                                .to_owned()
+                        })),
+                    &label,
+                );
+                if resp.clicked() {
+                    // Without git-lfs the dialog says why and what to install.
+                    actions.push(if reason.is_some() {
+                        Action::Lfs(crate::views::dialogs::LfsPage::Files)
+                    } else {
+                        Action::Op(Op::LfsPull)
+                    });
+                }
             }
             if let Some(remote) = &tab.downloads_refused {
                 let resp = chip(

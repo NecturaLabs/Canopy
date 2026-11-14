@@ -25,6 +25,10 @@ access), `python3 tools/stall-check.py`, `packaging/test-install.sh`.
 - `cargo test` stops at the first test binary that fails, so later binaries never run;
   `check.sh` and CI's test job pass `--no-fail-fast` to see every failure in one run.
 - `shellcheck` and `cargo deny` run only when installed; CI runs them either way.
+- An unresolved `nectura-ui` item (`unresolved import super::kit::...`) can mean the
+  `crates/nectura-ui` checkout lags the recorded pointer (`git status` shows the submodule
+  modified). Another session may own that checkout: work in your own git worktree and run
+  `git submodule update --init` there.
 
 ## Running the app live (private Xvfb)
 

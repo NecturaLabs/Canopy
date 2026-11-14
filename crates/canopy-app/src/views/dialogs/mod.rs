@@ -33,14 +33,18 @@ mod common;
 pub(crate) use common::{tilde_in, valid_ref_name};
 mod credential;
 mod file_history;
+mod flow;
 mod ignore;
 mod insights;
+mod lfs;
+mod merged;
 mod reader;
 mod search_changes;
 mod stack;
 mod stale;
 mod start;
 mod update;
+mod update_base;
 mod url;
 
 use common::{
@@ -49,10 +53,14 @@ use common::{
     remote_name_problem, swallow_enter, tilde, working,
 };
 use credential::credential;
+pub use flow::{FlowFinishForm, FlowInitForm, FlowStartForm};
 pub use ignore::IgnoreForm;
+pub use lfs::{LfsForm, LfsPage};
+pub use merged::MergedForm;
 pub use stack::DialogStack;
 pub use stale::StaleForm;
 pub use start::Start;
+pub use update_base::UpdateBaseForm;
 pub use url::{UrlBuilder, UrlSource};
 
 /// Width of the "How many commits" field of the patch export.
@@ -130,6 +138,13 @@ impl PatchPlan {
 #[derive(Debug, Clone)]
 pub enum Dialog {
     CleanStale(Box<StaleForm>),
+    /// Delete the branches that are merged into the base.
+    CleanMerged(Box<MergedForm>),
+    /// Bring the base branch's new commits into the checked-out branch.
+    UpdateFromBase(Box<UpdateBaseForm>),
+    FlowInit(Box<FlowInitForm>),
+    FlowStart(Box<FlowStartForm>),
+    FlowFinish(Box<FlowFinishForm>),
     Insights {
         repo: std::path::PathBuf,
     },
@@ -151,6 +166,8 @@ pub enum Dialog {
         searched: bool,
     },
     Ignore(Box<IgnoreForm>),
+    /// Files not downloaded, tracked patterns and locks of Git LFS.
+    Lfs(Box<LfsForm>),
     Open {
         path: String,
         /// Recently opened repositories, offered under the field.
@@ -514,10 +531,16 @@ pub fn show(
     let mut extra: Option<Outcome> = None;
     let outcome = match dialog {
         Dialog::CleanStale(form) => return stale::show(ctx, salt, form, tab),
+        Dialog::CleanMerged(form) => return merged::show(ctx, salt, form, tab),
+        Dialog::UpdateFromBase(form) => return update_base::show(ctx, salt, form, tab),
+        Dialog::FlowInit(form) => return flow::show_init(ctx, salt, form, tab),
+        Dialog::FlowStart(form) => return flow::show_start(ctx, salt, form, tab),
+        Dialog::FlowFinish(form) => return flow::show_finish(ctx, salt, form, tab),
         Dialog::Insights { .. } => return insights::show(ctx, dialog, tab),
         Dialog::FileHistory { .. } => return file_history::show(ctx, dialog, tab),
         Dialog::SearchChanges { .. } => return search_changes::show(ctx, dialog, tab),
         Dialog::Ignore(form) => return ignore::show(ctx, salt, form, tab),
+        Dialog::Lfs(form) => return lfs::show(ctx, salt, form, tab),
         Dialog::Identity {
             name,
             email,
