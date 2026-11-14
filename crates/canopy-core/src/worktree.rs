@@ -350,7 +350,7 @@ impl Repo {
     /// git's own failure.
     pub fn forget_preview(&self) -> Result<WorktreeForget> {
         let args = ["worktree", "prune", "--dry-run", "--verbose"];
-        let out = cli::run_unchecked(self.workdir(), &args)?;
+        let out = cli::run_unchecked_english(self.workdir(), &args)?;
         if out.code != Some(0) {
             return Err(out.error(&args));
         }
@@ -358,16 +358,13 @@ impl Repo {
         let mut entries = Vec::new();
         let mut unknown = Vec::new();
         let mut unreadable = Vec::new();
-        // git words the line in the user's language; the folder name and the reason come after
-        // the fixed `worktrees/` it is given.
         for line in String::from_utf8_lossy(&out.stdout)
             .lines()
             .chain(String::from_utf8_lossy(&out.stderr).lines())
         {
-            let Some((_, rest)) = line.split_once("worktrees/") else {
+            let Some((id, reason)) = prune_line(line) else {
                 continue;
             };
-            let (id, reason) = rest.split_once(": ").unwrap_or((rest, ""));
             let Ok(worktree) = self.git().find_worktree(id) else {
                 unknown.push(id.to_owned());
                 continue;
@@ -491,6 +488,17 @@ impl Repo {
     }
 }
 
+/// The folder name and reason in a line of `git worktree prune --verbose`: `Removing
+/// worktrees/<id>: <reason>`. Asked for in English, but a translation puts a space before the
+/// colon (French), so the id ends at the first colon and both parts are trimmed. A folder name
+/// with a colon in it does not parse and is blocked as unknown rather than guessed.
+fn prune_line(line: &str) -> Option<(&str, &str)> {
+    let (_, rest) = line.split_once("worktrees/")?;
+    let (id, reason) = rest.split_once(':').unwrap_or((rest, ""));
+    let id = id.trim_end();
+    (!id.is_empty()).then_some((id, reason.trim()))
+}
+
 /// The branch and commit a linked worktree's own `HEAD` file (`<admin>/HEAD`) names, or `None`
 /// when it cannot be read or parsed. The file is read directly: libgit2 refuses reference names
 /// with a space or other characters in the folder's name, and git does not.
@@ -565,4 +573,27 @@ fn admin_operation(admin: &Path) -> Option<String> {
     .into_iter()
     .find(|(file, _)| admin.join(file).symlink_metadata().is_ok())
     .map(|(_, what)| what.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prune_line;
+
+    #[test]
+    fn prune_lines_parse_in_english_and_translated_form() {
+        assert_eq!(
+            prune_line("Removing worktrees/old: gitdir file points to non-existent location"),
+            Some(("old", "gitdir file points to non-existent location"))
+        );
+        assert_eq!(
+            prune_line("Suppression de worktrees/old : le fichier gitdir pointe vers rien"),
+            Some(("old", "le fichier gitdir pointe vers rien"))
+        );
+        assert_eq!(
+            prune_line("Removing worktrees/old wt: gone"),
+            Some(("old wt", "gone"))
+        );
+        assert_eq!(prune_line("nothing to see"), None);
+        assert_eq!(prune_line("Removing worktrees/: x"), None);
+    }
 }

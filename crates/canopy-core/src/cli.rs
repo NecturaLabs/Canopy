@@ -459,11 +459,25 @@ impl Output {
 /// Like [`run`], but a non-zero exit is not an error: for commands such as `merge-tree` and
 /// `diff --quiet` that answer through their exit code. Only failing to start git is an error.
 pub fn run_unchecked(workdir: &Path, args: &[&str]) -> Result<Output> {
+    run_unchecked_with(command(Some(workdir)), args)
+}
+
+/// Asks git for its messages in English: `LC_ALL=C` outranks every other locale variable and
+/// `LANGUAGE` is set as well, which gettext reads first when the locale is not `C`.
+fn english(cmd: &mut Command) {
+    cmd.env("LC_ALL", "C").env("LANGUAGE", "C");
+}
+
+/// [`run_unchecked`] with git's messages in English, for output that Canopy parses.
+pub(crate) fn run_unchecked_english(workdir: &Path, args: &[&str]) -> Result<Output> {
+    let mut cmd = command(Some(workdir));
+    english(&mut cmd);
+    run_unchecked_with(cmd, args)
+}
+
+fn run_unchecked_with(mut cmd: Command, args: &[&str]) -> Result<Output> {
     let started = Instant::now();
-    let out = command(Some(workdir))
-        .args(args)
-        .output()
-        .map_err(Error::GitMissing)?;
+    let out = cmd.args(args).output().map_err(Error::GitMissing)?;
     let code = out.status.code();
     // Exit code 1 is an answer for these commands, not a failure worth a warning.
     record(
@@ -697,6 +711,20 @@ pub(crate) fn has_merge_tree_write_tree() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Output that is parsed is asked for in the C locale, whatever the user's language is.
+    #[test]
+    fn english_output_pins_the_locale() {
+        let mut cmd = command(None);
+        english(&mut cmd);
+        let value = |key: &str| {
+            cmd.get_envs()
+                .find(|(k, _)| *k == OsStr::new(key))
+                .and_then(|(_, v)| v.map(OsStr::to_os_string))
+        };
+        assert_eq!(value("LC_ALL"), Some("C".into()));
+        assert_eq!(value("LANGUAGE"), Some("C".into()));
+    }
 
     #[cfg(unix)]
     #[test]
