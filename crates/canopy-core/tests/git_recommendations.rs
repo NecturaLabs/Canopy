@@ -233,7 +233,6 @@ fn use_recommended_writes_exactly_these_keys_to_the_global_file_and_git_reads_th
         ("fetch.prune", "true"),
         ("fetch.prunetags", "false"),
         ("push.followtags", "true"),
-        ("submodule.recurse", "true"),
         ("push.default", "simple"),
         ("merge.conflictstyle", conflict_style),
         ("init.defaultbranch", "main"),
@@ -311,7 +310,7 @@ fn recommendations_by_key_for_every_supported_git() {
         ("rebase.autoStash", "true"),
         ("merge.autoStash", "true"),
         ("push.followTags", "true"),
-        ("submodule.recurse", "true"),
+        ("submodule.recurse", "false"),
         ("push.default", "simple"),
         ("init.defaultBranch", "main"),
         ("commit.cleanup", "default"),
@@ -1063,8 +1062,8 @@ fn the_recommended_commit_cleanup_is_gits_own_and_whitespace_leaks_the_editor_te
 }
 
 #[test]
-fn submodules_follow_a_checkout_and_a_push_becomes_on_demand() {
-    if !isolated("submodules_follow_a_checkout_and_a_push_becomes_on_demand") {
+fn git_recursing_into_submodules_drops_edits_and_makes_a_push_on_demand() {
+    if !isolated("git_recursing_into_submodules_drops_edits_and_makes_a_push_on_demand") {
         return;
     }
     let world = World::new();
@@ -1076,6 +1075,7 @@ fn submodules_follow_a_checkout_and_a_push_becomes_on_demand() {
         &sub_work,
         &["remote", "set-url", "origin", &sub_url.to_string_lossy()],
     );
+    commit_file(&sub_work, "b.txt", "shared\n", "s1");
     git(&sub_work, &["push", "-q", "origin", "main"]);
     let work = world.clone_to("super");
     git(
@@ -1094,18 +1094,34 @@ fn submodules_follow_a_checkout_and_a_push_becomes_on_demand() {
     git(&work, &["push", "-q", "-u", "origin", "other"]);
     git(&work, &["switch", "-q", "main"]);
     git(&work, &["submodule", "-q", "update"]);
+    // Use recommended removes git's own recursion where the global file turns it on.
+    git(&work, &["config", "--global", "submodule.recurse", "true"]);
     apply(&work);
+    assert!(!global_entries(&work).contains_key("submodule.recurse"));
 
-    // Without it a checkout leaves the submodule behind, and status says so; with it the
-    // submodule follows.
-    git(
-        &work,
-        &["-c", "submodule.recurse=false", "switch", "-q", "other"],
-    );
+    // Without it a checkout leaves the submodule behind, and status says so; `git submodule
+    // update`, which Canopy runs after a checkout, brings it along and keeps an edit inside it.
+    fs::write(m.join("b.txt"), "edited\n").expect("edit");
+    git(&work, &["switch", "-q", "other"]);
     assert_eq!(git(&work, &["status", "--porcelain"]), " M m\n");
+    git(&work, &["submodule", "-q", "update"]);
+    assert_eq!(git(&m, &["log", "-1", "--format=%s"]), "s2\n");
+    assert_eq!(
+        fs::read_to_string(m.join("b.txt")).expect("read"),
+        "edited\n"
+    );
     git(&work, &["switch", "-q", "main"]);
+    git(&work, &["submodule", "-q", "update"]);
+
+    // With it the submodule follows git's own checkout, and the edit to b.txt, the same in both
+    // submodule commits, is dropped without a word.
+    git(&work, &["config", "--global", "submodule.recurse", "true"]);
     git(&work, &["switch", "-q", "other"]);
     assert_eq!(git(&m, &["log", "-1", "--format=%s"]), "s2\n");
+    assert_eq!(
+        fs::read_to_string(m.join("b.txt")).expect("read"),
+        "shared\n"
+    );
     assert_eq!(git(&work, &["status", "--porcelain"]), "");
 
     // The documented side effect (git-config, `push.recurseSubmodules`: "unless submodule.recurse

@@ -391,11 +391,18 @@ mod reads {
             "diff.probe.textconv",
             &["log", "-Gneedle", "--name-only"],
         );
-        let found = repo.search_changes(None, "needle", false, 10).expect("search");
+        let found = repo
+            .search_changes(None, "needle", false, 10)
+            .expect("search");
         assert_eq!(found.hits.len(), 1, "the search finds the commit");
-        let found = repo.search_changes(None, "needle", true, 10).expect("search");
+        let found = repo
+            .search_changes(None, "needle", true, 10)
+            .expect("search");
         assert_eq!(found.hits.len(), 1, "the search finds the commit");
-        assert!(!f.ran("textconv search"), "the search ran the textconv program");
+        assert!(
+            !f.ran("textconv search"),
+            "the search ran the textconv program"
+        );
     }
 
     #[test]
@@ -423,9 +430,16 @@ mod reads {
     #[test]
     fn the_insights_run_no_program() {
         let f = Fixture::new();
-        let repo = f.armed("fsmonitor insights", "core.fsmonitor", &["status", "--porcelain"]);
+        let repo = f.armed(
+            "fsmonitor insights",
+            "core.fsmonitor",
+            &["status", "--porcelain"],
+        );
         repo.repository_metrics().expect("metrics");
         repo.branch_metrics().expect("branches");
-        assert!(!f.ran("fsmonitor insights"), "the insights ran core.fsmonitor");
+        assert!(
+            !f.ran("fsmonitor insights"),
+            "the insights ran core.fsmonitor"
+        );
     }
 }

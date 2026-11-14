@@ -51,7 +51,9 @@ pub use conflict::{
 pub use diff::{DiffLine, DiffSource, FileDiff, Hunk, HunkKey, LineKind, Whitespace};
 pub use error::{Error, Result};
 pub use file_history::{FileHistory, FileHistoryEntry};
-pub use flow::{FlowConfig, FlowFinish, FlowKind};
+pub use flow::{
+    FlowConfig, FlowFinish, FlowKind, flow_finish_requirement, flow_finish_unavailable,
+};
 pub use forge::{AuthorPage, Forge, ForgeKind};
 pub use git2::Oid;
 pub use search_changes::{ChangeHit, ChangeSearch};
@@ -61,8 +63,8 @@ pub use ignore::{
     IgnoreDestination, IgnoreMatch, IgnoreOutcome, IgnorePreview, IgnoreRule, IgnoreTarget,
     IgnoreTemplate, IgnoredPaths,
 };
-pub use lfs::{LfsFile, LfsPointer};
-pub use merged::{MergedBranch, MergedReason};
+pub use lfs::{LfsDiff, LfsFile, LfsLock, LfsOmitted, LfsPattern, LfsPointer, LfsSide};
+pub use merged::{BranchBase, MergedBranch, MergedReason, MergedRemoval};
 pub use metrics::{
     AuthorActivity, BranchMetrics, Divergence, MetricCommit, RepositoryMetrics, WeekActivity,
 };
@@ -80,4 +82,4 @@ pub use submodule::{
     SUBMODULE_LOG_LIMIT, SubmoduleChange, SubmoduleCommit, SubmoduleInfo, SubmoduleLog,
     SubmoduleState, submodule_add_problem,
 };
-pub use tools::MissingTool;
+pub use tools::{MissingTool, git_lfs_missing};

@@ -623,7 +623,11 @@ view. A list that ends up under a modal layer (egui keeps each layer's rank betw
 press and release in one frame can leave it there) is raised above it at once.
 
 A select can mark one option with the kit's Recommended badge, and then lists it first; its
-accessible description announces the recommendation without repeating the option name. The list reserves room for the
+accessible description announces the recommendation without repeating the option name. While that
+option is the value the closed select says "(Recommended)" after it, quieter than the value, and
+speaks it that way too, however the value came about (chosen, written by a button, read from a
+file); a fitted select is as wide for it as for its longest label. An unavailable option shows its
+note instead. The list reserves room for the
 badge and check, truncating only the painted label while keeping its full accessible name. A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
 
 Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
@@ -633,7 +637,9 @@ Repository selects show the effective value once. Explicit selection pins even t
 only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
 controls name their setting. Context lines and whitespace are one saved diff preset, with one
 shared reset that returns both to the app defaults. Help text never types the recommendation
-("Recommended: …"); the badge in the list is the only mark, in Settings → Git as well.
+("Recommended: …"); the badge in the list and "(Recommended)" after the selected value are the
+only marks, in Settings → Git as well, and a text field holding the recommended value (the first
+branch) has "(Recommended)" under it, where its messages go.
 
 ### Popover and the smaller components
 
@@ -664,6 +670,12 @@ The rest of the kit, each with the states `--overlay gallery` shows:
 - `Slider` picks a value along a range by dragging, clicking or the arrow keys.
 - `TreeRow` is a `ListRow` with an indent per level and a disclosure chevron (space is kept for it
   on leaves); Left collapses or asks for the parent, Right expands or asks for the first child.
+  The sidebar's Branches are a tree of these: folders for the `/` prefixes (branches first, then
+  folders, each by name; a folder with the checked-out branch inside has an accent icon and shows
+  the number of branches in it), leaf rows with the last segment of the name, a merge icon and the
+  word `merged`, `gone` or `squash?` after it for a merged branch (its tooltip has the check),
+  and the ahead and behind counts as mono text. Screen readers hear the whole name, "current
+  branch" and the marker.
 
 ### Text field
 
@@ -942,6 +954,32 @@ chip explains visible refusals and disappears when their commit details are hidd
 Diff metadata below the header identifies symbolic-link target paths and mode changes alongside
 content changes, using the theme's metadata size and subdued text colour.
 
+### Git LFS
+
+Four pieces, all from theme tokens and text, never colour alone:
+
+- **LFS tag.** On a file row (`views/commit_detail.rs`, `paint_lfs_tag`), left of the line counts: the
+  letters `LFS` in the monospace `sha_size`, `text_dim`, in a 1 point `text_faint` outline with
+  `radius-sm`. Screen readers hear "stored with Git LFS" after the path.
+- **Not downloaded.** The same cloud-slash glyph in `warning` the partial-clone rows use, after the
+  tag; the tooltip says the file holds only its pointer, and the row's spoken name ends "not
+  downloaded".
+- **Diff card** (`views/diff.rs`, `lfs_card`), above the hunks when the content is compared: a title
+  line with the drive glyph, then one line each for Before and After: label in `text_faint`, size
+  in `text`, the object id as `sha256:` and twelve digits in monospace (the whole id in its
+  tooltip), and "Not downloaded" in `warning` for a pointer whose object is missing. A line of
+  `text_dim` says why the content is not compared (not downloaded, binary, too large), a secondary
+  small Download LFS files button follows a pointer-only side, and a checkbox shows the pointer
+  text in monospace.
+- **Status bar chip.** A `Warning` chip, "N LFS files not downloaded · Download", while objects are
+  missing and nothing else runs; with `git-lfs` missing a click opens the dialog, which says what to
+  install.
+
+The Git LFS dialog (`views/dialogs/lfs.rs`) is a Reading-width dialog with a segmented control
+(Files, Tracked patterns, Locks), lists of at most 240 points before they scroll, and a Close
+button only: each row's action is its own small button, and a force unlock opens the standard danger
+confirmation naming the file and the lock's owner.
+
 ### Git identity
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings
@@ -976,8 +1014,9 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
 The Git page edits the main global Git file; This repository edits its common local Git file.
 Rows use the existing Select/TextField and row layout, with where a value is set in a note mark,
 named by scope and path ("your global git config (~/.gitconfig)"), or by path alone for an
-included file. An unset row's select reads "Value (Recommended)", or just the value Git uses where Canopy
-leaves the choice to Git. Enumerated values have one option each; unsupported configured values
+included file. A row's select reads "Value (Recommended)" while the value is the recommended one,
+set or unset (an unset row shows the recommendation), and the bare value otherwise; where Canopy
+leaves the choice to Git it shows the value Git uses. Enumerated values have one option each; unsupported configured values
 remain visible as text. Recommendations are badges, never a reason to lock a control. A global
 value is changed, never cleared; a repository's own value has the reset button, which removes the
 override and leaves includes and higher-priority scopes intact. The

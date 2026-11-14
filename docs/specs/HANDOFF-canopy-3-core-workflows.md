@@ -3,8 +3,9 @@
 **Status: merged, kept as the reference for wiring the app.** The branch was merged into `main` as
 `4556dfb`; the session, its local branch, its worktree and its remote branch are gone. As of
 8 October 2026 on PR #8, the app wires submodule management, pointer diffs and configurable
-updates; remaining acceptance is tracked in GitHub issue #60. Git-flow and merged-branch UI
-remain in #58 and LFS UI in #57; review the corresponding core when those features are wired.
+updates; remaining acceptance is tracked in GitHub issue #60. The git-flow and merged-branch
+UI is wired (#58; its live check with `tools/usersim.sh` is still open there); LFS UI remains in
+#57: review the corresponding core when it is wired.
 GitHub Issues is the active tracker. The historical "Not done" list below is reference, not
 the current task queue; the pull-configuration fixes now use the Git CLI. The installer test's
 failures on a desktop host are fixed: the unbuffered start
