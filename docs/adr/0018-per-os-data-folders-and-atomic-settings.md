@@ -1,4 +1,4 @@
-# ADR 0016: Canopy's files live in per-OS folders, and settings are written atomically
+# ADR 0018: Canopy's files live in per-OS folders, and settings are written atomically
 
 **Status:** accepted
 **Date:** 2026-11-14
@@ -24,7 +24,9 @@ expects folders with a marker file `.canopy-data` (`packaging/README.md`), which
 
 **Folders** (`storage.rs`): config, data, state and cache, each created owner-only (0700 on Unix)
 and claimed with the empty file `.canopy-data` (0600) when it is empty or holds only Canopy's own
-files. Linux follows the XDG variables (`$XDG_CONFIG_HOME/canopy`, `$XDG_DATA_HOME/canopy`,
+files (its settings, tokens, window state, logs, crash reports, pictures and the temporary names of
+a move); a folder with a stranger's file is used but left unmarked, and the installers' `--purge`
+leaves it, the Linux data folder (the old eframe folder) included. Linux follows the XDG variables (`$XDG_CONFIG_HOME/canopy`, `$XDG_DATA_HOME/canopy`,
 `$XDG_STATE_HOME/canopy`, `$XDG_CACHE_HOME/canopy`); macOS uses `Application Support/<app id>`
 (config and data), `Logs/Canopy` and `Caches/<app id>`; Windows uses `%APPDATA%\NecturaLabs\Canopy`
 and `%LOCALAPPDATA%\NecturaLabs\Canopy`. This is the table in `packaging/README.md`, which the
@@ -32,9 +34,11 @@ installers already purge. Settings and window state are config; saved tokens are
 #227 removes them); logs and crash reports are state; pictures are cache.
 
 **Migration** (`storage::migrate`, first thing in `main`): the contents of the two old folders move
-one file at a time to their new places. A file is never overwritten, never partly present at its
-new place (a rename, or a copy to a temporary name, then a rename) and leaves the old place only
-after it arrived, so a run cut short, or a second run, finishes the job. Links and files Canopy
+one file at a time to their new places. A file is never overwritten (the move is a hard link that
+refuses an existing destination, then removal of the old name; across file systems or where links
+are unavailable, a flushed copy under a per-process temporary name that is linked into place the
+same way), never partly present at its new place and leaves the old place only after it arrived,
+so a run cut short, or a second run, finishes the job. Links and files Canopy
 does not know stay. Emptied old folders go.
 
 **Settings file** (`settings_store.rs`): `settings.json` in the config folder, `{"schema": 1,
