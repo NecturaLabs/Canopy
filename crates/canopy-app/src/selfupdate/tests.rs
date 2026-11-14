@@ -469,6 +469,41 @@ fn a_rollback_that_cannot_finish_says_where_the_old_files_are() {
     );
 }
 
+/// The update's work folder (with whatever staging was left) is deleted when the update returns,
+/// so the next start's sweep sees no staging after a rollback that failed. It must still not
+/// take the old version's only copy for a finished swap's leftovers.
+#[test]
+fn a_rollback_that_could_not_finish_is_not_swept_away_at_the_next_start() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[("bin/canopy", "old binary"), ("share/old", "old share")],
+    );
+    let new = tmp.path().join("new");
+    folder(
+        &new,
+        &[("bin/canopy", "new binary"), ("share/new", "new share")],
+    );
+    let previous = root.join(".previous.t");
+    let mut moves = 0;
+    let err = swap_in(&root, &new, &previous, &["bin", "share"], &mut |a, b| {
+        moves += 1;
+        // Both go aside, the new `bin` fails, and another process makes `share` in the way.
+        if moves == 3 {
+            write(&root.join("share/squatter"), "squatter");
+            return Err(io::Error::other("failed"));
+        }
+        fs::rename(a, b)
+    })
+    .expect_err("failed");
+    assert!(err.contains("not all of the previous version"), "{err}");
+    let refusal = sweep(&root).expect_err("the start sweep refuses");
+    assert!(refusal.contains("run the installer again"), "{refusal}");
+    assert_eq!(read(&previous.join("share/old")), "old share");
+    assert_eq!(read(&root.join("bin/canopy")), "old binary");
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sweeping, locking, the receipt
 
@@ -608,7 +643,10 @@ fn a_halfway_swap_that_cannot_be_put_back_keeps_both_versions() {
     fs::set_permissions(&previous, fs::Permissions::from_mode(0o755)).expect("unlock");
     let refusal = swept.expect_err("refused");
     assert!(refusal.contains("run the installer again"), "{refusal}");
-    assert_eq!(read(&root.join(".staging.1-1-1/new/share/new")), "new share");
+    assert_eq!(
+        read(&root.join(".staging.1-1-1/new/share/new")),
+        "new share"
+    );
     assert_eq!(read(&previous.join("share/old")), "old share");
     assert_eq!(read(&root.join("bin/canopy")), "new binary");
 }
@@ -779,6 +817,31 @@ fn a_lock_a_killed_update_left_is_taken_over_and_the_start_sweep_runs() {
         names(&root),
         ["bin"].map(String::from).into_iter().collect(),
         "the dead update's staging and lock are gone"
+    );
+}
+
+/// A takeover killed between moving a dead lock aside and deleting it leaves `.lock-dead.*`; the
+/// sweep clears it once the pid it names is gone, and not before.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_sweep_clears_the_dead_lock_a_killed_takeover_left_aside() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(&root, &[("bin/canopy", "x")]);
+    write(&root.join(".lock-dead.a/pid"), &format!("{}\n", dead_pid()));
+    write(
+        &root.join(".lock-dead.b/pid"),
+        &format!("{}\n", std::process::id()),
+    );
+    write(&root.join(".lock-dead.c/other"), "no process id");
+    sweep(&root).expect("sweep");
+    assert_eq!(
+        names(&root),
+        [".lock-dead.b", ".lock-dead.c", "bin"]
+            .map(String::from)
+            .into_iter()
+            .collect(),
+        "only the one whose process is gone"
     );
 }
 

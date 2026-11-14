@@ -47,6 +47,12 @@ pub const UPDATE_STAGING_PREFIX: &str = "canopy-update.";
 /// of the entries of the new version, one per line. Hidden, so a swap never moves it.
 const STAGED_RECORD: &str = ".staged";
 
+/// The file [`rollback`] writes into the `.previous.*` folder when the old version could not all
+/// be put back. The update's own staging is deleted when it returns, so without this the start
+/// sweep would take that folder for a finished swap's leftovers and delete the old version's
+/// only copy. Hidden, so a swap never moves it.
+const NOT_RESTORED: &str = ".not-restored";
+
 /// What the installer puts in a Linux install folder: the only entries an update replaces. Anything
 /// else in the folder is not Canopy's and stays where it is.
 const ENTRIES: [&str; 7] = [
@@ -577,6 +583,8 @@ fn rollback(
     if undo_swap(root, previous, moved_in, moved_aside) {
         format!("{why}; the previous version was kept")
     } else {
+        // Best effort: if even this cannot be written, nothing more can be done about it here.
+        let _ = fs::write(previous.join(NOT_RESTORED), why);
         format!(
             "{why}, and not all of the previous version could be put back: its remaining files are in {}; move them back into {}, or run the installer again",
             previous.display(),
@@ -880,6 +888,17 @@ impl Drop for Cleanup {
 /// The file in the lock folder that names the process holding it, as the installer writes it.
 const LOCK_OWNER: &str = "pid";
 
+/// The start of the name a dead holder's lock is moved to while it is taken over.
+const LOCK_ASIDE: &str = ".lock-dead.";
+
+/// Whether the lock folder `lock` names a holder that is certainly gone.
+fn lock_is_dead(lock: &Path) -> bool {
+    lock_owner(lock)
+        .filter(|pid| *pid != 0)
+        .and_then(canopy_core::leftovers::process_is_gone)
+        == Some(true)
+}
+
 /// Who holds a lock that could not be taken.
 #[derive(Debug, PartialEq, Eq)]
 enum Holder {
@@ -942,7 +961,7 @@ impl Lock {
             Some(false) => return Err(LockError::Held(Holder::Running)),
             None => return Err(LockError::Held(Holder::Unknown)),
         }
-        let aside = path.with_file_name(unique_name(".lock-dead."));
+        let aside = path.with_file_name(unique_name(LOCK_ASIDE));
         if fs::rename(path, &aside).is_err() {
             return Err(LockError::Held(Holder::Running));
         }
@@ -977,8 +996,10 @@ impl Drop for Lock {
     }
 }
 
-/// Clears what an interrupted update left in `root`: the `.staging.*` folders and the receipt's
-/// `.canopy-install.new`. A `.previous.*` folder is the old version's files, and what it means
+/// Clears what an interrupted update left in `root`: the `.staging.*` folders, the receipt's
+/// `.canopy-install.new` and the `.lock-dead.*` folders of a killed lock takeover whose holder is
+/// gone. A `.previous.*` folder marked [`NOT_RESTORED`] (a roll-back that failed) is never touched
+/// and the sweep refuses. A `.previous.*` folder is the old version's files, and what it means
 /// depends on how far the swap got (see [`swap_in`]): when staged entries are still waiting in a
 /// `.staging.*` folder the swap stopped halfway and the old version is put back; when none are, the
 /// swap finished, and the old files are deleted only if the install in `root` is whole, else the
@@ -993,7 +1014,17 @@ fn sweep(root: &Path) -> Result<bool, String> {
             staging.push(entry.path());
         } else if name.starts_with(".previous.") {
             previous.push(entry.path());
+        } else if name.starts_with(LOCK_ASIDE) && lock_is_dead(&entry.path()) {
+            // What a killed takeover moved aside (see [`Lock::take_over`]); nothing needs it.
+            staging.push(entry.path());
         }
+    }
+    if let Some(kept) = previous.iter().find(|dir| dir.join(NOT_RESTORED).exists()) {
+        return Err(format!(
+            "{} holds the old version of an update that could not be undone: move its files back from {}, or run the installer again to repair it",
+            root.display(),
+            kept.display()
+        ));
     }
     let swap_stopped_halfway = staging
         .iter()
