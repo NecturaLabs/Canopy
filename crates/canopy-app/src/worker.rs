@@ -1592,10 +1592,11 @@ fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::
             )));
         }
     }
-    // A pull or a checkout moves what the submodules should be at.
+    // A pull, rebase or checkout moves what the submodules should be at.
     let moves = matches!(
         op,
         Op::Pull { .. }
+            | Op::Rebase(_)
             | Op::Checkout(_)
             | Op::CheckoutRequest { .. }
             | Op::CheckoutRemote { .. }
@@ -2459,6 +2460,75 @@ mod read_tests {
                 );
             }
         }
+    }
+
+    /// A direct rebase gets the same explicit submodule follow-up as a continued pull, without
+    /// letting the sequencer discard an edit inside the submodule.
+    #[test]
+    fn a_direct_rebase_follows_the_new_submodule_pointer_and_keeps_edits() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home/gitconfig"), "").expect("gitconfig");
+        let library = root.path().join("library");
+        let sup = root.path().join("super");
+        for path in [&library, &sup] {
+            std::fs::create_dir(path).expect("repo folder");
+            git(path, &["init", "-q", "-b", "main"]);
+            git(path, &["config", "commit.gpgsign", "false"]);
+            git(path, &["config", "core.autocrlf", "false"]);
+            std::fs::write(path.join("a.txt"), "base\n").expect("file");
+            git(path, &["add", "a.txt"]);
+            git(path, &["commit", "-q", "-m", "initial"]);
+        }
+        let library_url = library.to_string_lossy();
+        git(
+            &sup,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "--",
+                &library_url,
+                "deps/lib",
+            ],
+        );
+        git(&sup, &["commit", "-q", "-m", "add library"]);
+        git(&sup, &["switch", "-q", "-c", "topic"]);
+        git(&sup, &["switch", "-q", "main"]);
+        std::fs::write(library.join("b.txt"), "new library\n").expect("file");
+        git(&library, &["add", "b.txt"]);
+        git(&library, &["commit", "-q", "-m", "advance library"]);
+        let new = Oid::from_str(&git(&library, &["rev-parse", "HEAD"])).expect("new");
+        let sub = sup.join("deps/lib");
+        git(&sub, &["fetch", "-q", "origin"]);
+        git(&sub, &["checkout", "-q", "--detach", &new.to_string()]);
+        git(&sup, &["add", "deps/lib"]);
+        git(&sup, &["commit", "-q", "-m", "advance library pointer"]);
+        git(&sup, &["switch", "-q", "topic"]);
+        std::fs::write(sup.join("topic.txt"), "topic\n").expect("file");
+        git(&sup, &["add", "topic.txt"]);
+        git(&sup, &["commit", "-q", "-m", "topic"]);
+        git(&sub, &["checkout", "-q", "HEAD~1"]);
+        std::fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+        let repo = Repo::open(&sup).expect("open");
+        repo.set_options(canopy_core::GitOptions {
+            follow_config: false,
+            recurse_submodules: true,
+            autostash: false,
+            ..Default::default()
+        });
+
+        perform(&repo, Op::Rebase("main".into()), |_| {}).expect("rebase");
+
+        assert_eq!(
+            repo.submodules(false).expect("submodules")[0].workdir_id,
+            Some(new)
+        );
+        assert_eq!(
+            std::fs::read_to_string(sub.join("a.txt")).expect("read edit"),
+            "edited\n"
+        );
     }
 
     /// A pull asks first when only a fast-forward is allowed and the branches diverged, or when

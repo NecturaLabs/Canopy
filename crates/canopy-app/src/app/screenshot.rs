@@ -346,6 +346,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "add-submodule",
     "git-missing",
     "remove-submodule",
+    "discard-submodule",
     "new-tag",
     "stash",
     "export-patch",
@@ -507,6 +508,14 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             danger: true,
             repo: PathBuf::new(),
             op: Op::SubmoduleRemove("vendor/tidepool-ui".into()),
+        },
+        "discard-submodule" => Dialog::Confirm {
+            title: "Discard changes to vendor/tidepool-ui?".into(),
+            body: changes::submodule_discard(false).into(),
+            confirm: "Discard changes".into(),
+            danger: true,
+            repo: PathBuf::new(),
+            op: Op::Discard(Vec::new()),
         },
         "new-tag" => Dialog::NewTag {
             name: "v1.4.0".into(),

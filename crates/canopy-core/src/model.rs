@@ -266,6 +266,12 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
+    /// A submodule (Git mode `0o160000`, a commit) on either side.
+    pub fn is_submodule(&self) -> bool {
+        let commit = u32::from(git2::FileMode::Commit);
+        self.old_mode == Some(commit) || self.new_mode == Some(commit)
+    }
+
     /// The old and new mode when both sides exist and differ: an executable-bit change
     /// (`0o100644` to `0o100755`) or, with [`ChangeKind::Typechange`], a file/symbolic link swap.
     pub fn mode_change(&self) -> Option<(u32, u32)> {
