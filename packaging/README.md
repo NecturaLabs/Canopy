@@ -98,6 +98,11 @@ rewritten) and the icons (they must be in this install's receipt) are skipped wi
 another file or a symlink is there, and nothing is ever copied through a symlink; on Windows the
 same goes for a Start Menu shortcut or Apps & features entry that points at another folder.
 
+Earlier builds also registered a scalable SVG. Upgrades remove it only when it is a regular file,
+not a symlink, whose current SHA-256 is one of the two icons those builds shipped, whether the old
+receipt lists it or the copy is orphaned. An edited or custom SVG is left alone; the receipt does
+not by itself prove that its current bytes are still Canopy's.
+
 `--uninstall` (Windows: `-Uninstall`, or Apps & features) takes the same lock and removes exactly
 what the installer created, checking each item is still its own (a symlink pointing into the
 install folder, a desktop entry carrying `X-Canopy-Install-Dir`, icons identical to the installed
