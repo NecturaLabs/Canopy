@@ -47,8 +47,10 @@ pub(crate) fn lock_reason(worktree: &Worktree) -> Option<String> {
 
 /// Adds to `hasher` the name and size of everything under `folder`, by name within each folder,
 /// without following links: what git deletes with an ignored folder, which `git status` lists as
-/// the folder alone.
-fn hash_folder(folder: &Path, hasher: &mut DefaultHasher) {
+/// the folder alone. Returns the folders in it (`folder` itself included) that hold a `.git`, a
+/// repository of their own that the removal would delete with it. A `.git` is not walked into.
+fn hash_folder(folder: &Path, hasher: &mut DefaultHasher) -> Vec<PathBuf> {
+    let mut repositories = Vec::new();
     let mut pending = vec![folder.to_path_buf()];
     while let Some(dir) = pending.pop() {
         let Ok(read) = std::fs::read_dir(&dir) else {
@@ -63,11 +65,14 @@ fn hash_folder(folder: &Path, hasher: &mut DefaultHasher) {
             };
             entry.file_name().hash(hasher);
             meta.len().hash(hasher);
-            if meta.is_dir() {
+            if entry.file_name() == ".git" {
+                repositories.push(dir.clone());
+            } else if meta.is_dir() {
                 pending.push(entry.path());
             }
         }
     }
+    repositories
 }
 
 impl WorktreeLoss {
@@ -223,20 +228,21 @@ impl Repo {
                 continue;
             }
             // A folder git lists whole, untracked or ignored, that is a repository of its own.
-            if entry.path_bytes().ends_with(b"/")
-                && let Ok(path) = std::str::from_utf8(entry.path_bytes())
-                && folder.join(path).join(".git").symlink_metadata().is_ok()
-            {
-                nested.push(path.to_owned());
+            let listed_folder = entry.path_bytes().ends_with(b"/");
+            let at = folder.join(crate::paths::os_path(entry.path_bytes()));
+            if listed_folder && at.join(".git").symlink_metadata().is_ok() {
+                nested.push(String::from_utf8_lossy(entry.path_bytes()).into_owned());
                 continue;
             }
             entry.path_bytes().hash(&mut hasher);
             status.bits().hash(&mut hasher);
             if status.contains(Status::IGNORED) {
-                if entry.path_bytes().ends_with(b"/")
-                    && let Ok(path) = std::str::from_utf8(entry.path_bytes())
-                {
-                    hash_folder(&folder.join(path), &mut hasher);
+                // git lists an ignored folder whole: look inside for repositories.
+                if listed_folder {
+                    for repository in hash_folder(&at, &mut hasher) {
+                        let inside = repository.strip_prefix(&folder).unwrap_or(&repository);
+                        nested.push(inside.to_string_lossy().into_owned());
+                    }
                 }
                 removal.ignored.add(entry.path_bytes());
             } else if status.contains(Status::WT_NEW) && !status.intersects(index_changes) {

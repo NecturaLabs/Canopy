@@ -963,6 +963,71 @@ fn a_change_past_the_first_shown_names_is_a_change_since_the_confirmation() {
     assert!(!exists(&cache));
 }
 
+/// `git status` lists an ignored folder as the folder alone, so a repository inside it is not
+/// seen as one: it is looked for inside, and blocks the removal like any other nested repository.
+#[test]
+fn a_repository_inside_an_ignored_folder_is_never_deleted_with_it() {
+    let f = fixture();
+    let outer = f.linked("ignoring");
+    fs::write(outer.join(".gitignore"), "repos/\n").expect("file");
+    git(&outer, &["add", ".gitignore"]);
+    git(&outer, &["commit", "-q", "-m", "ignore repos"]);
+    let inner = outer.join("repos/foo");
+    fs::create_dir_all(&inner).expect("folder");
+    git(&inner, &["init", "-q", "-b", "main"]);
+    fs::write(inner.join("work.txt"), "unpublished\n").expect("file");
+    git(&inner, &["add", "."]);
+    git(
+        &inner,
+        &["commit", "-q", "-m", "only in the nested repository"],
+    );
+
+    let removal = f.repo.worktree_removal(&outer, &[]).expect("inspect");
+    let reason = removal.blocked.clone().unwrap_or_default();
+    assert!(
+        reason.contains("another repository") && reason.contains("repos/foo"),
+        "{reason}"
+    );
+    f.repo.remove_worktree(&removal, &[]).expect_err("refused");
+    assert!(exists(&inner.join("work.txt")), "the repository is kept");
+
+    // An ignored folder without one is still a plain ignored folder.
+    let plain = f.linked("plain");
+    fs::write(plain.join(".gitignore"), "cache/\n").expect("file");
+    git(&plain, &["add", ".gitignore"]);
+    git(&plain, &["commit", "-q", "-m", "ignore cache"]);
+    fs::create_dir_all(plain.join("cache/deep")).expect("folder");
+    fs::write(plain.join("cache/deep/x"), "x\n").expect("file");
+    let removal = f.repo.worktree_removal(&plain, &[]).expect("inspect");
+    assert_eq!(removal.blocked, None);
+    assert_eq!(removal.ignored.count, 1);
+}
+
+/// A repository in an untracked folder whose name is not valid UTF-8 is just as much one.
+#[cfg(unix)]
+#[test]
+fn a_repository_in_a_folder_that_is_not_utf8_is_never_deleted_with_it() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let f = fixture();
+    let outer = f.linked("odd-inside");
+    let inner = outer.join(OsString::from_vec(b"odd-\xff-repo".to_vec()));
+    fs::create_dir_all(&inner).expect("folder");
+    git(&inner, &["init", "-q", "-b", "main"]);
+    fs::write(inner.join("work.txt"), "x\n").expect("file");
+    git(&inner, &["add", "."]);
+    git(
+        &inner,
+        &["commit", "-q", "-m", "only in the nested repository"],
+    );
+
+    let removal = f.repo.worktree_removal(&outer, &[]).expect("inspect");
+    let reason = removal.blocked.clone().unwrap_or_default();
+    assert!(reason.contains("another repository"), "{reason}");
+    f.repo.remove_worktree(&removal, &[]).expect_err("refused");
+    assert!(exists(&inner.join("work.txt")), "the repository is kept");
+}
+
 /// A folder whose name is not valid UTF-8 gets an administrative folder with a name that is not
 /// text either, which libgit2 cannot list. Canopy leaves it out of the list, refuses to remove
 /// it, and refuses to forget it (git's prune would) without it having been shown.
