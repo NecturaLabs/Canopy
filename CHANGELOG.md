@@ -48,6 +48,10 @@ commits since the previous build.
 
 ### Fixed
 
+- Settings are written to a temporary file and renamed over the old one, on a thread of their own,
+  so a crash or a full disk while saving no longer leaves a truncated file. A settings file Canopy
+  cannot read is kept as `settings.json.bad` instead of being overwritten, Canopy starts with its
+  default settings and the notification center says so once.
 - Discard on a submodule in Changes now works: the submodule goes back to the commit this
   repository records and changes to its tracked files are thrown away, while untracked files inside
   it stay (Settings → Git → Discard in a submodule can delete them too). It refuses when that would
@@ -143,6 +147,10 @@ commits since the previous build.
 
 ### Changed
 
+- Canopy keeps its files in a folder for each kind of data (settings, saved tokens, logs and crash
+  reports, picture cache) following each system's convention, owner-only and marked `.canopy-data`
+  so the installers' `--purge` finds them, and moves what earlier builds kept in two other folders
+  the first time it starts. The privacy policy lists the folders.
 - Canopy no longer changes your git configuration unless you turn on Settings → Git → Edit my git
   config (off by default). Until then the git configuration in Settings is read only and Use
   recommended is hidden; Canopy still passes its own choices to every git command. A settings file

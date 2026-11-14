@@ -141,14 +141,16 @@ follows a symlink (or junction). It deletes:
   `logs/canopy-*.jsonl` or `crashes/crash-*.txt`. Any other generically named folder is listed and
   left, since another program may own it.
 
-Today the app writes only `eframe::storage_dir("canopy")` (eframe 0.36): Linux
-`$XDG_DATA_HOME/canopy` (`~/.local/share/canopy` when unset or relative), macOS
-`~/Library/Application Support/canopy`, Windows `%APPDATA%\canopy\data` (`%APPDATA%\canopy` goes
-too once that left it empty).
+The app creates these folders itself and puts `.canopy-data` (empty, 0600) in each one that is
+empty or holds only its own files (`crates/canopy-app/src/storage.rs`, ADR 0016). Builds before
+that wrote only `eframe::storage_dir("canopy")` (Linux `$XDG_DATA_HOME/canopy`, macOS
+`~/Library/Application Support/canopy`, Windows `%APPDATA%\canopy\data`) and the folder named
+after the app id (`app.ron`); the app moves their contents on its first start, and the installers
+still recognise the old `canopy` folder by its contents, for a user who never started the new build.
 
-**Contract for the planned move of the app's data (#44).** The installers already purge these
-folders; the app must create the marker file `.canopy-data` (empty is fine) in each one it
-creates, including every one with a generic name, or `--purge` will leave it:
+**Contract for the app's folders (#40).** The installers purge these folders; the app creates the
+marker file `.canopy-data` in each one it creates, including every one with a generic name, or
+`--purge` will leave it:
 
 | | Folders |
 |---|---|

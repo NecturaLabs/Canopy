@@ -59,12 +59,12 @@ ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `x
    pull and merge requests view use `tools/screenshot.sh FIXTURE out.png --demo-requests SCENARIO`
    (it implies `--view requests`): invented requests, no network, only under `--screenshot`, in a
    repository without a GitHub or GitLab remote. Scenarios are in `tools/README.md`.
-5. Settings are `$XDG_DATA_HOME/io.necturalabs.canopy/app.ron`, written on a graceful close
+5. Settings are `$XDG_CONFIG_HOME/canopy/settings.json`, written atomically on a graceful close
    (`xdotool key ctrl+q`) and by the periodic autosave. A fresh scratch folder starts at the real
    first-launch path: terms ("I agree"), crash reports ("Don't send"), then the Git identity
-   question. To skip the dialogs edit key `canopy-settings-v1`: `accepted_terms:"<TERMS_VERSION>"`,
-   `accepted_privacy:"<PRIVACY_VERSION>"`, `crash_reports:Some(false)`, `seen_intro:true`,
-   `identity_asked:true`.
+   question. To skip the dialogs edit the `settings` object: `"accepted_terms": "<TERMS_VERSION>"`,
+   `"accepted_privacy": "<PRIVACY_VERSION>"`, `"crash_reports": false`, `"seen_intro": true`,
+   `"identity_asked": true`.
 6. Clean up: quit with Ctrl+Q, kill `Xvfb` by its PID, delete the scratch folder, and remove any
    file the run wrote outside it.
 

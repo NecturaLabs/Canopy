@@ -201,7 +201,7 @@ path, the welcome screen lists recent repositories.
 | `--screenshot <FILE.png>` | Capture a PNG and exit. Use `tools/screenshot.sh`; direct invocation is refused without the isolated screenshot environment. |
 | `-h`, `--help` / `-V`, `--version` | Help and version. |
 
-Each run writes a JSON-lines log to `logs/` in Canopy's data folder (`~/.local/share/canopy` on
+Each run writes a JSON-lines log to `logs/` in Canopy's state folder (`~/.local/state/canopy` on
 Linux) and the same events to stderr. Set `CANOPY_LOG` (or `RUST_LOG`), for example
 `CANOPY_LOG=canopy=debug`, to choose the level; it overrides Settings → Privacy → Log detail.
 

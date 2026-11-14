@@ -351,6 +351,7 @@ A response with the wrong JSON shape reports its failure location without quotin
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Done | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Done | ? | ? | ? |
+| Files in per-OS folders (config, data, state, cache; owner-only, each marked `.canopy-data` for `--purge`), moved once from the earlier two folders; settings in `settings.json`, written to a temporary file and renamed on a thread of their own, so an interrupted write keeps the previous file; an unreadable settings file is kept as `settings.json.bad`, defaults load and the notification center says so once (ADR 0016) | Unreleased | ? | ? | ? |
 | Screen reader basics (AccessKit): window named for the repository, diff lines and conflict code read, unavailable buttons say why, no icon glyphs read, Settings scrolls to the focused control | Done | ? | ? | ? |
 | Full screen reader support (AccessKit) | Planned | ? | ? | ? |
 
