@@ -58,7 +58,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `file_history.rs` | `Repo::file_history`: the commits that changed one path, newest first, from `HEAD` or a given commit, followed through renames with `git --literal-pathspecs log --follow -M --name-status -z` via `cli.rs`. Each entry carries the path the file had in that commit and the old path when it renamed it, so its diff opens with `DiffSource::Commit`. Read by the worker (`Job::FileHistory`, `Event::FileHistory`; only the last queued one runs), with a one-minute limit and `GIT_NO_LAZY_FETCH=1`, so a partial clone is never downloaded into for it. |
 | `search_changes.rs` | `Repo::search_changes`: the pickaxe, `git log -S<text>` or `-G<regex> --name-only -z`, newest commit first, one hit per matching file; the text is one argument with its `-S`/`-G` prefix, so it never reads as an option; lazy fetch is off, so a partial clone downloads nothing |
 | `tools.rs` | The programs a repository needs besides `git` (`git-lfs` for LFS attributes, `ssh` for an SSH remote, the signing program for `commit.gpgsign`/`tag.gpgsign`) and the installation steps per system; `Repo::missing_tools` reads configuration and two small files, so the worker runs it once per tab (`Job::Tools`, `Event::ToolsMissing`). |
-| `lfs.rs` | Git LFS awareness without `git-lfs`: pointer parsing, which paths use `filter=lfs`, and whether an object has been downloaded. |
+| `lfs.rs` | Git LFS. Without `git-lfs`: pointer parsing, which paths use `filter=lfs`, whether an object has been downloaded (`Repo::lfs_files`, its own read `Job::Lfs`, never part of a refresh), the diff of an LFS path (`Repo::lfs_file_diff`: pointers old to new, content hunks only when every side is local, small text), and `drop_unchanged`, which removes from the status the files libgit2 calls modified only because their stat changed (it does not run `filter.lfs.*`; SHA-256 of the file against the index pointer, cached by path, size, mtime and blob id). With `git-lfs` (always as `git -c alias.lfs= lfs …` through `cli`, `GIT_LFS_FORCE_PROGRESS=1` for the streaming ones): pull, fetch, track, untrack, the pattern list, and lock, unlock and the lock list. |
 | `submodule.rs` | Submodule status (also in every snapshot), update, sync, add (with URL and folder checks) and remove, and the commit pair, with the commits between them, that a submodule's diff shows. |
 | `forge.rs` | Recognises GitHub and GitLab remotes and builds their web, request and clone URLs. Pure string handling; credentials in a remote URL are dropped, never emitted. |
 | `update.rs` | Build numbers for the update check: `parse_build` reads one (digits only; a semantic version has none) and `is_newer` orders builds as integers. |
@@ -67,7 +67,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 The app calls `delete_merged_branch` and `force_delete_branch` (the old `delete_branch(name,
 force)` wrapper is gone), `stage_all_except_repositories` (its `stage_all` wrapper is gone; it
 returns the folders it left out) and `publish_branch` (the branch menu's Publish). It does not
-yet use `flow.rs`, `merged.rs`, `lfs.rs`, `paths::safe_join` or `untracked_children` (the Changes list shows
+yet use `flow.rs`, `merged.rs`, `paths::safe_join` or `untracked_children` (the Changes list shows
 the collapsed folders, not their contents) outside the core's own code and tests; their GitHub
 Issues are the UI work.
 
@@ -97,6 +97,7 @@ thread.
 | Module | Responsibility |
 |---|---|
 | `main.rs` | Argument parsing, logging, eframe launch; also the entry point of the askpass client (the same executable, started by git or ssh). |
+| `lfs.rs` | `LfsState`, a tab's view of Git LFS: the files `Job::Lfs` found (read after every snapshot, never in a refresh) and which have no downloaded object, the install steps when `git lfs` does not work, and the patterns and locks the dialog reads (answers carry a serial; an older one is dropped), plus the size and object-id formatting of the diff card and the rows. |
 | `action.rs` | `Action`: what the user asked for during a frame. Views emit actions and never import `app`. |
 | `app/mod.rs` | `CanopyApp`: state, start-up, the frame (`eframe::App::ui`), opening repositories, theme. The window's AccessKit name ("<repository> — Canopy"); `Watched`, the copy of the settings whose change reloads diffs or forges, compared each frame instead of cloning `Settings`; and, for the app's tests, `test_app()` and `test_tab()`, a `CanopyApp` and a `RepoTab` with no threads. |
 | `app/input.rs` | Keyboard: bare keys, chords and the commands they run. |
@@ -156,6 +157,7 @@ thread.
 | `views/dialogs/search_changes.rs` | Search the history for changed text: the text and regular-expression fields, a Search button that keeps the dialog open (`Outcome::RunKeep`) and the tab's worker-loaded `change_search`, a row opens that commit with the file's diff (`Action::ShowFileVersion`) |
 | `views/dialogs/insights.rs` | Repository insights: the weekly activity painter, top authors and branch table, rendering only worker-loaded tab data, with loading/error states and an explicit refresh. |
 | `views/dialogs/ignore.rs` | Repository-bound ignore form: rule destinations and previews, ignored paths and deciding-rule explanations. Reads and mutations go through the repository worker; serials discard superseded reads and status changes invalidate cached results. |
+| `views/dialogs/lfs.rs` | The Git LFS dialog: the files whose objects are not downloaded (Download runs `git lfs pull`, Fetch objects only `git lfs fetch`), the tracked patterns (track, untrack) and the locks (lock, unlock, confirmed force unlock). Lists come from the tab's `lfs` state, read by `Job::LfsPatterns` and `Job::LfsLocks` (refused in an untrusted repository); every action is an `Op` and is disabled with the install steps while git-lfs is missing. |
 | `views/dialogs/reader.rs` | The full-size reading modal for the Terms of Service and Privacy Policy, used by the consent too: a measured column with headings, lists and kit links, scrolling with fades; each document starts at the top when the reader opens. |
 | `views/dialogs/{url,start,credential,update,common}.rs` | The remote URL builder, where a new branch starts, credential prompts, the update dialog (what is new, installing, restarting), shared fields and buttons. |
 | `views/statusbar.rs` | Branch, ahead/behind, repository state, running job. |

@@ -216,6 +216,37 @@ impl CanopyApp {
                     action,
                 ));
             }
+            if tab.lfs.in_use() {
+                // Offered only where the repository stores files with Git LFS; they say why when
+                // git-lfs is missing instead of failing.
+                let lfs_entry = |icon: &'static str, label: &str| e(icon, label, "Git LFS", None);
+                // Without git-lfs the dialog opens instead and says what to install.
+                let lfs_op = |op: Op| {
+                    if tab.lfs.unavailable().is_some() {
+                        Action::Lfs(dialogs::LfsPage::Files)
+                    } else {
+                        Action::Op(op)
+                    }
+                };
+                v.extend([
+                    (
+                        lfs_entry(icon::DOWNLOAD_SIMPLE, "LFS: Pull (download files)"),
+                        lfs_op(Op::LfsPull),
+                    ),
+                    (
+                        lfs_entry(icon::CLOUD_ARROW_DOWN, "LFS: Fetch objects"),
+                        lfs_op(Op::LfsFetch),
+                    ),
+                    (
+                        lfs_entry(icon::HARD_DRIVES, "LFS: Files and tracked patterns…"),
+                        Action::Lfs(dialogs::LfsPage::Patterns),
+                    ),
+                    (
+                        lfs_entry(icon::LOCK_SIMPLE, "LFS: Locks…"),
+                        Action::Lfs(dialogs::LfsPage::Locks),
+                    ),
+                ]);
+            }
             if tab.view != View::Requests
                 && tab
                     .file

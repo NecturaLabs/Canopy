@@ -895,6 +895,9 @@ impl Repo {
         missing: MissingObjects,
     ) -> Result<FileDiff> {
         self.read_diff(source, path, old_path, missing, || {
+            if crate::lfs::is_lfs(&self.git, Path::new(path)) {
+                return self.lfs_file_diff(source, path, old_path, context, whitespace);
+            }
             let d = self.raw_diff(source, path, old_path, context, whitespace)?;
             let mut out = diff::to_file_diff(&d, path)?;
             if out.kind == Some(ChangeKind::Typechange) && out.hunks.is_empty() {

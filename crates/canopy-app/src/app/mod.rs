@@ -82,6 +82,9 @@ pub const OVERLAYS: &[&str] = &[
     "repository-insights",
     "file-history",
     "file-history-commit",
+    "lfs",
+    "lfs-patterns",
+    "lfs-locks",
     "search-changes",
     "clean-stale",
     "author-card",
@@ -98,6 +101,7 @@ pub const OVERLAYS: &[&str] = &[
     "menu-branch",
     "menu-commit",
     "menu-file",
+    "menu-lfs-file",
     "blame",
     "open",
     "open-error",
@@ -1191,6 +1195,7 @@ impl eframe::App for CanopyApp {
                 | Dialog::FileHistory { repo, .. }
                 | Dialog::SearchChanges { repo, .. } => self.tabs.iter().find(|t| t.path == *repo),
                 Dialog::Ignore(form) => self.tabs.iter().find(|t| t.path == form.repo),
+                Dialog::Lfs(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::CleanStale(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 _ => self.tabs.get(self.active),
             };

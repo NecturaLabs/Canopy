@@ -207,6 +207,7 @@ fn statuses(repo: &Repository, untracked_limit: usize, renames: bool) -> Result<
     }
     out.untracked_dirs.sort_by(|a, b| a.path.cmp(&b.path));
     lfs::mark(repo, &mut out);
+    lfs::drop_unchanged(repo, &mut out);
     Ok(out)
 }
 
