@@ -201,6 +201,7 @@ The git-flow UI remains planned.
 | A rebase that stops on conflicts takes you to Changes, like a pull | Done | ? | ? | ? |
 | A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Done | ? | ? | ? |
 | Push, setting upstream when missing | Done | Yes | Yes | Yes |
+| A push (branch, new branch, tag, Flow finish) that would record a submodule commit no remote has stops before sending anything and names the submodules, whether Update submodules is on or off; a `push.recurseSubmodules` in your git configuration decides instead; a submodule with no remote of its own is not checked (git skips it) | Unreleased | ? | ? | ? |
 | Force push with lease | Done | Yes | ? | ? |
 | The force push confirmation names the branch and the remote branch it overwrites | Unreleased | ? | ? | ? |
 | A pull asks again when the remote changed while you decided | Unreleased | ? | ? | ? |

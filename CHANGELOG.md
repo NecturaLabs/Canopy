@@ -48,6 +48,10 @@ commits since the previous build.
 
 ### Fixed
 
+- A push whose commits record a submodule commit that is on no remote now stops before sending
+  anything and names the submodules to push first, instead of failing with git's "src refspec must
+  name a ref" while Update submodules is on, or publishing a commit nobody can fetch while it is
+  off. A `push.recurseSubmodules` in your git configuration decides instead.
 - Upgrades preserve an edited or custom legacy SVG app icon even when an old installer receipt
   still lists it: only a regular file whose current bytes match an icon Canopy shipped is removed.
 
