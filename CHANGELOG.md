@@ -76,6 +76,10 @@ commits since the previous build.
 
 ### Fixed
 
+- A push, pull or fetch the host refuses to sign in no longer offers Open Accounts, which cannot
+  change how git signs in: the notice says the host did not accept the user name and password git
+  sent, and that GitHub and GitLab take an access token as the password. Open Accounts now
+  follows every refusal of the GitHub or GitLab CLI's sign-in by the host's API, not only GitHub's.
 - Settings → Git and This repository no longer offer `matching` and `nothing` as Push destination
   choices: Canopy's own push understands `simple`, `upstream` and `current`, and `matching` pushes
   every branch with a same-named branch on the remote. A value your own git configuration holds
