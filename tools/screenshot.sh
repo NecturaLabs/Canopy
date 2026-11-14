@@ -6,6 +6,7 @@
 #                            [--contrast on|off] [--custom-theme SPEC]
 #                            [--motion system|reduced|full] [--gallery-page N]
 #                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
+#                            [--also <repo>]...
 #
 # <dialog> is any dialog overlay the app lists in its own --help (open, clone-error, confirm, terms,
 # approve, ...).
@@ -23,6 +24,9 @@
 # shows (a signature, say).
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
+#
+# --also <repo> (repeatable) opens one more repository in a background tab, as a restored session
+# does: <repo> is the shown tab and the others stay unloaded, a name in the tab strip.
 #
 # --demo-requests fills the pull/merge requests view with invented requests, with no network:
 # list, list-all, list-closed, list-unchecked, list-overflow, list-more, list-search, filtered, no-match, a request number
@@ -50,6 +54,7 @@ shift 2
 
 size=1440x900
 extra=()
+also=()
 while [[ $# -gt 0 ]]; do
   case $1 in
     --light) extra+=(--light); shift ;;
@@ -67,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     --motion) extra+=(--motion "${2:?--motion needs system, reduced or full}"); shift 2 ;;
     --gallery-page) extra+=(--gallery-page "${2:?--gallery-page needs a number}"); shift 2 ;;
     --demo-requests) extra+=(--demo-requests "${2:?--demo-requests needs a scenario, see --help}"); shift 2 ;;
+    --also) also+=("${2:?--also needs a repository folder}"); shift 2 ;;
     --size) size=${2:?--size needs WxH}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;
@@ -78,6 +84,10 @@ if [[ $repo != - ]]; then
   [[ -d $repo ]] || { echo "not a directory: $repo" >&2; exit 1; }
   repo_args=("$(realpath "$repo")")
 fi
+for other in "${also[@]}"; do
+  [[ -d $other ]] || { echo "not a directory: $other" >&2; exit 1; }
+  repo_args+=("$(realpath "$other")")
+done
 if ! command -v xvfb-run >/dev/null && [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
   echo "screenshots need xvfb-run or a running Hyprland session" >&2
   exit 1
