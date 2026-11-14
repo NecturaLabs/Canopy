@@ -1315,11 +1315,33 @@ fn git_setting_help(setting: Setting) -> &'static str {
         Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
         Setting::InitialBranch => "The branch a new repository starts on.",
         Setting::CommitCleanup => {
-            "Default removes # lines from a message you edit. Whitespace keeps them, git's template included."
+            "Default removes # lines from a message you edit. Spaces and blank lines keeps them."
         }
         Setting::Autocrlf => "Converts CRLF to LF on commit; CRLF on checkout converts back.",
         Setting::CommitSigning => "Signs every commit with your configured key.",
         Setting::SigningFormat => "SSH signs with an SSH key; OpenPGP and X.509 need GnuPG.",
+    }
+}
+
+/// Why a value the user's configuration holds is not one of the row's choices, after the note's
+/// "Set in …": empty for a value the list offers (see [`Setting::shown_only`]).
+fn shown_only_reason(setting: Setting, value: &str) -> &'static str {
+    let value = value.trim();
+    match setting {
+        _ if !setting
+            .shown_only()
+            .iter()
+            .any(|v| v.eq_ignore_ascii_case(value)) =>
+        {
+            ""
+        }
+        Setting::PushDefault if value.eq_ignore_ascii_case("matching") => {
+            " Canopy does not offer matching: a push sends every branch that has a branch of the same name on the remote."
+        }
+        Setting::PushDefault => {
+            " Canopy does not offer nothing: a push that names no branch is refused."
+        }
+        _ => "",
     }
 }
 
@@ -1505,8 +1527,20 @@ fn config_phrase(v: &ConfigValue) -> String {
     );
     format!(
         "{label} set to {} in {source}",
-        lowercase_label(&git_value_label(setting, &v.value))
+        value_phrase(setting, &v.value)
     )
+}
+
+/// A value inside a sentence. Most names are single words that read as they are in lower case;
+/// a cleanup's name is a phrase of its own ("Nothing", "Also lines starting with #"), so it is
+/// quoted as Settings shows it.
+fn value_phrase(setting: Setting, value: &str) -> String {
+    let label = git_value_label(setting, value);
+    if setting == Setting::CommitCleanup {
+        format!("\"{label}\"")
+    } else {
+        lowercase_label(&label)
+    }
 }
 
 /// The row a configuration key belongs to, and the remote or branch whose own value it is: a
@@ -1658,6 +1692,14 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
         "fetches",
     )
 }
+
+/// What Canopy's Message cleanup row says under its title.
+const MESSAGE_CLEANUP_HELP: &str =
+    "What git removes from commit messages. Spaces and blank lines keeps # lines.";
+
+/// What the Conflict style row says under its title; one line even at zoom 1.6, also in the
+/// smallest window (`help_fits_on_one_line`).
+const CONFLICT_STYLE_HELP: &str = "Showing the original too makes each side's change clear.";
 
 /// The Autostash row's help. A squash merge is left out: git would keep its stash unapplied and
 /// hidden, so `Repo::merge` never autostashes one, whatever Canopy's choice or git's key says.
@@ -3068,7 +3110,11 @@ fn git_config_editor(
                 warn: true,
             }),
             (None, Some(value)) => Some(Note {
-                text: format!("Set in {}.", source_label(Some(&value.source()))),
+                text: format!(
+                    "Set in {}.{}",
+                    source_label(Some(&value.source())),
+                    shown_only_reason(setting, &value.value)
+                ),
                 warn: false,
             }),
             (None, None) => None,
@@ -3218,6 +3264,12 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         }
         _ => value,
     };
+    // One name for each cleanup, as Canopy's own Message cleanup row has it.
+    if setting == Setting::CommitCleanup
+        && let Some(cleanup) = canopy_core::Cleanup::from_value(value)
+    {
+        return cleanup.label().to_owned();
+    }
     match (setting, value) {
         (Setting::PullRebase, "false") => "Don't rebase",
         (Setting::PullRebase, "true") => "Rebase",
@@ -3231,6 +3283,7 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         (Setting::SigningFormat, "openpgp") => "OpenPGP",
         (Setting::SigningFormat, "ssh") => "SSH",
         (Setting::SigningFormat, "x509") => "X.509",
+        (Setting::CommitCleanup, "scissors") => "Cut at the scissors line",
         (_, "true") => "On",
         (_, "false") => "Off",
         // Branch names and the diff3 styles are names, not words.
@@ -3494,7 +3547,7 @@ fn git(
         row_with_note(
             ui,
             "Conflict style",
-            "How conflicted files show both sides. Showing the original too makes each side's change clear.",
+            CONFLICT_STYLE_HELP,
             f.and_then(|f| {
                 let ours = s.conflict_style.style();
                 config_note(
@@ -3521,11 +3574,13 @@ fn git(
                     .show(ui);
             },
         );
-        heading(ui, "Commits");
+    }
+    heading(ui, "Commits");
+    if !follow {
         row_with_note(
             ui,
             "Message cleanup",
-            "What git removes from commit messages. Spaces and blank lines only keeps lines starting with #.",
+            MESSAGE_CLEANUP_HELP,
             f.and_then(|f| {
                 let ours = s.cleanup.cleanup().value();
                 config_note(
@@ -3572,7 +3627,6 @@ fn git(
             },
         );
     }
-    heading(ui, "Commits");
     default_row(
         ui,
         "Add Signed-off-by",
@@ -9286,6 +9340,65 @@ mod tests {
         }
     }
 
+    /// The Push destination list offers `simple`, `upstream` and `current`, which Canopy's own push
+    /// understands. A `matching` or `nothing` the user's own configuration holds is still the row's
+    /// value, with where it is set and why it is not a choice, and is not rewritten (#261).
+    #[test]
+    fn push_destinations_git_holds_but_canopy_does_not_offer_are_shown() {
+        if !crate::repo_config::in_isolated_git_env(
+            "views::settings_screen::tests::push_destinations_git_holds_but_canopy_does_not_offer_are_shown",
+        ) {
+            return;
+        }
+        let home = crate::settings::home_dir();
+        let global_file =
+            PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").expect("private global config"));
+        let setting = Setting::PushDefault;
+        let offered = ["Current", "Simple", "Upstream"];
+        for value in ["simple", "upstream", "current", "matching", "nothing"] {
+            cli::run(&home, &["config", "--global", setting.key(), value]).expect("global write");
+            let written = std::fs::read(&global_file).expect("global file");
+            let mut editor = Editor::open(None);
+            let nodes = editor.nodes();
+            let said = crate::ui::kit::testkit::find(&nodes, setting.label())
+                .and_then(|node| node.value.clone());
+            let label = git_value_label(setting, value);
+            let expected = if value == "simple" {
+                format!("{label} (Recommended)")
+            } else {
+                label
+            };
+            assert_eq!(said, Some(expected), "{value}");
+            let note = crate::ui::kit::testkit::find(&nodes, "Note on Push destination")
+                .and_then(|n| n.description.clone())
+                .expect("the row says where the value is set");
+            assert!(
+                note.starts_with("Set in your global git config"),
+                "{value}: {note}"
+            );
+            assert_eq!(
+                note.contains("Canopy does not offer"),
+                matches!(value, "matching" | "nothing"),
+                "{value}: {note}"
+            );
+            // Opening the list lists the three, whatever the row holds.
+            editor.press(setting.label());
+            let mut options: Vec<_> = editor
+                .nodes()
+                .into_iter()
+                .filter(|n| n.role == egui::accesskit::Role::ListBoxOption)
+                .filter_map(|n| n.label)
+                .collect();
+            options.sort();
+            assert_eq!(options, offered, "{value}");
+            assert_eq!(
+                std::fs::read(&global_file).expect("global file"),
+                written,
+                "{value}: looking changes nothing"
+            );
+        }
+    }
+
     /// Git reads `init.defaultBranch` only to create a repository, never from one that exists, so a
     /// repository's own value would change nothing: its editor leaves the row out (#230).
     #[test]
@@ -10241,21 +10354,26 @@ mod tests {
     #[test]
     fn help_fits_on_one_line() {
         let mut autostash_drawn = false;
+        let mut conflict_drawn = false;
         let mut wrapped = Vec::new();
         // With a repository open, so This repository is drawn too.
         let repo = Some(Path::new("/work/canopy"));
         // With Canopy following git's configuration or choosing for itself: the rows differ.
-        for (follow, section) in [true, false].into_iter().flat_map(|follow| {
+        // At the default window (1440 points), at zoom 1.6 (900) and at the smallest window at zoom 1.6
+        // (562).
+        for (follow, section, width) in [true, false].into_iter().flat_map(|follow| {
             Section::ALL
                 .into_iter()
                 .chain([Section::Repository])
-                .map(move |section| (follow, section))
+                .flat_map(move |section| {
+                    [1440.0_f32, 900.0, 562.0].map(move |width| (follow, section, width))
+                })
         }) {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
             ctx.enable_accesskit();
             theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
-            let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 6000.0));
+            let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 6000.0));
             let mut settings = Settings {
                 follow_git_config: follow,
                 ..Settings::default()
@@ -10307,19 +10425,22 @@ mod tests {
                 let (Some(text), Some(rect)) = (node.value(), node.bounds()) else {
                     continue;
                 };
-                // Canopy's own choices (follow off) are checked for the Autostash row only: the
-                // conflict markers row there wraps already (filed apart from this change).
-                if !follow && !text.starts_with(AUTOSTASH_HELP) {
+                // In the narrower windows only this row is held to one line; the page's longer helps wrap.
+                if width < 1440.0 && text != CONFLICT_STYLE_HELP {
                     continue;
                 }
+                conflict_drawn |= width < 600.0 && !follow && text == CONFLICT_STYLE_HELP;
                 autostash_drawn |= text.starts_with(AUTOSTASH_HELP);
                 if node.role() == egui::accesskit::Role::Label && rect.y1 - rect.y0 > two_lines {
-                    wrapped.push(format!("{section:?} (follow {follow}): {text}"));
+                    wrapped.push(format!(
+                        "{section:?} (follow {follow}, {width} points): {text}"
+                    ));
                 }
             }
         }
         assert!(wrapped.is_empty(), "{wrapped:#?}");
         assert!(autostash_drawn, "the Autostash row was not drawn");
+        assert!(conflict_drawn, "the Conflict style row was not drawn");
     }
 
     /// While this repository's git configuration decides its pulls or pruning, Canopy's own
@@ -10419,6 +10540,75 @@ mod tests {
                 setting.label()
             );
         }
+    }
+
+    /// The Git page names one group once: with Canopy choosing, Commits is one heading over its
+    /// rows (#283).
+    #[test]
+    fn the_git_page_has_one_commits_heading_in_each_mode() {
+        for follow in [true, false] {
+            let nodes = git_page(GitFacts::default(), follow);
+            let headings = nodes
+                .iter()
+                .filter(|n| {
+                    [n.label.as_deref(), n.value.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .any(|t| t.eq_ignore_ascii_case("Commits"))
+                })
+                .count();
+            assert_eq!(headings, 1, "follow {follow}");
+        }
+    }
+
+    /// A commit cleanup value has one name wherever it appears: the list of git values, the note
+    /// and notice that say where it is set, and Canopy's own Message cleanup row (#283).
+    #[test]
+    fn a_commit_cleanup_value_has_one_name() {
+        for cleanup in canopy_core::Cleanup::ALL {
+            let name = git_value_label(Setting::CommitCleanup, cleanup.value());
+            assert_eq!(name, cleanup.label(), "{}", cleanup.value());
+            assert!(
+                config_phrase(&fact("commit.cleanup", cleanup.value())).starts_with(&format!(
+                    "Commit message cleanup set to \"{}\" in ",
+                    cleanup.label()
+                )),
+                "{}",
+                cleanup.value()
+            );
+        }
+        // The help under the rows says the value by that name too, never by another.
+        for help in [
+            git_setting_help(Setting::CommitCleanup),
+            MESSAGE_CLEANUP_HELP,
+        ] {
+            for other in [
+                "Whitespace",
+                "whitespace",
+                "Strip",
+                "strip",
+                "Verbatim",
+                "verbatim",
+            ] {
+                assert!(!help.contains(other), "{help}: {other}");
+            }
+        }
+        assert!(
+            git_setting_help(Setting::CommitCleanup)
+                .contains(canopy_core::Cleanup::Whitespace.label()),
+            "the Git list's help names the value as the row does"
+        );
+        // Git's own two have names of their own, and none of the five repeats another.
+        let names: HashSet<_> = Setting::CommitCleanup
+            .values()
+            .iter()
+            .map(|v| git_value_label(Setting::CommitCleanup, v))
+            .collect();
+        assert_eq!(
+            names.len(),
+            Setting::CommitCleanup.values().len(),
+            "{names:?}"
+        );
     }
 
     /// Any other value shows bare, and the list still marks the recommended entry.

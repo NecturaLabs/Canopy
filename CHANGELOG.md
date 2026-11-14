@@ -76,6 +76,22 @@ commits since the previous build.
 
 ### Fixed
 
+- A push, pull or fetch the host refuses to sign in no longer offers Open Accounts, which cannot
+  change how git signs in: the notice says the host did not accept the user name and password git
+  sent, and that GitHub and GitLab take an access token as the password. Open Accounts now
+  follows every refusal of the GitHub or GitLab CLI's sign-in by the host's API, not only GitHub's.
+- Settings → Git and This repository no longer offer `matching` and `nothing` as Push destination
+  choices: Canopy's own push understands `simple`, `upstream` and `current`, and `matching` pushes
+  every branch with a same-named branch on the remote. A value your own git configuration holds
+  still shows on the row with where it is set and why Canopy does not offer it, and is left alone
+  until you pick another one.
+- Settings → Git with Canopy choosing the Git settings shows one Commits heading over its rows
+  instead of two, and a commit cleanup value has one name in the list of Git values, in the notes
+  and notices that say where it is set, and in Canopy's own Message cleanup row (Spaces and blank
+  lines, Also lines starting with #, Nothing; before, the same value was Whitespace, whitespace and
+  Spaces and blank lines).
+- The Conflict style help in Settings → Git, with Canopy choosing the Git settings, reads on one
+  line, also at zoom 1.6.
 - A select never cuts a label short (#225). The closed control widens to the value it shows (a long
   program name in Settings → Integrations is no longer limited to the text-field width) and, when
   the window has no more room, wraps it onto a second line; the open list is as wide as its

@@ -872,10 +872,11 @@ the notification center (its tooltip and Copy). Screen readers hear an error as 
 message.
 
 A decision (`ui::toast::Offer`) is labelled for what it does, with a tonal Primary Sm button and a
-Ghost Sm one beside it: a rejected push offers Pull / Not now for its repository, refused
-credentials Open Accounts / Not now, a new build Review update / Later, an installed one Restart
-now / Later. Taking it closes the card and removes it from the center; declining only closes the
-card, and the center offers it until it is taken or cleared.
+Ghost Sm one beside it: a rejected push offers Pull / Not now for its repository, the hosting API
+refusing the GitHub or GitLab CLI's sign-in Open Accounts / Not now (git's own refused sign-in
+offers nothing: Settings does not hold git's credentials), a new build Review update / Later, an
+installed one Restart now / Later. Taking it closes the card and removes it from the center;
+declining only closes the card, and the center offers it until it is taken or cleared.
 
 A card lasts as long as its words take to read: two seconds to notice it plus a quarter second a
 word, within 5 to 10 seconds for information and success and 8 to 15 for an error; a decision
