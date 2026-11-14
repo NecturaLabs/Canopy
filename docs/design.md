@@ -55,7 +55,9 @@ fills the danger button. Light themes ring the switch knob in `knob_edge`. Disab
 styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readable`: at least
 3:1, 4.5:1 at high contrast). A banner's or callout's action can be disabled too, so disabled text
 also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
-(`disabled_actions_read_on_banners`; high contrast 4.5:1 throughout).
+(`disabled_actions_read_on_banners`; high contrast 4.5:1 throughout). An unavailable option in
+an open list names a real program, so there it keeps 4.5:1 on the opaque list and on its glass over
+the pane or any backdrop the blur can show (`unavailable_options_read_in_an_open_list`).
 
 Diff colours are their own tokens, so a passing check and an added line do not share a green.
 `added_bg`, `removed_bg` and the line-number gutters `added_gutter`, `removed_gutter` are the row
@@ -872,10 +874,11 @@ the notification center (its tooltip and Copy). Screen readers hear an error as 
 message.
 
 A decision (`ui::toast::Offer`) is labelled for what it does, with a tonal Primary Sm button and a
-Ghost Sm one beside it: a rejected push offers Pull / Not now for its repository, refused
-credentials Open Accounts / Not now, a new build Review update / Later, an installed one Restart
-now / Later. Taking it closes the card and removes it from the center; declining only closes the
-card, and the center offers it until it is taken or cleared.
+Ghost Sm one beside it: a rejected push offers Pull / Not now for its repository, the hosting API
+refusing the GitHub or GitLab CLI's sign-in Open Accounts / Not now (git's own refused sign-in
+offers nothing: Settings does not hold git's credentials), a new build Review update / Later, an
+installed one Restart now / Later. Taking it closes the card and removes it from the center;
+declining only closes the card, and the center offers it until it is taken or cleared.
 
 A card lasts as long as its words take to read: two seconds to notice it plus a quarter second a
 word, within 5 to 10 seconds for information and success and 8 to 15 for an error; a decision
