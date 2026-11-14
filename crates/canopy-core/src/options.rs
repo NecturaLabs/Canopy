@@ -107,6 +107,14 @@ impl Cleanup {
         }
     }
 
+    /// The choice a `commit.cleanup` value names; `None` for git's `scissors` and `default`,
+    /// which Canopy's own choice does not offer.
+    pub fn from_value(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|c| value.trim().eq_ignore_ascii_case(c.value()))
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Whitespace => "Spaces and blank lines",

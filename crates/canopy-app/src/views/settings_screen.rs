@@ -3222,6 +3222,12 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         }
         _ => value,
     };
+    // One name for each cleanup, as Canopy's own Message cleanup row has it.
+    if setting == Setting::CommitCleanup
+        && let Some(cleanup) = canopy_core::Cleanup::from_value(value)
+    {
+        return cleanup.label().to_owned();
+    }
     match (setting, value) {
         (Setting::PullRebase, "false") => "Don't rebase",
         (Setting::PullRebase, "true") => "Rebase",
@@ -3235,6 +3241,7 @@ fn git_value_label(setting: Setting, value: &str) -> String {
         (Setting::SigningFormat, "openpgp") => "OpenPGP",
         (Setting::SigningFormat, "ssh") => "SSH",
         (Setting::SigningFormat, "x509") => "X.509",
+        (Setting::CommitCleanup, "scissors") => "Cut at the scissors line",
         (_, "true") => "On",
         (_, "false") => "Off",
         // Branch names and the diff3 styles are names, not words.
@@ -3525,7 +3532,9 @@ fn git(
                     .show(ui);
             },
         );
-        heading(ui, "Commits");
+    }
+    heading(ui, "Commits");
+    if !follow {
         row_with_note(
             ui,
             "Message cleanup",
@@ -3576,7 +3585,6 @@ fn git(
             },
         );
     }
-    heading(ui, "Commits");
     default_row(
         ui,
         "Add Signed-off-by",
@@ -10426,6 +10434,50 @@ mod tests {
                 setting.label()
             );
         }
+    }
+
+    /// The Git page names one group once: with Canopy choosing, Commits is one heading over its
+    /// rows (#283).
+    #[test]
+    fn the_git_page_has_one_commits_heading_in_each_mode() {
+        for follow in [true, false] {
+            let nodes = git_page(GitFacts::default(), follow);
+            let headings = nodes
+                .iter()
+                .filter(|n| {
+                    [n.label.as_deref(), n.value.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .any(|t| t.eq_ignore_ascii_case("Commits"))
+                })
+                .count();
+            assert_eq!(headings, 1, "follow {follow}");
+        }
+    }
+
+    /// A commit cleanup value has one name wherever it appears: the list of git values, the note
+    /// and notice that say where it is set, and Canopy's own Message cleanup row (#283).
+    #[test]
+    fn a_commit_cleanup_value_has_one_name() {
+        for cleanup in canopy_core::Cleanup::ALL {
+            let name = git_value_label(Setting::CommitCleanup, cleanup.value());
+            assert_eq!(name, cleanup.label(), "{}", cleanup.value());
+            assert!(
+                config_phrase(&fact("commit.cleanup", cleanup.value())).starts_with(&format!(
+                    "Commit message cleanup set to {} in ",
+                    lowercase_label(cleanup.label())
+                )),
+                "{}",
+                cleanup.value()
+            );
+        }
+        // Git's own two have names of their own, and none of the five repeats another.
+        let names: HashSet<_> = Setting::CommitCleanup
+            .values()
+            .iter()
+            .map(|v| git_value_label(Setting::CommitCleanup, v))
+            .collect();
+        assert_eq!(names.len(), Setting::CommitCleanup.values().len(), "{names:?}");
     }
 
     /// Any other value shows bare, and the list still marks the recommended entry.
