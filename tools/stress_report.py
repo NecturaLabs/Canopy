@@ -40,6 +40,7 @@ LIMITS = {
     "rss_growth_pct": 10.0,  # heap growth between first and last five minutes
     "rss_growth_slack_mib": 50.0,
     "threads_peak": 450.0,
+    "children_peak": 12.0,  # direct child processes; with no operation started by hand
     "threads_growth": 20.0,
     "fds_frac_of_limit": 0.70,
     "fds_growth": 50.0,
@@ -781,6 +782,12 @@ def main():
         if thr_peak:
             verdict.check("peak threads", thr_peak[0] <= LIMITS["threads_peak"], f"{thr_peak[0]:.0f}",
                           f"<= {LIMITS['threads_peak']:g}")
+        kids_peak = peak("children")
+        if kids_peak:
+            verdict.check("peak child processes", kids_peak[0] <= LIMITS["children_peak"],
+                          f"{kids_peak[0]:.0f}",
+                          f"<= {LIMITS['children_peak']:g} (background fetches and reads are limited; "
+                          "raise it with --limit children_peak=N for a run with operations started by hand)")
         fd_peak = peak("fds")
         nofile = as_float(meta.get("ulimit_nofile_soft"))
         if fd_peak and nofile:

@@ -211,6 +211,13 @@ commits since the previous build.
 
 ### Changed
 
+- Background work no longer grows with the number of tabs. At most four background fetches run
+  at once across all tabs: a tab that falls due while four run waits for one to finish, then
+  fetches, so a long session fetches everything within each interval without starting a `git`
+  and `ssh` process per tab at the same time. A fetch you start yourself never waits. The
+  refreshes that file changes cause in tabs you are not looking at share a limit of two to four
+  at a time (by the number of cores) instead of every tab reading its repository at once when a
+  build or another tool touches many; the tab you are looking at always refreshes at once.
 - Background fetching no longer fires in every tab at the same moment. When a tab first has
   background fetching on (it opens, or you turn the setting on or change the interval with tabs
   open), its first fetch comes between half the interval and a whole one later, a different time
