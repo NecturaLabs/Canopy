@@ -76,6 +76,11 @@ pub enum Error {
         /// The promisor remote named by `extensions.partialClone`.
         remote: String,
     },
+    /// `extensions.refStorage = reftable`, a ref format libgit2 cannot read.
+    #[error(
+        "Canopy cannot open this repository yet: it stores its references in Git's reftable format. Git itself still works with it."
+    )]
+    Reftable,
 }
 
 /// The message for [`Error::LegacyPartialClone`]. The remote name comes from the repository's own

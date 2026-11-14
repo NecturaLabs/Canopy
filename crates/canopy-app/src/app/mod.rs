@@ -83,8 +83,16 @@ pub const OVERLAYS: &[&str] = &[
     "repository-insights",
     "file-history",
     "file-history-commit",
+    "lfs",
+    "lfs-patterns",
+    "lfs-locks",
     "search-changes",
     "clean-stale",
+    "clean-merged",
+    "update-from-base",
+    "flow-init",
+    "flow-start",
+    "flow-finish",
     "author-card",
     "request-filters",
     "request-sort",
@@ -99,6 +107,7 @@ pub const OVERLAYS: &[&str] = &[
     "menu-branch",
     "menu-commit",
     "menu-file",
+    "menu-lfs-file",
     "blame",
     "open",
     "open-error",
@@ -113,6 +122,7 @@ pub const OVERLAYS: &[&str] = &[
     "add-submodule",
     "git-missing",
     "remove-submodule",
+    "discard-submodule",
     "new-tag",
     "stash",
     "export-patch",
@@ -1199,6 +1209,7 @@ impl eframe::App for CanopyApp {
                 | Dialog::FileHistory { repo, .. }
                 | Dialog::SearchChanges { repo, .. } => self.tabs.iter().find(|t| t.path == *repo),
                 Dialog::Ignore(form) => self.tabs.iter().find(|t| t.path == form.repo),
+                Dialog::Lfs(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::CleanStale(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 _ => self.tabs.get(self.active),
             };
@@ -1635,6 +1646,7 @@ pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
         settings::DiffPrefs::default(),
         worker,
     );
+    tab.snap_index = crate::tab::SnapIndex::new(&snap);
     tab.snap = Some(std::sync::Arc::new(snap));
     tab
 }

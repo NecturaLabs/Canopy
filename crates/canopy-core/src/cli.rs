@@ -336,6 +336,26 @@ pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
+/// Runs `git args… path` with a native, possibly non-UTF-8 final path argument. The path is
+/// converted only for the redacted log and error text, never for the process itself.
+pub fn run_with_path(workdir: &Path, args: &[&str], path: &Path) -> Result<String> {
+    let started = Instant::now();
+    let out = command(Some(workdir))
+        .args(args)
+        .arg(path)
+        .output()
+        .map_err(Error::GitMissing)?;
+    let shown_path = path.to_string_lossy();
+    let mut shown = args.to_vec();
+    shown.push(shown_path.as_ref());
+    record(&shown, started, out.status.code(), &out.stderr);
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(failure(&shown, &out.stdout, &out.stderr))
+    }
+}
+
 /// Runs `cmd`, a git command built with [`command`], and collects its output, but gives up after
 /// `limit`: the child is killed and the call fails. For reads that share a thread with other
 /// work, where a repository whose configuration makes git block must not stall everything behind it.
@@ -556,12 +576,24 @@ pub(crate) fn run_answer(
 pub fn run_streaming(
     workdir: Option<&Path>,
     args: &[&str],
+    progress: impl FnMut(&str),
+) -> Result<String> {
+    run_streaming_env(workdir, args, &[], progress)
+}
+
+/// [`run_streaming`] with extra environment variables for the command (`GIT_LFS_FORCE_PROGRESS`
+/// for git-lfs, which shows no progress unless it writes to a terminal).
+pub fn run_streaming_env(
+    workdir: Option<&Path>,
+    args: &[&str],
+    env: &[(&str, &str)],
     mut progress: impl FnMut(&str),
 ) -> Result<String> {
     let started = Instant::now();
     tracing::info!(command = %subcommand(args), args = ?loggable(args), "git started");
     let mut child = command(workdir)
         .args(args)
+        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
