@@ -36,6 +36,23 @@ const MAX_SCRIPT: u64 = 1024 * 1024;
 const APP_ID: &str = "io.necturalabs.Canopy";
 const RECEIPT: &str = ".canopy-install";
 
+/// The file the receipt is written to before it replaces [`RECEIPT`].
+const RECEIPT_STAGING: &str = ".canopy-install.new";
+
+/// The start of the name of the folder an update through the installer works in, in the system's
+/// temporary folder: `canopy-update.<process id>-…`.
+pub const UPDATE_STAGING_PREFIX: &str = "canopy-update.";
+
+/// The file [`swap_in`] writes into the `.previous.*` folder before it moves anything: the names
+/// of the entries of the new version, one per line. Hidden, so a swap never moves it.
+const STAGED_RECORD: &str = ".staged";
+
+/// The file [`rollback`] writes into the `.previous.*` folder when the old version could not all
+/// be put back. The update's own staging is deleted when it returns, so without this the start
+/// sweep would take that folder for a finished swap's leftovers and delete the old version's
+/// only copy. Hidden, so a swap never moves it.
+const NOT_RESTORED: &str = ".not-restored";
+
 /// What the installer puts in a Linux install folder: the only entries an update replaces. Anything
 /// else in the folder is not Canopy's and stays where it is.
 const ENTRIES: [&str; 7] = [
@@ -496,6 +513,19 @@ fn swap_in(
 ) -> Result<(), String> {
     let staged = swappable(new).map_err(|e| io_err("could not read", new, &e))?;
     fs::create_dir(previous).map_err(|e| io_err("could not create", previous, &e))?;
+    // What a sweep after a kill needs to know to undo phase two (see [`put_back`]).
+    let record = previous.join(STAGED_RECORD);
+    let names: String = staged
+        .iter()
+        .filter_map(|entry| entry.file_name()?.to_str())
+        .filter(|name| !name.contains('\n'))
+        .flat_map(|name| [name, "\n"])
+        .collect();
+    if let Err(e) = fs::write(&record, names) {
+        let _ = fs::remove_file(&record);
+        let _ = fs::remove_dir(previous);
+        return Err(io_err("could not write", &record, &e));
+    }
     let old: Vec<_> = swappable(root)
         .map_err(|e| io_err("could not read", root, &e))?
         .into_iter()
@@ -550,6 +580,27 @@ fn rollback(
     moved_aside: &[std::ffi::OsString],
     why: &str,
 ) -> String {
+    if undo_swap(root, previous, moved_in, moved_aside) {
+        format!("{why}; the previous version was kept")
+    } else {
+        // Best effort: if even this cannot be written, nothing more can be done about it here.
+        let _ = fs::write(previous.join(NOT_RESTORED), why);
+        format!(
+            "{why}, and not all of the previous version could be put back: its remaining files are in {}; move them back into {}, or run the installer again",
+            previous.display(),
+            root.display()
+        )
+    }
+}
+
+/// Removes the staged entries `moved_in` from `root` and moves the old ones `moved_aside` back out
+/// of `previous`, never over an existing name, then removes `previous`. Whether all of that worked.
+fn undo_swap(
+    root: &Path,
+    previous: &Path,
+    moved_in: &[std::ffi::OsString],
+    moved_aside: &[std::ffi::OsString],
+) -> bool {
     let mut ok = true;
     for name in moved_in {
         let path = root.join(name);
@@ -564,15 +615,11 @@ fn rollback(
             ok = false;
         }
     }
-    if ok && fs::remove_dir(previous).is_ok() {
-        format!("{why}; the previous version was kept")
-    } else {
-        format!(
-            "{why}, and not all of the previous version could be put back: its remaining files are in {}; move them back into {}, or run the installer again",
-            previous.display(),
-            root.display()
-        )
+    if !ok {
+        return false;
     }
+    let _ = fs::remove_file(previous.join(STAGED_RECORD));
+    fs::remove_dir(previous).is_ok()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -615,6 +662,48 @@ fn put_file(from: &Path, to: &Path) -> io::Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// The staging files an interrupted [`put_file`] of `to` left beside it (`<name>.canopy-new.<pid>`
+/// of a process that is gone). They sit in the user's folders, so they are reported, never
+/// deleted.
+fn abandoned_beside(to: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(name)) = (to.parent(), to.file_name().and_then(|n| n.to_str())) else {
+        return Vec::new();
+    };
+    let prefix = format!("{name}.canopy-new.");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| {
+            let file = e.file_name().to_string_lossy().into_owned();
+            let Some(pid) = file
+                .strip_prefix(&prefix)
+                .filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+                .and_then(|p| p.parse().ok())
+            else {
+                return false;
+            };
+            e.path().symlink_metadata().is_ok_and(|m| {
+                m.is_file() && canopy_core::leftovers::owner_is_gone(pid, m.modified().ok())
+            })
+        })
+        .map(|e| e.path())
+        .collect();
+    found.sort();
+    found
+}
+
+/// Adds a note for each staging file an earlier, interrupted write of `to` left beside it.
+fn note_abandoned_beside(to: &Path, notes: &mut Vec<String>) {
+    for file in abandoned_beside(to) {
+        notes.push(format!(
+            "{} was left by an update that stopped; delete it if you do not need it",
+            file.display()
+        ));
+    }
 }
 
 fn is_symlink(path: &Path) -> bool {
@@ -661,6 +750,7 @@ fn integrate_with(
                 entry.display()
             ));
         } else if put_file(&desktop_src, entry).is_ok() {
+            note_abandoned_beside(entry, notes);
             lines.push(format!("desktop={}", entry.display()));
         } else {
             notes.push(format!("could not write {}", entry.display()));
@@ -691,6 +781,7 @@ fn integrate_with(
             .parent()
             .is_some_and(|p| fs::create_dir_all(p).is_ok() && put_file(src, dst).is_ok())
         {
+            note_abandoned_beside(dst, notes);
             lines.push(format!("icon={}|{}", dst.display(), src.display()));
         } else {
             notes.push(format!("could not write {}", dst.display()));
@@ -705,7 +796,7 @@ fn integrate_with(
         }
     }
     lines.push(String::new());
-    let tmp = root.join(".canopy-install.new");
+    let tmp = root.join(RECEIPT_STAGING);
     let receipt = root.join(RECEIPT);
     if let Err(e) = fs::write(&tmp, lines.join("\n")).and_then(|()| fs::rename(&tmp, &receipt)) {
         let _ = fs::remove_file(&tmp);
@@ -794,46 +885,169 @@ impl Drop for Cleanup {
     }
 }
 
-/// The install folder's lock, taken as the installer takes it: a folder made with `mkdir`.
+/// The file in the lock folder that names the process holding it, as the installer writes it.
+const LOCK_OWNER: &str = "pid";
+
+/// The start of the name a dead holder's lock is moved to while it is taken over.
+const LOCK_ASIDE: &str = ".lock-dead.";
+
+/// Whether the lock folder `lock` names a holder that is certainly gone.
+fn lock_is_dead(lock: &Path) -> bool {
+    lock_owner(lock)
+        .filter(|pid| *pid != 0)
+        .and_then(canopy_core::leftovers::process_is_gone)
+        == Some(true)
+}
+
+/// Who holds a lock that could not be taken.
+#[derive(Debug, PartialEq, Eq)]
+enum Holder {
+    /// A process that is running, or that is this one.
+    Running,
+    /// A lock whose owner cannot be told: no process id in it (an older version made it), or a
+    /// system where a process id cannot be looked up. It may be an update that was killed.
+    Unknown,
+}
+
+/// Why [`Lock::try_take`] gave no lock.
+#[derive(Debug, PartialEq, Eq)]
+enum LockError {
+    Held(Holder),
+    Failed(String),
+}
+
+/// The install folder's lock, taken as the installer takes it: a folder made with `mkdir`, with
+/// the process id of its holder in it. A process that is killed never removes its lock, so a lock
+/// whose holder is provably gone is taken over.
 struct Lock(PathBuf);
 
 impl Lock {
     fn take(root: &Path) -> Result<Self, String> {
-        let path = root.join(".lock");
-        fs::create_dir(&path).map_err(|e| {
-            if e.kind() == io::ErrorKind::AlreadyExists {
-                format!(
-                    "another Canopy install or update is running (remove {} if it is not)",
-                    path.display()
-                )
-            } else {
-                io_err("could not create", &path, &e)
-            }
-        })?;
-        Ok(Self(path))
+        Self::try_take(root).map_err(|e| match e {
+            LockError::Held(Holder::Running) => format!(
+                "another Canopy install or update is running (remove {} if it is not)",
+                root.join(".lock").display()
+            ),
+            LockError::Held(Holder::Unknown) => format!(
+                "another Canopy install or update is running, or was killed and cannot be told apart (remove {} if none is running)",
+                root.join(".lock").display()
+            ),
+            LockError::Failed(why) => why,
+        })
     }
+
+    fn try_take(root: &Path) -> Result<Self, LockError> {
+        let path = root.join(".lock");
+        match fs::create_dir(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Self::take_over(&path)?,
+            Err(e) => return Err(LockError::Failed(io_err("could not create", &path, &e))),
+        }
+        // From here `Drop` releases the lock, also when the record cannot be written.
+        let lock = Self(path);
+        let owner = lock.0.join(LOCK_OWNER);
+        fs::write(&owner, format!("{}\n", std::process::id()))
+            .map_err(|e| LockError::Failed(io_err("could not write", &owner, &e)))?;
+        Ok(lock)
+    }
+
+    /// Makes room for a new lock at `path` when its holder is certainly gone. The folder is moved
+    /// aside first, which only one of several processes finding the same dead lock can do, and
+    /// goes back if it turns out not to be the dead holder's.
+    fn take_over(path: &Path) -> Result<(), LockError> {
+        let owner = lock_owner(path).filter(|pid| *pid != 0);
+        match owner.and_then(canopy_core::leftovers::process_is_gone) {
+            Some(true) => {}
+            Some(false) => return Err(LockError::Held(Holder::Running)),
+            None => return Err(LockError::Held(Holder::Unknown)),
+        }
+        let aside = path.with_file_name(unique_name(LOCK_ASIDE));
+        if fs::rename(path, &aside).is_err() {
+            return Err(LockError::Held(Holder::Running));
+        }
+        if lock_owner(&aside) != owner {
+            let _ = fs::rename(&aside, path);
+            return Err(LockError::Held(Holder::Running));
+        }
+        let _ = fs::remove_dir_all(&aside);
+        fs::create_dir(path).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                LockError::Held(Holder::Running)
+            } else {
+                LockError::Failed(io_err("could not create", path, &e))
+            }
+        })
+    }
+}
+
+/// The process id a lock folder names, if it names one.
+fn lock_owner(lock: &Path) -> Option<u32> {
+    fs::read_to_string(lock.join(LOCK_OWNER))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 impl Drop for Lock {
     fn drop(&mut self) {
+        let _ = fs::remove_file(self.0.join(LOCK_OWNER));
         let _ = fs::remove_dir(&self.0);
     }
 }
 
-/// Clears what an interrupted update left in `root`. A `.previous.*` folder is the old version's
-/// files: it is deleted only when the install in `root` is whole, else the update is refused.
-fn sweep(root: &Path) -> Result<(), String> {
+/// Clears what an interrupted update left in `root`: the `.staging.*` folders, the receipt's
+/// `.canopy-install.new` and the `.lock-dead.*` folders of a killed lock takeover whose holder is
+/// gone. A `.previous.*` folder marked [`NOT_RESTORED`] (a roll-back that failed) is never touched
+/// and the sweep refuses. A `.previous.*` folder is the old version's files, and what it means
+/// depends on how far the swap got (see [`swap_in`]): when staged entries are still waiting in a
+/// `.staging.*` folder the swap stopped halfway and the old version is put back; when none are, the
+/// swap finished, and the old files are deleted only if the install in `root` is whole, else the
+/// update is refused. The caller holds the [`Lock`]. Returns whether the old version was put back.
+fn sweep(root: &Path) -> Result<bool, String> {
     let mut staging = Vec::new();
     let mut previous = Vec::new();
     for entry in fs::read_dir(root).map_err(|e| io_err("could not read", root, &e))? {
         let entry = entry.map_err(|e| io_err("could not read", root, &e))?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with(".staging.") {
+        if name.starts_with(".staging.") || name == RECEIPT_STAGING {
             staging.push(entry.path());
         } else if name.starts_with(".previous.") {
             previous.push(entry.path());
+        } else if name.starts_with(LOCK_ASIDE) && lock_is_dead(&entry.path()) {
+            // What a killed takeover moved aside (see [`Lock::take_over`]); nothing needs it.
+            staging.push(entry.path());
         }
     }
+    if let Some(kept) = previous.iter().find(|dir| dir.join(NOT_RESTORED).exists()) {
+        return Err(format!(
+            "{} holds the old version of an update that could not be undone: move its files back from {}, or run the installer again to repair it",
+            root.display(),
+            kept.display()
+        ));
+    }
+    let swap_stopped_halfway = staging
+        .iter()
+        .any(|dir| swappable(&dir.join("new")).is_ok_and(|waiting| !waiting.is_empty()));
+    let found = previous.len();
+    if !previous.is_empty() && swap_stopped_halfway {
+        let waiting: Vec<_> = staging
+            .iter()
+            .filter_map(|dir| swappable(&dir.join("new")).ok())
+            .flatten()
+            .filter_map(|entry| entry.file_name().map(ToOwned::to_owned))
+            .collect();
+        previous.retain(|dir| !put_back(root, dir, &waiting));
+        // The old version could not all be put back: `root` holds parts of both versions, and
+        // the staged rest of the new one and the old one are the only copies. Keep them.
+        if !previous.is_empty() {
+            return Err(format!(
+                "{} holds an update that was interrupted halfway and could not be undone: run the installer again to repair it",
+                root.display()
+            ));
+        }
+    }
+    let restored = previous.len() < found;
     if !previous.is_empty() && !root.join("bin/canopy").is_file() {
         return Err(format!(
             "{} holds the files of an update that was interrupted and has no Canopy of its own: run the installer again to repair it",
@@ -843,7 +1057,84 @@ fn sweep(root: &Path) -> Result<(), String> {
     for path in staging.into_iter().chain(previous) {
         remove_any(&path).map_err(|e| io_err("could not remove", &path, &e))?;
     }
-    Ok(())
+    Ok(restored)
+}
+
+/// Puts the old version in `previous` back into `root` after a swap that stopped halfway, undoing
+/// the part of the new one that had moved in (the same as [`rollback`]): every entry of the new
+/// version that is no longer `waiting` in staging, and every name that is also in `previous`.
+/// Returns whether it is all back and `previous` is gone; otherwise `previous` stays for the caller
+/// to deal with.
+fn put_back(root: &Path, previous: &Path, waiting: &[std::ffi::OsString]) -> bool {
+    let Ok(entries) = fs::read_dir(previous) else {
+        return false;
+    };
+    let aside: Vec<_> = entries
+        .flatten()
+        .map(|e| e.file_name())
+        .filter(|name| !name.to_string_lossy().starts_with('.'))
+        .collect();
+    let mut moved_in = aside.clone();
+    for name in staged_names(previous) {
+        if !waiting.contains(&name) && !moved_in.contains(&name) {
+            moved_in.push(name);
+        }
+    }
+    undo_swap(root, previous, &moved_in, &aside)
+}
+
+/// The names of the new version's entries, as [`swap_in`] recorded them in `previous` before it
+/// moved anything: what a swap that was killed must remove from `root`, which no memory of the
+/// killed process says. Empty for a swap an earlier build made.
+fn staged_names(previous: &Path) -> Vec<std::ffi::OsString> {
+    fs::read_to_string(previous.join(STAGED_RECORD))
+        .map(|text| text.lines().map(std::ffi::OsString::from).collect())
+        .unwrap_or_default()
+}
+
+/// What the start's sweep of an installation found and did, for the notification center.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct UpdateSweep {
+    /// The install folder, set when `put_back` or `stuck_lock` is.
+    pub root: PathBuf,
+    /// An update was killed halfway through its swap, and the old version is back.
+    pub put_back: bool,
+    /// The install folder's lock, left by something that cannot be told from a running install
+    /// or update; nothing was cleared.
+    pub stuck_lock: Option<PathBuf>,
+}
+
+/// At start: clears what an interrupted update left in this installation, when Canopy runs from
+/// one the installer made and no running install or update holds its lock (the lock of a killed
+/// one is taken over). Anything else is left for the next update, which sweeps first.
+pub fn sweep_interrupted_update() -> Result<UpdateSweep, String> {
+    let Install::Managed { root } = detect() else {
+        return Ok(UpdateSweep::default());
+    };
+    sweep_unlocked(&root)
+}
+
+/// [`sweep`] under the install folder's lock. A lock a running process holds means an install or
+/// an update is running, and nothing is touched; so is one whose holder cannot be told, which is
+/// reported.
+fn sweep_unlocked(root: &Path) -> Result<UpdateSweep, String> {
+    match Lock::try_take(root) {
+        Ok(_lock) => Ok(UpdateSweep {
+            root: root.to_path_buf(),
+            put_back: sweep(root)?,
+            stuck_lock: None,
+        }),
+        Err(LockError::Held(Holder::Unknown)) => Ok(UpdateSweep {
+            root: root.to_path_buf(),
+            put_back: false,
+            stuck_lock: Some(root.join(".lock")),
+        }),
+        Err(LockError::Held(Holder::Running)) => Ok(UpdateSweep::default()),
+        Err(LockError::Failed(why)) => {
+            tracing::debug!(error = %why, "could not take the install lock to sweep");
+            Ok(UpdateSweep::default())
+        }
+    }
 }
 
 /// A name no other call in this process, and no other process, has used: the process id and a
@@ -1023,7 +1314,7 @@ pub fn install_with_installer(
             "{name} from the update feed is not Canopy's installer"
         ));
     }
-    let dir = std::env::temp_dir().join(unique_name("canopy-update."));
+    let dir = std::env::temp_dir().join(unique_name(UPDATE_STAGING_PREFIX));
     {
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]

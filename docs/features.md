@@ -28,6 +28,7 @@ Update this table in the same change that adds or alters a feature.
 |---|---|---|---|---|
 | Open, init | Done | Yes | Yes | Yes |
 | Ignore management: file/extension/folder/pattern rules, preview, local/global exclude, ignored paths, why ignored, stop tracking; optional starter templates on init | In progress (#59) | Yes | Yes | Yes |
+| Leftovers of failed or killed operations: Canopy's own staging files are removed at the next start once their process is gone; an update killed halfway is put back and a lock a killed update or install left is taken over (Linux, where the process can be shown gone), each with a notification; a lock whose holder cannot be told is left and reported; a staging file an interrupted save left in a working tree is reported in the notification center with its path and never deleted; Git's lock files stay and git's message names them | Unreleased | ? | ? | ? |
 | Clone with live progress; a clone whose submodules cannot be downloaded is kept and opened with git's message, never deleted | Done | Yes | Yes | Yes |
 | Several repositories in tabs; closing or changing a worktree preserves unsent commit messages, conflict edits and request comments for this session | Done | Yes | Yes | Yes |
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |

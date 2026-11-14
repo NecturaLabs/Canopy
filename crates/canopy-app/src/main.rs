@@ -14,6 +14,7 @@ mod highlight;
 #[cfg(unix)]
 mod hostile;
 mod hosting;
+mod housekeeping;
 mod identity_worker;
 mod keymap;
 mod lfs;

@@ -65,23 +65,52 @@ fn history(p: &Path) -> String {
     git(p, &["log", "--format=%s|%an <%ae>|%T"])
 }
 
+/// The staging folder of an export is made in the temporary folder, by exclusive creation: a
+/// folder already there under a name the export would pick is never reused, emptied or removed.
+/// The export takes the next number, so every number it could be at is occupied here.
 #[test]
 fn exporting_patches_preserves_preexisting_staging_content() {
+    /// Removes what the test made, also when an assertion fails.
+    struct Occupied(Vec<std::path::PathBuf>);
+    impl Drop for Occupied {
+        fn drop(&mut self) {
+            for folder in &self.0 {
+                let _ = fs::remove_dir_all(folder);
+            }
+        }
+    }
+    const NUMBERS: u64 = 64;
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     let out = tempfile::tempdir().expect("tempdir");
-    let staging = out
-        .path()
-        .join(format!(".canopy-patches-{}", std::process::id()));
-    fs::create_dir(&staging).expect("preexisting folder");
-    fs::write(staging.join("keep.txt"), "user data").expect("existing data");
+    let temp = std::env::temp_dir();
+    let mut occupied = Occupied(Vec::new());
+    for number in 0..NUMBERS {
+        let staging = temp.join(format!(
+            "{}{}-{number}",
+            canopy_core::leftovers::PATCH_STAGING_PREFIX,
+            std::process::id()
+        ));
+        // A number another export of this binary is using right now stays that export's.
+        if fs::create_dir(&staging).is_err() {
+            continue;
+        }
+        occupied.0.push(staging.clone());
+        fs::write(staging.join("keep.txt"), "user data").expect("existing data");
+    }
     let repo = Repo::open(source.path()).expect("repo");
-    repo.export_patches(&[oid(source.path(), "HEAD")], out.path())
+    let files = repo
+        .export_patches(&[oid(source.path(), "HEAD")], out.path())
         .expect("export");
-    assert_eq!(
-        fs::read_to_string(staging.join("keep.txt")).expect("data remains"),
-        "user data"
-    );
+    assert_eq!(files.len(), 1);
+    for staging in &occupied.0 {
+        assert_eq!(
+            fs::read_to_string(staging.join("keep.txt")).expect("data remains"),
+            "user data",
+            "{}",
+            staging.display()
+        );
+    }
 }
 
 #[test]
