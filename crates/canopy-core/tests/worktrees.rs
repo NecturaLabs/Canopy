@@ -792,6 +792,40 @@ fn a_forgotten_worktree_with_an_unusual_id_still_shows_its_head() {
     assert!(worktrees.join("old wt").is_dir(), "nothing was forgotten");
 }
 
+/// Git's dry run names an entry by its folder in the repository's worktrees folder, ending at a
+/// colon: folders named `a` and `a:b` (an older git, or a rename by hand) would both read as
+/// `a`, and the second, holding the only reference to a commit, would be forgotten unseen.
+/// Such a name blocks forgetting.
+#[cfg(unix)]
+#[test]
+fn an_ambiguous_worktree_id_blocks_forgetting() {
+    let f = fixture();
+    let worktrees = f.main.join(".git/worktrees");
+    for (name, id) in [("first", "a"), ("second", "a:b")] {
+        let folder = f.beside.join(name);
+        git(
+            &f.main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                &folder.to_string_lossy(),
+            ],
+        );
+        fs::write(folder.join("a.txt"), format!("{name}\n")).expect("edit");
+        git(&folder, &["commit", "-q", "-am", name]);
+        fs::remove_dir_all(&folder).expect("delete by hand");
+        fs::rename(worktrees.join(name), worktrees.join(id)).expect("rename");
+    }
+    let preview = f.repo.forget_preview().expect("preview");
+    let reason = preview.blocked.clone().unwrap_or_default();
+    assert!(reason.contains("a:b"), "{preview:?}");
+    assert!(f.repo.forget_worktrees(&preview).is_err());
+    assert!(worktrees.join("a:b").is_dir(), "nothing was forgotten");
+    assert!(worktrees.join("a").is_dir(), "nothing was forgotten");
+}
+
 /// A submodule that was never initialized is an empty folder: git removes the worktree, and so
 /// does Canopy.
 #[test]
@@ -961,6 +995,28 @@ fn a_change_past_the_first_shown_names_is_a_change_since_the_confirmation() {
     let again = f.repo.worktree_removal(&cache, &[]).expect("inspect");
     f.repo.remove_worktree(&again, &[]).expect("remove");
     assert!(!exists(&cache));
+}
+
+/// A bare repository (no `.git` inside, its `HEAD`, `objects` and `refs` at the top) in an
+/// ignored folder is a repository too, and blocks the removal.
+#[test]
+fn a_bare_repository_inside_an_ignored_folder_is_never_deleted_with_it() {
+    let f = fixture();
+    let outer = f.linked("bare-inside");
+    fs::write(outer.join(".gitignore"), "*.bare/\n").expect("file");
+    git(&outer, &["add", ".gitignore"]);
+    git(&outer, &["commit", "-q", "-m", "ignore bare"]);
+    let bare = outer.join("stash.bare");
+    git(&outer, &["init", "-q", "--bare", &bare.to_string_lossy()]);
+
+    let removal = f.repo.worktree_removal(&outer, &[]).expect("inspect");
+    let reason = removal.blocked.clone().unwrap_or_default();
+    assert!(
+        reason.contains("another repository") && reason.contains("stash.bare"),
+        "{reason}"
+    );
+    f.repo.remove_worktree(&removal, &[]).expect_err("refused");
+    assert!(exists(&bare.join("HEAD")), "the repository is kept");
 }
 
 /// `git status` lists an ignored folder as the folder alone, so a repository inside it is not

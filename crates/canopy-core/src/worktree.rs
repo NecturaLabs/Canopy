@@ -45,6 +45,12 @@ pub(crate) fn lock_reason(worktree: &Worktree) -> Option<String> {
     }
 }
 
+/// Whether `dir` is a bare repository: no `.git` inside, its `HEAD`, `objects` and `refs` at the
+/// top, as git looks for them.
+fn is_bare_repository(dir: &Path) -> bool {
+    dir.join("HEAD").is_file() && dir.join("objects").is_dir() && dir.join("refs").is_dir()
+}
+
 /// Adds to `hasher` the name and size of everything under `folder`, by name within each folder,
 /// without following links: what git deletes with an ignored folder, which `git status` lists as
 /// the folder alone. Returns the folders in it (`folder` itself included) that hold a `.git`, a
@@ -65,10 +71,13 @@ fn hash_folder(folder: &Path, hasher: &mut DefaultHasher) -> Vec<PathBuf> {
             };
             entry.file_name().hash(hasher);
             meta.len().hash(hasher);
+            let path = entry.path();
             if entry.file_name() == ".git" {
                 repositories.push(dir.clone());
+            } else if meta.is_dir() && is_bare_repository(&path) {
+                repositories.push(path);
             } else if meta.is_dir() {
-                pending.push(entry.path());
+                pending.push(path);
             }
         }
     }
@@ -230,7 +239,9 @@ impl Repo {
             // A folder git lists whole, untracked or ignored, that is a repository of its own.
             let listed_folder = entry.path_bytes().ends_with(b"/");
             let at = folder.join(crate::paths::os_path(entry.path_bytes()));
-            if listed_folder && at.join(".git").symlink_metadata().is_ok() {
+            if listed_folder
+                && (at.join(".git").symlink_metadata().is_ok() || is_bare_repository(&at))
+            {
                 nested.push(String::from_utf8_lossy(entry.path_bytes()).into_owned());
                 continue;
             }
@@ -391,7 +402,20 @@ impl Repo {
             });
         }
         entries.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.id.cmp(&b.id)));
-        let blocked = if !unreadable.is_empty() && unknown.is_empty() {
+        // Git's lines name an entry by its folder up to the first colon, so a folder named with a
+        // colon or edge spaces, or two lines naming one folder, leave an entry unseen.
+        let mut ambiguous = ambiguous_ids(&self.git().commondir().join("worktrees"));
+        for (i, entry) in entries.iter().enumerate() {
+            if entries[..i].iter().any(|e| e.id == entry.id) && !ambiguous.contains(&entry.id) {
+                ambiguous.push(entry.id.clone());
+            }
+        }
+        let blocked = if !ambiguous.is_empty() {
+            Some(format!(
+                "Git's list of what it would forget cannot tell apart {} in the repository's worktrees folder. Rename that folder, or run git worktree prune yourself.",
+                ambiguous.join(", ")
+            ))
+        } else if !unreadable.is_empty() && unknown.is_empty() {
             Some(format!(
                 "Canopy cannot read the HEAD of {} in the repository's worktrees folder, so it cannot say which commits forgetting would lose. Run git worktree prune -n -v to see them.",
                 unreadable.join(", ")
@@ -490,6 +514,20 @@ impl Repo {
         walk.try_fold(0, |count, commit| commit.map(|_| count + 1))
             .map_err(Into::into)
     }
+}
+
+/// The folders in the repository's worktrees folder whose names [`prune_line`] cannot read back
+/// whole: with a colon in them, or a space at either end.
+fn ambiguous_ids(worktrees: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(worktrees)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(':') || name.trim() != name)
+        .collect();
+    names.sort();
+    names
 }
 
 /// The folder name and reason in a line of `git worktree prune --verbose`: `Removing
