@@ -10,6 +10,9 @@ mod branch_tree;
 mod build_info;
 mod crash_reports;
 mod highlight;
+#[cfg(test)]
+#[cfg(unix)]
+mod hostile;
 mod hosting;
 mod housekeeping;
 mod identity_worker;

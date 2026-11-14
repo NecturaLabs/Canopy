@@ -33,6 +33,7 @@ pub mod ops;
 pub mod options;
 pub mod partial;
 pub mod paths;
+pub mod programs;
 mod pull;
 mod pull_preview;
 pub mod repo;

@@ -136,11 +136,13 @@ commits since the previous build.
   a URL in a title or in Git's error text, and the Privacy Policy now lists those saved
   notifications among the data that stays on your computer (updated 9 October 2026).
 
-- An automatic fetch in a folder you have not trusted now also switches off, on its command line,
-  the `ext::` transport, the command that advertises an alternate's tips and the fetch of
-  submodules, which a repository's own files could use to run a program; a setting the guard
-  names with a password in its URL is shown without it; and a failure of an automatic fetch that
-  is the same as the last one is shown once instead of at every interval.
+- A repository that is not trusted is read-only, and the refusal now names what its own files would
+  run (a hook, a clean or smudge filter, a merge driver, `core.sshCommand`, a credential helper,
+  `gpg.program`, a submodule update command) instead of saying only that programs could run, and
+  says only what is true when it finds none. The checks that only the automatic fetch made now
+  cover the whole repository. In a repository that is not trusted the branch cleanup no longer
+  checks for squash merges (git's merge machinery runs merge drivers) and the base comparison is
+  refused; both work as before once the folder is trusted.
 
 - Feature-branch workflows. The sidebar's Branches group names by their `/` prefixes into
   collapsible folders (nested for deeper prefixes, open by default, remembered per repository,

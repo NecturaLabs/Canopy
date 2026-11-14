@@ -55,6 +55,10 @@ impl Repo {
             "--name-status",
             "-z",
             "--no-show-signature",
+            // A repository's own textconv or external diff program must not run here, even
+            // where a git release would apply one to a name-status log.
+            "--no-ext-diff",
+            "--no-textconv",
             &count,
             "--format=%x1e%H%x1f%an%x1f%at%x1f%s",
             &start,
