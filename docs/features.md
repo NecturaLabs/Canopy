@@ -84,9 +84,11 @@ An untrusted repository starts no program: the refusal of an action names what t
 files would run (`core.sshCommand`, `hook pre-commit`, `filter.lfs.clean`, a merge driver, a
 credential helper, `gpg.program`, a `submodule.<name>.update` command ...), and the reads that run
 `git` (blame, a file's history, the change search) switch off textconv and external diff programs
-on their command line. Every git command Canopy runs disables `core.fsmonitor`, which a repository
-can set to a command that git would run on every `git status`. In a trusted repository git runs
-these as in a terminal.
+on their command line. The branch cleanup's squash-merge check and the update-from-base preview
+use `git merge-tree`, which runs merge drivers: an untrusted repository skips the squash check
+(and trusting it runs the check) and refuses the preview. Every git command Canopy runs disables
+`core.fsmonitor`, which a repository can set to a command that git would run on every `git status`.
+In a trusted repository git runs these as in a terminal.
 
 ## History
 

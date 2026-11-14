@@ -114,9 +114,11 @@ commits since the previous build.
 
 - A repository that is not trusted is read-only, and the refusal now names what its own files would
   run (a hook, a clean or smudge filter, a merge driver, `core.sshCommand`, a credential helper,
-  `gpg.program`, a submodule update command) instead of saying only that programs could run. A
-  file's history switches off textconv and external diff programs like blame and the change search
-  already do. This replaces the check that only the automatic fetch made.
+  `gpg.program`, a submodule update command) instead of saying only that programs could run, and
+  says only what is true when it finds none. The checks that only the automatic fetch made now
+  cover the whole repository. In a repository that is not trusted the branch cleanup no longer
+  checks for squash merges (git's merge machinery runs merge drivers) and the base comparison is
+  refused; both work as before once the folder is trusted.
 
 - Feature-branch workflows. The sidebar's Branches group names by their `/` prefixes into
   collapsible folders (nested for deeper prefixes, open by default, remembered per repository,
