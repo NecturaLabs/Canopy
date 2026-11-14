@@ -13,7 +13,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use canopy_core::{Repo, WorktreeInfo, WorktreeState};
+use canopy_core::{OpenFolder, Repo, WorktreeInfo, WorktreeState};
 
 #[expect(
     clippy::disallowed_methods,
@@ -107,7 +107,7 @@ fn exists(path: &Path) -> bool {
 fn a_clean_worktree_is_removed_and_its_branch_stays() {
     let f = fixture();
     let wt = f.linked("topic");
-    let removal = f.repo.worktree_removal(&wt).expect("inspect");
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     assert_eq!(removal.branch.as_deref(), Some("topic"));
     assert!(removal.blocked.is_none(), "{:?}", removal.blocked);
     assert_eq!(removal.changed_files(), 0);
@@ -115,7 +115,7 @@ fn a_clean_worktree_is_removed_and_its_branch_stays() {
     assert_eq!(removal.unreachable_commits, 0);
     assert!(!removal.needs_force());
 
-    f.repo.remove_worktree(&removal).expect("remove");
+    f.repo.remove_worktree(&removal, &[]).expect("remove");
     assert!(!exists(&wt));
     assert!(!f.registered().contains("topic\n"), "{}", f.registered());
     assert!(!f.registered().contains(&*wt.to_string_lossy()));
@@ -138,7 +138,7 @@ fn each_kind_of_dirt_is_counted_and_git_refuses_it_without_force() {
     fs::create_dir_all(wt.join("build/deep")).expect("folder");
     fs::write(wt.join("build/deep/out.o"), "x").expect("ignored");
 
-    let removal = f.repo.worktree_removal(&wt).expect("inspect");
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     assert_eq!(removal.modified.count, 2, "{removal:?}");
     assert!(removal.modified.first.contains(&"a.txt".to_owned()));
     assert!(removal.modified.first.contains(&"staged.txt".to_owned()));
@@ -159,7 +159,9 @@ fn each_kind_of_dirt_is_counted_and_git_refuses_it_without_force() {
     assert!(!plain.status.success());
     assert!(exists(&wt));
 
-    f.repo.remove_worktree(&removal).expect("forced removal");
+    f.repo
+        .remove_worktree(&removal, &[])
+        .expect("forced removal");
     assert!(!exists(&wt));
     assert!(!f.registered().contains(&*wt.to_string_lossy()));
 }
@@ -169,11 +171,11 @@ fn ignored_files_alone_need_no_force_and_are_deleted() {
     let f = fixture();
     let wt = f.linked("cache");
     fs::write(wt.join("debug.log"), "x").expect("ignored");
-    let removal = f.repo.worktree_removal(&wt).expect("inspect");
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     assert_eq!(removal.ignored.count, 1);
     assert!(!removal.needs_force());
     // Git's own behaviour: a plain remove deletes ignored files.
-    f.repo.remove_worktree(&removal).expect("remove");
+    f.repo.remove_worktree(&removal, &[]).expect("remove");
     assert!(!exists(&wt));
 }
 
@@ -185,7 +187,7 @@ fn commits_only_a_detached_head_reaches_are_listed() {
         &f.main,
         &["worktree", "add", "-q", "--detach", &wt.to_string_lossy()],
     );
-    let at_tip = f.repo.worktree_removal(&wt).expect("inspect");
+    let at_tip = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     assert_eq!(at_tip.branch, None);
     assert_eq!(at_tip.unreachable_commits, 0, "main reaches HEAD");
 
@@ -194,13 +196,13 @@ fn commits_only_a_detached_head_reaches_are_listed() {
     fs::write(wt.join("b.txt"), "three\n").expect("edit");
     git(&wt, &["add", "b.txt"]);
     git(&wt, &["commit", "-q", "-m", "and here"]);
-    let lonely = f.repo.worktree_removal(&wt).expect("inspect");
+    let lonely = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     assert_eq!(lonely.unreachable_commits, 2);
     assert!(!lonely.needs_force());
     let tip = lonely.head.expect("head");
 
     // Git removes it without a word; the commits lose their last reference.
-    f.repo.remove_worktree(&lonely).expect("remove");
+    f.repo.remove_worktree(&lonely, &[]).expect("remove");
     assert!(!exists(&wt));
     let reachable = git(&f.main, &["branch", "--contains", &tip.to_string()]);
     assert!(reachable.trim().is_empty(), "no branch has it: {reachable}");
@@ -212,7 +214,7 @@ fn commits_only_a_detached_head_reaches_are_listed() {
     git(&on_branch, &["commit", "-q", "-m", "on a branch"]);
     assert_eq!(
         f.repo
-            .worktree_removal(&on_branch)
+            .worktree_removal(&on_branch, &[])
             .expect("inspect")
             .unreachable_commits,
         0
@@ -237,10 +239,10 @@ fn a_locked_worktree_is_listed_with_git_reason_and_never_removed() {
     assert_eq!(listed.locked.as_deref(), Some("on a USB drive"));
     assert_eq!(listed.state, WorktreeState::Ready);
 
-    let removal = f.repo.worktree_removal(&wt).expect("inspect");
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     let reason = removal.blocked.clone().expect("blocked");
     assert!(reason.contains("on a USB drive"), "{reason}");
-    let error = f.repo.remove_worktree(&removal).expect_err("refused");
+    let error = f.repo.remove_worktree(&removal, &[]).expect_err("refused");
     assert!(error.to_string().contains("locked"), "{error}");
     assert!(exists(&wt));
     assert!(f.registered().contains("locked on a USB drive"));
@@ -251,7 +253,7 @@ fn a_locked_worktree_is_listed_with_git_reason_and_never_removed() {
     assert_eq!(f.info(&bare).locked.as_deref(), Some(""));
     assert!(
         f.repo
-            .worktree_removal(&bare)
+            .worktree_removal(&bare, &[])
             .expect("inspect")
             .blocked
             .is_some()
@@ -262,26 +264,30 @@ fn a_locked_worktree_is_listed_with_git_reason_and_never_removed() {
 fn the_main_and_the_open_folder_and_strangers_are_not_removable() {
     let f = fixture();
     let wt = f.linked("other");
-    let error = f.repo.worktree_removal(&f.main).expect_err("main");
+    let error = f.repo.worktree_removal(&f.main, &[]).expect_err("main");
     assert!(error.to_string().contains("main working folder"), "{error}");
     let stranger = f.beside.join("nothing");
     fs::create_dir_all(&stranger).expect("folder");
     f.repo
-        .worktree_removal(&stranger)
+        .worktree_removal(&stranger, &[])
         .expect_err("not a worktree");
 
     // From inside the linked folder, that folder is the one open here; the main one is a
     // sibling that may go away only through its own repository.
     let inside = Repo::open(&wt).expect("open linked");
-    let open_here = inside.worktree_removal(&wt).expect("inspect");
+    let open_here = inside.worktree_removal(&wt, &[]).expect("inspect");
     let reason = open_here.blocked.clone().expect("blocked");
     assert!(reason.contains("open in this tab"), "{reason}");
-    inside.remove_worktree(&open_here).expect_err("refused");
+    inside
+        .remove_worktree(&open_here, &[])
+        .expect_err("refused");
     assert!(exists(&wt));
     // It can remove a sibling.
     let sibling = f.linked("sibling");
-    let removal = inside.worktree_removal(&sibling).expect("inspect");
-    inside.remove_worktree(&removal).expect("remove sibling");
+    let removal = inside.worktree_removal(&sibling, &[]).expect("inspect");
+    inside
+        .remove_worktree(&removal, &[])
+        .expect("remove sibling");
     assert!(!exists(&sibling));
 }
 
@@ -291,10 +297,10 @@ fn a_worktree_that_changed_after_the_confirmation_is_refused() {
 
     // A file edited after the preview.
     let wt = f.linked("edited");
-    let seen = f.repo.worktree_removal(&wt).expect("inspect");
+    let seen = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     assert!(!seen.needs_force());
     fs::write(wt.join("a.txt"), "precious\n").expect("edit");
-    let error = f.repo.remove_worktree(&seen).expect_err("refused");
+    let error = f.repo.remove_worktree(&seen, &[]).expect_err("refused");
     assert!(error.to_string().contains("changed since"), "{error}");
     assert_eq!(
         fs::read_to_string(wt.join("a.txt")).expect("kept"),
@@ -303,25 +309,25 @@ fn a_worktree_that_changed_after_the_confirmation_is_refused() {
 
     // One more untracked file after a forced removal was confirmed.
     fs::write(wt.join("one.txt"), "x").expect("untracked");
-    let seen = f.repo.worktree_removal(&wt).expect("inspect");
+    let seen = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     assert!(seen.needs_force());
     fs::write(wt.join("two.txt"), "y").expect("untracked");
-    f.repo.remove_worktree(&seen).expect_err("refused");
+    f.repo.remove_worktree(&seen, &[]).expect_err("refused");
     assert!(exists(&wt.join("two.txt")));
 
     // A new commit moves the branch.
     let moved = f.linked("moved");
-    let seen = f.repo.worktree_removal(&moved).expect("inspect");
+    let seen = f.repo.worktree_removal(&moved, &[]).expect("inspect");
     fs::write(moved.join("n.txt"), "x").expect("file");
     git(&moved, &["add", "n.txt"]);
     git(&moved, &["commit", "-q", "-m", "more"]);
-    let error = f.repo.remove_worktree(&seen).expect_err("refused");
+    let error = f.repo.remove_worktree(&seen, &[]).expect_err("refused");
     assert!(error.to_string().contains("branch or commit"), "{error}");
     assert!(exists(&moved));
 
     // A folder locked after the preview.
     let late = f.linked("late");
-    let seen = f.repo.worktree_removal(&late).expect("inspect");
+    let seen = f.repo.worktree_removal(&late, &[]).expect("inspect");
     git(
         &f.main,
         &[
@@ -332,7 +338,7 @@ fn a_worktree_that_changed_after_the_confirmation_is_refused() {
             &late.to_string_lossy(),
         ],
     );
-    let error = f.repo.remove_worktree(&seen).expect_err("refused");
+    let error = f.repo.remove_worktree(&seen, &[]).expect_err("refused");
     assert!(error.to_string().contains("locked"), "{error}");
     assert!(exists(&late));
 }
@@ -343,10 +349,10 @@ fn assume_unchanged_flags_block_removal_as_they_do_stale_cleanup() {
     let wt = f.linked("hidden");
     git(&wt, &["update-index", "--assume-unchanged", "a.txt"]);
     fs::write(wt.join("a.txt"), "hidden edit\n").expect("edit");
-    let removal = f.repo.worktree_removal(&wt).expect("inspect");
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     let reason = removal.blocked.clone().expect("blocked");
     assert!(reason.contains("Assume-unchanged"), "{reason}");
-    f.repo.remove_worktree(&removal).expect_err("refused");
+    f.repo.remove_worktree(&removal, &[]).expect_err("refused");
     assert_eq!(
         fs::read_to_string(wt.join("a.txt")).expect("kept"),
         "hidden edit\n"
@@ -468,10 +474,10 @@ fn removing_a_missing_worktree_is_refused_with_the_way_out() {
     let f = fixture();
     let wt = f.linked("vanished");
     fs::remove_dir_all(&wt).expect("delete by hand");
-    let removal = f.repo.worktree_removal(&wt).expect("inspect");
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     let reason = removal.blocked.clone().expect("blocked");
     assert!(reason.contains("Forget"), "{reason}");
-    f.repo.remove_worktree(&removal).expect_err("refused");
+    f.repo.remove_worktree(&removal, &[]).expect_err("refused");
     assert!(f.registered().contains("vanished"));
 }
 
@@ -675,13 +681,13 @@ fn a_worktree_with_an_initialized_submodule_is_never_removed() {
         ("untracked", &untracked),
         ("clean", &clean),
     ] {
-        let removal = f.repo.worktree_removal(folder).expect("inspect");
+        let removal = f.repo.worktree_removal(folder, &[]).expect("inspect");
         let reason = removal.blocked.clone().unwrap_or_default();
         assert!(
             reason.contains("submodule") && reason.contains("deps/sub"),
             "{name}: {reason}"
         );
-        let error = f.repo.remove_worktree(&removal).expect_err("refused");
+        let error = f.repo.remove_worktree(&removal, &[]).expect_err("refused");
         assert!(error.to_string().contains("submodule"), "{name}: {error}");
         assert!(exists(folder), "{name}: folder kept");
         assert!(
@@ -700,9 +706,9 @@ fn a_worktree_with_an_initialized_submodule_is_never_removed() {
 fn a_worktree_with_an_uninitialized_submodule_is_removed() {
     let f = fixture();
     let wt = f.with_submodule("fresh", false);
-    let removal = f.repo.worktree_removal(&wt).expect("inspect");
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
     assert_eq!(removal.blocked, None);
-    f.repo.remove_worktree(&removal).expect("remove");
+    f.repo.remove_worktree(&removal, &[]).expect("remove");
     assert!(!exists(&wt));
 }
 
@@ -723,13 +729,13 @@ fn a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it() {
         &inner,
         &["commit", "-q", "-m", "only in the nested repository"],
     );
-    let removal = f.repo.worktree_removal(&outer).expect("inspect");
+    let removal = f.repo.worktree_removal(&outer, &[]).expect("inspect");
     let reason = removal.blocked.clone().unwrap_or_default();
     assert!(
         reason.contains("another repository") && reason.contains("vendor/inner"),
         "{reason}"
     );
-    f.repo.remove_worktree(&removal).expect_err("refused");
+    f.repo.remove_worktree(&removal, &[]).expect_err("refused");
     assert!(
         exists(&inner.join("work.txt")),
         "the nested repository is kept"
@@ -749,25 +755,68 @@ fn a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it() {
             &guest.to_string_lossy(),
         ],
     );
-    let removal = f.repo.worktree_removal(&host).expect("inspect");
+    let removal = f.repo.worktree_removal(&host, &[]).expect("inspect");
     let reason = removal.blocked.clone().unwrap_or_default();
     assert!(
         reason.contains("another worktree") && reason.contains("guest"),
         "{reason}"
     );
-    f.repo.remove_worktree(&removal).expect_err("refused");
+    f.repo.remove_worktree(&removal, &[]).expect_err("refused");
     assert!(exists(&guest), "the inner worktree is kept");
     assert!(f.registered().contains(&*guest.to_string_lossy()));
 
     // The inner one is removable by itself, and then the outer one is too.
-    let inner_removal = f.repo.worktree_removal(&guest).expect("inspect");
+    let inner_removal = f.repo.worktree_removal(&guest, &[]).expect("inspect");
     assert_eq!(inner_removal.blocked, None);
     f.repo
-        .remove_worktree(&inner_removal)
+        .remove_worktree(&inner_removal, &[])
         .expect("remove the inner one");
-    let removal = f.repo.worktree_removal(&host).expect("inspect");
+    let removal = f.repo.worktree_removal(&host, &[]).expect("inspect");
     assert_eq!(removal.blocked, None);
     f.repo
-        .remove_worktree(&removal)
+        .remove_worktree(&removal, &[])
         .expect("remove the outer one");
+}
+
+/// A folder another tab has open is refused whatever way that tab spells its path, and a tab
+/// opened after the confirmation counts, because the list is read when the removal runs.
+#[test]
+fn a_folder_open_in_another_tab_is_refused_however_it_is_spelled() {
+    let f = fixture();
+    let shared = f.linked("shared");
+    let sibling = f.linked("shared2");
+    let seen = f.repo.worktree_removal(&shared, &[]).expect("inspect");
+    assert_eq!(seen.blocked, None);
+
+    let alias = f.beside.join("alias");
+    std::os::unix::fs::symlink(&shared, &alias).expect("symlink");
+    fs::create_dir_all(f.beside.join("elsewhere")).expect("folder");
+    let dotted = f.beside.join("elsewhere/../shared");
+    for (spelling, tab) in [(&alias, "Review"), (&dotted, "Docs"), (&shared, "Same")] {
+        let open = [OpenFolder {
+            path: spelling.clone(),
+            name: tab.into(),
+        }];
+        let now = f.repo.worktree_removal(&shared, &open).expect("inspect");
+        let reason = now.blocked.unwrap_or_default();
+        assert!(
+            reason.contains("open in the tab") && reason.contains(tab),
+            "{reason}"
+        );
+        // It was confirmed before the tab opened: refused when it runs.
+        let error = f.repo.remove_worktree(&seen, &open).expect_err("refused");
+        assert!(error.to_string().contains(tab), "{error}");
+        assert!(exists(&shared));
+    }
+
+    // A tab on a folder whose name merely starts the same does not hold it.
+    let neighbour = [OpenFolder {
+        path: sibling.clone(),
+        name: "Neighbour".into(),
+    }];
+    f.repo
+        .remove_worktree(&seen, &neighbour)
+        .expect("not the same folder");
+    assert!(!exists(&shared));
+    assert!(exists(&sibling));
 }

@@ -15,19 +15,16 @@ pub struct RemoveWorktreeForm {
     /// The linked working folder to remove.
     pub path: PathBuf,
     serial: u64,
-    /// The title of the other tab that has the folder open, which keeps it from being removed.
-    open_in: Option<String>,
     /// The folder holds changes: the first confirmation was given, the destructive one is asked.
     deleting: bool,
 }
 
 impl RemoveWorktreeForm {
-    pub fn new(repo: PathBuf, path: PathBuf, serial: u64, open_in: Option<String>) -> Self {
+    pub fn new(repo: PathBuf, path: PathBuf, serial: u64) -> Self {
         Self {
             repo,
             path,
             serial,
-            open_in,
             deleting: false,
         }
     }
@@ -95,12 +92,7 @@ pub(super) fn show(
     let reading = tab.and_then(|t| t.worktree_removal.as_ref());
     let removal = reading.and_then(|r| r.as_ref().ok());
     let busy = tab.is_none_or(|t| t.running.is_some());
-    let blocked = removal.and_then(|r| {
-        form.open_in
-            .as_ref()
-            .map(|name| format!("It is open in the tab {name}. Close that tab first."))
-            .or_else(|| r.blocked.clone())
-    });
+    let blocked = removal.and_then(|r| r.blocked.clone());
     // The second step exists only for a folder that holds changes.
     let deleting = form.deleting && removal.is_some_and(|r| r.needs_force());
     let name = folder(&form.path);
@@ -191,7 +183,10 @@ pub(super) fn show(
             }
             Some(removal) => Outcome::Run(vec![Action::OpIn {
                 repo: form.repo.clone(),
-                op: Op::RemoveWorktree(removal.clone()),
+                op: Op::RemoveWorktree {
+                    removal: removal.clone(),
+                    open_in: Vec::new(),
+                },
             }]),
             None => Outcome::Keep,
         },
@@ -402,7 +397,7 @@ mod tests {
         let ctx = setup();
         let removal = removal();
         let tab = tab_with(&removal);
-        let mut form = RemoveWorktreeForm::new(tab.path.clone(), removal.path, 1, None);
+        let mut form = RemoveWorktreeForm::new(tab.path.clone(), removal.path, 1);
         let (nodes, _) = frames(&ctx, &mut form, &tab);
         assert!(button(&nodes, "Continue").is_some_and(|n| !n.disabled));
         assert!(button(&nodes, "Remove and delete").is_none());
@@ -521,30 +516,21 @@ mod tests {
         clean.modified = WorktreeLoss::default();
         clean.untracked = WorktreeLoss::default();
         let tab = tab_with(&clean);
-        let mut form = RemoveWorktreeForm::new(tab.path.clone(), clean.path, 1, None);
+        let mut form = RemoveWorktreeForm::new(tab.path.clone(), clean.path, 1);
         let (nodes, _) = frames(&ctx, &mut form, &tab);
         assert!(button(&nodes, "Remove worktree").is_some_and(|n| !n.disabled));
         assert!(button(&nodes, "Continue").is_none());
     }
 
     #[test]
-    fn a_folder_open_in_another_tab_or_blocked_cannot_be_confirmed() {
+    fn a_blocked_folder_cannot_be_confirmed() {
         let ctx = setup();
         let removal = removal();
-        let tab = tab_with(&removal);
-        let mut form = RemoveWorktreeForm::new(
-            tab.path.clone(),
-            removal.path.clone(),
-            1,
-            Some("canopy-wt".into()),
-        );
-        let (nodes, _) = frames(&ctx, &mut form, &tab);
-        assert!(button(&nodes, "Continue").is_some_and(|n| n.disabled));
-
         let mut locked = removal;
+        // Core says why: locked, open in another tab, a submodule, another repository inside.
         locked.blocked = Some("It is locked (on a USB drive).".into());
         let tab = tab_with(&locked);
-        let mut form = RemoveWorktreeForm::new(tab.path.clone(), locked.path, 1, None);
+        let mut form = RemoveWorktreeForm::new(tab.path.clone(), locked.path, 1);
         let (nodes, _) = frames(&ctx, &mut form, &tab);
         let confirm = button(&nodes, "Continue").expect("confirm");
         assert!(confirm.disabled);

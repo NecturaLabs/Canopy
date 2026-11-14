@@ -1661,6 +1661,17 @@ impl RepoTab {
         self.stale_serial
     }
 
+    /// The other tabs' folders, as core wants them.
+    pub fn open_folders(&self) -> Vec<canopy_core::OpenFolder> {
+        self.open_elsewhere
+            .iter()
+            .map(|(path, name)| canopy_core::OpenFolder {
+                path: path.clone(),
+                name: name.clone(),
+            })
+            .collect()
+    }
+
     /// Asks what removing the linked working folder `path` would delete; the answer lands in
     /// [`Self::worktree_removal`]. Returns the request's serial.
     pub fn read_worktree_removal(&mut self, path: PathBuf) -> u64 {
@@ -1669,6 +1680,7 @@ impl RepoTab {
         self.worker.send(Job::WorktreeRemoval {
             serial: self.worktree_removal_serial,
             path,
+            open_in: self.open_folders(),
         });
         self.worktree_removal_serial
     }

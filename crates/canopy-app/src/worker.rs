@@ -61,7 +61,12 @@ pub enum Op {
     },
     /// Remove a linked working folder (`git worktree remove`), provided it is still what the
     /// user confirmed: it carries what the confirmation listed.
-    RemoveWorktree(Box<canopy_core::WorktreeRemoval>),
+    RemoveWorktree {
+        removal: Box<canopy_core::WorktreeRemoval>,
+        /// The folders the application's other tabs have open when the removal runs; the
+        /// application fills it in as the operation is sent.
+        open_in: Vec<canopy_core::OpenFolder>,
+    },
     /// Forget the working folders that are gone (`git worktree prune`), provided they are still
     /// the ones the user confirmed.
     ForgetWorktrees(Box<canopy_core::WorktreeForget>),
@@ -321,7 +326,7 @@ impl Op {
             ),
             Self::UpdateFromBase { base, .. } => format!("Updating from {base}"),
             Self::CleanStale { .. } => "Cleaning up stale worktrees and branches".into(),
-            Self::RemoveWorktree(removal) => {
+            Self::RemoveWorktree { removal, .. } => {
                 format!("Removing worktree {}", removal.path.display())
             }
             Self::ForgetWorktrees(forget) => format!(
@@ -471,6 +476,8 @@ pub enum Job {
     WorktreeRemoval {
         serial: u64,
         path: PathBuf,
+        /// The folders the application's other tabs have open.
+        open_in: Vec<canopy_core::OpenFolder>,
     },
     /// What `git worktree prune` would forget; the serial ties the reply to the newest request.
     WorktreeForget {
@@ -1376,11 +1383,15 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             .map_err(|error| error.to_string()),
                     });
                 }
-                Job::WorktreeRemoval { serial, path } => {
+                Job::WorktreeRemoval {
+                    serial,
+                    path,
+                    open_in,
+                } => {
                     emit(Event::WorktreeRemoval {
                         serial,
                         result: repo
-                            .worktree_removal(&path)
+                            .worktree_removal(&path, &open_in)
                             .map(Box::new)
                             .map_err(|error| error.to_string()),
                     });
@@ -2228,8 +2239,8 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
                 candidates.len()
             ))
         }
-        Op::RemoveWorktree(removal) => repo
-            .remove_worktree(&removal)
+        Op::RemoveWorktree { removal, open_in } => repo
+            .remove_worktree(&removal, &open_in)
             .map(|()| format!("Removed worktree {}", removal.path.display())),
         Op::ForgetWorktrees(forget) => repo.forget_worktrees(&forget).map(|()| {
             format!(
@@ -4588,16 +4599,19 @@ mod read_tests {
                 start: None,
                 checkout: true,
             },
-            Op::RemoveWorktree(Box::new(canopy_core::WorktreeRemoval {
-                path: repo.join("../elsewhere"),
-                branch: None,
-                head: None,
-                modified: canopy_core::WorktreeLoss::default(),
-                untracked: canopy_core::WorktreeLoss::default(),
-                ignored: canopy_core::WorktreeLoss::default(),
-                unreachable_commits: 0,
-                blocked: None,
-            })),
+            Op::RemoveWorktree {
+                removal: Box::new(canopy_core::WorktreeRemoval {
+                    path: repo.join("../elsewhere"),
+                    branch: None,
+                    head: None,
+                    modified: canopy_core::WorktreeLoss::default(),
+                    untracked: canopy_core::WorktreeLoss::default(),
+                    ignored: canopy_core::WorktreeLoss::default(),
+                    unreachable_commits: 0,
+                    blocked: None,
+                }),
+                open_in: Vec::new(),
+            },
             Op::ForgetWorktrees(Box::default()),
             // git-lfs is a program the repository's own configuration steers.
             Op::LfsPull,

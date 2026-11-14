@@ -131,6 +131,15 @@ pub enum WorktreeState {
     Unreadable,
 }
 
+/// A working folder another tab of the application has open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenFolder {
+    /// The folder, as that tab spells it.
+    pub path: PathBuf,
+    /// What the tab is called.
+    pub name: String,
+}
+
 /// A kind of change a worktree removal would lose: how many, and the first few of them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorktreeLoss {

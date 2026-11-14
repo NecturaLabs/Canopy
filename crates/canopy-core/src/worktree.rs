@@ -7,7 +7,8 @@ use git2::{Repository, Status, StatusOptions, Worktree, WorktreeLockStatus};
 
 use crate::stale::worktree_index_protection;
 use crate::{
-    Error, ForgottenWorktree, Repo, Result, WorktreeForget, WorktreeLoss, WorktreeRemoval, cli,
+    Error, ForgottenWorktree, OpenFolder, Repo, Result, WorktreeForget, WorktreeLoss,
+    WorktreeRemoval, cli,
 };
 
 /// How many paths of each kind a [`WorktreeLoss`] keeps: the user is shown a few, the count says
@@ -86,7 +87,7 @@ impl Repo {
     ///
     /// # Errors
     /// `path` is not a linked working folder of this repository.
-    pub fn worktree_removal(&self, path: &Path) -> Result<WorktreeRemoval> {
+    pub fn worktree_removal(&self, path: &Path, open_in: &[OpenFolder]) -> Result<WorktreeRemoval> {
         let (_, worktree) = self.linked_worktree(path)?;
         let folder = worktree.path().to_path_buf();
         let mut removal = WorktreeRemoval {
@@ -103,6 +104,11 @@ impl Repo {
             Some(
                 "It is the folder open in this tab. Switch to another working folder first.".into(),
             )
+        } else if let Some(open) = open_in.iter().find(|o| same_folder(&o.path, &folder)) {
+            Some(format!(
+                "It is open in the tab {}. Close that tab first.",
+                open.name
+            ))
         } else if let Some(reason) = lock_reason(&worktree) {
             Some(if reason.is_empty() {
                 "It is locked. Unlock it with git worktree unlock first.".into()
@@ -258,8 +264,12 @@ impl Repo {
     ///
     /// # Errors
     /// The reason above, or git's own refusal.
-    pub fn remove_worktree(&self, expected: &WorktreeRemoval) -> Result<()> {
-        let now = self.worktree_removal(&expected.path)?;
+    pub fn remove_worktree(
+        &self,
+        expected: &WorktreeRemoval,
+        open_in: &[OpenFolder],
+    ) -> Result<()> {
+        let now = self.worktree_removal(&expected.path, open_in)?;
         let name = expected.path.display();
         if let Some(reason) = &now.blocked {
             return Err(Error::invalid(format!("Cannot remove {name}: {reason}")));
