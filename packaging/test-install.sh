@@ -289,19 +289,36 @@ linux_flow() {
     check "nothing else written outside the install folder ($outside)" [ "$outside" = "./.local/bin/canopy ./.local/share/applications/io.necturalabs.Canopy.desktop ./.local/share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png " ]
 
     echo "== the scalable icon earlier builds registered"
+    # The test's installer carries the digest of this stand-in for a shipped icon.
+    shipped_text="an icon Canopy shipped"
+    shipped_sha=$(printf '%s\n' "$shipped_text" | sha256sum | awk '{print $1}')
+    sed "s/^LEGACY_SVG_SHA256=.*/LEGACY_SVG_SHA256=\"$shipped_sha\"/" "$installer" >"$tmp/install-shipped.sh"
+    real_installer=$installer
+    installer=$tmp/install-shipped.sh
     printf 'icon=%s|%s\n' "$svg" "$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg" >>"$opt/.canopy-install"
     mkdir -p "$(dirname "$svg")"
-    echo "old svg" >"$svg"
+    printf '%s\n' "$shipped_text" >"$svg"
     # One registered while XDG_DATA_HOME pointed elsewhere.
     svg_a=$home/data-a/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg
     mkdir -p "$(dirname "$svg_a")"
-    echo "old svg" >"$svg_a"
+    printf '%s\n' "$shipped_text" >"$svg_a"
     printf 'icon=%s|%s\n' "$svg_a" "$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg" >>"$opt/.canopy-install"
     run_status
     check "install exits 0" [ "$status" = 0 ]
     check "old scalable icon removed" [ ! -e "$svg" ]
     check "old scalable icon removed where it was registered" [ ! -e "$svg_a" ]
     check "and dropped from the receipt" [ -z "$(grep -F "scalable" "$opt/.canopy-install")" ]
+
+    echo "== an edited scalable icon still named in the old receipt"
+    printf '%s\n' "$shipped_text" >"$svg"
+    echo "edited" >>"$svg"
+    printf 'icon=%s|%s\n' "$svg" "$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg" >>"$opt/.canopy-install"
+    run_status
+    check "install exits 0 with an edited registered SVG" [ "$status" = 0 ]
+    check "edited registered SVG is preserved" [ "$(cat "$svg")" = "$shipped_text
+edited" ]
+    check "edited SVG is not claimed in the receipt" [ -z "$(grep -F "scalable" "$opt/.canopy-install")" ]
+    rm "$svg"
 
     echo "== a custom SVG absent from the receipt"
     # A receipt for the neighbouring PNG does not establish who installed this SVG.
@@ -321,12 +338,7 @@ linux_flow() {
 
     echo "== an orphaned scalable icon whose content Canopy shipped"
     # The receipt no longer lists it (a build that rewrote the receipt dropped the line), but
-    # the content proves where it came from. The test's installer carries the digest of a stand-in.
-    shipped_text="an icon Canopy shipped"
-    shipped_sha=$(printf '%s\n' "$shipped_text" | sha256sum | awk '{print $1}')
-    sed "s/^LEGACY_SVG_SHA256=.*/LEGACY_SVG_SHA256=\"$shipped_sha\"/" "$installer" >"$tmp/install-shipped.sh"
-    real_installer=$installer
-    installer=$tmp/install-shipped.sh
+    # the content proves where it came from.
     printf '%s\n' "$shipped_text" >"$svg"
     run_status
     check "install exits 0 with an orphaned shipped icon" [ "$status" = 0 ]

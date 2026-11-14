@@ -50,6 +50,9 @@ commits since the previous build.
 
 ### Fixed
 
+- Upgrades preserve an edited or custom legacy SVG app icon even when an old installer receipt
+  still lists it: only a regular file whose current bytes match an icon Canopy shipped is removed.
+
 - Settings → Integrations marks the program your system would use as "<name> (Default)" instead of
   "Recommended", and no longer names the `$TERMINAL`, `$VISUAL` or `$EDITOR` it came from. The desktop's
   default text editor is offered only when it is installed, like the other defaults. Searching

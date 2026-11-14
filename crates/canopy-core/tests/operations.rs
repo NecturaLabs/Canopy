@@ -3555,6 +3555,10 @@ fn a_fetched_pull_brings_in_the_commit_that_was_checked() {
             PullStrategy::Merge => {
                 assert_eq!(git(copy.workdir(), &["rev-parse", "HEAD^1"]), before);
                 assert_eq!(git(copy.workdir(), &["rev-parse", "HEAD^2"]).trim(), seen);
+                assert_eq!(
+                    git(copy.workdir(), &["log", "-1", "--format=%s"]).trim(),
+                    "Merge branch 'main' of origin"
+                );
             }
             _ => assert_eq!(git(copy.workdir(), &["rev-parse", "HEAD~1"]).trim(), seen),
         }
