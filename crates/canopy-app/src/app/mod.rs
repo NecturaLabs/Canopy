@@ -233,6 +233,8 @@ pub struct CanopyApp {
     /// Git configuration reads started for tabs just opened, answered once into the
     /// notification center.
     config_reads: Vec<(PathBuf, Receiver<crate::repo_config::GitFacts>)>,
+    /// Scans of opened repositories for staging files an interrupted save left, until they answer.
+    leftover_reads: Vec<(PathBuf, Receiver<Vec<PathBuf>>)>,
     git_version: String,
     tokens: TokenStore,
     updater: Updater,
@@ -361,6 +363,7 @@ impl CanopyApp {
             opener: open::start(&cc.egui_ctx),
             pending_opens: 0,
             config_reads: Vec::new(),
+            leftover_reads: Vec::new(),
             git_version,
             tokens: if shooting {
                 TokenStore::default()
@@ -1600,6 +1603,7 @@ pub(super) fn test_app() -> CanopyApp {
         opener: None,
         pending_opens: 0,
         config_reads: Vec::new(),
+        leftover_reads: Vec::new(),
         git_version: String::new(),
         tokens: TokenStore::default(),
         updater: Updater::default(),

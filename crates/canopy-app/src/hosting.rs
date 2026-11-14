@@ -126,12 +126,18 @@ impl TokenStore {
         let Some(path) = tokens_path() else {
             return Err(std::io::Error::other("no data directory"));
         };
+        self.save_to(&path)
+    }
+
+    /// Writes the store to `path` through a staging file that is removed again when any step
+    /// fails.
+    fn save_to(&self, path: &std::path::Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         let tmp = path.with_extension("json.tmp");
-        let written = write_private(&tmp, &json).and_then(|()| std::fs::rename(&tmp, &path));
+        let written = write_private(&tmp, &json).and_then(|()| std::fs::rename(&tmp, path));
         if written.is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
@@ -1587,6 +1593,22 @@ mod tests {
         for reason in ["refused", "not found", "moved"] {
             assert!(log.contains(&format!("reason=\"{reason}\"")), "{log}");
         }
+    }
+
+    #[test]
+    fn a_failed_token_save_removes_its_staging_file() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        // A folder where the file belongs: the rename fails after the staging file was written.
+        let path = dir.path().join("tokens.json");
+        std::fs::create_dir(&path)?;
+        let mut store = TokenStore::default();
+        store.put("github.com", "ghp_example");
+        store.save_to(&path).unwrap_err();
+        let names: Vec<_> = std::fs::read_dir(dir.path())?
+            .map(|e| e.map(|e| e.file_name()))
+            .collect::<Result<_, _>>()?;
+        assert_eq!(names, ["tokens.json"], "no staging file is left");
+        Ok(())
     }
 
     #[test]

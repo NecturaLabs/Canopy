@@ -378,6 +378,7 @@ impl CanopyApp {
         }
         self.poll_opened(ctx);
         self.poll_config_reads(ctx);
+        self.poll_leftover_reads(ctx);
         self.poll_identity(ctx);
         for tab in &mut self.tabs {
             tab.requests.refresh.interval =

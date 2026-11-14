@@ -359,6 +359,32 @@ impl CanopyApp {
         }
     }
 
+    /// Starts looking for staging files an interrupted save left in the repository. A screenshot
+    /// run looks at nothing.
+    pub(super) fn read_leftovers_for(&mut self, ctx: &egui::Context, root: &std::path::Path) {
+        if self.screenshot.is_none() {
+            let rx = crate::housekeeping::scan_async(ctx, root.to_path_buf());
+            self.leftover_reads.push((root.to_path_buf(), rx));
+        }
+    }
+
+    /// Puts the leftover files the finished scans found into the notification center, once each.
+    pub(super) fn poll_leftover_reads(&mut self, ctx: &egui::Context) {
+        let mut waiting = Vec::new();
+        for (path, rx) in std::mem::take(&mut self.leftover_reads) {
+            match rx.try_recv() {
+                Ok(files) if !files.is_empty() => {
+                    let (title, body) = crate::housekeeping::leftover_notice(&files);
+                    self.toasts
+                        .push_quiet_once_for(ctx, Topic::Attention, title, &body, &path);
+                }
+                Ok(_) | Err(crossbeam_channel::TryRecvError::Disconnected) => {}
+                Err(crossbeam_channel::TryRecvError::Empty) => waiting.push((path, rx)),
+            }
+        }
+        self.leftover_reads = waiting;
+    }
+
     /// Puts what the finished configuration reads found into the notification center.
     pub(super) fn poll_config_reads(&mut self, ctx: &egui::Context) {
         let mut waiting = Vec::new();
@@ -394,6 +420,7 @@ impl CanopyApp {
             let tab = self.new_tab(ctx, root.clone());
             self.tabs.push(tab);
             self.read_config_for(ctx, &root);
+            self.read_leftovers_for(ctx, &root);
             if focus || self.tabs.len() == 1 {
                 self.active = self.tabs.len() - 1;
             }
@@ -422,6 +449,7 @@ impl CanopyApp {
             tab.view = view;
             self.tabs.insert(source, tab);
             self.read_config_for(ctx, &root);
+            self.read_leftovers_for(ctx, &root);
         }
         let next_focus = if focused.as_deref() == Some(from) {
             Some(&root)

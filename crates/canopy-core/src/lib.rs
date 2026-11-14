@@ -22,6 +22,7 @@ pub mod forge;
 pub mod graph;
 pub mod identity;
 pub mod ignore;
+pub mod leftovers;
 pub mod lfs;
 mod lines;
 mod merged;

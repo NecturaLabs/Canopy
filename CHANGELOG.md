@@ -48,6 +48,14 @@ commits since the previous build.
 
 ### Fixed
 
+- What a killed or failed Canopy leaves behind is cleaned up or reported, and nothing of yours is
+  deleted. At the next start Canopy removes its own staging files (the saved-token and avatar-cache
+  staging files, the patch export's and the update's folders in the temporary folder, an
+  interrupted update's staging in the install folder) once the process that made them is gone, and
+  puts back the old version when an update was killed halfway through the swap. A repository you open
+  with a staging file an interrupted save left in its working tree gets one notification with the
+  path; Canopy never deletes it, nor Git's own lock files. Exporting patches now stages in the
+  temporary folder instead of the folder you chose.
 - A push whose commits record a submodule commit that is on no remote now stops before sending
   anything and names the submodules to push first, instead of failing with git's "src refspec must
   name a ref" while Update submodules is on, or publishing a commit nobody can fetch while it is

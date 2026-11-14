@@ -821,14 +821,29 @@ impl Repo {
         let ordered = self.parents_first(oids)?;
         let io = |e: std::io::Error| Error::invalid(format!("{}: {e}", dir.display()));
         std::fs::create_dir_all(dir).map_err(io)?;
-        // Written beside the target and moved in only once no file there would be replaced.
+        // Written in the system's temporary folder, which only Canopy's own staging goes into, and
+        // copied in once no file at the target would be replaced. A kill leaves the folder there,
+        // not in the folder the user chose; the next start removes it (`leftovers`).
+        let temp = std::env::temp_dir();
         let staging = loop {
             let next = PATCH_EXPORT_NEXT.fetch_add(1, Ordering::Relaxed);
-            let path = dir.join(format!(".canopy-patches-{}-{next}", std::process::id()));
-            match std::fs::create_dir(&path) {
+            let path = temp.join(format!(
+                "{}{}-{next}",
+                crate::leftovers::PATCH_STAGING_PREFIX,
+                std::process::id()
+            ));
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            match builder.create(&path) {
                 Ok(()) => break path,
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(io(error)),
+                Err(error) => {
+                    return Err(Error::invalid(format!("{}: {error}", temp.display())));
+                }
             }
         };
         let staging_arg = staging.to_string_lossy();

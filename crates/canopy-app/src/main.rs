@@ -10,6 +10,7 @@ mod build_info;
 mod crash_reports;
 mod highlight;
 mod hosting;
+mod housekeeping;
 mod identity_worker;
 mod keymap;
 mod logging;
@@ -379,6 +380,11 @@ fn main() -> anyhow::Result<()> {
     ui::install_host();
     logging::init(logging::LogLevel::Normal);
     canopy_hosting::set_build(build_info::NUMBER);
+
+    // Staging files an earlier run left in Canopy's own folders; a screenshot run has none.
+    if launch.screenshot.is_none() && launch.glass_soak.is_none() {
+        housekeeping::sweep_at_start_async();
+    }
 
     // The editor, terminal and file manager the open actions use when Settings names none.
     system_apps::refresh(None);

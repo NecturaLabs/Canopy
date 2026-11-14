@@ -562,6 +562,26 @@ impl Toasts {
         self.notify(ctx, kind, topic, title, body, help, offer, source, false);
     }
 
+    /// Like [`Self::push_quiet_for`] (an Info notice), and only when the center does not already
+    /// hold the same words: the same leftover files found on every open are one notice.
+    pub fn push_quiet_once_for(
+        &mut self,
+        ctx: &egui::Context,
+        topic: Topic,
+        title: &str,
+        body: &str,
+        repo: &Path,
+    ) {
+        if self
+            .history
+            .iter()
+            .any(|e| e.title == title && e.body == body)
+        {
+            return;
+        }
+        self.push_quiet_for(ctx, ToastKind::Info, topic, title, body, repo);
+    }
+
     /// Notifies with a decision to make: the card shows buttons for it for a decision's time
     /// (`DECISION_SECONDS`), and the center offers it until it is made or declined.
     pub fn push_offer(
