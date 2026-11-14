@@ -279,17 +279,25 @@ impl std::fmt::Debug for CanopyApp {
 impl CanopyApp {
     /// The saved settings, and, when the settings file was unreadable, why and where it was kept.
     /// Without a file, the copy builds before the move kept in eframe's storage is taken once
-    /// (ADR 0016); defaults when there is neither.
+    /// (ADR 0018); defaults when there is neither.
     fn load_settings(
         storage: Option<&dyn eframe::Storage>,
         shooting: bool,
+    ) -> (Settings, Option<(String, Option<PathBuf>)>) {
+        Self::load_settings_from(crate::storage::layout().filter(|_| !shooting), storage)
+    }
+
+    /// [`Self::load_settings`] for the folders `layout` names; `None` reads only eframe's storage.
+    fn load_settings_from(
+        layout: Option<&crate::storage::Layout>,
+        storage: Option<&dyn eframe::Storage>,
     ) -> (Settings, Option<(String, Option<PathBuf>)>) {
         let legacy = || {
             storage
                 .and_then(|s| eframe::get_value(s, settings::KEY))
                 .unwrap_or_default()
         };
-        let Some(layout) = crate::storage::layout().filter(|_| !shooting) else {
+        let Some(layout) = layout else {
             return (legacy(), None);
         };
         match crate::settings_store::load(&layout.settings_file()) {
@@ -450,23 +458,11 @@ impl CanopyApp {
             app.toasts.restore_json(&kept);
         }
         if let Some((reason, kept)) = unreadable_settings {
-            let body = match kept {
-                Some(kept) => format!(
-                    "Canopy started with its default settings because the file was unreadable: {reason}. \
-                     The file is kept as {}.",
-                    kept.display()
-                ),
-                None => format!(
-                    "Canopy started with its default settings because the file was unreadable: {reason}. \
-                     The file could not be moved aside, and the next save replaces it."
-                ),
-            };
-            app.toasts.push(
+            push_unreadable_settings_notice(
+                &mut app.toasts,
                 &cc.egui_ctx,
-                ToastKind::Error,
-                Topic::Error,
-                "Settings could not be read",
-                body,
+                &reason,
+                kept.as_deref(),
             );
         }
         let restore = if launch.paths.is_empty() && !shooting {
@@ -1730,6 +1726,33 @@ pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
     tab
 }
 
+/// Says once that the settings file could not be read and Canopy started from defaults.
+fn push_unreadable_settings_notice(
+    toasts: &mut Toasts,
+    ctx: &egui::Context,
+    reason: &str,
+    kept: Option<&std::path::Path>,
+) {
+    let body = match kept {
+        Some(kept) => format!(
+            "Canopy started with its default settings because the file was unreadable: {reason}. \
+             The file is kept as {}.",
+            kept.display()
+        ),
+        None => format!(
+            "Canopy started with its default settings because the file was unreadable: {reason}. \
+             The file could not be moved aside, and the next save replaces it."
+        ),
+    };
+    toasts.push(
+        ctx,
+        ToastKind::Error,
+        Topic::Error,
+        "Settings could not be read",
+        body,
+    );
+}
+
 /// The notification center as it is written to disk: with no user name or password left in a
 /// URL in a title or in Git's error text.
 fn saved_notifications(toasts: &Toasts) -> String {
@@ -1739,6 +1762,77 @@ fn saved_notifications(toasts: &Toasts) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// eframe's storage as an in-memory map.
+    #[derive(Default)]
+    struct MemoryStorage(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for MemoryStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+        fn flush(&mut self) {}
+    }
+
+    fn layout_in(root: &std::path::Path) -> crate::storage::Layout {
+        let env = crate::storage::Env {
+            home: Some(root.to_path_buf()),
+            ..crate::storage::Env::default()
+        };
+        crate::storage::Layout::resolve(crate::storage::Os::Linux, &env).expect("layout")
+    }
+
+    /// A first start on the new layout still finds the settings the earlier builds kept in
+    /// eframe's `app.ron`, and a new `settings.json` that is unreadable does not.
+    #[test]
+    fn without_a_settings_file_the_old_app_ron_settings_are_taken() {
+        let root = tempfile::tempdir().expect("tmp");
+        let layout = layout_in(root.path());
+        let mut storage = MemoryStorage::default();
+        let old = Settings {
+            seen_intro: true,
+            ..Settings::default()
+        };
+        assert!(!Settings::default().seen_intro);
+        eframe::set_value(&mut storage, settings::KEY, &old);
+        let (loaded, unreadable) = CanopyApp::load_settings_from(Some(&layout), Some(&storage));
+        assert!(loaded.seen_intro, "the old copy is read");
+        assert!(unreadable.is_none());
+        let (none, _) = CanopyApp::load_settings_from(Some(&layout), None);
+        assert!(!none.seen_intro, "defaults with neither");
+        // Once settings.json exists, even a broken one, the old copy is not consulted again.
+        std::fs::create_dir_all(&layout.config).expect("dir");
+        std::fs::write(layout.settings_file(), "{ not json").expect("write");
+        let (loaded, unreadable) = CanopyApp::load_settings_from(Some(&layout), Some(&storage));
+        assert!(!loaded.seen_intro);
+        let (reason, kept) = unreadable.expect("the damage is reported");
+        assert_ne!(reason, "");
+        assert_eq!(kept, Some(layout.config.join("settings.json.bad")));
+    }
+
+    #[test]
+    fn an_unreadable_settings_file_is_announced_once_with_where_it_is_kept() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        push_unreadable_settings_notice(
+            &mut toasts,
+            &ctx,
+            "expected value at line 1",
+            Some(std::path::Path::new("/c/canopy/settings.json.bad")),
+        );
+        let json = toasts.to_json();
+        assert!(json.contains("Settings could not be read"), "{json}");
+        assert!(json.contains("settings.json.bad"), "{json}");
+        let mut unmoved = Toasts::default();
+        push_unreadable_settings_notice(&mut unmoved, &ctx, "bad", None);
+        assert!(unmoved.to_json().contains("could not be moved aside"));
+    }
 
     /// What the center keeps on disk carries no password, and keeps the rest.
     #[test]
