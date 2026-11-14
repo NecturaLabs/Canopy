@@ -1315,7 +1315,7 @@ fn git_setting_help(setting: Setting) -> &'static str {
         Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
         Setting::InitialBranch => "The branch a new repository starts on.",
         Setting::CommitCleanup => {
-            "Default removes # lines from a message you edit. Whitespace keeps them, git's template included."
+            "Default removes # lines from a message you edit. Spaces and blank lines keeps them."
         }
         Setting::Autocrlf => "Converts CRLF to LF on commit; CRLF on checkout converts back.",
         Setting::CommitSigning => "Signs every commit with your configured key.",
@@ -1527,8 +1527,20 @@ fn config_phrase(v: &ConfigValue) -> String {
     );
     format!(
         "{label} set to {} in {source}",
-        lowercase_label(&git_value_label(setting, &v.value))
+        value_phrase(setting, &v.value)
     )
+}
+
+/// A value inside a sentence. Most names are single words that read as they are in lower case;
+/// a cleanup's name is a phrase of its own ("Nothing", "Also lines starting with #"), so it is
+/// quoted as Settings shows it.
+fn value_phrase(setting: Setting, value: &str) -> String {
+    let label = git_value_label(setting, value);
+    if setting == Setting::CommitCleanup {
+        format!("\"{label}\"")
+    } else {
+        lowercase_label(&label)
+    }
 }
 
 /// The row a configuration key belongs to, and the remote or branch whose own value it is: a
@@ -1681,8 +1693,11 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
     )
 }
 
-/// What the Conflict style row says under its title; one line even at zoom 1.6
-/// (`help_fits_on_one_line`).
+/// What Canopy's Message cleanup row says under its title.
+const MESSAGE_CLEANUP_HELP: &str = "What git removes from commit messages. Spaces and blank lines only keeps lines starting with #.";
+
+/// What the Conflict style row says under its title; one line even at zoom 1.6, also in the
+/// smallest window (`help_fits_on_one_line`).
 const CONFLICT_STYLE_HELP: &str = "Showing the original too makes each side's change clear.";
 
 /// The Autostash row's help. A squash merge is left out: git would keep its stash unapplied and
@@ -3564,7 +3579,7 @@ fn git(
         row_with_note(
             ui,
             "Message cleanup",
-            "What git removes from commit messages. Spaces and blank lines only keeps lines starting with #.",
+            MESSAGE_CLEANUP_HELP,
             f.and_then(|f| {
                 let ours = s.cleanup.cleanup().value();
                 config_note(
@@ -10343,18 +10358,21 @@ mod tests {
         // With a repository open, so This repository is drawn too.
         let repo = Some(Path::new("/work/canopy"));
         // With Canopy following git's configuration or choosing for itself: the rows differ.
-        // And at the usual zoom and at 1.6, where the window is 1.6 times fewer points wide.
-        for (follow, section, zoom) in [true, false].into_iter().flat_map(|follow| {
+        // At the default window (1440 points), at zoom 1.6 (900) and at the smallest window at zoom 1.6
+        // (562).
+        for (follow, section, width) in [true, false].into_iter().flat_map(|follow| {
             Section::ALL
                 .into_iter()
                 .chain([Section::Repository])
-                .flat_map(move |section| [1.0_f32, 1.6].map(move |zoom| (follow, section, zoom)))
+                .flat_map(move |section| {
+                    [1440.0_f32, 900.0, 562.0].map(move |width| (follow, section, width))
+                })
         }) {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
             ctx.enable_accesskit();
             theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
-            let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0 / zoom, 6000.0));
+            let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 6000.0));
             let mut settings = Settings {
                 follow_git_config: follow,
                 ..Settings::default()
@@ -10406,15 +10424,15 @@ mod tests {
                 let (Some(text), Some(rect)) = (node.value(), node.bounds()) else {
                     continue;
                 };
-                // At zoom 1.6 only this row is held to one line; the page's longer helps wrap.
-                if zoom > 1.0 && text != CONFLICT_STYLE_HELP {
+                // In the narrower windows only this row is held to one line; the page's longer helps wrap.
+                if width < 1440.0 && text != CONFLICT_STYLE_HELP {
                     continue;
                 }
-                conflict_drawn |= zoom > 1.0 && !follow && text == CONFLICT_STYLE_HELP;
+                conflict_drawn |= width < 600.0 && !follow && text == CONFLICT_STYLE_HELP;
                 autostash_drawn |= text.starts_with(AUTOSTASH_HELP);
                 if node.role() == egui::accesskit::Role::Label && rect.y1 - rect.y0 > two_lines {
                     wrapped.push(format!(
-                        "{section:?} (follow {follow}, zoom {zoom}): {text}"
+                        "{section:?} (follow {follow}, {width} points): {text}"
                     ));
                 }
             }
@@ -10551,13 +10569,34 @@ mod tests {
             assert_eq!(name, cleanup.label(), "{}", cleanup.value());
             assert!(
                 config_phrase(&fact("commit.cleanup", cleanup.value())).starts_with(&format!(
-                    "Commit message cleanup set to {} in ",
-                    lowercase_label(cleanup.label())
+                    "Commit message cleanup set to \"{}\" in ",
+                    cleanup.label()
                 )),
                 "{}",
                 cleanup.value()
             );
         }
+        // The help under the rows says the value by that name too, never by another.
+        for help in [
+            git_setting_help(Setting::CommitCleanup),
+            MESSAGE_CLEANUP_HELP,
+        ] {
+            for other in [
+                "Whitespace",
+                "whitespace",
+                "Strip",
+                "strip",
+                "Verbatim",
+                "verbatim",
+            ] {
+                assert!(!help.contains(other), "{help}: {other}");
+            }
+        }
+        assert!(
+            git_setting_help(Setting::CommitCleanup)
+                .contains(canopy_core::Cleanup::Whitespace.label()),
+            "the Git list's help names the value as the row does"
+        );
         // Git's own two have names of their own, and none of the five repeats another.
         let names: HashSet<_> = Setting::CommitCleanup
             .values()
