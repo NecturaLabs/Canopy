@@ -1226,7 +1226,7 @@ mod tests {
         tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
             commits: (0..10)
                 .map(|i| canopy_core::CommitSummary {
-                    oid,
+                    oid: Oid::from_bytes(&[i + 1; 20]).expect("fixture oid"),
                     summary: format!("Commit {i}"),
                     author: author.clone(),
                     parents: Vec::new(),
@@ -1369,6 +1369,10 @@ mod tests {
         let (mut tab, _dir) = populated_tab(&ctx);
         visible_details(&ctx, &mut tab, vec2(562.5, 350.0));
         let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
+        assert!(
+            !visible.iter().any(|text| text.contains("widget ID")),
+            "no widget may share an id within a frame: {visible:?}"
+        );
         assert!(
             visible.iter().any(|text| text == "Author"),
             "author must be readable: {visible:?}"
