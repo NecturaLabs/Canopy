@@ -626,6 +626,18 @@ fn is_symlink(path: &Path) -> bool {
 /// the installer applies, and writes the new receipt. Problems are returned as notes: the new
 /// version is installed whatever happens here.
 fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
+    integrate_with(root, build, old, notes, &SHIPPED_SVG_SHA256);
+}
+
+/// [`integrate`] with the digests of the scalable icons earlier builds shipped passed in, so tests
+/// prove the removal with stand-in bytes rather than a copy of the old icon.
+fn integrate_with(
+    root: &Path,
+    build: u64,
+    old: &Receipt,
+    notes: &mut Vec<String>,
+    shipped: &[&str],
+) {
     let mut lines = vec![
         format!(
             "# Written by the Canopy installer: what it created outside {}.",
@@ -659,10 +671,13 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
             continue;
         }
         if !src.is_file() {
-            // Earlier builds also registered a scalable SVG; this one ships none. One that cannot
-            // be removed stays in the receipt, to be tried again.
+            // Earlier builds also registered a scalable SVG; this one ships none. Remove only the
+            // bytes one of those builds shipped, never an edited copy. One that cannot be removed
+            // stays in the receipt, to be tried again.
             if dst.ends_with(format!("hicolor/scalable/apps/{APP_ID}.svg"))
                 && dst.symlink_metadata().is_ok_and(|m| m.is_file())
+                && fs::read(dst)
+                    .is_ok_and(|bytes| shipped.contains(&updates::sha256_hex(&bytes).as_str()))
                 && fs::remove_file(dst).is_err()
             {
                 notes.push(format!("could not remove {}", dst.display()));
@@ -682,7 +697,7 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
         }
     }
     for (dst, _) in &old.icons {
-        remove_shipped_svg_beside(dst, &SHIPPED_SVG_SHA256);
+        remove_shipped_svg_beside(dst, shipped);
     }
     for link in &old.links {
         if fs::read_link(link).is_ok_and(|t| t == root.join("bin/canopy")) {

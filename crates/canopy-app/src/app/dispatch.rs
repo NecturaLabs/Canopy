@@ -131,6 +131,19 @@ impl CanopyApp {
                         self.dialogs.open(Dialog::FileHistory { repo, path, from });
                     }
                 }
+                Action::Lfs(page) => {
+                    if let Some(tab) = self.tab() {
+                        tab.read_lfs_lists();
+                        let repo = tab.path.clone();
+                        self.dialogs
+                            .open(Dialog::Lfs(Box::new(dialogs::LfsForm::new(repo, page))));
+                    }
+                }
+                Action::LfsLists => {
+                    if let Some(tab) = self.tab() {
+                        tab.read_lfs_lists();
+                    }
+                }
                 Action::SearchChanges { query, regex } => {
                     if let Some(tab) = self.tab() {
                         tab.search_changes(query, regex);
@@ -512,18 +525,22 @@ impl CanopyApp {
                     setting,
                     value,
                 } => {
-                    self.request_git_config(
-                        ctx,
-                        IdentityJob::Config {
-                            repo,
-                            scope,
-                            setting,
-                            value,
-                        },
-                    );
+                    if self.may_edit_git_config(ctx) {
+                        self.request_git_config(
+                            ctx,
+                            IdentityJob::Config {
+                                repo,
+                                scope,
+                                setting,
+                                value,
+                            },
+                        );
+                    }
                 }
                 Action::UseRecommendedGitConfig => {
-                    self.request_git_config(ctx, IdentityJob::Recommendations);
+                    if self.may_edit_git_config(ctx) {
+                        self.request_git_config(ctx, IdentityJob::Recommendations);
+                    }
                 }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();

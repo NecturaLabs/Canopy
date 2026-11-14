@@ -1070,6 +1070,7 @@ mod tests {
         let sub = canopy_core::SubmoduleInfo {
             name: "deps/lib".into(),
             path: "deps/lib".into(),
+            path_os: "deps/lib".into(),
             url: None,
             head_id: Some(oid(7)),
             index_id: Some(oid(7)),
@@ -1540,6 +1541,7 @@ mod tests {
         let sub = |path: &str, checked_out: bool| canopy_core::SubmoduleInfo {
             name: path.into(),
             path: path.into(),
+            path_os: path.into(),
             url: Some(format!("https://example.com/{path}.git")),
             head_id: Some(oid(7)),
             index_id: Some(oid(7)),
@@ -1591,6 +1593,7 @@ mod tests {
             .map(|i| canopy_core::SubmoduleInfo {
                 name: format!("deps/lib-{i}"),
                 path: format!("deps/lib-{i}"),
+                path_os: format!("deps/lib-{i}").into(),
                 url: None,
                 head_id: Some(oid(7)),
                 index_id: Some(oid(7)),
@@ -1627,6 +1630,7 @@ mod tests {
         let sub = |path: &str, index: Option<u8>| canopy_core::SubmoduleInfo {
             name: path.into(),
             path: path.into(),
+            path_os: path.into(),
             url: Some(format!("https://example.com/{path}.git")),
             head_id: Some(oid(7)),
             index_id: index.map(oid),

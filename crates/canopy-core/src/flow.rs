@@ -567,7 +567,9 @@ impl Repo {
         if delete_remote {
             refspecs.push(format!(":{}", heads(&config.branch(kind, name))));
         }
-        let mut args = vec!["push", "--progress", "--", remote];
+        let mut args = vec!["push", "--progress"];
+        args.extend(self.push_submodules_flag());
+        args.extend(["--", remote]);
         args.extend(refspecs.iter().map(String::as_str));
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }

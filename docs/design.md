@@ -948,6 +948,32 @@ chip explains visible refusals and disappears when their commit details are hidd
 Diff metadata below the header identifies symbolic-link target paths and mode changes alongside
 content changes, using the theme's metadata size and subdued text colour.
 
+### Git LFS
+
+Four pieces, all from theme tokens and text, never colour alone:
+
+- **LFS tag.** On a file row (`views/commit_detail.rs`, `paint_lfs_tag`), left of the line counts: the
+  letters `LFS` in the monospace `sha_size`, `text_dim`, in a 1 point `text_faint` outline with
+  `radius-sm`. Screen readers hear "stored with Git LFS" after the path.
+- **Not downloaded.** The same cloud-slash glyph in `warning` the partial-clone rows use, after the
+  tag; the tooltip says the file holds only its pointer, and the row's spoken name ends "not
+  downloaded".
+- **Diff card** (`views/diff.rs`, `lfs_card`), above the hunks when the content is compared: a title
+  line with the drive glyph, then one line each for Before and After: label in `text_faint`, size
+  in `text`, the object id as `sha256:` and twelve digits in monospace (the whole id in its
+  tooltip), and "Not downloaded" in `warning` for a pointer whose object is missing. A line of
+  `text_dim` says why the content is not compared (not downloaded, binary, too large), a secondary
+  small Download LFS files button follows a pointer-only side, and a checkbox shows the pointer
+  text in monospace.
+- **Status bar chip.** A `Warning` chip, "N LFS files not downloaded · Download", while objects are
+  missing and nothing else runs; with `git-lfs` missing a click opens the dialog, which says what to
+  install.
+
+The Git LFS dialog (`views/dialogs/lfs.rs`) is a Reading-width dialog with a segmented control
+(Files, Tracked patterns, Locks), lists of at most 240 points before they scroll, and a Close
+button only: each row's action is its own small button, and a force unlock opens the standard danger
+confirmation naming the file and the lock's owner.
+
 ### Git identity
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings

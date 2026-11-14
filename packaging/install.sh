@@ -830,8 +830,9 @@ integrate_linux() {
             warn "could not write $entry"
         fi
     fi
-    # Earlier builds also shipped a scalable SVG: remove each copy the old receipt lists, wherever
-    # it was registered. One that cannot be removed stays in the receipt, to be tried again.
+    # Earlier builds also shipped a scalable SVG: remove each copy the old receipt lists whose
+    # current bytes are one of those icons, never an edited copy. One that cannot be removed stays
+    # in the receipt, to be tried again.
     if [ -f "$receipt" ]; then
         grep '^icon=' "$receipt" | grep -F "/icons/hicolor/scalable/apps/$APP_ID.svg|" |
             while IFS= read -r line; do
@@ -839,9 +840,15 @@ integrate_linux() {
                 dst=${pair%%|*}
                 src=${pair#*|}
                 icon_entry_ok "$dst" "$src" || continue
-                if [ -f "$dst" ] && [ ! -L "$dst" ] && ! rm -f -- "$dst" 2>/dev/null; then
-                    warn "could not remove $dst"
-                    printf 'icon=%s|%s\n' "$dst" "$src" >>"$tmp_receipt"
+                if [ -f "$dst" ] && [ ! -L "$dst" ]; then
+                    case " $LEGACY_SVG_SHA256 " in
+                        *" $(sha256_of "$dst") "*)
+                            if ! rm -f -- "$dst" 2>/dev/null; then
+                                warn "could not remove $dst"
+                                printf 'icon=%s|%s\n' "$dst" "$src" >>"$tmp_receipt"
+                            fi
+                            ;;
+                    esac
                 fi
             done
     fi
