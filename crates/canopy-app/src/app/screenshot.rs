@@ -334,7 +334,9 @@ impl CanopyApp {
             && demo_shown
             && self.pending_opens == 0
             && !crate::ui::art::growing(ctx)
-            // A tab that is not shown has not loaded and never will in this run.
+            // A tab that is not shown has not loaded and never will in this run; the shown one
+            // has to have.
+            && self.tabs.get(self.active).is_none_or(RepoTab::is_loaded)
             && self.tabs.iter().filter(|t| t.is_loaded()).all(|t| {
                 // A demo scene may be a loading or an error state on purpose: it is final.
                 let requests_ready = demo.is_some()

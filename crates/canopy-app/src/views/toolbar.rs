@@ -152,6 +152,11 @@ fn doc_tabs(tabs: &[RepoTab]) -> Vec<DocTab<'_>> {
                 };
                 let _ = write!(detail, "  ·  {modifier}+{}", i + 1);
             }
+            // No counts are known for a tab that has not been shown yet: say so, so that nothing
+            // reads as "in sync".
+            if !tab.is_loaded() {
+                detail.push_str("  ·  Not loaded yet: it loads when you switch to it");
+            }
             let doc = DocTab::new(&tab.path, &tab.name)
                 .icon(tab.icon)
                 .sync(ahead, behind)

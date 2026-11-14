@@ -787,6 +787,18 @@ impl CanopyApp {
         app
     }
 
+    /// What accepting a notification's Pull offer does: show the repository's tab, then pull it.
+    fn pull_offered(&self, path: &std::path::Path, actions: &mut Vec<Action>) {
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.path == path && tab.running.is_none())
+        {
+            actions.push(Action::SwitchTab(index));
+            actions.push(Action::Pull);
+        }
+    }
+
     fn tab(&mut self) -> Option<&mut RepoTab> {
         self.tabs.get_mut(self.active)
     }
@@ -1347,16 +1359,7 @@ impl eframe::App for CanopyApp {
         self.cheatsheet.show(&ctx);
         for offer in self.toasts.show(&ctx) {
             match offer {
-                Offer::Pull(path) => {
-                    if let Some(index) = self
-                        .tabs
-                        .iter()
-                        .position(|tab| tab.path == path && tab.running.is_none())
-                    {
-                        actions.push(Action::SwitchTab(index));
-                        actions.push(Action::Pull);
-                    }
-                }
+                Offer::Pull(path) => self.pull_offered(&path, &mut actions),
                 Offer::Accounts => {
                     self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }

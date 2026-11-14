@@ -1612,6 +1612,10 @@ impl RepoTab {
 
     /// Requests a full refresh.
     pub fn refresh(&self) {
+        // A tab that has not loaded has nothing to refresh: its first load reads everything.
+        if !self.is_loaded() {
+            return;
+        }
         self.worker.send(Job::Refresh(self.commit_limit));
     }
 
@@ -2083,6 +2087,10 @@ impl RepoTab {
     pub fn trust_changed(&mut self, version: u64) {
         self.trust_version = version;
         self.auto_fetch_failure = None;
+        // A tab that has not loaded has no worker to ask; its first load reads the trust anew.
+        if !self.is_loaded() {
+            return;
+        }
         // The worker tells the tab how the change left this repository.
         self.worker.send(Job::RefreshStatus);
         if self.template_asked && !self.template_loaded {

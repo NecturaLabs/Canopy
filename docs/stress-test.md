@@ -35,6 +35,7 @@ detail) sets the detail; `tools/stress.sh open` sets `CANOPY_LOG` to the Detaile
 |---|---|---|---|---|
 | `canopy started` | INFO | `run`, `version`, `pid`, `filter` | Normal | time zero |
 | `snapshot` | DEBUG | `commits`, `ms` | Detailed | the first one per repository marks "tab loaded"; later ones are refreshes |
+| `loading the tab shown for the first time` | DEBUG | `path` | Detailed | when a tab was first shown (#62); a tab's load time runs from here to its first `snapshot` |
 | `job done` | DEBUG | `job` (`details`, `diff`, `conflict`, `head-message`, `squash-message`, `operation`), `ms` | Detailed | job durations |
 | `operation started` / `operation succeeded` / `operation failed` | INFO / INFO / WARN | `operation` (a label such as `Fetching` or `Checking out feature/x`), `ms`, `error` | Normal | operation durations, hung operations |
 | `git finished` / `git failed` | DEBUG / WARN | `command`, `args`, `ms`, `exit`, `stderr` | Detailed | git command durations |
@@ -289,9 +290,10 @@ by name only: no repository thread, file watcher or snapshot until a tab is firs
 that touches nothing measures one loaded tab (threads and inotify instances are about 1 per
 loaded tab plus the shared threads). To load them all, show each tab once, for example holding
 `Ctrl+Tab` (or `xdotool key --repeat 100 --delay 300 ctrl+Tab`). The report's "all tabs loaded"
-criterion fails until every tab has been shown, and its times run from the start of the process,
-so show them promptly. Every other scenario below starts from "everything loaded" and therefore
-from this step.
+criterion fails until every tab has been shown; each tab's load time runs from the moment it was
+first shown (the `loading the tab shown for the first time` event) to its first snapshot, so the
+pace of your switching does not count against it. Every other scenario below starts from
+"everything loaded" and therefore from this step.
 
 Watch: how long until the tabs fill in (the report's "Loading" section: first snapshot per
 repository), whether the window stays responsive while loading (try moving and resizing it),
@@ -420,7 +422,7 @@ progress or prepared conflict, so nothing fights the person resolving. Afterward
 | What | How | Where it ends up |
 |---|---|---|
 | Start-up to first frame | not available (instrumentation item 2); until then stopwatch from launch to a drawn window | by hand |
-| Start-up to all tabs loaded | first `snapshot` event per repository, relative to `canopy started` | `report`, "Loading" |
+| Load time per tab | first `snapshot` event per repository, relative to its `loading the tab shown for the first time` event (the process start when that event is absent) | `report`, "Loading" |
 | Frame times p50/p95/p99, hitches over 33 ms | not available (item 1); `frame stats` events when they exist | `report`, "Frame times" |
 | RSS over time (total, heap `RssAnon`, mapped files `RssFile`) | `/proc/<pid>/status`, every second | `samples.csv` |
 | Thread count | `/proc/<pid>/status` `Threads`; names every 5 min | `samples.csv`, `threads.txt` |
@@ -448,7 +450,7 @@ fails.
 | Warnings | each read and explained; unexpected ones fail the run (REVIEW until judged) | all |
 | Every repository opens (no `cannot open the repository`) | 100 of 100 | a |
 | First frame | at most 2 s (needs item 2) | a |
-| All tabs loaded (first snapshot of the last one) | at most 120 s; 95 % of tabs within 60 s | a |
+| Load time of a tab (from first shown to its first snapshot) | slowest at most 120 s; 95 % of tabs within 60 s | a |
 | UI usable while tabs load (no frozen window) | by eye until frame stats exist | a |
 | Frames while tab switching | none over 100 ms; at most 1 % over 33 ms (needs item 1) | b |
 | Frames while scrolling history | p95 at most 16.7 ms, p99 at most 33 ms, none over 100 ms (needs item 1; use `--from/--until`) | c |

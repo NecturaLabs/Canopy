@@ -176,17 +176,17 @@ impl CanopyApp {
                     if i < self.tabs.len() {
                         let closed = self.tabs.remove(i);
                         open::keep_draft(ctx, &closed);
-                        if self.active >= self.tabs.len() {
-                            self.active = self.tabs.len().saturating_sub(1);
-                        }
+                        // The neighbour that takes its place is shown now, so it loads now.
+                        self.activate(ctx, self.active);
                     }
                 }
                 Action::SwitchTab(i) => {
                     if i < self.tabs.len() {
-                        self.active = i;
-                        // A tab shown for the first time loads in full instead
-                        // ([`CanopyApp::load_active_tab`]).
-                        if self.tabs[i].is_loaded() {
+                        // A tab shown for the first time loads in full ([`CanopyApp::activate`])
+                        // instead of refreshing.
+                        let loaded = self.tabs[i].is_loaded();
+                        self.activate(ctx, i);
+                        if loaded {
                             self.tabs[i].refresh();
                             self.request_identity(IdentityJob::ReadRepo(self.tabs[i].path.clone()));
                         }
@@ -434,7 +434,7 @@ impl CanopyApp {
                 }
                 Action::RepositorySettings(path) => {
                     if let Some(i) = self.tabs.iter().position(|t| t.path == path) {
-                        self.active = i;
+                        self.activate(ctx, i);
                         self.open_settings(SettingsScreen::at(
                             settings_screen::Section::Repository,
                         ));

@@ -84,6 +84,10 @@ if [[ $repo != - ]]; then
   [[ -d $repo ]] || { echo "not a directory: $repo" >&2; exit 1; }
   repo_args=("$(realpath "$repo")")
 fi
+if [[ $repo == - && ${#also[@]} -gt 0 ]]; then
+  echo "--also needs a shown repository: <repo> is - (the welcome screen)" >&2
+  exit 2
+fi
 for other in "${also[@]}"; do
   [[ -d $other ]] || { echo "not a directory: $other" >&2; exit 1; }
   repo_args+=("$(realpath "$other")")

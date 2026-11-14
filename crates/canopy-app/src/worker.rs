@@ -1004,15 +1004,34 @@ impl Worker {
         (worker, ev_tx, job_rx)
     }
 
-    /// Queues a job. A worker that has not started drops it: its tab has loaded nothing, and
-    /// loads everything when it starts.
+    /// Queues a job. A worker that has not started drops it, and says so (WARN): the shown tab is
+    /// always loaded, and what runs for a background tab asks [`Worker::is_started`] first (its
+    /// tab loads everything when it starts), so a job that gets here is a mistake in the caller.
     pub fn send(&self, job: Job) {
         if self.unstarted.is_some() {
-            tracing::trace!(job = job.kind(), "dropped for a tab that is not loaded yet");
+            tracing::warn!(
+                job = job.kind(),
+                "a job was sent to a tab that is not loaded, and was dropped"
+            );
+            #[cfg(test)]
+            UNSTARTED_SENDS.with(|sent| sent.borrow_mut().push(job.kind()));
             return;
         }
         let _ = self.jobs.send(job);
     }
+
+    /// The kinds of the jobs this thread's tests sent to a worker that had not started, oldest
+    /// first, and forgets them: a test of background work asserts it is empty.
+    #[cfg(test)]
+    pub fn take_unstarted_sends() -> Vec<&'static str> {
+        UNSTARTED_SENDS.with(|sent| std::mem::take(&mut *sent.borrow_mut()))
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static UNSTARTED_SENDS: std::cell::RefCell<Vec<&'static str>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The threads of dropped workers that may still be running ([`wait_for_threads`]).

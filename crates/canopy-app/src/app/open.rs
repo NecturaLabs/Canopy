@@ -437,14 +437,16 @@ impl CanopyApp {
     fn add_tab(&mut self, ctx: &egui::Context, root: PathBuf, focus: bool) {
         if let Some(i) = self.tabs.iter().position(|t| t.path == root) {
             if focus {
-                self.active = i;
+                self.activate(ctx, i);
             }
         } else {
             let tab = self.new_tab(ctx, root.clone());
             self.tabs.push(tab);
             if focus || self.tabs.len() == 1 {
-                self.active = self.tabs.len() - 1;
+                self.activate(ctx, self.tabs.len() - 1);
             }
+            // The tab strip and, for the shown one, the loading state need a frame.
+            ctx.request_repaint();
         }
         self.settings.touch_recent(root);
     }
@@ -473,12 +475,21 @@ impl CanopyApp {
         } else {
             focused.as_ref()
         };
-        if let Some(index) = next_focus.and_then(|p| self.tabs.iter().position(|t| &t.path == p)) {
-            self.active = index;
-        } else {
-            self.active = self.active.min(self.tabs.len().saturating_sub(1));
-        }
+        let index = next_focus
+            .and_then(|p| self.tabs.iter().position(|t| &t.path == p))
+            .unwrap_or(self.active);
+        self.activate(ctx, index);
+        ctx.request_repaint();
         self.settings.touch_recent(root);
+    }
+
+    /// Makes tab `index` (or the last one, when it is past the end) the active one and loads it
+    /// at once if it has not been shown before, so no tab is ever active without a worker. Every
+    /// change of `self.active` goes through here; [`Self::load_active_tab`], which also runs
+    /// every frame, is the backstop.
+    pub(super) fn activate(&mut self, ctx: &egui::Context, index: usize) {
+        self.active = index.min(self.tabs.len().saturating_sub(1));
+        self.load_active_tab(ctx);
     }
 
     /// Loads the active tab if it has not been shown before: starts its repository thread and
@@ -495,6 +506,8 @@ impl CanopyApp {
         }
         let path = tab.path.clone();
         tracing::debug!(path = %path.display(), "loading the tab shown for the first time");
+        // The first snapshot arrives on its own; the loading state shows meanwhile.
+        ctx.request_repaint();
         self.read_config_for(ctx, &path);
         self.read_leftovers_for(ctx, &path);
         self.request_identity(IdentityJob::ReadRepo(path));
@@ -1254,8 +1267,8 @@ mod tests {
         }
         assert_eq!(app.active, 0);
         assert!(
-            app.tabs.iter().all(|t| !t.is_loaded()),
-            "opening a tab starts no thread and no watcher"
+            app.tabs[0].is_loaded() && app.tabs[1..].iter().all(|t| !t.is_loaded()),
+            "only the shown tab starts a thread and a watcher"
         );
         let queues: Vec<_> = (0..3).map(|i| lazy_tab(&mut app, i)).collect();
 
@@ -1269,9 +1282,15 @@ mod tests {
         assert!(queues[1].is_empty() && queues[2].is_empty());
 
         // Background chores that reach every tab leave the unloaded ones alone.
+        crate::worker::Worker::take_unstarted_sends();
         app.apply_repo_looks();
         app.auto_fetch(&ctx);
         app.tabs[1].refresh();
+        app.tabs[1].trust_changed(1);
+        assert_eq!(
+            crate::worker::Worker::take_unstarted_sends(),
+            Vec::<&str>::new()
+        );
         assert!(queues[1].is_empty() && queues[2].is_empty());
         let opened = app.tabs[2].last_fetch;
         assert_eq!(
@@ -1280,7 +1299,7 @@ mod tests {
         );
 
         app.apply(&ctx, vec![Action::SwitchTab(2)]);
-        assert!(queues[2].is_empty(), "the switch itself loads nothing");
+        assert!(app.tabs[2].is_loaded(), "the switch itself loads it");
         app.load_active_tab(&ctx);
         app.load_active_tab(&ctx);
         assert!(
@@ -1347,14 +1366,112 @@ mod tests {
         );
         let (worker, _events, jobs) = crate::worker::Worker::lazy_detached(PathBuf::from("lazy"));
         tab.worker = worker;
+        crate::worker::Worker::take_unstarted_sends();
+        // Background work that reaches every tab leaves this one alone, quietly.
+        tab.trust_changed(1);
+        tab.refresh();
+        tab.reload_diff();
+        assert_eq!(
+            crate::worker::Worker::take_unstarted_sends(),
+            Vec::<&str>::new()
+        );
+        // An action aimed at it is a mistake: it is dropped, and the drop is reported.
         tab.op(Op::Fetch {
             prune: false,
             quiet: true,
         });
-        tab.trust_changed(1);
-        tab.refresh();
-        tab.reload_diff();
+        assert_eq!(crate::worker::Worker::take_unstarted_sends(), ["operation"]);
         assert!(jobs.is_empty(), "{:?}", jobs.try_iter().collect::<Vec<_>>());
         assert!(tab.snap.is_none() && !tab.is_loaded());
+    }
+
+    /// #62: a Pull offered by a restored notification for a tab nobody has shown yet loads the
+    /// tab first, so its worker gets the first snapshot request and then the pull, in that order.
+    #[test]
+    fn a_pull_offered_for_a_tab_not_yet_shown_loads_it_first() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let mut app = test_app();
+        let paths: Vec<_> = ["a", "b"]
+            .iter()
+            .map(|name| {
+                let path = dir.path().join(name);
+                std::fs::create_dir(&path).expect("folder");
+                path
+            })
+            .collect();
+        app.add_tab(&ctx, paths[0].clone(), true);
+        app.add_tab(&ctx, paths[1].clone(), false);
+        let queues: Vec<_> = (0..2).map(|i| lazy_tab(&mut app, i)).collect();
+        app.load_active_tab(&ctx);
+        assert!(!app.tabs[1].is_loaded());
+
+        let mut actions = Vec::new();
+        app.pull_offered(&paths[1], &mut actions);
+        app.apply(&ctx, actions);
+        assert_eq!(app.active, 1);
+        let queued: Vec<_> = queues[1].try_iter().collect();
+        assert!(
+            matches!(
+                queued.as_slice(),
+                [Job::Refresh(_), Job::Op(Op::Pull { .. })]
+            ),
+            "the pull must not be lost: {queued:?}"
+        );
+        settle_reads(&mut app);
+    }
+
+    /// #62: the active tab is never one that has not loaded, whichever way it became active.
+    #[test]
+    fn every_change_of_the_active_tab_leaves_it_loaded() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let mut app = test_app();
+        let paths: Vec<_> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|name| {
+                let path = dir.path().join(name);
+                std::fs::create_dir(&path).expect("folder");
+                path
+            })
+            .collect();
+        let shown = |app: &CanopyApp| app.tabs[app.active].is_loaded();
+
+        app.add_tab(&ctx, paths[0].clone(), true);
+        assert!(shown(&app), "add_tab with focus");
+        for path in &paths[1..4] {
+            app.add_tab(&ctx, path.clone(), false);
+        }
+        assert!(app.tabs[1..].iter().all(|t| !t.is_loaded()));
+        app.add_tab(&ctx, paths[1].clone(), true);
+        assert!(
+            app.active == 1 && shown(&app),
+            "add_tab focusing an open tab"
+        );
+
+        app.apply(&ctx, vec![Action::SwitchTab(2)]);
+        assert!(app.active == 2 && shown(&app), "SwitchTab");
+        app.apply(&ctx, vec![Action::RepositorySettings(paths[3].clone())]);
+        assert!(app.active == 3 && shown(&app), "RepositorySettings");
+
+        // Closing the shown tab puts its unloaded neighbour in its place.
+        app.add_tab(&ctx, paths[4].clone(), false);
+        assert!(!app.tabs[4].is_loaded());
+        app.apply(&ctx, vec![Action::SwitchTab(3)]);
+        app.apply(&ctx, vec![Action::CloseTab(3)]);
+        assert!(app.active == 3 && app.tabs[3].path == paths[4] && shown(&app));
+        app.apply(&ctx, vec![Action::CloseTab(3)]);
+        assert!(app.active == 2 && shown(&app), "CloseTab of the last tab");
+
+        let newer = dir.path().join("f");
+        std::fs::create_dir(&newer).expect("folder");
+        app.add_tab(&ctx, paths[3].clone(), false);
+        let from = app.tabs[app.active].path.clone();
+        app.replace_tab(&ctx, &from, newer.clone());
+        assert!(
+            app.tabs[app.active].path == newer && shown(&app),
+            "replace_tab"
+        );
+        settle_reads(&mut app);
     }
 }
