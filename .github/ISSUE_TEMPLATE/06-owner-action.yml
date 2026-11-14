@@ -72,3 +72,11 @@ body:
       - [ ] Second checkable outcome'
   validations:
     required: true
+- type: textarea
+  id: decision_record
+  attributes:
+    label: Decision record (optional)
+    description: Give the recommendation and alternatives to record. After an answer, preserve the
+      date, decision, evidence and any requirements still unresolved.
+  validations:
+    required: false

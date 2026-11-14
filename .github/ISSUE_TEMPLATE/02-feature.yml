@@ -73,3 +73,11 @@ body:
       - [ ] Second checkable outcome'
   validations:
     required: true
+- type: textarea
+  id: where_to_see
+  attributes:
+    label: Where to see it (optional)
+    description: Name the current screen, workflow or fixture and how a reviewer can verify the
+      proposal, with exact commands when useful.
+  validations:
+    required: false
