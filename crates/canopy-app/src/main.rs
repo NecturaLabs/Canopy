@@ -21,6 +21,7 @@ mod keymap;
 mod lfs;
 mod logging;
 mod platform;
+mod read_limit;
 mod repo_config;
 mod request_view;
 mod selfupdate;

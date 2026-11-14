@@ -498,6 +498,12 @@ impl CanopyApp {
     /// with its name in the strip only, so opening a hundred repositories starts one thread, not a
     /// hundred. Runs every frame; this one place covers every way a tab becomes the active one.
     pub(super) fn load_active_tab(&mut self, ctx: &egui::Context) {
+        // Before the tab loads, so its first refresh never waits: only the shown tab's refreshes
+        // skip the limit on concurrent background reads (`read_limit`), and a tab just left is
+        // limited again.
+        for (index, tab) in self.tabs.iter().enumerate() {
+            tab.worker.set_priority(index == self.active);
+        }
         let Some(tab) = self.tabs.get_mut(self.active) else {
             return;
         };
@@ -517,6 +523,33 @@ impl CanopyApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #62: the shown tab's worker skips the limit on background reads, and the tab that was
+    /// shown before goes back behind it, whichever way the active tab changes.
+    #[test]
+    fn only_the_shown_tab_has_priority_over_the_limit() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.tabs = (0..3)
+            .map(|_| test_tab(canopy_core::RepoSnapshot::default()))
+            .collect();
+        let shown = |app: &CanopyApp| -> Vec<bool> {
+            app.tabs.iter().map(|t| t.worker.is_shown()).collect()
+        };
+        app.activate(&ctx, 0);
+        assert_eq!(shown(&app), [true, false, false]);
+        app.activate(&ctx, 2);
+        assert_eq!(shown(&app), [false, false, true]);
+        // A change of the active tab that bypasses `activate` is caught by the next frame.
+        app.active = 1;
+        app.load_active_tab(&ctx);
+        assert_eq!(shown(&app), [false, true, false]);
+        // Closing the shown tab leaves the one that takes its place shown.
+        app.tabs.remove(1);
+        app.active = 1;
+        app.load_active_tab(&ctx);
+        assert_eq!(shown(&app), [false, true]);
+    }
 
     /// review-views-6: when the opener thread is gone, the Open form that asked says so and
     /// takes input again instead of waiting on "Opening…" for ever.

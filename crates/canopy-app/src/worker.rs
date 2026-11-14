@@ -14,6 +14,8 @@ use canopy_core::{
     RepoState, Whitespace, WorkingStatus,
 };
 
+use crate::read_limit::Lane;
+
 /// Where a finished git-flow branch is pushed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlowPush {
@@ -866,6 +868,8 @@ pub struct Worker {
     ended: Receiver<()>,
     /// What [`Worker::start`] needs; `None` once the worker is running.
     unstarted: Option<Unstarted>,
+    /// The thread's way to the limit on background reads.
+    lane: Arc<Lane>,
 }
 
 /// What a worker that has not started yet remembers.
@@ -886,16 +890,31 @@ struct Running {
 }
 
 impl Worker {
-    /// Starts the thread (and a file watcher) for the repository at `path`.
+    /// Starts the thread (and a file watcher) for the repository at `path`. A test's worker
+    /// stands for the tab being shown: its reads skip the limit on background reads.
     #[cfg(test)]
     pub fn spawn(path: PathBuf, ctx: &egui::Context) -> Self {
-        let running = Self::spawn_threads(path, ctx);
+        let worker = Self::spawn_limited(path, ctx, crate::read_limit::shared());
+        worker.set_priority(true);
+        worker
+    }
+
+    /// [`Worker::spawn`] with its own limit on background reads, and not shown.
+    #[cfg(test)]
+    pub fn spawn_limited(
+        path: PathBuf,
+        ctx: &egui::Context,
+        limiter: Arc<crate::read_limit::Limiter>,
+    ) -> Self {
+        let lane = Arc::new(Lane::new(limiter));
+        let running = Self::spawn_threads(path, ctx, Arc::clone(&lane));
         Self {
             jobs: running.jobs,
             events: running.events,
             stop_watcher: running.stop_watcher,
             ended: running.ended,
             unstarted: None,
+            lane,
         }
     }
 
@@ -918,7 +937,21 @@ impl Worker {
             stop_watcher,
             ended,
             unstarted: Some(unstarted),
+            lane: Arc::new(Lane::new(crate::read_limit::shared())),
         }
+    }
+
+    /// Whether this tab is the one being shown. Its background reads (a refresh after a file
+    /// changed) never wait for the process-wide limit; every other tab's do. Takes effect at
+    /// once, also for a refresh already waiting.
+    pub fn set_priority(&self, shown: bool) {
+        self.lane.set_priority(shown);
+    }
+
+    /// Whether [`Worker::set_priority`] last said this is the shown tab.
+    #[cfg(test)]
+    pub fn is_shown(&self) -> bool {
+        self.lane.has_priority()
     }
 
     /// Whether the thread and the watcher run (a worker from [`Worker::spawn`] always does).
@@ -933,7 +966,8 @@ impl Worker {
             return false;
         };
         if unstarted.threads {
-            let running = Self::spawn_threads(unstarted.path, &unstarted.ctx);
+            let running =
+                Self::spawn_threads(unstarted.path, &unstarted.ctx, Arc::clone(&self.lane));
             self.jobs = running.jobs;
             self.events = running.events;
             self.stop_watcher = running.stop_watcher;
@@ -942,7 +976,7 @@ impl Worker {
         true
     }
 
-    fn spawn_threads(path: PathBuf, ctx: &egui::Context) -> Running {
+    fn spawn_threads(path: PathBuf, ctx: &egui::Context, lane: Arc<Lane>) -> Running {
         let (jobs, job_rx) = unbounded::<Job>();
         let (ev_tx, events) = unbounded::<Event>();
         let thread_ctx = ctx.clone();
@@ -954,7 +988,7 @@ impl Worker {
             .name(format!("repo:{}", path.display()))
             .spawn(move || {
                 let _ended = run_ended;
-                run(thread_path, job_rx, ev_tx, thread_ctx);
+                run(thread_path, job_rx, ev_tx, thread_ctx, &lane);
             });
         if let Err(e) = spawned {
             // Without a thread the tab would wait for its first snapshot forever: show why.
@@ -987,6 +1021,7 @@ impl Worker {
             stop_watcher,
             ended,
             unstarted: None,
+            lane: Arc::new(Lane::new(crate::read_limit::shared())),
         };
         (worker, ev_tx, job_rx)
     }
@@ -1042,6 +1077,8 @@ impl Drop for Worker {
     /// process waits for them before it exits ([`wait_for_threads`]). A test binary, which has no
     /// such moment, waits here.
     fn drop(&mut self) {
+        // A thread waiting for its turn to refresh stops waiting; the senders below then end it.
+        self.lane.close();
         // Dropping the senders ends the threads: the watcher's loop, then the repository
         // thread's once the watcher's copy of the jobs sender has gone too.
         drop(std::mem::replace(
@@ -1115,7 +1152,7 @@ impl Job {
     clippy::needless_pass_by_value,
     reason = "the thread owns its channels and context; dropping them on exit tells the other side"
 )]
-fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context) {
+fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context, lane: &Lane) {
     // Every event this thread logs carries the repository.
     let _repo = tracing::info_span!("repo", path = %path.display()).entered();
     // Before this thread can start a download: core asks the trust list at every fetch.
@@ -1676,6 +1713,24 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         if let Some(n) = want_full.filter(|n| *n > 0) {
             limit = n;
         }
+        // The read a file change or a timer asked for waits its turn among the tabs that are not
+        // shown (the shown tab's lane never waits); what follows an operation does not, nor do the
+        // reads above, which someone is waiting for. Nothing is locked while it waits, and a
+        // closed tab stops the wait and the thread.
+        let background = !mutated && (want_full.is_some() || want_status);
+        let _permit = if background {
+            let waited = Instant::now();
+            let Some(permit) = lane.acquire() else {
+                return;
+            };
+            let ms = u64::try_from(waited.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if ms > 0 {
+                tracing::debug!(ms, "background refresh waited for its turn");
+            }
+            Some(permit)
+        } else {
+            None
+        };
         if want_full.is_some() || mutated {
             let started = Instant::now();
             match snapshot_completing(&repo, limit, &emit, &allowed, &mut status_failure) {
@@ -2464,6 +2519,7 @@ mod tests {
     use super::{Job, Op, OpKind, PullStrategy, read_only_message, watch};
     use std::path::Path;
     use std::process::Command;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     /// The refusal says what is true: the program sources it found, that the configuration could
@@ -2574,6 +2630,125 @@ mod tests {
         let started = Instant::now();
         drop(worker);
         assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    /// A repository with one commit.
+    fn committed_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        git(dir.path(), &["config", "user.name", "Ada"]);
+        git(dir.path(), &["config", "user.email", "ada@example.com"]);
+        git(
+            dir.path(),
+            &["commit", "-q", "--allow-empty", "-m", "first"],
+        );
+        dir
+    }
+
+    /// Whether a read (a snapshot or a status) arrives within `within`.
+    fn reads_arrive(worker: &super::Worker, within: Duration) -> bool {
+        let end = Instant::now() + within;
+        while let Some(left) = end.checked_duration_since(Instant::now()) {
+            match worker.events.recv_timeout(left) {
+                Ok(super::Event::Snapshot(_) | super::Event::Status(_)) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+
+    /// #62: the refresh a tab nobody is looking at runs when the process-wide limit has room, and
+    /// the tab being shown never waits for it.
+    #[test]
+    fn a_background_refresh_waits_for_the_limit_and_a_shown_tab_does_not() {
+        let repo = committed_repo();
+        // No permit is ever free: only the priority bypass can let a read through.
+        let limiter = Arc::new(crate::read_limit::Limiter::new(0));
+        let worker = super::Worker::spawn_limited(
+            repo.path().to_path_buf(),
+            &egui::Context::default(),
+            Arc::clone(&limiter),
+        );
+        worker.send(Job::RefreshStatus);
+        worker.send(Job::Refresh(10));
+        assert!(
+            !reads_arrive(&worker, Duration::from_millis(500)),
+            "a background tab read without a permit"
+        );
+        assert_eq!(limiter.waiting(), 1, "its thread waits, once");
+
+        // The user switches to it: the read that waits starts now.
+        worker.set_priority(true);
+        assert!(
+            reads_arrive(&worker, Duration::from_secs(60)),
+            "the tab now shown did not read"
+        );
+        // And what it asks for next does not wait either.
+        worker.send(Job::RefreshStatus);
+        assert!(reads_arrive(&worker, Duration::from_secs(60)));
+
+        // Leaving the tab puts it back behind the limit.
+        worker.set_priority(false);
+        worker.send(Job::RefreshStatus);
+        assert!(!reads_arrive(&worker, Duration::from_millis(500)));
+    }
+
+    /// #62: what the user asked for is never held back by the limit: an operation answers, with
+    /// every permit taken, on a tab that is not shown.
+    #[test]
+    fn an_operation_and_an_on_demand_read_are_not_limited() {
+        let repo = committed_repo();
+        let limiter = Arc::new(crate::read_limit::Limiter::new(0));
+        let worker = super::Worker::spawn_limited(
+            repo.path().to_path_buf(),
+            &egui::Context::default(),
+            limiter,
+        );
+        worker.send(Job::Op(Op::StageAll));
+        worker.send(Job::HeadMessage);
+        let mut seen = Vec::new();
+        let end = Instant::now() + Duration::from_secs(60);
+        while seen.len() < 2 {
+            let Some(left) = end.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            match worker.events.recv_timeout(left) {
+                Ok(super::Event::OpFinished { .. }) => seen.push("operation"),
+                Ok(super::Event::HeadMessage(_)) => seen.push("head message"),
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        seen.sort_unstable();
+        assert_eq!(seen, ["head message", "operation"]);
+    }
+
+    /// #62: closing the tab of a thread that waits for a permit ends the thread, however long the
+    /// wait would have been.
+    #[test]
+    fn a_dropped_worker_waiting_for_a_permit_ends() {
+        let repo = committed_repo();
+        let limiter = Arc::new(crate::read_limit::Limiter::new(0));
+        let worker = super::Worker::spawn_limited(
+            repo.path().to_path_buf(),
+            &egui::Context::default(),
+            Arc::clone(&limiter),
+        );
+        worker.send(Job::Refresh(10));
+        let end = Instant::now() + Duration::from_secs(60);
+        while limiter.waiting() == 0 {
+            assert!(Instant::now() < end, "the thread never waited");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let ended = worker.ended.clone();
+        drop(worker);
+        assert_eq!(
+            ended.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected),
+            "the repository thread was still running after its worker was dropped"
+        );
+        assert_eq!(limiter.waiting(), 0);
     }
 
     /// Standard output of `git` in `dir`, without its final newline.
