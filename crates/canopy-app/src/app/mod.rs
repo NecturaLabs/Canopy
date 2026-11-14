@@ -84,6 +84,11 @@ pub const OVERLAYS: &[&str] = &[
     "file-history-commit",
     "search-changes",
     "clean-stale",
+    "clean-merged",
+    "update-from-base",
+    "flow-init",
+    "flow-start",
+    "flow-finish",
     "author-card",
     "request-filters",
     "request-sort",
@@ -1626,6 +1631,7 @@ pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
         settings::DiffPrefs::default(),
         worker,
     );
+    tab.snap_index = crate::tab::SnapIndex::new(&snap);
     tab.snap = Some(std::sync::Arc::new(snap));
     tab
 }

@@ -30,6 +30,16 @@ pub enum AppearanceChoice {
 #[derive(Debug, Clone)]
 pub enum Action {
     CleanStale,
+    /// List the branches merged into the base, to delete.
+    CleanMerged,
+    /// Bring the base branch's new commits into the checked-out branch.
+    UpdateFromBase,
+    /// Set up git-flow.
+    FlowInit,
+    /// Start a git-flow branch, of this kind when given.
+    FlowStart(Option<canopy_core::FlowKind>),
+    /// Finish a git-flow branch: this one, else the checked-out one.
+    FlowFinish(Option<String>),
     RememberSidebar {
         repo: PathBuf,
         closed: std::collections::BTreeSet<String>,

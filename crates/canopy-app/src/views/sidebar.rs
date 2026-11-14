@@ -242,34 +242,140 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             true,
             None,
         );
+        let flow = snap.workflow.flow.as_ref();
+        let head_flow = snap
+            .head
+            .branch
+            .as_deref()
+            .zip(flow)
+            .and_then(|(name, f)| f.classify(name).map(|(kind, _)| (kind, name.to_owned())));
         menu::context(&branches_header.response, |m| {
+            if m.item(icon::GIT_MERGE, "Clean up merged branches…").show(m.ui).clicked() {
+                actions.push(Action::CleanMerged);
+            }
             if m.item(icon::TRASH, "Clean up stale…").show(m.ui).clicked() {
                 actions.push(Action::CleanStale);
             }
+            m.separator();
+            if flow.is_none() {
+                if m.item(icon::TREE_STRUCTURE, "Set up git-flow…").show(m.ui).clicked() {
+                    actions.push(Action::FlowInit);
+                }
+            } else {
+                if m.item(icon::TREE_STRUCTURE, "Start a git-flow branch…").show(m.ui).clicked() {
+                    actions.push(Action::FlowStart(None));
+                }
+                if let Some((kind, name)) = &head_flow
+                    && m.item(icon::CHECK_CIRCLE, format!("Finish {} {name}…", kind.label().to_lowercase())).show(m.ui).clicked() {
+                        actions.push(Action::FlowFinish(Some(name.clone())));
+                    }
+            }
         });
         if branches_open {
+            let tree = &tab.snap_index.branch_tree;
+            let shown = crate::branch_tree::visible(tree, &tab.collapsed);
+            let merged = tab.merged.as_ref().and_then(|m| m.as_ref().ok());
+            let kept: &[String] = snap.workflow.base.as_ref().map_or(&[], |b| &b.protected);
             // One Tab stop for the branches: the checked-out one until the user moves.
             let first = usize::from(unborn.is_some());
-            let head = snap.branches.iter().position(|b| b.is_head).map(|i| i + first);
-            let list = Roving::new(ui.ctx(), ("sidebar-branches", &tab.path), snap.branches.len() + first, head.or(Some(0)));
+            let head = shown.iter().position(|s| matches!(&tree[s.node], crate::branch_tree::Node::Branch { index, .. } if snap.branches[*index].is_head)).map(|i| i + first);
+            let list = Roving::new(ui.ctx(), ("sidebar-branches", &tab.path), shown.len() + first, head.or(Some(0)));
+            let mut toggles: Vec<(String, bool)> = Vec::new();
             ui.scope(|ui| {
-            if snap.branches.len() + first > 0 { a11y::group(ui, Role::List, "Branches"); }
+            if shown.len() + first > 0 { a11y::group(ui, if tree.is_empty() { Role::List } else { Role::Tree }, "Branches"); }
             if let Some(name) = unborn {
                 let label = format!("{name} (no commits yet)");
                 let _ = row(ui, &Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, selected: false, current: true, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it"), detail: None, spoken: None }, Some((list, 0)));
             }
-            virtual_rows(ui, snap.branches.len(), row_h, |ui, i| {
-                let b = &snap.branches[i];
+            virtual_rows(ui, shown.len(), row_h, |ui, vi| {
+                let at = vi + first;
+                let (node, parent) = (&tree[shown[vi].node], shown[vi].parent);
+                let (b, depth, leaf) = match node {
+                    crate::branch_tree::Node::Folder { path, name, depth, branches, has_head, .. } => {
+                        let key = crate::branch_tree::folder_key(path);
+                        let mut open = !tab.collapsed.contains(&key);
+                        let glyph = if open { icon::FOLDER_OPEN } else { icon::FOLDER_SIMPLE };
+                        let spoken = format!("{path}, folder of {branches} {}", if *branches == 1 { "branch" } else { "branches" });
+                        let mut row = TreeRow::new(("branch-folder", path), *depth)
+                            .indent(section_tree_indent())
+                            .open(&mut open)
+                            .toggle_on_click(true)
+                            .icon(glyph)
+                            .label(name.clone())
+                            .trailing(branches.to_string())
+                            .accessible_name(spoken)
+                            .tooltip(path.clone())
+                            .roving(list, at);
+                        if *has_head {
+                            row = row.icon_tone(Tone::Accent);
+                        }
+                        let shown_row = row.show(ui);
+                        if shown_row.value == Some(TreeNav::FirstChild) {
+                            list.focus(ui.ctx(), at + 1);
+                        }
+                        if shown_row.value == Some(TreeNav::Parent)
+                            && let Some(parent) = parent {
+                                list.focus(ui.ctx(), parent + first);
+                            }
+                        if open == tab.collapsed.contains(&key) {
+                            toggles.push((key, open));
+                        }
+                        return;
+                    }
+                    crate::branch_tree::Node::Branch { index, name, depth } => (&snap.branches[*index], *depth, name),
+                };
                 // A branch checked out in another worktree (listed under Worktrees) lives there:
                 // git refuses to check it out here, so it opens that worktree instead.
                 let worktree = b.worktree.as_ref().filter(|_| !b.is_head);
-                let glyph = if b.is_head { icon::CHECK_CIRCLE } else { icon::GIT_BRANCH };
+                // The base and the long-lived branches never carry a merged marker.
+                let reason = merged.and_then(|m| m.reason(&b.name)).filter(|_| !kept.contains(&b.name));
                 let mut hint = b.upstream.as_ref().map_or_else(|| "No upstream".to_owned(), |u| format!("Tracks {u}"));
                 if let Some(w) = worktree {
                     hint = format!("Checked out in the worktree {} · {hint}", folder_name(w));
                 }
+                if let Some(r) = reason {
+                    hint = format!("{} · {hint}", r.label());
+                }
+                let (glyph, tone) = if b.is_head {
+                    (icon::CHECK_CIRCLE, Tone::Accent)
+                } else {
+                    match reason {
+                        Some(canopy_core::MergedReason::Reachable) => (icon::GIT_MERGE, Tone::Success),
+                        Some(canopy_core::MergedReason::SquashMerged) => (icon::GIT_MERGE, Tone::Warning),
+                        Some(canopy_core::MergedReason::UpstreamGone) => (icon::CLOUD_SLASH, Tone::Warning),
+                        None => (icon::GIT_BRANCH, Tone::Neutral),
+                    }
+                };
+                let mut notes: Vec<String> = Vec::new();
+                if b.ahead > 0 { notes.push(format!("↑{}", b.ahead)); }
+                if b.behind > 0 { notes.push(format!("↓{}", b.behind)); }
+                if let Some(r) = reason { notes.push(merged_word(r).to_owned()); }
+                let mut spoken = b.name.clone();
+                if let Some(r) = reason { spoken = format!("{spoken}, {}", merged_word(r)); }
                 let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::Branch(n) if *n == b.name), b.target);
-                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, selected, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint), detail: None, spoken: None }, Some((list, i + first)));
+                let mut tree_row = TreeRow::new(("branch", &b.name), depth)
+                    .indent(section_tree_indent())
+                    .icon(glyph)
+                    .icon_tone(tone)
+                    .label(leaf.clone())
+                    .accessible_name(spoken)
+                    .selected(selected)
+                    .tooltip(hint)
+                    .roving(list, at);
+                if !notes.is_empty() {
+                    tree_row = tree_row.trailing(notes.join(" "));
+                }
+                let shown_row = tree_row.show(ui);
+                // Left goes back up to the folder.
+                if shown_row.value == Some(TreeNav::Parent)
+                    && let Some(parent) = parent {
+                        list.focus(ui.ctx(), parent + first);
+                    }
+                let resp = shown_row.response;
+                if b.is_head {
+                    // Announced as the current branch, apart from being selected.
+                    ui.ctx().accesskit_node_builder(resp.id, |n| n.set_aria_current(egui::accesskit::AriaCurrent::True));
+                }
                 if resp.clicked()
                     && let Some(t) = b.target {
                         pick = Some(SidebarItem::Branch(b.name.clone()));
@@ -283,6 +389,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 }
                 let name = b.name.clone();
                 let is_head = b.is_head;
+                let head_base = is_head.then(|| snap.workflow.head_base.clone()).flatten();
+                let finish_kind = snap.workflow.flow.as_ref().and_then(|f| f.classify(&b.name)).map(|(kind, _)| kind);
                 let has_upstream = b.upstream.is_some();
                 let remotes: Vec<String> = snap.remotes.iter().map(|r| r.name.clone()).collect();
                 let worktree = worktree.cloned();
@@ -317,6 +425,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         }
                         m.separator();
                     }
+                    if let Some(base) = &head_base
+                        && m.item(icon::ARROW_FAT_LINES_DOWN, format!("Update from {base}…")).show(m.ui).clicked() {
+                            actions.push(Action::UpdateFromBase);
+                        }
+                    if let Some(kind) = finish_kind
+                        && m.item(icon::FLAG_CHECKERED, format!("Finish {}…", kind.label().to_lowercase())).show(m.ui).clicked() {
+                            actions.push(Action::FlowFinish(Some(name.clone())));
+                        }
                     if m.item(icon::GIT_BRANCH, "New branch from here…").show(m.ui).clicked() {
                         actions.push(Action::OpenDialog(Dialog::new_branch_at(crate::views::dialogs::Start::Branch(name.clone()))));
                     }
@@ -349,6 +465,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 });
             });
             });
+            for (key, open) in toggles {
+                tab.set_sidebar_open(&key, open);
+            }
         }
 
         // Worktrees: the repository's working folders, once `git worktree add` made a second.
@@ -677,6 +796,15 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             });
         }
         tab.sidebar_changed = false;
+    }
+}
+
+/// The short word a merged branch's row shows after its name; the tooltip has the full check.
+fn merged_word(reason: canopy_core::MergedReason) -> &'static str {
+    match reason {
+        canopy_core::MergedReason::Reachable => "merged",
+        canopy_core::MergedReason::UpstreamGone => "gone",
+        canopy_core::MergedReason::SquashMerged => "squash?",
     }
 }
 
@@ -1120,6 +1248,7 @@ mod tests {
             tags: vec![tag("v2"), tag("v1")],
             ..Default::default()
         }));
+        tab.snap_index = crate::tab::SnapIndex::new(tab.snap.as_deref().expect("snapshot"));
         let mut actions = Vec::new();
         let press = |key: egui::Key| {
             vec![egui::Event::Key {
@@ -1150,10 +1279,11 @@ mod tests {
             if key == egui::Key::Tab && path.len() == 2 {
                 let list = nodes
                     .iter()
-                    .find(|n| n.role() == Role::List && n.label() == Some("Branches"))
-                    .expect("the branches list");
+                    .find(|n| n.role() == Role::Tree && n.label() == Some("Branches"))
+                    .expect("the branches tree");
                 assert_eq!(list.label(), Some("Branches"));
-                assert_eq!(list.children().len(), 3, "the branch rows are its parts");
+                // main, zeta, the feature folder and feature/a inside it.
+                assert_eq!(list.children().len(), 4, "the branch rows are its parts");
             }
         }
         crate::ui::motion::set_reduced(false);
@@ -1175,6 +1305,61 @@ mod tests {
             "{path:?}"
         );
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// Branches group into folders by their prefixes: a folder is a tree item with its expanded
+    /// state, a click closes it (hiding what it holds) and the choice is saved with the
+    /// repository's other sidebar choices.
+    #[test]
+    fn a_prefix_folder_collapses_and_the_choice_is_remembered() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = tab_with(Vec::new());
+        let branch = |name: &str, is_head: bool| canopy_core::BranchInfo {
+            name: name.into(),
+            target: None,
+            is_head,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            worktree: None,
+        };
+        tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
+            branches: vec![
+                branch("main", true),
+                branch("feature/a", false),
+                branch("feature/b", false),
+            ],
+            ..Default::default()
+        }));
+        tab.snap_index = crate::tab::SnapIndex::new(tab.snap.as_deref().expect("snapshot"));
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let open = a11y::disclosure_name("feature, folder of 2 branches", true);
+        let folder = named(&nodes, &open).expect("the open folder");
+        assert_eq!(folder.role(), Role::TreeItem);
+        assert_eq!(folder.is_expanded(), Some(true));
+        // A branch is announced by its whole name; the branch without a prefix stays at the top.
+        assert!(named(&nodes, "feature/a").is_some() && named(&nodes, "feature/b").is_some());
+        assert!(named(&nodes, "main").is_some());
+
+        let at = center(folder);
+        let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert!(tab.collapsed.contains("folder:feature"));
+        assert!(
+            named(&nodes, "feature/a").is_none(),
+            "closed folders hide their branches"
+        );
+        let closed = a11y::disclosure_name("feature, folder of 2 branches", false);
+        assert!(named(&nodes, &closed).is_some());
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::RememberSidebar { closed, .. } if closed.contains("folder:feature"))),
+            "{actions:?}"
+        );
     }
 
     fn oid(n: u8) -> canopy_core::Oid {
@@ -1219,6 +1404,7 @@ mod tests {
             ],
             ..Default::default()
         }));
+        tab.snap_index = crate::tab::SnapIndex::new(tab.snap.as_deref().expect("snapshot"));
         tab
     }
 

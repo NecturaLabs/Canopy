@@ -21,7 +21,19 @@ pub(super) struct Screenshot {
     /// `--overlay trust-banner`: the prompt about the first tab's repository counts as answered
     /// with Don't trust, which leaves the banner.
     pub(super) declines_trust: bool,
+    /// `--overlay` of a dialog that reads the repository (flow, merged, update from base): it
+    /// opens, as the user would open it, once the first tab has its snapshot.
+    pub(super) pending_dialog: Option<&'static str>,
 }
+
+/// The `--overlay` names of the dialogs that open from the repository's own state.
+const REPOSITORY_DIALOGS: [&str; 5] = [
+    "clean-merged",
+    "update-from-base",
+    "flow-init",
+    "flow-start",
+    "flow-finish",
+];
 
 impl Screenshot {
     /// A picture saved to `path`, of `overlay` when that is one this module opens itself.
@@ -37,6 +49,8 @@ impl Screenshot {
             menu: overlay.and_then(MenuShot::of),
             long_message: overlay == Some("long-message"),
             declines_trust: overlay == Some("trust-banner"),
+            pending_dialog: overlay
+                .and_then(|name| REPOSITORY_DIALOGS.iter().copied().find(|d| *d == name)),
         }
     }
 }
@@ -208,6 +222,25 @@ impl CanopyApp {
             self.dialogs.close();
             self.apply(ctx, vec![Action::CleanStale]);
         }
+        if let Some(name) = self.screenshot.as_ref().and_then(|s| s.pending_dialog)
+            && self.tabs.get(self.active).is_some_and(|t| t.snap.is_some())
+        {
+            if let Some(shot) = &mut self.screenshot {
+                shot.pending_dialog = None;
+            }
+            let action = match name {
+                "clean-merged" => Action::CleanMerged,
+                "update-from-base" => Action::UpdateFromBase,
+                "flow-init" => Action::FlowInit,
+                "flow-start" => Action::FlowStart(None),
+                _ => Action::FlowFinish(None),
+            };
+            self.apply(ctx, vec![action]);
+            // A name for the picture, so the preview line shows what it will create.
+            if let Some(Dialog::FlowStart(form)) = self.dialogs.current_mut() {
+                "payments".clone_into(&mut form.name);
+            }
+        }
         if self.screenshot.as_ref().is_some_and(|s| s.long_message)
             && let Some(tab) = self.tabs.get_mut(self.active)
         {
@@ -266,7 +299,20 @@ impl CanopyApp {
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.stale_result.is_some());
+        let merged_ready = !self.dialogs.any(|d| matches!(d, Dialog::CleanMerged(_)))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.merged.is_some() && t.merged_applied == t.merged_serial);
+        let base_ready = !self.dialogs.any(|d| matches!(d, Dialog::UpdateFromBase(_)))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.base_result.is_some());
         let ready = insights_ready
+            && merged_ready
+            && base_ready
+            && shot.pending_dialog.is_none()
             && file_history_ready
             && search_ready
             && stale_ready

@@ -87,6 +87,19 @@ commits since the previous build.
   names with a password in its URL is shown without it; and a failure of an automatic fetch that
   is the same as the last one is shown once instead of at every interval.
 
+- Feature-branch workflows. The sidebar's Branches group names by their `/` prefixes into
+  collapsible folders (nested for deeper prefixes, open by default, remembered per repository,
+  with the Remotes tree's arrow keys). A branch merged into the base (`develop` in a git-flow
+  repository, else the remote's default branch) shows a merged marker, a branch whose upstream was
+  deleted shows `gone`, and one that looks squash-merged shows `squash?`; the tooltip names the
+  check, and the readings run once per change of branches, off the UI thread. "Clean up merged
+  branches…" deletes the proven ones with `git branch -d` and the unproven ones with `-D` only after
+  a confirmation, never the checked-out branch, the base or `main`, `master` and `develop`.
+  "Update from base" brings the base's new commits into the checked-out branch (fast-forward, or
+  Rebase (recommended) or Merge when they diverged, naming the files that would conflict). Set up,
+  Start and Finish for git-flow work from the palette and the Branches menu: Finish can rebase a
+  feature or bugfix onto develop first, merges a hotfix into an open release instead of develop,
+  and pushes the result (deleting the remote branch only when asked).
 - Windows uninstall help and purge confirmation now say that saved hosting tokens are deleted
   along with settings, logs and caches.
 - Finishing a single-commit git-flow feature or bugfix fast-forwards when possible, matching

@@ -14,9 +14,45 @@ use canopy_core::{
     RepoState, Whitespace, WorkingStatus,
 };
 
+/// Where a finished git-flow branch is pushed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlowPush {
+    pub remote: String,
+    /// Also delete the finished branch on the remote.
+    pub delete_remote: bool,
+}
+
 /// A request to change the repository. Each one is followed by a refresh.
 #[derive(Debug, Clone)]
 pub enum Op {
+    /// `git flow init`: write the configuration and create the development branch.
+    FlowInit(canopy_core::FlowConfig),
+    /// Start a git-flow branch of `kind` called `name` from `base` (the kind's own when `None`).
+    FlowStart {
+        kind: canopy_core::FlowKind,
+        name: String,
+        base: Option<String>,
+    },
+    /// Finish a git-flow branch, then push what it changed when `push` says so.
+    FlowFinish {
+        kind: canopy_core::FlowKind,
+        name: String,
+        options: canopy_core::FlowFinish,
+        push: Option<FlowPush>,
+    },
+    /// Delete merged branches (`Repo::remove_merged_branches`); `allow_unproven` is the user's
+    /// confirmation to force-delete the ones that only look merged.
+    CleanMerged {
+        bases: Vec<String>,
+        names: Vec<String>,
+        allow_unproven: bool,
+    },
+    /// Bring `tip`, the commit of `base` the user was shown, into the checked-out branch.
+    UpdateFromBase {
+        base: String,
+        strategy: PullStrategy,
+        tip: Oid,
+    },
     CleanStale {
         candidates: Vec<canopy_core::StaleCandidate>,
         older_than_days: u32,
@@ -220,7 +256,7 @@ impl Op {
             Self::Pull { .. } => OpKind::Pull,
             Self::Push { .. } | Self::PublishBranch { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
-            Self::Merge(..) | Self::Rebase(_) => OpKind::Merge,
+            Self::Merge(..) | Self::Rebase(_) | Self::UpdateFromBase { .. } => OpKind::Merge,
             Self::StashSave { .. } => OpKind::Stash,
             Self::StashApply { pop: true, .. } | Self::StashApplyCommit { pop: true, .. } => {
                 OpKind::Pop
@@ -235,6 +271,23 @@ impl Op {
     /// Present-tense label shown while the operation runs.
     pub fn label(&self) -> String {
         match self {
+            Self::FlowInit(_) => "Initialising git-flow".into(),
+            Self::FlowStart { kind, name, .. } => {
+                format!("Starting {} {name}", kind.label().to_lowercase())
+            }
+            Self::FlowFinish { kind, name, .. } => {
+                format!("Finishing {} {name}", kind.label().to_lowercase())
+            }
+            Self::CleanMerged { names, .. } => format!(
+                "Deleting {} merged {}",
+                names.len(),
+                if names.len() == 1 {
+                    "branch"
+                } else {
+                    "branches"
+                }
+            ),
+            Self::UpdateFromBase { base, .. } => format!("Updating from {base}"),
             Self::CleanStale { .. } => "Cleaning up stale worktrees and branches".into(),
             Self::Stage(_) | Self::StageAll => "Staging".into(),
             Self::AddIgnore { .. } => "Adding ignore rule".into(),
@@ -346,6 +399,18 @@ impl Op {
 /// Work for the repository thread.
 #[derive(Debug, Clone)]
 pub enum Job {
+    /// Which local branches are merged into `base`; the serial ties the reply to the newest
+    /// request. `squash` also runs the per-branch squash check.
+    MergedBranches {
+        serial: u64,
+        bases: Vec<String>,
+        squash: bool,
+    },
+    /// What bringing `base` into the checked-out branch would do (no fetch).
+    BaseCompare {
+        serial: u64,
+        base: String,
+    },
     StaleCandidates {
         serial: u64,
         older_than_days: u32,
@@ -464,6 +529,15 @@ pub struct DiffKey {
 /// hold them across a frame without copying.
 #[derive(Debug)]
 pub enum Event {
+    MergedBranches {
+        serial: u64,
+        bases: Vec<String>,
+        result: Result<Arc<[canopy_core::MergedBranch]>, String>,
+    },
+    BaseCompare {
+        serial: u64,
+        result: Result<canopy_core::PullPreview, String>,
+    },
     StaleCandidates {
         serial: u64,
         result: Result<Arc<[canopy_core::StaleCandidate]>, String>,
@@ -819,6 +893,8 @@ impl Job {
             Self::RetryDownloads => "retry-downloads",
             Self::Ignore { .. } => "ignore",
             Self::StaleCandidates { .. } => "stale_candidates",
+            Self::MergedBranches { .. } => "merged_branches",
+            Self::BaseCompare { .. } => "base_compare",
             Self::RefreshStatus => "status",
             Self::Details(_) => "details",
             Self::Signature(_) => "signature",
@@ -923,6 +999,27 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             let kind = job.kind();
             let started = Instant::now();
             match job {
+                Job::MergedBranches {
+                    serial,
+                    bases,
+                    squash,
+                } => {
+                    let result = repo
+                        .merged_branches_among(&bases, squash)
+                        .map(Arc::from)
+                        .map_err(|error| error.to_string());
+                    emit(Event::MergedBranches {
+                        serial,
+                        bases,
+                        result,
+                    });
+                }
+                Job::BaseCompare { serial, base } => {
+                    emit(Event::BaseCompare {
+                        serial,
+                        result: repo.compare_base(&base).map_err(|error| error.to_string()),
+                    });
+                }
                 Job::StaleCandidates {
                     serial,
                     older_than_days,
@@ -1189,7 +1286,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     let announce = op.announce();
                     // A pull, a rebase or a merge: it can autostash, and stopping on conflicts is
                     // not a failure.
-                    let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_) | Op::Merge(..));
+                    let integrates = matches!(
+                        op,
+                        Op::Pull { .. } | Op::Rebase(_) | Op::Merge(..) | Op::UpdateFromBase { .. }
+                    );
                     // A leftover autostash (an external `git merge --squash --autostash`) is
                     // not this operation's: only one that appears during it is reported.
                     let held_before = integrates && repo.autostash_held();
@@ -1596,6 +1696,56 @@ fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::
 fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Result<String> {
     let done = |r: canopy_core::Result<()>| r.map(|()| String::new());
     match op {
+        Op::FlowInit(config) => repo.flow_init(&config).map(|()| {
+            format!(
+                "git-flow is set up: {} and {}",
+                config.master, config.develop
+            )
+        }),
+        Op::FlowStart { kind, name, base } => repo
+            .flow_start(kind, &name, base.as_deref())
+            .map(|branch| format!("Started {branch}")),
+        Op::FlowFinish {
+            kind,
+            name,
+            options,
+            push,
+        } => {
+            let mut message = repo.flow_finish(kind, &name, &options)?;
+            if let Some(push) = push {
+                repo.flow_push(kind, &name, &push.remote, push.delete_remote, progress)
+                    .map_err(|e| {
+                        canopy_core::Error::Invalid(format!(
+                            "{message}, but pushing to {} failed: {e}",
+                            push.remote
+                        ))
+                    })?;
+                message = format!("{message} and pushed to {}", push.remote);
+            }
+            Ok(message)
+        }
+        Op::CleanMerged {
+            bases,
+            names,
+            allow_unproven,
+        } => {
+            let removal = repo.remove_merged_branches(&bases, &names, allow_unproven)?;
+            if removal.removed.is_empty() && !removal.failed.is_empty() {
+                return Err(canopy_core::Error::Invalid(removal.summary()));
+            }
+            Ok(removal.summary())
+        }
+        Op::UpdateFromBase {
+            base,
+            strategy,
+            tip,
+        } => repo.update_from_base(strategy, tip, progress).map(|out| {
+            if out.trim().is_empty() {
+                format!("Updated from {base}")
+            } else {
+                out
+            }
+        }),
         Op::CleanStale {
             candidates,
             older_than_days,
@@ -2020,7 +2170,7 @@ fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>, ended: Sender<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{Job, Op, OpKind, watch};
+    use super::{Job, Op, OpKind, PullStrategy, watch};
     use std::path::Path;
     use std::process::Command;
     use std::time::{Duration, Instant};
@@ -2037,6 +2187,22 @@ mod tests {
             .status()
             .is_ok_and(|s| s.success());
         assert!(ok, "git {args:?}");
+    }
+
+    /// Standard output of `git` in `dir`, without its final newline.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
     }
 
     /// Waits up to `limit` for a job matching `want`.
@@ -2093,6 +2259,215 @@ mod tests {
             folders,
             [linked.canonicalize()?, main.join(".git").canonicalize()?]
         );
+        Ok(())
+    }
+
+    /// The next finished operation's label and result, and nothing before it that matters.
+    fn next_finished(
+        worker: &super::Worker,
+    ) -> Result<(String, Result<String, String>), Box<dyn std::error::Error>> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let event = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?;
+            if let super::Event::OpFinished { label, result, .. } = event {
+                return Ok((label, result));
+            }
+        }
+    }
+
+    /// git-flow through the repository thread: set up, start, finish with a push, and the
+    /// snapshot that follows knows git-flow is set up and the branch is gone.
+    #[test]
+    fn git_flow_runs_through_the_worker_from_set_up_to_the_push()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use canopy_core::{FlowConfig, FlowFinish, FlowKind};
+        let dir = tempfile::tempdir()?;
+        let main = dir.path().join("main");
+        let remote = dir.path().join("remote.git");
+        std::fs::create_dir(&main)?;
+        std::fs::create_dir(&remote)?;
+        git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+        git(&main, &["init", "-q", "-b", "main"]);
+        for (key, value) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+        ] {
+            git(&main, &["config", key, value]);
+        }
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(
+            &main,
+            &["remote", "add", "origin", &remote.to_string_lossy()],
+        );
+        git(&main, &["push", "-q", "-u", "origin", "main"]);
+
+        crate::trust::add_for_tests(dir.path().to_path_buf());
+        let worker = super::Worker::spawn(main.clone(), &egui::Context::default());
+        let config = FlowConfig {
+            master: "main".into(),
+            ..FlowConfig::default()
+        };
+        worker.send(Job::Op(Op::FlowInit(config)));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(
+            result,
+            Ok("git-flow is set up: main and develop".to_owned())
+        );
+
+        worker.send(Job::Op(Op::FlowStart {
+            kind: FlowKind::Feature,
+            name: "login".into(),
+            base: None,
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(result, Ok("Started feature/login".to_owned()));
+        std::fs::write(main.join("login.txt"), "x\n")?;
+        git(&main, &["add", "login.txt"]);
+        git(&main, &["commit", "-q", "-m", "feat: login"]);
+
+        // A start that git-flow refuses comes back as its own sentence.
+        worker.send(Job::Op(Op::FlowStart {
+            kind: FlowKind::Feature,
+            name: "login".into(),
+            base: None,
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(
+            result,
+            Err("Branch 'feature/login' already exists.".to_owned())
+        );
+
+        worker.send(Job::Op(Op::FlowFinish {
+            kind: FlowKind::Feature,
+            name: "login".into(),
+            options: FlowFinish::default(),
+            push: Some(super::FlowPush {
+                remote: "origin".into(),
+                delete_remote: false,
+            }),
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(
+            result,
+            Ok("Merged feature/login into develop and pushed to origin".to_owned())
+        );
+        assert_eq!(
+            git_out(&main, &["rev-parse", "develop"]),
+            git_out(&remote, &["rev-parse", "develop"]),
+            "develop reached the remote"
+        );
+        assert_eq!(git_out(&main, &["branch", "--list", "feature/login"]), "");
+        assert_eq!(
+            git_out(&main, &["symbolic-ref", "--short", "HEAD"]),
+            "develop"
+        );
+
+        // The snapshot after the operation says git-flow is set up.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let snapshot = loop {
+            if let super::Event::Snapshot(s) = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+                && s.head.branch.as_deref() == Some("develop")
+            {
+                break s;
+            }
+        };
+        assert_eq!(
+            snapshot.workflow.flow.as_ref().map(|f| f.develop.as_str()),
+            Some("develop")
+        );
+        Ok(())
+    }
+
+    /// Cleaning up merged branches and updating from the base through the repository thread.
+    #[test]
+    fn merged_branches_and_the_base_update_run_through_the_worker()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let main = dir.path().join("main");
+        std::fs::create_dir(&main)?;
+        git(&main, &["init", "-q", "-b", "main"]);
+        for (key, value) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+        ] {
+            git(&main, &["config", key, value]);
+        }
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(&main, &["switch", "-q", "-c", "topic"]);
+        std::fs::write(main.join("topic.txt"), "topic\n")?;
+        git(&main, &["add", "topic.txt"]);
+        git(&main, &["commit", "-q", "-m", "feat: topic"]);
+        git(&main, &["switch", "-q", "main"]);
+        git(&main, &["merge", "-q", "--no-ff", "--no-edit", "topic"]);
+        git(&main, &["switch", "-q", "-c", "work", "main~1"]);
+        std::fs::write(main.join("mine.txt"), "mine\n")?;
+        git(&main, &["add", "mine.txt"]);
+        git(&main, &["commit", "-q", "-m", "feat: mine"]);
+
+        crate::trust::add_for_tests(dir.path().to_path_buf());
+        let worker = super::Worker::spawn(main.clone(), &egui::Context::default());
+        worker.send(Job::MergedBranches {
+            serial: 1,
+            bases: vec!["main".into()],
+            squash: true,
+        });
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let rows = loop {
+            if let super::Event::MergedBranches {
+                serial: 1, result, ..
+            } = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+            {
+                break result?;
+            }
+        };
+        let reasons: Vec<(&str, bool)> = rows
+            .iter()
+            .map(|b| (b.name.as_str(), b.reason.is_some()))
+            .collect();
+        assert_eq!(reasons, [("topic", true), ("work", false)]);
+
+        worker.send(Job::BaseCompare {
+            serial: 1,
+            base: "main".into(),
+        });
+        let preview = loop {
+            if let super::Event::BaseCompare { serial: 1, result } = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+            {
+                break result?;
+            }
+        };
+        assert_eq!((preview.ahead, preview.behind), (1, 2));
+
+        worker.send(Job::Op(Op::UpdateFromBase {
+            base: "main".into(),
+            strategy: PullStrategy::Rebase,
+            tip: preview.tip.ok_or("no tip")?,
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(git_out(&main, &["rev-list", "--count", "main..work"]), "1");
+        assert_eq!(git_out(&main, &["rev-list", "--count", "work..main"]), "0");
+
+        worker.send(Job::Op(Op::CleanMerged {
+            bases: vec!["main".into()],
+            names: vec!["topic".into()],
+            allow_unproven: false,
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(result, Ok("Deleted 1 branch".to_owned()));
+        assert_eq!(git_out(&main, &["branch", "--list", "topic"]), "");
         Ok(())
     }
 

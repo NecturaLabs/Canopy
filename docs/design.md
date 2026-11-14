@@ -664,6 +664,12 @@ The rest of the kit, each with the states `--overlay gallery` shows:
 - `Slider` picks a value along a range by dragging, clicking or the arrow keys.
 - `TreeRow` is a `ListRow` with an indent per level and a disclosure chevron (space is kept for it
   on leaves); Left collapses or asks for the parent, Right expands or asks for the first child.
+  The sidebar's Branches are a tree of these: folders for the `/` prefixes (branches first, then
+  folders, each by name; a folder with the checked-out branch inside has an accent icon and shows
+  the number of branches in it), leaf rows with the last segment of the name, a merge icon and the
+  word `merged`, `gone` or `squash?` after it for a merged branch (its tooltip has the check),
+  and the ahead and behind counts as mono text. Screen readers hear the whole name, "current
+  branch" and the marker.
 
 ### Text field
 
