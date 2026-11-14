@@ -1265,10 +1265,14 @@ pub struct RepoTab {
     /// The auto-fetch interval `next_fetch` was scheduled for; a different one reschedules.
     pub fetch_every: Option<Duration>,
     /// An automatic fetch was sent to the worker and has not finished, so it counts against the
-    /// limit on background fetches (`MAX_BACKGROUND_FETCHES`). Cleared by the end of a fetch nobody
-    /// asked for, and by a failure the worker reports, which also covers a fetch it never ran
-    /// (the repository would not open): a slot is never held for ever.
+    /// limit on background fetches (`MAX_BACKGROUND_FETCHES`). Cleared by the worker's answer to
+    /// that fetch (also when it could not run it, as when the repository would not open); a tab whose
+    /// worker thread has ended is not counted ([`Worker::is_alive`]).
     pub auto_fetch_pending: bool,
+    /// The quiet fetches sent and not yet finished, oldest first, each `true` when it was the
+    /// automatic one: the worker runs a tab's operations in order and answers each once, so the
+    /// first answer to a quiet fetch belongs to the first of these.
+    quiet_fetches: std::collections::VecDeque<bool>,
 }
 
 impl RepoTab {
@@ -1284,6 +1288,13 @@ impl RepoTab {
         let worker = Worker::spawn(path.clone(), ctx);
         worker.send(Job::Refresh(commit_limit));
         Self::with_worker(path, commit_limit, diff_prefs, worker)
+    }
+
+    /// Sends an automatic fetch (the timer's, never the user's) and counts it against the limit on
+    /// background fetches until it finishes.
+    pub fn auto_fetch(&mut self, prune: bool) {
+        self.auto_fetch_pending = true;
+        self.send_op(Op::Fetch { prune, quiet: true }, true);
     }
 
     /// Opens a tab that loads nothing until it is first shown ([`Self::load`]): no thread, no
@@ -1430,6 +1441,7 @@ impl RepoTab {
             next_fetch: None,
             fetch_every: None,
             auto_fetch_pending: false,
+            quiet_fetches: std::collections::VecDeque::new(),
         }
     }
 
@@ -1459,7 +1471,15 @@ impl RepoTab {
     }
 
     /// Queues a mutation.
-    pub fn op(&self, op: Op) {
+    pub fn op(&mut self, op: Op) {
+        self.send_op(op, false);
+    }
+
+    /// Queues `op`; a quiet fetch is remembered, to tell its end from the automatic one's.
+    fn send_op(&mut self, op: Op, automatic: bool) {
+        if matches!(op, Op::Fetch { quiet: true, .. }) && self.worker.is_started() {
+            self.quiet_fetches.push_back(automatic);
+        }
         self.worker.send(Job::Op(op));
     }
 
@@ -2913,7 +2933,10 @@ impl RepoTab {
                     self.running_kind = None;
                     self.progress = None;
                     // The end of a fetch nobody asked for gives its slot back, whatever the result.
-                    if kind == OpKind::Fetch && !announce {
+                    if kind == OpKind::Fetch
+                        && !announce
+                        && self.quiet_fetches.pop_front() == Some(true)
+                    {
                         self.auto_fetch_pending = false;
                     }
                     // Any operation can change the file being resolved (a save, a stash, a
@@ -3059,7 +3082,6 @@ impl RepoTab {
                     body: format!("{e} {}", crate::watcher::WATCH_FAILED_HINT),
                 }),
                 Event::Failed(e) => {
-                    self.auto_fetch_pending = false;
                     if self.snap.is_none() {
                         self.load_error = Some(e.clone());
                     }
@@ -5159,6 +5181,86 @@ mod tests {
         })?;
         tab.poll(&[]);
         assert_eq!(tab.next_fetch, None);
+        Ok(())
+    }
+
+    fn tab_with_detached_worker() -> (RepoTab, crossbeam_channel::Sender<Event>) {
+        let (worker, events, _jobs) = Worker::detached();
+        let tab = RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        (tab, events)
+    }
+
+    fn quiet_fetch_finished(
+        tab: &mut RepoTab,
+        events: &crossbeam_channel::Sender<Event>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        events.send(Event::OpFinished {
+            label: "Fetching".into(),
+            kind: OpKind::Fetch,
+            announce: false,
+            result: Ok(String::new()),
+        })?;
+        tab.poll(&[]);
+        Ok(())
+    }
+
+    /// #62: a slot of the limit on background fetches is given back by the end of that fetch only:
+    /// not by a read that failed meanwhile.
+    #[test]
+    fn an_unrelated_failure_does_not_free_the_automatic_fetch_slot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tab, events) = tab_with_detached_worker();
+        tab.auto_fetch(false);
+        assert!(tab.auto_fetch_pending);
+        events.send(Event::Failed("the status read failed".into()))?;
+        tab.poll(&[]);
+        assert!(tab.auto_fetch_pending, "a failed read freed the slot");
+        quiet_fetch_finished(&mut tab, &events)?;
+        assert!(!tab.auto_fetch_pending, "its own end frees it");
+        Ok(())
+    }
+
+    /// #62: the quiet fetch sent after a request is merged is not the automatic one, whichever
+    /// order the two were sent in.
+    #[test]
+    fn another_quiet_fetch_does_not_free_the_automatic_fetch_slot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut tab, events) = tab_with_detached_worker();
+        tab.op(Op::Fetch {
+            prune: false,
+            quiet: true,
+        });
+        tab.auto_fetch(false);
+        quiet_fetch_finished(&mut tab, &events)?;
+        assert!(
+            tab.auto_fetch_pending,
+            "the other fetch's end freed the slot"
+        );
+        quiet_fetch_finished(&mut tab, &events)?;
+        assert!(!tab.auto_fetch_pending);
+
+        tab.auto_fetch(false);
+        tab.op(Op::Fetch {
+            prune: false,
+            quiet: true,
+        });
+        quiet_fetch_finished(&mut tab, &events)?;
+        assert!(!tab.auto_fetch_pending, "the automatic one ended first");
+        quiet_fetch_finished(&mut tab, &events)?;
+        // A fetch the user started changes nothing about the count.
+        tab.auto_fetch(false);
+        tab.op(Op::Fetch {
+            prune: false,
+            quiet: false,
+        });
+        events.send(Event::OpFinished {
+            label: "Fetching".into(),
+            kind: OpKind::Fetch,
+            announce: true,
+            result: Ok(String::new()),
+        })?;
+        tab.poll(&[]);
+        assert!(tab.auto_fetch_pending);
         Ok(())
     }
 

@@ -2,7 +2,7 @@
 //! never calls git itself, so a slow disk, a large repository or the network cannot freeze it.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -820,6 +820,15 @@ fn next_step(
     }
 }
 
+/// Held by a repository thread: tells its worker the thread ended, however it ended.
+struct ThreadEnd(Arc<AtomicBool>);
+
+impl Drop for ThreadEnd {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 /// What a finished operation means for the tab, independent of its label's wording.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpKind {
@@ -874,6 +883,8 @@ pub struct Worker {
     unstarted: Option<Unstarted>,
     /// The thread's way to the limit on background reads.
     lane: Arc<Lane>,
+    /// Set when the repository thread has ended, however it ended ([`Worker::is_alive`]).
+    thread_ended: Arc<AtomicBool>,
 }
 
 /// What a worker that has not started yet remembers.
@@ -891,6 +902,7 @@ struct Running {
     events: Receiver<Event>,
     stop_watcher: Sender<()>,
     ended: Receiver<()>,
+    thread_ended: Arc<AtomicBool>,
 }
 
 impl Worker {
@@ -919,6 +931,7 @@ impl Worker {
             ended: running.ended,
             unstarted: None,
             lane,
+            thread_ended: running.thread_ended,
         }
     }
 
@@ -942,6 +955,7 @@ impl Worker {
             ended,
             unstarted: Some(unstarted),
             lane: Arc::new(Lane::new(crate::read_limit::shared())),
+            thread_ended: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -950,6 +964,17 @@ impl Worker {
     /// once, also for a refresh already waiting.
     pub fn set_priority(&self, shown: bool) {
         self.lane.set_priority(shown);
+    }
+
+    /// Whether the repository thread still runs (a worker that has not started counts as alive).
+    pub fn is_alive(&self) -> bool {
+        !self.thread_ended.load(Ordering::Acquire)
+    }
+
+    /// Marks the thread as ended, as a thread that died would.
+    #[cfg(test)]
+    pub fn end_thread_for_test(&self) {
+        self.thread_ended.store(true, Ordering::Release);
     }
 
     /// Whether [`Worker::set_priority`] last said this is the shown tab.
@@ -976,6 +1001,7 @@ impl Worker {
             self.events = running.events;
             self.stop_watcher = running.stop_watcher;
             self.ended = running.ended;
+            self.thread_ended = running.thread_ended;
         }
         true
     }
@@ -988,9 +1014,12 @@ impl Worker {
         let failed = ev_tx.clone();
         let (ended_tx, ended) = crossbeam_channel::bounded(0);
         let run_ended = ended_tx.clone();
+        let thread_ended = Arc::new(AtomicBool::new(false));
+        let end = ThreadEnd(Arc::clone(&thread_ended));
         let spawned = std::thread::Builder::new()
             .name(format!("repo:{}", path.display()))
             .spawn(move || {
+                let _end = end;
                 let _ended = run_ended;
                 run(thread_path, job_rx, ev_tx, thread_ctx, &lane);
             });
@@ -1009,6 +1038,7 @@ impl Worker {
             events,
             stop_watcher,
             ended,
+            thread_ended,
         }
     }
 
@@ -1026,6 +1056,7 @@ impl Worker {
             ended,
             unstarted: None,
             lane: Arc::new(Lane::new(crate::read_limit::shared())),
+            thread_ended: Arc::new(AtomicBool::new(false)),
         };
         (worker, ev_tx, job_rx)
     }
@@ -1206,6 +1237,18 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "cannot open the repository");
+                // An operation in the batch will not run: say so, so that whoever waits for its
+                // end (the tab, the limit on background fetches) is not left waiting.
+                for job in &rest {
+                    if let Job::Op(op) = job {
+                        emit(Event::OpFinished {
+                            label: op.label(),
+                            kind: op.kind(),
+                            announce: op.announce(),
+                            result: Err(e.to_string()),
+                        });
+                    }
+                }
                 emit(Event::Failed(e.to_string()));
                 continue;
             }
@@ -2583,8 +2626,10 @@ mod tests {
         worker.send(Job::RefreshStatus);
         assert!(reads_arrive(&worker, Duration::from_secs(60)));
 
-        // Leaving the tab puts it back behind the limit.
+        // Leaving the tab puts it back behind the limit. Reads still on their way are counted
+        // first, so only the one asked for now is judged.
         worker.set_priority(false);
+        while reads_arrive(&worker, Duration::from_millis(300)) {}
         worker.send(Job::RefreshStatus);
         assert!(!reads_arrive(&worker, Duration::from_millis(500)));
     }
@@ -2644,6 +2689,83 @@ mod tests {
             "the repository thread was still running after its worker was dropped"
         );
         assert_eq!(limiter.waiting(), 0);
+    }
+
+    /// #62: a batch the thread cannot run because the repository will not open still answers
+    /// every operation in it, so the tab that waits for the end of one (the limit on background
+    /// fetches counts it) hears of it.
+    #[test]
+    fn a_batch_that_cannot_run_reports_each_of_its_operations() {
+        // A folder that is not a repository: it will not open.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let worker = super::Worker::spawn(dir.path().to_path_buf(), &egui::Context::default());
+        worker.send(Job::Op(Op::Fetch {
+            prune: false,
+            quiet: true,
+        }));
+        worker.send(Job::Op(Op::StageAll));
+        let mut finished = Vec::new();
+        let mut failed = 0;
+        let end = Instant::now() + Duration::from_secs(60);
+        while finished.len() < 2 || failed < 1 {
+            let Some(left) = end.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            match worker.events.recv_timeout(left) {
+                Ok(super::Event::OpFinished {
+                    kind,
+                    announce,
+                    result,
+                    ..
+                }) => finished.push((kind, announce, result.is_err())),
+                Ok(super::Event::Failed(_)) => failed += 1,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        assert_eq!(
+            finished,
+            [(OpKind::Fetch, false, true), (OpKind::Other, false, true)],
+            "one answer per operation, in order, each an error"
+        );
+        assert!(failed >= 1, "the refresh error still reaches the tab");
+    }
+
+    /// #62: a worker whose repository thread has ended says so; one that never started, or runs,
+    /// does not.
+    #[test]
+    fn a_worker_knows_whether_its_thread_runs() {
+        let repo = committed_repo();
+        let worker = super::Worker::spawn(repo.path().to_path_buf(), &egui::Context::default());
+        assert!(worker.is_alive());
+        let (lazy, _events, _jobs) = super::Worker::lazy_detached(std::path::PathBuf::from("/x"));
+        assert!(lazy.is_alive(), "nothing started, nothing ended");
+        let (detached, _events, _jobs) = super::Worker::detached();
+        assert!(detached.is_alive());
+        detached.end_thread_for_test();
+        assert!(!detached.is_alive());
+    }
+
+    /// The guard a repository thread holds tells its worker when the thread ends, however it ends.
+    #[test]
+    fn the_thread_guard_reports_the_end_of_its_thread() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let flag = Arc::new(AtomicBool::new(false));
+        let guard = super::ThreadEnd(Arc::clone(&flag));
+        let thread = std::thread::spawn(move || {
+            let _guard = guard;
+        });
+        thread.join().expect("the thread ran");
+        assert!(flag.load(Ordering::Acquire), "a thread that returned");
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let guard = super::ThreadEnd(Arc::clone(&flag));
+        let panicking = std::thread::spawn(move || {
+            let _guard = guard;
+            std::panic::resume_unwind(Box::new("the repository thread died"));
+        });
+        assert!(panicking.join().is_err());
+        assert!(flag.load(Ordering::Acquire), "a thread that panicked");
     }
 
     /// Standard output of `git` in `dir`, without its final newline.

@@ -682,7 +682,8 @@ impl CanopyApp {
                 now.checked_add(first_fetch_delay(&t.path, every))
                     .unwrap_or(now)
             });
-            let idle = t.running.is_none() && t.trust != RepoTrust::Untrusted;
+            let idle =
+                t.running.is_none() && t.trust != RepoTrust::Untrusted && t.worker.is_alive();
             let has_remote = t.snap.as_ref().is_some_and(|s| !s.remotes.is_empty());
             if !idle || !has_remote {
                 // Busy, untrusted and not yet loaded tabs are looked at again by the poll, not
@@ -699,13 +700,20 @@ impl CanopyApp {
         // due time: the next pass starts it once a slot is free. No wake time is set for it, since
         // it is due already; a running fetch ends with an event that repaints, and the poll finds
         // it at the latest.
-        let free = MAX_BACKGROUND_FETCHES
-            .saturating_sub(self.tabs.iter().filter(|t| t.auto_fetch_pending).count());
+        // A tab whose repository thread has ended counts for nothing: its fetch will not finish.
+        let running = self
+            .tabs
+            .iter()
+            .filter(|t| t.auto_fetch_pending && t.worker.is_alive())
+            .count();
+        let free = MAX_BACKGROUND_FETCHES.saturating_sub(running);
         due_now.sort_by_key(|(due, _)| *due);
-        if due_now.len() > free {
+        let waiting = due_now.len().saturating_sub(free);
+        // Said when the number changes, not at every frame the limit holds tabs back.
+        if waiting_changed(&mut self.fetch_waiting, waiting) {
             tracing::debug!(
-                due = due_now.len(),
-                started = free,
+                waiting,
+                running,
                 "background fetches limited; the rest wait for a slot"
             );
         }
@@ -713,8 +721,7 @@ impl CanopyApp {
             let prune = self.settings.prune_for(&self.tabs[index].path);
             let t = &mut self.tabs[index];
             t.next_fetch = t.fetch_every.and_then(|every| now.checked_add(every));
-            t.auto_fetch_pending = true;
-            t.op(Op::Fetch { prune, quiet: true });
+            t.auto_fetch(prune);
         }
         any.then_some(wake)
     }
@@ -743,6 +750,16 @@ impl CanopyApp {
 /// handful however many tabs are open. A first estimate: the stress run (docs/stress-test.md,
 /// scenario d) is where to tune it.
 const MAX_BACKGROUND_FETCHES: usize = 4;
+
+/// Whether the number of tabs waiting for a fetch slot changed since it was last noted (`last`),
+/// and so is worth a log line.
+fn waiting_changed(last: &mut usize, now: usize) -> bool {
+    if *last == now {
+        return false;
+    }
+    *last = now;
+    true
+}
 
 /// The longest the frame loop sleeps between looks at auto-fetch. A tab that is busy, untrusted
 /// or not loaded yet has no wake time of its own and is found by this poll.
@@ -1169,9 +1186,10 @@ mod tests {
         );
     }
 
-    /// #62: a fetch the worker never ran (the repository would not open) does not hold its slot.
+    /// #62: a fetch the worker could not run (the repository would not open) is answered like
+    /// one that failed, which frees its slot; a failure of some other work does not.
     #[test]
-    fn a_failure_the_worker_reports_frees_the_fetch_slot() {
+    fn a_fetch_the_worker_could_not_run_frees_its_slot() {
         let now = Instant::now();
         let (mut app, queues, senders) = overdue_tabs(6, now);
         app.auto_fetch_at(now);
@@ -1180,9 +1198,78 @@ mod tests {
             .send(crate::worker::Event::Failed("cannot open".into()))
             .expect("the tab listens");
         app.tabs[1].poll(&[]);
+        assert!(
+            app.tabs[1].auto_fetch_pending,
+            "a failure alone frees nothing"
+        );
+        senders[1]
+            .send(crate::worker::Event::OpFinished {
+                label: "Fetching".into(),
+                kind: OpKind::Fetch,
+                announce: false,
+                result: Err("cannot open".into()),
+            })
+            .expect("the tab listens");
+        app.tabs[1].poll(&[]);
         assert!(!app.tabs[1].auto_fetch_pending);
         app.auto_fetch_at(now);
         assert_eq!(queues.iter().filter(|q| fetched(q)).count(), 1);
+    }
+
+    /// #62: a tab whose repository thread died mid-fetch gives its slot back: four of them must
+    /// not stop every other tab's automatic fetch for good.
+    #[test]
+    fn a_tab_whose_thread_ended_does_not_hold_a_fetch_slot() {
+        let now = Instant::now();
+        let (mut app, queues, _senders) = overdue_tabs(8, now);
+        app.auto_fetch_at(now);
+        assert_eq!(queues.iter().filter(|q| fetched(q)).count(), 4);
+        for tab in &app.tabs[..4] {
+            tab.worker.end_thread_for_test();
+        }
+        app.auto_fetch_at(now);
+        let next: Vec<usize> = (0..8).filter(|n| fetched(&queues[*n])).collect();
+        assert_eq!(
+            next,
+            [4, 5, 6, 7],
+            "the four dead tabs' slots went to others"
+        );
+        assert!(
+            app.tabs[..4].iter().all(|t| t.auto_fetch_pending),
+            "their own state is left alone"
+        );
+    }
+
+    /// #62: the line that says fetches are held back is written when the number held back
+    /// changes, not at every frame the limit holds them.
+    #[test]
+    fn the_held_back_fetches_are_logged_when_their_number_changes() {
+        let mut last = 0;
+        assert!(
+            !waiting_changed(&mut last, 0),
+            "nothing held back, nothing said"
+        );
+        assert!(waiting_changed(&mut last, 96));
+        for _ in 0..1000 {
+            assert!(
+                !waiting_changed(&mut last, 96),
+                "the same number, said already"
+            );
+        }
+        assert!(waiting_changed(&mut last, 95));
+        assert!(
+            waiting_changed(&mut last, 0),
+            "the end of the backlog is worth a line"
+        );
+        assert!(!waiting_changed(&mut last, 0));
+
+        // Frames with the same tabs held back leave the app's note unchanged.
+        let now = Instant::now();
+        let (mut app, _queues, _senders) = overdue_tabs(10, now);
+        app.auto_fetch_at(now);
+        assert_eq!(app.fetch_waiting, 6);
+        app.auto_fetch_at(now);
+        assert_eq!(app.fetch_waiting, 6);
     }
 
     #[test]
@@ -1251,8 +1338,25 @@ mod tests {
             queues.iter().all(|q| !fetched(q)),
             "the pass that turns it on fetches nothing"
         );
-        // Each tab's step is a share of the second half of the interval.
+        // The schedule itself is spread, whatever the limit on running fetches does later: the
+        // second half of the interval cut into 5 second buckets holds a few tabs each.
         let every = Duration::from_mins(5);
+        let mut buckets = [0_usize; 60];
+        for tab in &app.tabs {
+            let due = tab.next_fetch.expect("scheduled");
+            let after = due.duration_since(on);
+            assert!(after >= every / 2 && after < every, "{after:?}");
+            buckets[usize::try_from(after.as_secs() / 5).expect("small")] += 1;
+        }
+        assert!(
+            buckets.iter().all(|n| *n <= 8),
+            "tabs fall due in a herd: {buckets:?}"
+        );
+        assert!(
+            buckets.iter().filter(|n| **n > 0).count() >= 20,
+            "tabs fall due in a few buckets: {buckets:?}"
+        );
+        // Each tab's step is a share of the second half of the interval.
         let mut fired = Vec::new();
         for second in (0..=300).step_by(5) {
             app.auto_fetch_at(on + Duration::from_secs(second));
