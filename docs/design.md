@@ -1044,7 +1044,9 @@ right after the title, `XS` apart) whose tooltip shows on hover and on keyboard 
 Tooltips level; screen readers hear it as the mark's description. A remark about the row's current
 state (where git sets the value, why profile pictures are missing, a signing problem) is a second
 mark beside it, `HelpMark::notice`: an info glyph in `text_faint`, or a warning glyph in `warning`
-for a problem, announced as "Note on …" or "Warning on …"; it never adds a line under the help, and
+for a problem, announced as "Note on …" or "Warning on …". Beside a help mark the info remark is
+set apart (`HelpMark::apart`): drawn in `accent`, a further `XS` from the "?", so the two never look
+alike; it never adds a line under the help, and
 an action it suggests is a ghost button among the row's controls. Settings → Keyboard shows one key column of the cheatsheet's
 keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo
 and a tick; hover is a neutral hairline. Cards fill the row in whole columns and reflow with the

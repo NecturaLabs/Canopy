@@ -303,8 +303,14 @@ const CENTER_LIST_MIN_HEIGHT: f32 = 80.0;
 fn center_list_height(ctx: &egui::Context, used: f32) -> f32 {
     let pad = f32::from(nectura_ui::points_i8(theme::metrics().card_pad));
     // The panel opens above the bell in the status bar, so the card stack's room applies.
-    let room = ctx.content_rect().height() - theme::metrics().status_bar_height - 2.0 * theme::LG;
+    let room = room_above_status_bar(ctx.content_rect().height());
     (room - 2.0 * pad - used).clamp(CENTER_LIST_MIN_HEIGHT, CENTER_LIST_HEIGHT)
+}
+
+/// The height a panel above the status bar may take in a window `screen_height` tall, keeping
+/// `LG` above and below it.
+fn room_above_status_bar(screen_height: f32) -> f32 {
+    screen_height - theme::metrics().status_bar_height - 2.0 * theme::LG
 }
 /// The lines of a notification's text the center shows; the rest is in its tooltip.
 const CENTER_BODY_LINES: usize = 4;
@@ -854,7 +860,7 @@ impl Toasts {
                 );
                 // An Area begins with its previous frame's size. Do not feed that shrunken
                 // height back into the scroll viewport: arrivals and disclosures must grow.
-                let max_height = (screen.height() - m.status_bar_height - 2.0 * theme::LG).max(0.0);
+                let max_height = room_above_status_bar(screen.height()).max(0.0);
                 ui.set_max_height(max_height);
                 ui.spacing_mut().item_spacing.y = theme::SM;
                 ui.spacing_mut().scroll = theme::solid_scroll();
@@ -2341,9 +2347,9 @@ mod tests {
             out.textures_delta.clear();
         }
         let pad = f32::from(nectura_ui::points_i8(theme::metrics().card_pad));
-        let margin = theme::LG;
         assert!(
-            panel.height() + 2.0 * pad <= screen.height() - 2.0 * margin,
+            panel.height() + 2.0 * pad
+                <= screen.height() - theme::metrics().status_bar_height - 2.0 * theme::LG,
             "the panel ({} + padding) leaves no margin in {}",
             panel.height(),
             screen.height()
