@@ -465,8 +465,11 @@ cmd_open() {
   local watches instances
   watches=$(read_first /proc/sys/fs/inotify/max_user_watches)
   instances=$(read_first /proc/sys/fs/inotify/max_user_instances)
-  if [[ $instances =~ ^[0-9]+$ ]] && ((instances < ${#paths[@]} + 100)); then
-    info "warning: fs.inotify.max_user_instances is $instances; each tab needs one. Raise it:"
+  # Canopy needs one instance for all its tabs; other programs of the user hold some too, so
+  # warn below the kernel's default.
+  local min_instances=128
+  if [[ $instances =~ ^[0-9]+$ ]] && ((instances < min_instances)); then
+    info "warning: fs.inotify.max_user_instances is $instances; Canopy needs one, other programs more. Raise it:"
     info "  sudo sysctl fs.inotify.max_user_instances=1024"
   fi
   if [[ $watches =~ ^[0-9]+$ ]] && ((watches < 1000000)); then

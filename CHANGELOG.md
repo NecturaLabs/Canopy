@@ -211,6 +211,10 @@ commits since the previous build.
 
 ### Changed
 
+- One file watcher serves every open repository instead of one per tab, so many open tabs no
+  longer run into the system's limit on watcher instances (128 per user by default on Linux). A
+  tab whose files cannot be watched says so once in the notification center: changes on disk then
+  show after a Refresh.
 - Background fetching no longer fires in every tab at the same moment. When a tab first has
   background fetching on (it opens, or you turn the setting on or change the interval with tabs
   open), its first fetch comes between half the interval and a whole one later, a different time

@@ -14,7 +14,7 @@ report transport).
 │                     │  ▲                                            │
 │               Job   │  │  Event        (crossbeam channels)     │
 │                     ▼  │                                            │
-│       worker.rs: one thread per shown repository + file watcher    │
+│      worker.rs: one thread per shown repository; one watcher       │
 └─────────────────────────────┬───────────────────────────────────────┘
                               │ plain function calls
 ┌──────────────────────────── canopy-core ────────────────────────────┐
@@ -118,7 +118,8 @@ thread.
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`: waits until the window is final, keeps the pointer out of the picture (`raw_input_hook` drops pointer input), opens the dialog overlays and, for `--overlay menu-*`, a context menu by a synthetic right click on the widget it finds by its AccessKit name. |
 | `app/demo_requests.rs` | Invented pull and merge requests the requests view shows under `--screenshot --demo-requests`, each row carrying a rollup as with a token; never reachable in a normal run, no network. |
 | `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
-| `worker.rs` | Reads Git's pending merge message off the UI thread, applied only to an empty composer still in a merge. One background thread per repository whose tab has been shown (a `Worker::lazy` of a tab never shown has none, starts with `start`, and drops, with a WARN, any job sent to it before); `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; debounced file watcher. `Job::PushTarget` answers with `Event::PushTarget` (where a force push would go, for its confirmation). Dropping a `Worker` (closing its tab) stops both threads without waiting; the app's exit waits for them all at once (`wait_for_threads`), so no thread is still inside libgit2 or OpenSSL when the process tears them down. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it, but only in a trusted folder; elsewhere it sends `Event::DownloadsRefused` and fails the read with a message that says why. Every batch tells the tab whether the repository is trusted (`Event::Trust`, with the version of the trusted list that said so), and every `Job::Op` asks the list again when it starts: in a repository that is not trusted it ends in `OpFinished` with `READ_ONLY` and runs nothing (ADR 0014). |
+| `worker.rs` | Reads Git's pending merge message off the UI thread, applied only to an empty composer still in a merge. One background thread per repository whose tab has been shown (a `Worker::lazy` of a tab never shown has none, starts with `start`, and drops, with a WARN, any job sent to it before); `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; its file watching is `watcher.rs`'s. `Job::PushTarget` answers with `Event::PushTarget` (where a force push would go, for its confirmation). Dropping a `Worker` (closing its tab) ends its thread and its watch on the shared watcher thread without waiting; the app's exit waits for them all at once (`wait_for_threads`), so no thread is still inside libgit2 or OpenSSL when the process tears them down. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it, but only in a trusted folder; elsewhere it sends `Event::DownloadsRefused` and fails the read with a message that says why. Every batch tells the tab whether the repository is trusted (`Event::Trust`, with the version of the trusted list that said so), and every `Job::Op` asks the list again when it starts: in a repository that is not trusted it ends in `OpFinished` with `READ_ONLY` and runs nothing (ADR 0014). |
+| `watcher.rs` | One `notify` watcher on one thread for every open repository: watches only the outermost wanted folders, routes each change to the tabs it belongs to, debounces per tab and sends `Job::Refresh` or `Job::RefreshStatus`; a folder it cannot watch is reported once (`Job::WatchFailed`). See "File watching and refresh". |
 | `identity_worker.rs` | Serial background jobs for identity and supported Git configuration writes, including global recommendations; events refresh identity, Settings facts and affected tabs, with Git errors surfaced as toasts. |
 | `avatars.rs` | Twelve-hour persistent thumbnail and no-picture cache that classifies misses (about the author: cached; repository refused: the tab stops asking; unknown commit: another of the author's is tried, at most 1024 remembered; unreachable: a 10-minute pause), the off switch and budget checked before every provider request, `explain` (why pictures are missing, for the views), serialized across the per-host picture threads (which pull request jobs never wait for), an hourly lookup budget that leaves GitHub's anonymous quota to pull requests, files unused for 30 days deleted at start-up, with bounded PNG/JPEG decoding off the UI thread and a per-tab texture cache that drops the least recently shown picture past 256. |
 | `hosting.rs` | A background thread per repository tab for pull and merge requests through `canopy-hosting` (`HostJob`). `resolve_token` asks the CLI once per thread (ADR 0017) and `HostEvent::Cli` carries what it said (`CliState`: the account and scopes, or why no credential); nothing else supplies a token and nothing is saved. `check_cli` runs the same question on its own thread for Settings → Accounts (at most four at once; the page shows up to four hosts of open repositories), which has no tab for a host such as gitlab.com. `remove_saved_tokens` deletes the `tokens.json` of earlier builds at start. With a CLI sign-in, a list refresh also fetches the rows' checks and reviews (`add_rollup`, one query after the jobs queued behind the list, on a lane of its own so later jobs never wait for it, paused until a rate limit resets, an hour at most) and sends the list twice, first without them, dropping the checks of a list a newer one replaced. Dropping the `HostWorker` turns off its switch, which the thread's client and its author-picture thread's client both carry, so a job under way sends nothing more. |
@@ -419,11 +420,25 @@ Runtime requirement: `git` 2.30 or newer on `PATH`.
 
 ## File watching and refresh
 
-`worker.rs` runs a `notify` watcher on the working tree (which includes `.git`). Events are
-debounced (350 ms of quiet, so a checkout or a build yields one refresh) and classified: a change
-inside `.git` other than `objects/`, `logs/` and `*.lock` files asks for a full snapshot
-(`Job::Refresh`), a change to a file that is not ignored by `.gitignore` asks only for a status
-refresh (`Job::RefreshStatus`), and changes to ignored paths such as `target/` are dropped. The
+`watcher.rs` runs one `notify` watcher (one inotify instance on Linux) on one thread for every
+open repository: each tab's working tree (which includes `.git`) and its git folders outside it (a
+linked worktree's or submodule's), without following symbolic links. Opening a repository and
+registering its watches happen on that thread. Recursive watches never overlap: `notify` shares
+one inotify watch per folder, so removing a nested watch would remove the outer one's folders, and
+the thread watches only the outermost wanted folders (a submodule open in its own tab is covered by
+its parent's watch). When that set changes, tabs whose folders went unwatched for a moment get a
+full refresh. A change is routed to every tab whose folder holds it, the deepest folder of a tab
+deciding, and debounced per tab (350 ms of quiet, so a checkout or a build yields one refresh). It
+is classified: a change inside a git folder other than `objects/`, `logs/`, `*.lock` and fsmonitor
+files asks for a full snapshot (`Job::Refresh`), a change to a file that is not ignored asks only
+for a status refresh (`Job::RefreshStatus`), and changes to ignored paths such as `target/` are
+dropped; when the system drops queued changes (inotify overflow) every tab reads everything again.
+A folder that cannot be watched (the inotify limits) is unwatched again, the wanted folders inside it
+are watched on their own, and it is tried again when the set of tabs changes; a folder created later
+that cannot be watched is reported the same way. Its tab says once, in the notification center,
+that changes on disk show after a Refresh (`Job::WatchFailed`). A tab registered more than a
+second after it asked (behind other repositories' recursive walks) reads everything again, and a
+panic inside the watcher tells the tabs watched then and lets the next repository start afresh. The
 worker coalesces queued refreshes, so a burst of requests costs one read. Canopy also refreshes when its window regains focus,
 which covers file systems where watching is unreliable (network mounts, some WSL setups).
 
