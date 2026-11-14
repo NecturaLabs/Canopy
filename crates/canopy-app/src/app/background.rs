@@ -644,6 +644,11 @@ impl CanopyApp {
     /// session, or the setting turned on with many tabs open) spread their first fetches over the
     /// second half of the interval instead of falling due in one frame. After a fetch the tab
     /// waits one whole interval.
+    ///
+    /// At most [`MAX_BACKGROUND_FETCHES`] of these fetches run at once across all tabs, so the
+    /// processes, connections and disk reads they cost do not grow with the number of tabs. A tab
+    /// that falls due while they are all taken waits, and starts when one finishes: the longest
+    /// waiting first. A fetch the user starts is not counted and never waits.
     pub(super) fn auto_fetch(&mut self, ctx: &egui::Context) {
         if self.screenshot.is_some() {
             return;
@@ -658,7 +663,9 @@ impl CanopyApp {
     fn auto_fetch_at(&mut self, now: Instant) -> Option<Duration> {
         let mut any = false;
         let mut wake = AUTO_FETCH_POLL;
-        for t in &mut self.tabs {
+        // Tabs whose fetch is due, with when it fell due.
+        let mut due_now: Vec<(Instant, usize)> = Vec::new();
+        for (index, t) in self.tabs.iter_mut().enumerate() {
             let minutes = self.settings.auto_fetch_for(&t.path);
             if minutes == 0 {
                 t.next_fetch = None;
@@ -683,12 +690,31 @@ impl CanopyApp {
                 continue;
             }
             if now >= due {
-                t.next_fetch = now.checked_add(every);
-                let prune = self.settings.prune_for(&t.path);
-                t.op(Op::Fetch { prune, quiet: true });
+                due_now.push((due, index));
             } else {
                 wake = wake.min(next_due(now, due));
             }
+        }
+        // The tabs that have waited longest go first, and a tab the limit holds back keeps its
+        // due time: the next pass starts it once a slot is free. No wake time is set for it, since
+        // it is due already; a running fetch ends with an event that repaints, and the poll finds
+        // it at the latest.
+        let free = MAX_BACKGROUND_FETCHES
+            .saturating_sub(self.tabs.iter().filter(|t| t.auto_fetch_pending).count());
+        due_now.sort_by_key(|(due, _)| *due);
+        if due_now.len() > free {
+            tracing::debug!(
+                due = due_now.len(),
+                started = free,
+                "background fetches limited; the rest wait for a slot"
+            );
+        }
+        for (_, index) in due_now.into_iter().take(free) {
+            let prune = self.settings.prune_for(&self.tabs[index].path);
+            let t = &mut self.tabs[index];
+            t.next_fetch = t.fetch_every.and_then(|every| now.checked_add(every));
+            t.auto_fetch_pending = true;
+            t.op(Op::Fetch { prune, quiet: true });
         }
         any.then_some(wake)
     }
@@ -709,6 +735,14 @@ impl CanopyApp {
         }
     }
 }
+
+/// How many automatic fetches run at once across all tabs. A fetch waits on the network and the
+/// server, not on this machine's cores, so the number does not follow them. Four is enough to
+/// overlap the waiting, so a long session's fetches finish in a few rounds, and keeps the `git`
+/// and `ssh` processes, connections and pack indexing that background fetching causes to a
+/// handful however many tabs are open. A first estimate: the stress run (docs/stress-test.md,
+/// scenario d) is where to tune it.
+const MAX_BACKGROUND_FETCHES: usize = 4;
 
 /// The longest the frame loop sleeps between looks at auto-fetch. A tab that is busy, untrusted
 /// or not loaded yet has no wake time of its own and is found by this poll.
@@ -759,6 +793,8 @@ mod tests {
 
     use super::*;
     use crate::settings::{DiffPrefs, NotificationPrefs};
+    use crate::worker::OpKind;
+    use crossbeam_channel::Sender;
 
     fn identity(name: &str, email: &str, explicit: bool) -> Identity {
         let field = |value: &str| Field {
@@ -975,7 +1011,15 @@ mod tests {
     }
 
     fn tab_with_remote(path: &str) -> (RepoTab, Receiver<Job>) {
-        let (worker, _events, jobs) = crate::worker::Worker::detached();
+        let (tab, jobs, _events) = tab_with_remote_events(path);
+        (tab, jobs)
+    }
+
+    /// [`tab_with_remote`], and the sender for the events its worker would send.
+    fn tab_with_remote_events(
+        path: &str,
+    ) -> (RepoTab, Receiver<Job>, Sender<crate::worker::Event>) {
+        let (worker, events, jobs) = crate::worker::Worker::detached();
         let snap = canopy_core::RepoSnapshot {
             remotes: vec![canopy_core::RemoteInfo {
                 name: "origin".into(),
@@ -987,7 +1031,7 @@ mod tests {
         let mut tab = test_tab(snap);
         tab.path = path.into();
         tab.worker = worker;
-        (tab, jobs)
+        (tab, jobs, events)
     }
 
     fn fetched(queue: &Receiver<Job>) -> bool {
@@ -1007,6 +1051,138 @@ mod tests {
             queues.push(jobs);
         }
         (app, queues)
+    }
+
+    /// `count` tabs with a remote, all overdue for their automatic fetch, the first one the most.
+    fn overdue_tabs(
+        count: usize,
+        now: Instant,
+    ) -> (
+        CanopyApp,
+        Vec<Receiver<Job>>,
+        Vec<Sender<crate::worker::Event>>,
+    ) {
+        let mut app = test_app();
+        app.settings.auto_fetch_minutes = 5;
+        let (mut queues, mut senders) = (Vec::new(), Vec::new());
+        for n in 0..count {
+            let (mut tab, jobs, events) = tab_with_remote_events(&format!("/repos/project-{n:03}"));
+            tab.fetch_every = Some(Duration::from_mins(5));
+            let overdue = Duration::from_secs(u64::try_from(count - n).expect("small") * 10);
+            tab.next_fetch = Some(now.checked_sub(overdue).expect("in the past"));
+            app.tabs.push(tab);
+            queues.push(jobs);
+            senders.push(events);
+        }
+        (app, queues, senders)
+    }
+
+    fn finish_fetch(
+        app: &mut CanopyApp,
+        senders: &[Sender<crate::worker::Event>],
+        index: usize,
+        announce: bool,
+    ) {
+        senders[index]
+            .send(crate::worker::Event::OpFinished {
+                label: "Fetching".into(),
+                kind: OpKind::Fetch,
+                announce,
+                result: Ok(String::new()),
+            })
+            .expect("the tab listens");
+        app.tabs[index].poll(&[]);
+    }
+
+    /// #62: with many tabs due, the background fetch starts only up to its limit, the tabs it
+    /// skips keep their due time, and the frame loop is not asked to wake at once for them.
+    #[test]
+    fn auto_fetch_starts_at_most_the_limit_and_leaves_the_rest_due() {
+        let now = Instant::now();
+        let (mut app, queues, _senders) = overdue_tabs(10, now);
+        let due: Vec<_> = app.tabs.iter().map(|t| t.next_fetch).collect();
+        let wake = app.auto_fetch_at(now).expect("auto-fetch is on");
+        let started: Vec<_> = queues.iter().map(fetched).collect();
+        assert_eq!(
+            started.iter().filter(|s| **s).count(),
+            MAX_BACKGROUND_FETCHES,
+            "{started:?}"
+        );
+        assert!(
+            started[..MAX_BACKGROUND_FETCHES].iter().all(|s| *s),
+            "the tabs that waited longest start first: {started:?}"
+        );
+        for (n, tab) in app.tabs.iter().enumerate().skip(MAX_BACKGROUND_FETCHES) {
+            assert_eq!(tab.next_fetch, due[n], "tab {n} keeps its due time");
+            assert!(!tab.auto_fetch_pending);
+        }
+        assert_eq!(
+            wake, AUTO_FETCH_POLL,
+            "tabs that are overdue but waiting for a slot do not wake the loop at once"
+        );
+        // Asking again changes nothing while those fetches run.
+        app.auto_fetch_at(now + Duration::from_secs(1));
+        assert!(
+            queues.iter().all(Receiver::is_empty),
+            "no fifth fetch started"
+        );
+    }
+
+    /// #62: a finished fetch frees a slot for the tab that has waited longest, and every tab
+    /// gets its fetch, never more than the limit at once.
+    #[test]
+    fn a_finished_background_fetch_frees_a_slot_for_the_next_tab() {
+        let now = Instant::now();
+        let (mut app, queues, senders) = overdue_tabs(10, now);
+        app.auto_fetch_at(now);
+        let mut started: Vec<usize> = (0..10).filter(|n| fetched(&queues[*n])).collect();
+        assert_eq!(started, [0, 1, 2, 3]);
+
+        // A fetch the user ran by hand and finished does not free a slot of the timer's.
+        finish_fetch(&mut app, &senders, 0, true);
+        app.auto_fetch_at(now);
+        assert!(queues.iter().all(Receiver::is_empty), "still four running");
+        finish_fetch(&mut app, &senders, 0, false);
+        finish_fetch(&mut app, &senders, 2, false);
+        app.auto_fetch_at(now);
+        let next: Vec<usize> = (0..10).filter(|n| fetched(&queues[*n])).collect();
+        assert_eq!(next, [4, 5], "two slots, the two longest waiting");
+        started.extend(next);
+
+        // The rest follow one by one until every tab has fetched once.
+        let mut running = vec![1, 3, 4, 5];
+        while started.len() < 10 {
+            let done = running.remove(0);
+            finish_fetch(&mut app, &senders, done, false);
+            app.auto_fetch_at(now);
+            let begun: Vec<usize> = (0..10).filter(|n| fetched(&queues[*n])).collect();
+            assert_eq!(begun.len(), 1, "one slot, one fetch");
+            running.extend(&begun);
+            started.extend(begun);
+            assert!(running.len() <= MAX_BACKGROUND_FETCHES);
+        }
+        started.sort_unstable();
+        assert_eq!(
+            started,
+            (0..10).collect::<Vec<_>>(),
+            "each tab fetched once"
+        );
+    }
+
+    /// #62: a fetch the worker never ran (the repository would not open) does not hold its slot.
+    #[test]
+    fn a_failure_the_worker_reports_frees_the_fetch_slot() {
+        let now = Instant::now();
+        let (mut app, queues, senders) = overdue_tabs(6, now);
+        app.auto_fetch_at(now);
+        assert_eq!(queues.iter().filter(|q| fetched(q)).count(), 4);
+        senders[1]
+            .send(crate::worker::Event::Failed("cannot open".into()))
+            .expect("the tab listens");
+        app.tabs[1].poll(&[]);
+        assert!(!app.tabs[1].auto_fetch_pending);
+        app.auto_fetch_at(now);
+        assert_eq!(queues.iter().filter(|q| fetched(q)).count(), 1);
     }
 
     #[test]
@@ -1082,6 +1258,10 @@ mod tests {
             app.auto_fetch_at(on + Duration::from_secs(second));
             let now_fired = queues.iter().filter(|q| fetched(q)).count();
             fired.push(now_fired);
+            // Each fetch is over before the next step (the limit on running ones is tested apart).
+            for tab in &mut app.tabs {
+                tab.auto_fetch_pending = false;
+            }
         }
         assert_eq!(fired.iter().sum::<usize>(), 40, "every tab fetched once");
         assert_eq!(

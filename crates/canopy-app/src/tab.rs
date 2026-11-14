@@ -1264,6 +1264,11 @@ pub struct RepoTab {
     pub next_fetch: Option<Instant>,
     /// The auto-fetch interval `next_fetch` was scheduled for; a different one reschedules.
     pub fetch_every: Option<Duration>,
+    /// An automatic fetch was sent to the worker and has not finished, so it counts against the
+    /// limit on background fetches (`MAX_BACKGROUND_FETCHES`). Cleared by the end of a fetch nobody
+    /// asked for, and by a failure the worker reports, which also covers a fetch it never ran
+    /// (the repository would not open): a slot is never held for ever.
+    pub auto_fetch_pending: bool,
 }
 
 impl RepoTab {
@@ -1424,6 +1429,7 @@ impl RepoTab {
             avatars: crate::avatars::Avatars::default(),
             next_fetch: None,
             fetch_every: None,
+            auto_fetch_pending: false,
         }
     }
 
@@ -2906,6 +2912,10 @@ impl RepoTab {
                     self.running = None;
                     self.running_kind = None;
                     self.progress = None;
+                    // The end of a fetch nobody asked for gives its slot back, whatever the result.
+                    if kind == OpKind::Fetch && !announce {
+                        self.auto_fetch_pending = false;
+                    }
                     // Any operation can change the file being resolved (a save, a stash, a
                     // checkout): parse it again so choices and the save guard match the disk.
                     if let Some(r) = &self.resolver {
@@ -3043,6 +3053,7 @@ impl RepoTab {
                     });
                 }
                 Event::Failed(e) => {
+                    self.auto_fetch_pending = false;
                     if self.snap.is_none() {
                         self.load_error = Some(e.clone());
                     }
