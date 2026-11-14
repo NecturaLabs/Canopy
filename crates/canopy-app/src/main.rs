@@ -60,7 +60,7 @@ OPTIONS:
                               open-error, clone,
                               clone-running, clone-error, init, new-branch, new-worktree,
                               new-worktree-error, rename, add-submodule,
-                              git-missing, remove-submodule, new-tag,
+                              git-missing, remove-submodule, discard-submodule, new-tag,
                               stash, export-patch, apply-patch, add-remote, add-remote-refused, publish, new-request,
                               confirm, confirm-danger, confirm-host, convert-partial-clone, confirm-merge-risky,
                               diverged, pull-conflicts, pull-moved, whats-new, crash, update-available,

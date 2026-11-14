@@ -336,6 +336,26 @@ pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
+/// Runs `git args… path` with a native, possibly non-UTF-8 final path argument. The path is
+/// converted only for the redacted log and error text, never for the process itself.
+pub fn run_with_path(workdir: &Path, args: &[&str], path: &Path) -> Result<String> {
+    let started = Instant::now();
+    let out = command(Some(workdir))
+        .args(args)
+        .arg(path)
+        .output()
+        .map_err(Error::GitMissing)?;
+    let shown_path = path.to_string_lossy();
+    let mut shown = args.to_vec();
+    shown.push(shown_path.as_ref());
+    record(&shown, started, out.status.code(), &out.stderr);
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(failure(&shown, &out.stdout, &out.stderr))
+    }
+}
+
 /// Runs `cmd`, a git command built with [`command`], and collects its output, but gives up after
 /// `limit`: the child is killed and the call fails. For reads that share a thread with other
 /// work, where a repository whose configuration makes git block must not stall everything behind it.

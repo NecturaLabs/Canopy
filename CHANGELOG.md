@@ -56,6 +56,16 @@ commits since the previous build.
   with a staging file an interrupted save left in its working tree gets one notification with the
   path; Canopy never deletes it, nor Git's own lock files. Exporting patches now stages in the
   temporary folder instead of the folder you chose.
+||||||| 395ef36
+- Discard on a submodule in Changes now works: the submodule goes back to the commit this
+  repository records and changes to its tracked files are thrown away, while untracked files inside
+  it stay (Settings → Git → Discard in a submodule can delete them too). It refuses when that would
+  leave a commit on no branch. Before, it did nothing.
+- Opening a repository that stores its references in Git's reftable format says so plainly;
+  Canopy cannot open such a repository yet.
+- A pull or checkout with `submodule.recurse` on in your git configuration no longer throws away
+  uncommitted edits inside a submodule: Canopy updates submodules itself, the way it does when the
+  key is unset, and that keeps them.
 - A push whose commits record a submodule commit that is on no remote now stops before sending
   anything and names the submodules to push first, instead of failing with git's "src refspec must
   name a ref" while Update submodules is on, or publishing a commit nobody can fetch while it is
@@ -142,6 +152,13 @@ commits since the previous build.
 
 ### Changed
 
+- Canopy no longer changes your git configuration unless you turn on Settings → Git → Edit my git
+  config (off by default). Until then the git configuration in Settings is read only and Use
+  recommended is hidden; Canopy still passes its own choices to every git command. A settings file
+  cannot turn it on.
+- Settings recommends leaving git's `submodule.recurse` off (Recurse into submodules): with it on,
+  git's own checkout, reset and restore can drop edits inside submodules. Use recommended removes it
+  from your global git config. Canopy's own Update submodules stays on.
 - The commit details header now shows the author, the commit id and the parents before the commit
   subject, and the subject takes the rest of the row. The commit identity card describes the
   author and names the committer only when someone else committed.
