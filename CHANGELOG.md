@@ -78,8 +78,8 @@ commits since the previous build.
 
 - A push, pull or fetch the host refuses to sign in no longer offers Open Accounts, which cannot
   change how git signs in: the notice says the host did not accept the user name and password git
-  sent, and that GitHub and GitLab take an access token as the password. Open Accounts stays for
-  the GitHub API refusing the GitHub CLI's sign-in.
+  sent, and that GitHub and GitLab take an access token as the password. Open Accounts now
+  follows every refusal of the GitHub or GitLab CLI's sign-in by the host's API, not only GitHub's.
 - The notification center keeps its margin above and below at the smallest window size and zoom, scrolling its list when the window is short.
 - A Settings row with both an explanation mark and a state remark (Download profile pictures) draws the remark in the accent colour with a gap, so the two marks no longer look alike.
 - Settings are written to a temporary file and renamed over the old one, on a thread of their own,
