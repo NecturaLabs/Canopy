@@ -80,12 +80,13 @@ A download of the working tree status that failed (server unreachable) is rememb
 refreshes the file watcher makes show the same message without trying the network again, until
 the user presses Retry or Refresh. A download is killed after ten minutes.
 
-The same list guards auto-fetch. A repository whose own files name a program a fetch would run
-(`core.sshCommand`, a credential helper, `remote.<name>.uploadpack`, `core.hooksPath`, a
-`reference-transaction` or `pre-auto-gc` hook) is not fetched by the timer outside a trusted
-folder, and the failure names what it found; a fetch the user starts runs as in a terminal. Every
-git command Canopy runs disables `core.fsmonitor`, which a repository can set to a command that
-git would run on every `git status`.
+An untrusted repository starts no program: the refusal of an action names what the repository's own
+files would run (`core.sshCommand`, `hook pre-commit`, `filter.lfs.clean`, a merge driver, a
+credential helper, `gpg.program`, a `submodule.<name>.update` command ...), and the reads that run
+`git` (blame, a file's history, the change search) switch off textconv and external diff programs
+on their command line. Every git command Canopy runs disables `core.fsmonitor`, which a repository
+can set to a command that git would run on every `git status`. In a trusted repository git runs
+these as in a terminal.
 
 ## History
 

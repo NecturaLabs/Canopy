@@ -339,20 +339,38 @@ octopus merges, multiple roots and lane reuse.
 
 ### Repository configuration that runs programs (audit, issue #28)
 
-Every `git` call comes from `cli::command` (clippy refuses `Command::new("git")` elsewhere), which
-puts `-c core.fsmonitor=false` first and sets `GIT_TERMINAL_PROMPT`, `GIT_EDITOR` and
-`GIT_SEQUENCE_EDITOR`. What a hostile `.git/config` could still make git run, per key:
+The rule (owner decision, #228): a repository that is not trusted is read-only and starts no
+program; in a trusted repository nothing about hooks, filters or credential helpers changes, so
+the user's git configuration is respected. Two layers enforce it. Every `git` call comes from
+`cli::command` (clippy refuses `Command::new("git")` elsewhere), which puts `-c
+core.fsmonitor=false` first and sets `GIT_TERMINAL_PROMPT`, `GIT_EDITOR` and
+`GIT_SEQUENCE_EDITOR`. And the repository thread (`worker.rs`) refuses every `Job::Op` and every
+signature check while the repository is not trusted, with a toast that names what the repository's
+own files would run (`programs::programs`, `read_only_message`; `core.sshcommand`, `hook
+pre-commit`, `filter.lfs.clean` ...). Each source has a control fixture (Unix): ordinary git runs
+the poisoned program, so a missing marker means something.
 
-| Key | Status |
-|---|---|
-| `core.fsmonitor` | Forced off on every call, submodule children included (test `repository_fsmonitor_command_is_not_executed`). |
-| `core.editor`, `sequence.editor` | Overridden by `GIT_EDITOR` / `GIT_SEQUENCE_EDITOR` (test `repository_editors_are_not_executed`; `sequence.editor` outranked `GIT_EDITOR` before). |
-| `core.pager`, `pager.*` | Output is always piped, so git never starts a pager (test `repository_pager_command_is_not_executed`). |
-| `diff.external`, `diff.*.textconv` | Canopy runs no `git diff` that prints a patch (diffs are libgit2); the one `git diff --quiet` passes `--no-ext-diff`. |
-| `alias.lfs` | The LFS probe on opening a repository empties it (`tools::LFS_PROBE`). |
-| `core.sshCommand`, `credential.helper`, `remote.*.uploadpack`, `core.gitProxy`, `core.hooksPath` and its fetch hooks, `protocol.ext.allow` | Run only when the user starts a network command, as in a terminal. The one fetch nobody asked for, auto-fetch, refuses outside a trusted folder when they name a program (`partial::fetch_programs`) and neutralises the rest on its command line (`Repo::fetch_unattended`). |
-| `gpg.program`, `gpg.ssh.program` | `Repo::commit_signature` is the only verifier; the worker calls it only in a trusted folder (`Job::Signature`, gated by `allowed()`). Signing a commit the user makes runs them as in a terminal. |
-| `filter.*.clean/smudge`, merge drivers, hooks (`pre-commit`, `post-checkout`, ...), `submodule.*.update=!cmd` | Run when the user stages, commits, checks out, merges or updates submodules in a trusted repository, as in a terminal: neutralising them would break Git LFS and the user's own hooks. A repository that is not trusted is read-only: the repository thread refuses every `Job::Op` before it starts `git` (`READ_ONLY`, test `an_untrusted_repository_is_read_only_and_starts_no_program`, ADR 0014). |
+| Source | Untrusted repository | Trusted repository | Test |
+|---|---|---|---|
+| `core.fsmonitor` | Forced off on every call, submodule children included. | Same: the daemon is not wanted. | `cli::repository_fsmonitor_command_is_not_executed`; insights: `programs::reads::the_insights_run_no_program` |
+| `core.editor`, `sequence.editor` | Overridden by `GIT_EDITOR` / `GIT_SEQUENCE_EDITOR`. | Same. | `cli::repository_editors_are_not_executed` |
+| `core.pager`, `pager.*` | Output is always piped, so git starts no pager. | Same. | `cli::repository_pager_command_is_not_executed` |
+| `diff.external`, `diff.*.textconv` | Diffs are libgit2. The `git` reads that could apply them pass `--no-textconv` (blame, change search, file history) and `--no-ext-diff` (change search, file history, the one `git diff --quiet`). | Same: Canopy never wants converted text from these reads. | `programs::reads::*` |
+| `filter.*.clean/smudge/process` | Blaming the working-tree version of a file that has a filter is refused (`Repo::blame`); every other read of file contents is libgit2 or reads stored bytes. Staging, checkout and merge are refused. | Run when the user stages, checks out or merges, as in a terminal (Git LFS needs them). | `hostile::an_untrusted_repository_starts_no_program_...` (clean, smudge); `programs::reads::a_working_tree_blame_...` |
+| `merge.*.driver`, `submodule.*.update=!cmd`, hooks (`pre-commit`, `post-checkout`, `post-index-change`, ...) | The operation is refused (`READ_ONLY`). `git status` is libgit2, so the index is never rewritten by a read. | Run on the user's own commit, checkout, merge or submodule update, as in a terminal. | `hostile::...` (pre-commit, post-checkout, merge driver, submodule update) |
+| `core.sshCommand`, `credential.helper`, `remote.*.uploadpack`, `core.gitProxy`, `core.hooksPath`, `protocol.ext.allow` | Fetch, pull and push are refused, and the background fetch skips the repository. | Run on a network command, as in a terminal. | `hostile::...` (core.sshCommand, credential helper) |
+| `gpg.program`, `gpg.ssh.program` | Signing is refused with the commit; `Job::Signature` verifies nothing. | Run on the user's signed commit and on a signature check. | `hostile::...` (signing, verifying) |
+| `alias.lfs` | The LFS probe on opening a repository empties it (`tools::LFS_PROBE`). | Same. | `tools` tests |
+
+Decision on the reads that run `git` (blame, file history, change search, insights, ignore
+checks): they stay available in an untrusted repository, because browsing history is what
+"read-only" is for, and each starts no program on its own. What a read could run is switched off
+on its command line (the two diff flags above) or refused for the one case that cannot be switched
+off (a working-tree blame through a clean filter); the rest (`shortlog`, `count-objects`,
+`check-ignore`, `check-attr`, `rev-parse`) have no program hook, and `core.fsmonitor`, the only
+one that reads can reach, is off. Gating them would take history away from a repository the user
+only wants to look at, and would not make them safer than the flags do. A new read that runs
+`git` gets a control fixture in `programs::reads`.
 
 Runtime requirement: `git` 2.30 or newer on `PATH`.
 
