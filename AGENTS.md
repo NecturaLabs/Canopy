@@ -20,7 +20,7 @@ These come from the owner and override anything else in the repository.
   with no remote at all.
 - **Network**: Canopy contacts the local `git` executable for Git traffic; the repository's own
   GitHub or GitLab API for pull/merge requests and author profile lookup: REST, plus, with a
-  token, one GraphQL query per request-list refresh on the same host (`api.github.com/graphql`,
+  CLI sign-in, one GraphQL query per request-list refresh on the same host (`api.github.com/graphql`,
   `https://<host>[:port]/api/graphql`) for the rows' checks and reviews, and GitHub's GraphQL
   search for a typed request filter once the list is longer than a page (ADR 0011); profile
   pictures on that host, GitHub's `avatars.githubusercontent.com`, and exact Gravatar/Libravatar
@@ -32,8 +32,10 @@ These come from the owner and override anything else in the repository.
   not about the author (repository refused, commit not pushed, network) is never cached per
   author; it pauses lookups instead. Image requests carry no token and follow no redirects. No
   other telemetry, analytics, backend or service.
-- **Credentials**: never put credentials into a URL Canopy builds or logs. A hosting token goes
-  only to its own host. Git and ssh prompts go through Canopy's own askpass
+- **Credentials**: never put credentials into a URL Canopy builds or logs. Hosting access uses
+  only the sign-in of the local `gh` / `glab` CLI (ADR 0017): Canopy saves no token, shows no
+  token field and reads none from the environment or git's credential helper; the CLI's token
+  stays in memory and goes only to its own host. Git and ssh prompts go through Canopy's own askpass
   (`crates/canopy-app/src/askpass.rs`), never a terminal.
 - **Legal and data**: `docs/legal/privacy-policy.md` and `terms-of-service.md` state what leaves
   the machine. A change to that updates them and their `Last updated` date (matching
@@ -69,18 +71,19 @@ These come from the owner and override anything else in the repository.
 
 ## Security-sensitive areas
 
-`vendor/` (third-party code we build, with our patch); `askpass.rs`; saved tokens (`tokens.json`,
-`hosting.rs`) and all of `crates/canopy-hosting/`; crash-report scrubbing (`crash_reports.rs`); URL
+`vendor/` (third-party code we build, with our patch); `askpass.rs`; the CLI sign-in lookup
+(`hosting.rs`) and all of `crates/canopy-hosting/`; crash-report scrubbing (`crash_reports.rs`); URL
 opening and running the chosen editor, terminal and file manager in `platform.rs` (web addresses
 only; a file name only ever as a whole argument); settings import and export (`settings_file.rs`:
-a file never sets consent, trust, the programs Canopy runs or the hosts a token goes to);
+a file never sets consent, trust, the programs Canopy runs or the GitLab hosts Canopy signs in to);
 installed-app discovery (`system_apps.rs`); git configuration reading (`repo_config.rs`); log
 redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; `nectura-ui/src/kit/glass/gl.rs` (the only
 `unsafe` code); the update feed; `Cargo.toml`, `Cargo.lock`, `deny.toml`; `.gitmodules` and the `crates/nectura-ui`
 pointer; `.github/` (self-hosted runners run code; `.github/actions/fetch-ui` handles the library's
 deploy key). A change there gets a security pass (`/security-review`) before the general review. A
 pointer bump shows only a hash, so review it as the library's own diff (`git -C crates/nectura-ui
-diff <old>..<new>`), and a change to the library's `gl.rs` gets the security pass too. Ask the owner before storing a token anywhere new, contacting a new host or
+diff <old>..<new>`), and a change to the library's `gl.rs` gets the security pass too. Ask the
+owner before storing a credential anywhere, contacting a new host or
 adding a dependency.
 
 ## Commands

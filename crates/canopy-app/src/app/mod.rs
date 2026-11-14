@@ -12,7 +12,7 @@ use canopy_core::Repo;
 use canopy_core::identity::Identity;
 use canopy_hosting::{NewRequest, RequestSummary};
 
-use crate::hosting::{HostJob, TokenStore};
+use crate::hosting::HostJob;
 use crate::identity_worker::{IdentityWorker, Job as IdentityJob};
 use crate::keymap::{self, Command};
 use crate::settings::{self, Settings};
@@ -249,7 +249,6 @@ pub struct CanopyApp {
     /// The start's cleanup of what an earlier run left behind, until it answers.
     swept: Option<Receiver<crate::housekeeping::Swept>>,
     git_version: String,
-    tokens: TokenStore,
     updater: Updater,
     identity_worker: Option<IdentityWorker>,
     global_identity: Option<Identity>,
@@ -322,6 +321,9 @@ impl CanopyApp {
         // Before any tab opens, so a repository thread never sees an empty list.
         crate::trust::publish(&settings);
         crate::trust::install_gate();
+        // The editor, terminal and file manager the open actions use when Settings names none, and
+        // which saved commands name a program file that is gone.
+        crate::system_apps::refresh(None, &settings.launcher_commands());
         crate::ui::fonts::install(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         if let Some(style) = launch.style {
@@ -357,6 +359,10 @@ impl CanopyApp {
 
         let git_version = canopy_core::cli::version().unwrap_or_else(|_| "git not found".into());
         let gitlab_hosts = settings.gitlab_host_list();
+        // Screenshots and tests must not delete anything of the real user's.
+        if !shooting {
+            crate::hosting::remove_saved_tokens();
+        }
         let mut app = Self {
             trust_seen: crate::trust::changes(),
             settings,
@@ -381,11 +387,6 @@ impl CanopyApp {
             swept: (!shooting && launch.glass_soak.is_none())
                 .then(|| crate::housekeeping::sweep_at_start_async(&cc.egui_ctx)),
             git_version,
-            tokens: if shooting {
-                TokenStore::default()
-            } else {
-                TokenStore::load()
-            },
             updater: Updater::default(),
             identity_worker: IdentityWorker::start(&cc.egui_ctx),
             global_identity: None,
@@ -887,11 +888,7 @@ impl CanopyApp {
         if s.hosting_api != before.hosting_api {
             let enabled = s.hosting_api;
             for t in &mut self.tabs {
-                let saved = t
-                    .forge()
-                    .and_then(|(_, f)| self.tokens.get_for(f))
-                    .map(str::to_owned);
-                t.restart_host(ctx, saved, enabled);
+                t.restart_host(ctx, enabled);
             }
         }
     }
@@ -1198,7 +1195,6 @@ impl eframe::App for CanopyApp {
                 &ctx,
                 screen,
                 &mut self.settings,
-                &mut self.tokens,
                 &settings_screen::SettingsData {
                     tabs: &self.tabs,
                     update: &self.updater.state,
@@ -1213,14 +1209,16 @@ impl eframe::App for CanopyApp {
                 },
                 &mut actions,
             );
-            if result.tokens_changed {
-                let enabled = self.settings.hosting_api;
-                for t in &mut self.tabs {
-                    let saved = t
-                        .forge()
-                        .and_then(|(_, f)| self.tokens.get_for(f))
-                        .map(str::to_owned);
-                    t.restart_host(&ctx, saved, enabled);
+            // A CLI sign-in that changed since a tab asked for it: the tab asks again.
+            let enabled = self.settings.hosting_api;
+            for t in &mut self.tabs {
+                let stale = t.host.as_ref().is_some_and(|h| {
+                    result
+                        .sign_in_changed
+                        .contains(&h.forge.authority().to_lowercase())
+                });
+                if stale {
+                    t.restart_host(&ctx, enabled);
                 }
             }
             if result.close {
@@ -1652,7 +1650,6 @@ pub(super) fn test_app() -> CanopyApp {
         leftover_reads: Vec::new(),
         swept: None,
         git_version: String::new(),
-        tokens: TokenStore::default(),
         updater: Updater::default(),
         identity_worker: None,
         global_identity: None,

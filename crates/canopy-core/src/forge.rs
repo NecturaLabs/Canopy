@@ -66,7 +66,7 @@ pub struct Forge {
     /// Which provider.
     pub kind: ForgeKind,
     /// Lower-case host name without port or credentials, e.g. `github.com`. Use it to show
-    /// and match the host (settings, saved tokens); use [`Forge::authority`] to build URLs.
+    /// and match the host (settings, the CLI sign-in); use [`Forge::authority`] to build URLs.
     pub host: String,
     /// The web server's port when the remote is an `https://` or `http://` URL that names one
     /// other than the scheme's default (443 or 80), e.g. `8443` for
@@ -150,6 +150,37 @@ pub fn normalise_host(raw: &str) -> Option<String> {
     let s = s.split_once(':').map_or(s, |(host, _)| host);
     let host = s.to_ascii_lowercase();
     valid_host(&host).then_some(host)
+}
+
+/// Normalises a user-entered host, preserving a validated non-default web port.
+///
+/// Scheme, credentials and path are ignored as in [`normalise_host`]; a zero, non-numeric or
+/// out-of-range port is rejected. `http` defaults to 80 and every other scheme to 443.
+pub fn normalise_host_with_port(raw: &str) -> Option<(String, Option<u16>)> {
+    let mut s = raw.trim();
+    let mut default_port = HTTPS_PORT;
+    if let Some((scheme, rest)) = s.split_once("://") {
+        if scheme.eq_ignore_ascii_case("http") {
+            default_port = HTTP_PORT;
+        }
+        s = rest;
+    }
+    let authority = s.split('/').next().unwrap_or_default();
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let (host, port) = if let Some((host, port)) = authority.rsplit_once(':') {
+        let port = port.parse::<u16>().ok().filter(|port| *port != 0)?;
+        (host, Some(port))
+    } else {
+        (authority, None)
+    };
+    let host = host.to_ascii_lowercase();
+    if !valid_host(&host) {
+        return None;
+    }
+    let port = port.filter(|port| *port != default_port);
+    Some((host, port))
 }
 
 /// Which forge `host` belongs to, given the user's self-hosted GitLab hosts.
@@ -1118,6 +1149,35 @@ mod tests {
         ];
         for (raw, want) in cases {
             assert_eq!(normalise_host(raw).as_deref(), *want, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn normalises_hosts_with_their_web_ports() {
+        for (raw, want) in [
+            (
+                "GitLab.Corp:8443",
+                Some(("gitlab.corp".to_owned(), Some(8443))),
+            ),
+            (
+                "https://gitlab.corp:443/x",
+                Some(("gitlab.corp".to_owned(), None)),
+            ),
+            (
+                "http://gitlab.corp:80/x",
+                Some(("gitlab.corp".to_owned(), None)),
+            ),
+            (
+                "http://gitlab.corp:443/x",
+                Some(("gitlab.corp".to_owned(), Some(443))),
+            ),
+            ("gitlab.corp:0", None),
+            ("gitlab.corp:65536", None),
+            ("gitlab.corp:nope", None),
+            ("gitlab.corp:", None),
+            ("[::1]", None),
+        ] {
+            assert_eq!(normalise_host_with_port(raw), want, "{raw:?}");
         }
     }
 

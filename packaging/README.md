@@ -120,8 +120,8 @@ own entries (Linux: `bin`, `share`, `legal`, `LICENSE`, `README.md`, `VERSION`, 
 `uninstall.ps1`, `.canopy-install`; both: leftover `.staging.*`, `.previous.*` and `.lock`), then
 the folder if that left it empty; otherwise it keeps the folder and lists what is in it. `--purge`
 also deletes Canopy's settings, logs and caches after asking (or with `--yes`), following the
-rules below. Saved tokens are `tokens.json` in Canopy's data folder, so `--purge` deletes them with
-it (Canopy does not use the system keychain yet).
+rules below. Canopy saves no token and uses no system keychain: hosting access is the sign-in of
+the GitHub and GitLab CLIs, which they keep themselves (`gh auth logout`, `glab auth logout`).
 
 ### Layout
 
@@ -145,7 +145,7 @@ follows a symlink (or junction). It deletes:
   exists;
 - a folder with a **generic name** (anything called just `canopy` or `Canopy`) only when it holds
   the marker file `.canopy-data`; for today's eframe folder (below), also when it holds Canopy's
-  own files: `tokens.json`, an `app.ron` with Canopy's settings key `canopy-settings-v1`,
+  own files: an `app.ron` with Canopy's settings key `canopy-settings-v1`,
   `logs/canopy-*.jsonl` or `crashes/crash-*.txt`. Any other generically named folder is listed and
   left, since another program may own it.
 

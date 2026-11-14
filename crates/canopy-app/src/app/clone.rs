@@ -126,7 +126,6 @@ mod tests {
             leftover_reads: Vec::new(),
             swept: None,
             git_version: String::new(),
-            tokens: TokenStore::default(),
             updater: Updater::default(),
             identity_worker: None,
             global_identity: None,

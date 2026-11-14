@@ -297,11 +297,7 @@ pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
         let candidates: Vec<String> = std::env::var("TERMINAL")
             .ok()
             .into_iter()
-            .chain(
-                crate::system_apps::LINUX_TERMINALS
-                    .iter()
-                    .map(|t| (*t).to_owned()),
-            )
+            .chain(crate::system_apps::linux_terminals().map(str::to_owned))
             .collect();
         for term in candidates {
             let mut cmd = Command::new(&term);
