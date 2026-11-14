@@ -375,11 +375,18 @@ impl CanopyApp {
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.base_result.is_some());
-        let worktree_ready = !self.dialogs.any(|d| matches!(d, Dialog::RemoveWorktree(_)))
+        let worktree_ready = (!self.dialogs.any(|d| matches!(d, Dialog::RemoveWorktree(_)))
             || self
                 .tabs
                 .get(self.active)
-                .is_some_and(|t| t.worktree_removal.is_some());
+                .is_some_and(|t| t.worktree_removal.is_some()))
+            && (!self
+                .dialogs
+                .any(|d| matches!(d, Dialog::ForgetWorktrees(_)))
+                || self
+                    .tabs
+                    .get(self.active)
+                    .is_some_and(|t| t.worktree_forget.is_some()));
         let ready = worktree_ready
             && insights_ready
             && merged_ready

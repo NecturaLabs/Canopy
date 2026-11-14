@@ -64,7 +64,7 @@ pub enum Op {
     RemoveWorktree(Box<canopy_core::WorktreeRemoval>),
     /// Forget the working folders that are gone (`git worktree prune`), provided they are still
     /// the ones the user confirmed.
-    ForgetWorktrees(Vec<PathBuf>),
+    ForgetWorktrees(Box<canopy_core::WorktreeForget>),
     AddIgnore {
         rule: canopy_core::IgnoreRule,
         target: canopy_core::IgnoreTarget,
@@ -324,10 +324,10 @@ impl Op {
             Self::RemoveWorktree(removal) => {
                 format!("Removing worktree {}", removal.path.display())
             }
-            Self::ForgetWorktrees(paths) => format!(
+            Self::ForgetWorktrees(forget) => format!(
                 "Forgetting {} missing {}",
-                paths.len(),
-                if paths.len() == 1 {
+                forget.entries.len(),
+                if forget.entries.len() == 1 {
                     "worktree"
                 } else {
                     "worktrees"
@@ -471,6 +471,10 @@ pub enum Job {
     WorktreeRemoval {
         serial: u64,
         path: PathBuf,
+    },
+    /// What `git worktree prune` would forget; the serial ties the reply to the newest request.
+    WorktreeForget {
+        serial: u64,
     },
     /// Local repository and branch metrics, loaded only when requested.
     Insights(u64),
@@ -616,6 +620,10 @@ pub enum Event {
     WorktreeRemoval {
         serial: u64,
         result: Result<Box<canopy_core::WorktreeRemoval>, String>,
+    },
+    WorktreeForget {
+        serial: u64,
+        result: Result<Box<canopy_core::WorktreeForget>, String>,
     },
     Insights {
         serial: u64,
@@ -1185,6 +1193,7 @@ impl Job {
             Self::Ignore { .. } => "ignore",
             Self::StaleCandidates { .. } => "stale_candidates",
             Self::WorktreeRemoval { .. } => "worktree_removal",
+            Self::WorktreeForget { .. } => "worktree_forget",
             Self::MergedBranches { .. } => "merged_branches",
             Self::BaseCompare { .. } => "base_compare",
             Self::RefreshStatus => "status",
@@ -1372,6 +1381,15 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         serial,
                         result: repo
                             .worktree_removal(&path)
+                            .map(Box::new)
+                            .map_err(|error| error.to_string()),
+                    });
+                }
+                Job::WorktreeForget { serial } => {
+                    emit(Event::WorktreeForget {
+                        serial,
+                        result: repo
+                            .forget_preview()
                             .map(Box::new)
                             .map_err(|error| error.to_string()),
                     });
@@ -2213,11 +2231,11 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         Op::RemoveWorktree(removal) => repo
             .remove_worktree(&removal)
             .map(|()| format!("Removed worktree {}", removal.path.display())),
-        Op::ForgetWorktrees(paths) => repo.forget_missing_worktrees(&paths).map(|()| {
+        Op::ForgetWorktrees(forget) => repo.forget_worktrees(&forget).map(|()| {
             format!(
                 "Forgot {} missing {}",
-                paths.len(),
-                if paths.len() == 1 {
+                forget.entries.len(),
+                if forget.entries.len() == 1 {
                     "worktree"
                 } else {
                     "worktrees"
@@ -4580,7 +4598,7 @@ mod read_tests {
                 unreachable_commits: 0,
                 blocked: None,
             })),
-            Op::ForgetWorktrees(Vec::new()),
+            Op::ForgetWorktrees(Box::default()),
             // git-lfs is a program the repository's own configuration steers.
             Op::LfsPull,
             Op::LfsFetch,

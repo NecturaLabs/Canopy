@@ -1,12 +1,14 @@
 //! Removing a linked working folder and forgetting those that are gone: what the removal would
 //! delete, read before the user is asked and again right before git runs.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use git2::{Repository, Status, StatusOptions, Worktree, WorktreeLockStatus};
 
 use crate::stale::worktree_index_protection;
-use crate::{Error, Repo, Result, WorktreeInfo, WorktreeLoss, WorktreeRemoval, WorktreeState};
+use crate::{
+    Error, ForgottenWorktree, Repo, Result, WorktreeForget, WorktreeLoss, WorktreeRemoval, cli,
+};
 
 /// How many paths of each kind a [`WorktreeLoss`] keeps: the user is shown a few, the count says
 /// how many more.
@@ -108,7 +110,7 @@ impl Repo {
                 format!("It is locked ({reason}). Unlock it with git worktree unlock first.")
             })
         } else if folder_gone(&folder) {
-            Some("Its folder is missing. Forget it instead; git deletes nothing then.".into())
+            Some("Its folder is missing. Forget it instead (Forget missing worktrees…).".into())
         } else if folder.to_str().is_none() {
             Some("Its folder name is not valid UTF-8, so Canopy cannot pass it to git.".into())
         } else {
@@ -180,12 +182,11 @@ impl Repo {
             }
         }
         // A detached `HEAD` is kept alive only by this folder's administrative files, which the
-        // removal deletes. Every branch counts as keeping a commit, so a commit that only a
-        // tag reaches is counted too.
+        // removal deletes; a branch, remote branch or tag containing a commit keeps it.
         if removal.branch.is_none()
             && let Some(head) = removal.head
         {
-            removal.unreachable_commits = self.stale_unique_commits(head, &[])?;
+            removal.unreachable_commits = self.commits_only_reached_by(head)?;
         }
         Ok(removal)
     }
@@ -227,36 +228,141 @@ impl Repo {
         self.git_cmd(&args).map(drop)
     }
 
-    /// The registered working folders whose folder is gone and which are not locked: the ones
-    /// `git worktree prune` forgets, by folder.
-    pub fn missing_worktrees(&self) -> Vec<PathBuf> {
-        self.worktrees()
-            .into_iter()
-            .filter(|w: &WorktreeInfo| w.state == WorktreeState::Missing && w.locked.is_none())
-            .map(|w| w.path)
-            .collect()
-    }
-
-    /// Forgets the working folders that are gone (`git worktree prune`), provided they are
-    /// still exactly `expected`, the ones the user confirmed: prune cannot name one, so another
-    /// folder that went missing since is refused. Deletes no working folder. A locked one is
-    /// kept.
+    /// What `git worktree prune` would forget, as git itself says (`prune --dry-run`), with what
+    /// forgetting each deletes. Canopy's own view of a missing folder is checked against it: a
+    /// folder git forgets that Canopy does not see as gone (it exists but cannot be read, or its
+    /// administrative folder is broken) blocks the forgetting, because the user would not have
+    /// been told.
     ///
     /// # Errors
-    /// The set changed, or git's own refusal.
-    pub fn forget_missing_worktrees(&self, expected: &[PathBuf]) -> Result<()> {
-        let mut now = self.missing_worktrees();
-        let mut expected = expected.to_vec();
-        now.sort();
-        expected.sort();
-        if now != expected {
+    /// git's own failure.
+    pub fn forget_preview(&self) -> Result<WorktreeForget> {
+        let args = ["worktree", "prune", "--dry-run", "--verbose"];
+        let out = cli::run_unchecked(self.workdir(), &args)?;
+        if out.code != Some(0) {
+            return Err(out.error(&args));
+        }
+        let common = Repository::open(self.git().commondir())?;
+        let mut entries = Vec::new();
+        let mut unknown = Vec::new();
+        // git words the line in the user's language; the folder name and the reason come after
+        // the fixed `worktrees/` it is given.
+        for line in String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .chain(String::from_utf8_lossy(&out.stderr).lines())
+        {
+            let Some((_, rest)) = line.split_once("worktrees/") else {
+                continue;
+            };
+            let (id, reason) = rest.split_once(": ").unwrap_or((rest, ""));
+            let Ok(worktree) = self.git().find_worktree(id) else {
+                unknown.push(id.to_owned());
+                continue;
+            };
+            let head = common.find_reference(&format!("worktrees/{id}/HEAD")).ok();
+            let branch = head
+                .as_ref()
+                .and_then(|h| h.symbolic_target().ok().flatten())
+                .and_then(|t| t.strip_prefix("refs/heads/"))
+                .map(str::to_owned);
+            let head = head.and_then(|h| h.resolve().ok()).and_then(|r| r.target());
+            let admin = self.git().commondir().join("worktrees").join(id);
+            let path = worktree.path().to_path_buf();
+            entries.push(ForgottenWorktree {
+                id: id.to_owned(),
+                reason: reason.to_owned(),
+                gone: folder_gone(&path) && lock_reason(&worktree).is_none(),
+                unreachable_commits: match (&branch, head) {
+                    (None, Some(head)) => self.commits_only_reached_by(head)?,
+                    _ => 0,
+                },
+                branch,
+                head,
+                submodule_repositories: admin.join("modules").is_dir(),
+                operation: admin_operation(&admin),
+                path,
+            });
+        }
+        entries.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.id.cmp(&b.id)));
+        let blocked = if unknown.is_empty() {
+            let outside: Vec<String> = entries
+                .iter()
+                .filter(|e| !e.gone)
+                .map(|e| e.path.display().to_string())
+                .collect();
+            (!outside.is_empty()).then(|| {
+                format!(
+                    "Git would also forget {}, which Canopy does not see as missing: the folder exists but cannot be read, or its entry in the repository is broken. Fix that, or run git worktree prune yourself.",
+                    outside.join(", ")
+                )
+            })
+        } else {
+            Some(format!(
+                "Git would also forget {} in the repository's worktrees folder, which Canopy cannot read as a working folder. Run git worktree prune -n -v to see them.",
+                unknown.join(", ")
+            ))
+        };
+        Ok(WorktreeForget { entries, blocked })
+    }
+
+    /// Forgets the working folders `expected` lists (`git worktree prune`), provided git's set
+    /// is still exactly that, down to what each deletes: prune cannot name one folder, so
+    /// another that went missing since, or a commit made since, is refused. Deletes no working
+    /// folder, but deletes each forgotten folder's administrative files in the repository (see
+    /// [`ForgottenWorktree`]). A locked one is kept.
+    ///
+    /// # Errors
+    /// The set changed or is blocked, or git's own refusal.
+    pub fn forget_worktrees(&self, expected: &WorktreeForget) -> Result<()> {
+        let now = self.forget_preview()?;
+        if let Some(reason) = &now.blocked {
+            return Err(Error::invalid(reason.clone()));
+        }
+        if now != *expected {
             return Err(Error::invalid(
                 "The missing worktrees changed since the confirmation. Open Forget again to see which ones git would forget.",
             ));
         }
-        if now.is_empty() {
+        if now.entries.is_empty() {
             return Ok(());
         }
         self.git_cmd(&["worktree", "prune"]).map(drop)
     }
+
+    /// Commits reachable from `head` that no branch, remote branch or tag reaches.
+    fn commits_only_reached_by(&self, head: git2::Oid) -> Result<usize> {
+        let mut walk = self.git().revwalk()?;
+        walk.push(head)?;
+        for reference in self.git().references()? {
+            let reference = reference?;
+            let Ok(name) = reference.name() else {
+                continue;
+            };
+            if ["refs/heads/", "refs/remotes/", "refs/tags/"]
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+                && let Ok(commit) = reference.peel_to_commit()
+            {
+                walk.hide(commit.id())?;
+            }
+        }
+        walk.try_fold(0, |count, commit| commit.map(|_| count + 1))
+            .map_err(Into::into)
+    }
+}
+
+/// The operation in progress in the administrative folder `admin` of a linked worktree, which
+/// holds that folder's own rebase, bisect and merge state.
+fn admin_operation(admin: &Path) -> Option<String> {
+    [
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("BISECT_LOG", "bisect"),
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+    ]
+    .into_iter()
+    .find(|(file, _)| admin.join(file).symlink_metadata().is_ok())
+    .map(|(_, what)| what.to_owned())
 }

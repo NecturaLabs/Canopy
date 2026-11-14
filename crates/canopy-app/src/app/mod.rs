@@ -1334,6 +1334,7 @@ impl eframe::App for CanopyApp {
                 Dialog::Lfs(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::CleanStale(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::RemoveWorktree(form) => self.tabs.iter().find(|t| t.path == form.repo),
+                Dialog::ForgetWorktrees(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 _ => self.tabs.get(self.active),
             };
             match dialogs::show(

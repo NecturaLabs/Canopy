@@ -1090,6 +1090,10 @@ pub struct RepoTab {
     pub worktree_removal_serial: u64,
     /// What removing that working folder would delete, `None` while it is on its way.
     pub worktree_removal: Option<Result<Box<canopy_core::WorktreeRemoval>, String>>,
+    /// The newest [`Self::read_worktree_forget`] request; an older reply is dropped.
+    pub worktree_forget_serial: u64,
+    /// What git would forget, `None` while it is on its way.
+    pub worktree_forget: Option<Result<Box<canopy_core::WorktreeForget>, String>>,
     /// The other tabs' working folders and their titles, set each frame by the app: a folder
     /// open in another tab cannot be removed from here.
     pub open_elsewhere: Vec<(PathBuf, String)>,
@@ -1363,6 +1367,8 @@ impl RepoTab {
             stale_result: None,
             worktree_removal_serial: 0,
             worktree_removal: None,
+            worktree_forget_serial: 0,
+            worktree_forget: None,
             open_elsewhere: Vec::new(),
             ignore_result: None,
             ignore_serial: 0,
@@ -1665,6 +1671,17 @@ impl RepoTab {
             path,
         });
         self.worktree_removal_serial
+    }
+
+    /// Asks what `git worktree prune` would forget; the answer lands in
+    /// [`Self::worktree_forget`]. Returns the request's serial.
+    pub fn read_worktree_forget(&mut self) -> u64 {
+        self.worktree_forget_serial = self.worktree_forget_serial.wrapping_add(1);
+        self.worktree_forget = None;
+        self.worker.send(Job::WorktreeForget {
+            serial: self.worktree_forget_serial,
+        });
+        self.worktree_forget_serial
     }
 
     /// Requests a full refresh.
@@ -2532,6 +2549,11 @@ impl RepoTab {
                 Event::WorktreeRemoval { serial, result } => {
                     if serial == self.worktree_removal_serial {
                         self.worktree_removal = Some(result);
+                    }
+                }
+                Event::WorktreeForget { serial, result } => {
+                    if serial == self.worktree_forget_serial {
+                        self.worktree_forget = Some(result);
                     }
                 }
                 Event::Ignore { serial, result } => {

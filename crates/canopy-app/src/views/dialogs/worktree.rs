@@ -200,6 +200,133 @@ pub(super) fn show(
     }
 }
 
+/// The repository and reading this form asks the user to confirm.
+#[derive(Debug, Clone)]
+pub struct ForgetWorktreesForm {
+    /// The repository the tab shows.
+    pub repo: PathBuf,
+    serial: u64,
+}
+
+impl ForgetWorktreesForm {
+    pub fn new(repo: PathBuf, serial: u64) -> Self {
+        Self { repo, serial }
+    }
+}
+
+/// What forgetting one worktree deletes besides the working folder it no longer has.
+fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
+    let p = palette(ui.ctx());
+    ui.add_space(theme::XS);
+    note(ui, entry.path.display().to_string(), p.text);
+    let on = match (&entry.branch, entry.head) {
+        (Some(branch), _) => format!("on {branch}, which stays"),
+        (None, Some(head)) => format!("detached at {}", short_id(head)),
+        (None, None) => "nothing checked out".to_owned(),
+    };
+    note(ui, format!("    {on}"), p.text_dim);
+    if !entry.reason.is_empty() {
+        note(ui, format!("    {}", entry.reason), p.text_dim);
+    }
+    if entry.unreachable_commits > 0 {
+        note(
+            ui,
+            format!(
+                "    {} no branch or tag contains lose their last reference with its HEAD",
+                plural(entry.unreachable_commits, "commit", "commits")
+            ),
+            p.danger,
+        );
+    }
+    if let Some(operation) = &entry.operation {
+        note(
+            ui,
+            format!("    a {operation} in progress is lost"),
+            p.danger,
+        );
+    }
+    if entry.submodule_repositories {
+        note(ui, "    its submodule repositories are deleted", p.danger);
+    }
+}
+
+pub(super) fn show_forget(
+    ctx: &egui::Context,
+    salt: (&'static str, std::mem::Discriminant<Dialog>),
+    form: &ForgetWorktreesForm,
+    tab: Option<&RepoTab>,
+) -> Outcome {
+    let p = palette(ctx);
+    let tab = tab.filter(|t| t.path == form.repo && t.worktree_forget_serial == form.serial);
+    let reading = tab.and_then(|t| t.worktree_forget.as_ref());
+    let forget = reading.and_then(|r| r.as_ref().ok());
+    let busy = tab.is_none_or(|t| t.running.is_some());
+    let blocked = forget.and_then(|f| {
+        if f.entries.is_empty() {
+            Some("Git would forget no worktree: none is missing now.".to_owned())
+        } else {
+            f.blocked.clone()
+        }
+    });
+    let count = forget.map_or(0, |f| f.entries.len());
+    let result = KitDialog::new(salt)
+        .title("Forget missing worktrees?")
+        .icon(icon::TRASH)
+        .width(DialogWidth::Form)
+        .destructive()
+        .initial_focus(InitialFocus::Cancel)
+        .body(|ui| {
+            if tab.is_none() {
+                note(ui, "This is no longer available. Open it again from the worktree.", p.danger);
+                return;
+            }
+            match reading {
+                None => working(ui, "Asking git which worktrees it would forget…"),
+                Some(Err(error)) => note(ui, format!("The check failed: {error}"), p.danger),
+                Some(Ok(forget)) => {
+                    if let Some(reason) = &blocked {
+                        Callout::new(Tone::Warning, reason.as_str()).show(ui);
+                    }
+                    note(
+                        ui,
+                        "Git forgets these worktrees, whose folders are gone. It deletes no working folder, but it deletes each one's entry in the repository (.git/worktrees): its HEAD and reflog, its index and the repositories of its submodules. The branches stay.",
+                        p.text,
+                    );
+                    for entry in &forget.entries {
+                        forgotten(ui, entry);
+                    }
+                }
+            }
+        })
+        .footer(|footer| {
+            footer.cancel().confirm(format!(
+                "Forget {}",
+                plural(count.max(1), "worktree", "worktrees")
+            ));
+            if busy {
+                footer.confirm_disabled("Wait for repository operations to finish");
+            } else if let Some(reason) = &blocked {
+                footer.confirm_disabled(reason.clone());
+            } else if let Some(Err(_)) = reading {
+                footer.confirm_disabled("The check of the worktrees failed");
+            } else if forget.is_none() {
+                footer.confirm_disabled("Wait for the check of the worktrees");
+            }
+        })
+        .show(ctx);
+    match result {
+        DialogResult::Confirm if !busy && blocked.is_none() => match forget {
+            Some(forget) => Outcome::Run(vec![Action::OpIn {
+                repo: form.repo.clone(),
+                op: Op::ForgetWorktrees(forget.clone()),
+            }]),
+            None => Outcome::Keep,
+        },
+        DialogResult::Cancel => Outcome::Close,
+        _ => Outcome::Keep,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +414,103 @@ mod tests {
             button(&nodes, "Remove and delete 3 changed files").is_some_and(|n| !n.disabled),
             "{:?}",
             nodes.iter().map(|n| n.label.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    fn entry(id: &str) -> canopy_core::ForgottenWorktree {
+        canopy_core::ForgottenWorktree {
+            id: id.into(),
+            path: PathBuf::from("/work").join(id),
+            reason: "gitdir file points to non-existent location".into(),
+            gone: true,
+            branch: None,
+            head: None,
+            unreachable_commits: 0,
+            submodule_repositories: false,
+            operation: None,
+        }
+    }
+
+    fn forget_frames(
+        ctx: &egui::Context,
+        forget: Option<Result<Box<canopy_core::WorktreeForget>, String>>,
+    ) -> Vec<crate::ui::kit::testkit::Spoken> {
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            PathBuf::from("/work/canopy"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.worktree_forget_serial = 1;
+        tab.worktree_forget = forget;
+        let form = ForgetWorktreesForm::new(tab.path.clone(), 1);
+        let salt = salt(&Dialog::ForgetWorktrees(Box::new(form.clone())));
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = spoken(ctx, |_| {
+                show_forget(ctx, salt, &form, Some(&tab));
+            });
+        }
+        nodes
+    }
+
+    /// The confirmation says what forgetting deletes, plainly, and names each worktree that
+    /// holds commits nothing else reaches.
+    #[test]
+    fn forgetting_names_what_it_deletes_and_the_commits_it_orphans() {
+        let ctx = setup();
+        let mut lonely = entry("lonely");
+        lonely.unreachable_commits = 2;
+        lonely.operation = Some("rebase".into());
+        lonely.submodule_repositories = true;
+        let forget = canopy_core::WorktreeForget {
+            entries: vec![lonely, entry("plain")],
+            blocked: None,
+        };
+        let nodes = forget_frames(&ctx, Some(Ok(Box::new(forget))));
+        let said = |part: &str| {
+            nodes.iter().any(|n| {
+                [&n.label, &n.value]
+                    .into_iter()
+                    .flatten()
+                    .any(|text| text.contains(part))
+            })
+        };
+        assert!(
+            said("deletes each one's entry in the repository"),
+            "{nodes:?}"
+        );
+        assert!(said("HEAD and reflog, its index"));
+        assert!(said("2 commits no branch or tag contains"));
+        assert!(said("a rebase in progress is lost"));
+        assert!(said("submodule repositories are deleted"));
+        assert!(!said("deletes nothing"), "no claim that nothing is deleted");
+        assert!(button(&nodes, "Forget 2 worktrees").is_some_and(|n| !n.disabled));
+    }
+
+    #[test]
+    fn forgetting_is_disabled_when_blocked_failed_or_empty() {
+        let ctx = setup();
+        let blocked = canopy_core::WorktreeForget {
+            entries: vec![entry("gone")],
+            blocked: Some("Git would also forget /work/lo.".into()),
+        };
+        let nodes = forget_frames(&ctx, Some(Ok(Box::new(blocked))));
+        let confirm = button(&nodes, "Forget 1 worktree").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("Git would also forget /work/lo.")
+        );
+        let nodes = forget_frames(&ctx, Some(Ok(Box::default())));
+        assert!(button(&nodes, "Forget 1 worktree").is_some_and(|n| n.disabled));
+        let nodes = forget_frames(&ctx, Some(Err("git went away".into())));
+        let confirm = button(&nodes, "Forget 1 worktree").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("The check of the worktrees failed")
         );
     }
 

@@ -419,26 +419,35 @@ fn missing_worktrees_are_listed_and_forgetting_matches_git_prune() {
         String::from_utf8_lossy(&dry.stderr),
         String::from_utf8_lossy(&dry.stdout)
     );
-    let mut listed = f.repo.missing_worktrees();
-    assert_eq!(listed.len(), 2, "{listed:?}");
+    let listed = f.repo.forget_preview().expect("preview");
+    assert_eq!(listed.blocked, None);
+    assert_eq!(listed.entries.len(), 2, "{listed:?}");
     assert_eq!(dry.matches("Removing worktrees/").count(), 2, "{dry}");
+    assert!(
+        listed
+            .entries
+            .iter()
+            .all(|e| e.gone && e.reason.contains("gitdir")),
+        "git's own reason is kept: {listed:?}"
+    );
+    let ids: Vec<&str> = listed.entries.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, ["also", "gone"], "by folder");
     assert!(
         dry.contains("worktrees/gone") && dry.contains("worktrees/also"),
         "{dry}"
     );
-    listed.sort();
 
     // A folder that went missing after the confirmation is refused, nothing is forgotten.
     fs::remove_dir_all(&kept).expect("delete by hand");
     f.repo
-        .forget_missing_worktrees(&listed)
+        .forget_worktrees(&listed)
         .expect_err("the set changed");
     assert!(f.registered().contains(&*gone.to_string_lossy()));
     fs::create_dir_all(&kept).expect("put the folder back");
     // (An empty folder without `.git` is as gone as a deleted one to git.)
-    let expected = f.repo.missing_worktrees();
-    assert_eq!(expected.len(), 3);
-    f.repo.forget_missing_worktrees(&expected).expect("forget");
+    let expected = f.repo.forget_preview().expect("preview");
+    assert_eq!(expected.entries.len(), 3);
+    f.repo.forget_worktrees(&expected).expect("forget");
     let after = f.registered();
     assert!(!after.contains(&*gone.to_string_lossy()), "{after}");
     assert!(!after.contains(&*also.to_string_lossy()), "{after}");
@@ -448,9 +457,10 @@ fn missing_worktrees_are_listed_and_forgetting_matches_git_prune() {
     assert!(after.contains("locked drive"), "{after}");
     let branches = git(&f.main, &["branch", "--list"]);
     assert!(branches.contains("gone") && branches.contains("held"));
-    assert_eq!(f.repo.missing_worktrees(), Vec::<PathBuf>::new());
+    let nothing = f.repo.forget_preview().expect("preview");
+    assert_eq!(nothing, canopy_core::WorktreeForget::default());
     // Nothing to forget is not an error.
-    f.repo.forget_missing_worktrees(&[]).expect("nothing to do");
+    f.repo.forget_worktrees(&nothing).expect("nothing to do");
 }
 
 #[test]
@@ -483,10 +493,109 @@ fn a_folder_that_cannot_be_read_is_listed_as_unreadable_not_missing() {
     let info = info.expect("listed");
     assert_eq!(info.state, WorktreeState::Unreadable);
     assert_eq!(info.branch.as_deref(), Some("locked-out"));
+}
+
+/// Git prunes an entry when `lstat` of its `.git` fails for any reason, so a folder that merely
+/// cannot be read goes with the missing ones. Forgetting must not drop what the user was not
+/// told about: the preview is git's own set, says which folder Canopy does not see as gone, and
+/// the forgetting is refused.
+#[test]
+fn forgetting_does_not_prune_an_unreadable_folder_next_to_a_missing_one() {
+    let f = fixture();
+    let gone = f.linked("gone");
+    let lo = f.linked("lo");
+    fs::remove_dir_all(&gone).expect("delete by hand");
+    fs::set_permissions(&lo, fs::Permissions::from_mode(0o000)).expect("chmod");
+    let readable = fs::read_dir(&lo).is_ok();
+    let preview = f.repo.forget_preview().expect("preview");
+    let result = f.repo.forget_worktrees(&preview);
+    let after = f.registered();
+    fs::set_permissions(&lo, fs::Permissions::from_mode(0o755)).expect("chmod back");
+    if readable {
+        return; // running as a user the permission does not stop
+    }
+    assert_eq!(preview.entries.len(), 2, "git's own set: {preview:?}");
+    let lo_entry = preview.entries.iter().find(|e| e.id == "lo").expect("lo");
+    assert!(!lo_entry.gone, "{lo_entry:?}");
+    let reason = preview.blocked.clone().expect("blocked");
+    assert!(reason.contains("lo"), "{reason}");
+    result.expect_err("refused");
+    assert!(after.contains(&*lo.to_string_lossy()), "still registered");
     assert!(
-        !f.repo
-            .missing_worktrees()
-            .iter()
-            .any(|p| p.ends_with("locked-out"))
+        after.contains(&*gone.to_string_lossy()),
+        "nothing was pruned"
     );
+}
+
+/// What forgetting deletes is in the preview: a detached `HEAD` whose commits nothing else
+/// reaches, a tag keeping one, a submodule repository, an operation in progress.
+#[test]
+fn the_forget_preview_names_what_forgetting_loses() {
+    let f = fixture();
+    let lonely = f.beside.join("lonely");
+    git(
+        &f.main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &lonely.to_string_lossy(),
+        ],
+    );
+    fs::write(lonely.join("a.txt"), "two\n").expect("edit");
+    git(&lonely, &["commit", "-q", "-am", "only here"]);
+    let lonely_tip = git(&lonely, &["rev-parse", "HEAD"]).trim().to_owned();
+    let tagged = f.beside.join("tagged");
+    git(
+        &f.main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &tagged.to_string_lossy(),
+        ],
+    );
+    fs::write(tagged.join("a.txt"), "three\n").expect("edit");
+    git(&tagged, &["commit", "-q", "-am", "kept by a tag"]);
+    let tagged_tip = git(&tagged, &["rev-parse", "HEAD"]);
+    git(&f.main, &["tag", "keep", tagged_tip.trim()]);
+    let busy = f.linked("busy");
+    // A rebase stopped in that folder leaves its state in the administrative folder.
+    let admin = f.main.join(".git/worktrees/busy");
+    fs::create_dir_all(admin.join("rebase-merge")).expect("state");
+    fs::create_dir_all(admin.join("modules/sub")).expect("modules");
+    for folder in [&lonely, &tagged, &busy] {
+        fs::remove_dir_all(folder).expect("delete by hand");
+    }
+
+    let preview = f.repo.forget_preview().expect("preview");
+    assert_eq!(preview.blocked, None);
+    let by_id = |id: &str| preview.entries.iter().find(|e| e.id == id).expect("entry");
+    assert_eq!(by_id("lonely").unreachable_commits, 1, "{preview:?}");
+    assert_eq!(
+        by_id("lonely").head.map(|h| h.to_string()),
+        Some(lonely_tip)
+    );
+    assert_eq!(by_id("tagged").unreachable_commits, 0, "a tag keeps it");
+    assert_eq!(by_id("busy").branch.as_deref(), Some("busy"));
+    assert_eq!(by_id("busy").unreachable_commits, 0);
+    assert_eq!(by_id("busy").operation.as_deref(), Some("rebase"));
+    assert!(by_id("busy").submodule_repositories);
+    assert!(!by_id("lonely").submodule_repositories);
+    assert_eq!(by_id("lonely").operation, None);
+
+    // The deletion is real: the administrative folder goes, the commit loses its reference.
+    f.repo.forget_worktrees(&preview).expect("forget");
+    assert!(!admin.exists());
+    let contains = git(
+        &f.main,
+        &[
+            "branch",
+            "--contains",
+            &by_id("lonely").head.expect("head").to_string(),
+        ],
+    );
+    assert!(contains.trim().is_empty(), "{contains}");
 }

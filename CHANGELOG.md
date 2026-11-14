@@ -18,8 +18,10 @@ commits since the previous build.
   `--force`. The checks run again just before git, and a folder that changed since the
   confirmation is refused. The main folder, the one open in this tab, a locked one and one open in
   another tab cannot be removed. The Worktrees section now also lists folders that are missing
-  and locked ones (with git's reason), and Forget missing worktrees… (`git worktree prune`) lists
-  the ones it forgets (#90).
+  and locked ones (with git's reason), and Forget missing worktrees… (`git worktree prune`) asks git
+  which ones it would forget, says what that deletes in the repository (each one's `HEAD`, reflog,
+  index and submodule repositories) and names the ones holding commits no branch or tag has; it
+  refuses when git would forget more than it showed (#90).
 - Tabs that are open but not shown load only when you first show them. Restoring a session, or
   opening several repositories from the command line, loads the tab you see at once and lists the
   others by name in the tab strip; each one reads its repository, starts watching its files and

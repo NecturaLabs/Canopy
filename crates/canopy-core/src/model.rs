@@ -164,6 +164,47 @@ pub struct WorktreeRemoval {
     pub blocked: Option<String>,
 }
 
+/// A registered working folder that `git worktree prune` would forget.
+///
+/// Forgetting deletes the administrative folder `.git/worktrees/<id>`: its `HEAD` and reflog, its
+/// index, any submodule repositories under `modules/` and any rebase or bisect state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgottenWorktree {
+    /// The folder's name inside `.git/worktrees`.
+    pub id: String,
+    /// The working folder it points to.
+    pub path: PathBuf,
+    /// Git's reason for forgetting it.
+    pub reason: String,
+    /// Canopy also sees its folder as gone (the `.git` file is not there), and it is unlocked.
+    /// One that is not (it exists but cannot be read, say) is forgotten by git all the same, which
+    /// blocks the forgetting: the user was not told it was missing.
+    pub gone: bool,
+    /// The branch its `HEAD` names; `None` when detached.
+    pub branch: Option<String>,
+    /// The commit its `HEAD` is at.
+    pub head: Option<Oid>,
+    /// Commits only this folder's detached `HEAD` reaches: no branch, remote branch or tag
+    /// contains them, and forgetting it deletes the `HEAD`.
+    pub unreachable_commits: usize,
+    /// It has submodule repositories under `.git/worktrees/<id>/modules`.
+    pub submodule_repositories: bool,
+    /// A rebase, bisect, merge, cherry-pick or revert is in progress there, and is lost.
+    pub operation: Option<String>,
+}
+
+/// What `git worktree prune` would forget.
+///
+/// Read right before asking the user and again right before git runs
+/// ([`crate::Repo::forget_worktrees`] refuses when it differs).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorktreeForget {
+    /// Git's own set, by id.
+    pub entries: Vec<ForgottenWorktree>,
+    /// Why Canopy will not run it, when it will not.
+    pub blocked: Option<String>,
+}
+
 impl WorktreeRemoval {
     /// Git refuses to remove it without `--force`: it holds changes or untracked files.
     #[must_use]

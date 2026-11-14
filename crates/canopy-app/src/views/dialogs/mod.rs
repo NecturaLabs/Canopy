@@ -63,7 +63,7 @@ pub use stale::StaleForm;
 pub use start::Start;
 pub use update_base::UpdateBaseForm;
 pub use url::{UrlBuilder, UrlSource};
-pub use worktree::RemoveWorktreeForm;
+pub use worktree::{ForgetWorktreesForm, RemoveWorktreeForm};
 
 /// Width of the "How many commits" field of the patch export.
 const EXPORT_COUNT_WIDTH: f32 = 140.0;
@@ -142,6 +142,8 @@ pub enum Dialog {
     CleanStale(Box<StaleForm>),
     /// Remove a linked working folder, after listing what that deletes.
     RemoveWorktree(Box<RemoveWorktreeForm>),
+    /// Forget the working folders that are gone, after listing what that deletes.
+    ForgetWorktrees(Box<ForgetWorktreesForm>),
     /// Delete the branches that are merged into the base.
     CleanMerged(Box<MergedForm>),
     /// Bring the base branch's new commits into the checked-out branch.
@@ -536,6 +538,7 @@ pub fn show(
     let outcome = match dialog {
         Dialog::CleanStale(form) => return stale::show(ctx, salt, form, tab),
         Dialog::RemoveWorktree(form) => return worktree::show(ctx, salt, form, tab),
+        Dialog::ForgetWorktrees(form) => return worktree::show_forget(ctx, salt, form, tab),
         Dialog::CleanMerged(form) => return merged::show(ctx, salt, form, tab),
         Dialog::UpdateFromBase(form) => return update_base::show(ctx, salt, form, tab),
         Dialog::FlowInit(form) => return flow::show_init(ctx, salt, form, tab),
