@@ -238,6 +238,10 @@ fn invalid_settings_and_branch_names_never_change_files() {
     for (setting, value) in [
         (Setting::FetchPrune, "yes\n[core]\nhooksPath=attack"),
         (Setting::PushDefault, "--global"),
+        // Git accepts these and the editor shows them where the user set them, but Canopy never
+        // writes them (#261).
+        (Setting::PushDefault, "matching"),
+        (Setting::PushDefault, "nothing"),
         (Setting::SigningFormat, "program"),
         (Setting::CommitCleanup, "truncate"),
         (Setting::InitialBranch, "bad name"),
@@ -515,4 +519,18 @@ fn recommendations_report_later_include_overrides_without_rewriting_the_include(
             .as_deref(),
         Some("true")
     );
+}
+
+#[test]
+fn values_shown_but_not_offered_are_no_choices() {
+    for setting in Setting::ALL {
+        for shown in setting.shown_only() {
+            assert!(!setting.values().contains(shown), "{}", setting.key());
+        }
+    }
+    assert_eq!(
+        Setting::PushDefault.values(),
+        ["simple", "upstream", "current"]
+    );
+    assert_eq!(Setting::PushDefault.shown_only(), ["matching", "nothing"]);
 }

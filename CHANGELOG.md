@@ -76,6 +76,11 @@ commits since the previous build.
 
 ### Fixed
 
+- Settings → Git and This repository no longer offer `matching` and `nothing` as Push destination
+  choices: Canopy's own push understands `simple`, `upstream` and `current`, and `matching` pushes
+  every branch with a same-named branch on the remote. A value your own git configuration holds
+  still shows on the row with where it is set and why Canopy does not offer it, and is left alone
+  until you pick another one.
 - Settings → Git with Canopy choosing the Git settings shows one Commits heading over its rows
   instead of two, and a commit cleanup value has one name in the list of Git values, in the notes
   and notices that say where it is set, and in Canopy's own Message cleanup row (Spaces and blank

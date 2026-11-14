@@ -90,18 +90,32 @@ impl Setting {
         }
     }
 
-    /// Canonical editor choices; an initial branch accepts a validated branch name instead.
+    /// Canonical editor choices, the only values Canopy writes; an initial branch accepts a
+    /// validated branch name instead. `push.default` lists the three that send one branch, the
+    /// ones Canopy's own push understands; see [`Setting::shown_only`].
     pub fn values(self) -> &'static [&'static str] {
         match self {
             Self::PullRebase => &["false", "true", "merges", "interactive"],
             Self::PullFastForward => &["only", "true", "false"],
-            Self::PushDefault => &["simple", "upstream", "current", "matching", "nothing"],
+            Self::PushDefault => &["simple", "upstream", "current"],
             Self::ConflictStyle => &["zdiff3", "diff3", "merge"],
             Self::InitialBranch => &[],
             Self::CommitCleanup => &["whitespace", "strip", "verbatim", "scissors", "default"],
             Self::Autocrlf => &["false", "input", "true"],
             Self::SigningFormat => &["openpgp", "ssh", "x509"],
             _ => &["true", "false"],
+        }
+    }
+
+    /// Values git accepts that the editor shows where the user's own configuration holds them but
+    /// never offers or writes. `push.default = matching` (git's default before 2.0) pushes every
+    /// branch that has a same-named branch on the remote, so one click would publish many
+    /// branches; `nothing` refuses every push that names no branch. Canopy's own push
+    /// ([`PushDefault`](crate::PushDefault)) knows neither, so it never chooses them.
+    pub fn shown_only(self) -> &'static [&'static str] {
+        match self {
+            Self::PushDefault => &["matching", "nothing"],
+            _ => &[],
         }
     }
 

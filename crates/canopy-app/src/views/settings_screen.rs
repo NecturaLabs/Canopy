@@ -1323,6 +1323,28 @@ fn git_setting_help(setting: Setting) -> &'static str {
     }
 }
 
+/// Why a value the user's configuration holds is not one of the row's choices, after the note's
+/// "Set in …": empty for a value the list offers (see [`Setting::shown_only`]).
+fn shown_only_reason(setting: Setting, value: &str) -> &'static str {
+    let value = value.trim();
+    match setting {
+        _ if !setting
+            .shown_only()
+            .iter()
+            .any(|v| v.eq_ignore_ascii_case(value)) =>
+        {
+            ""
+        }
+        Setting::PushDefault if value.eq_ignore_ascii_case("matching") => {
+            " Canopy does not offer matching: a push sends every branch that has a branch of the same name on the remote."
+        }
+        Setting::PushDefault => {
+            " Canopy does not offer nothing: a push that names no branch is refused."
+        }
+        _ => "",
+    }
+}
+
 /// What an unset git setting shows: the value that applies, which is its recommendation except for
 /// line endings and signing, which Canopy leaves to git's built-in value.
 fn unset_value(setting: Setting, recommended: &str) -> String {
@@ -3072,7 +3094,11 @@ fn git_config_editor(
                 warn: true,
             }),
             (None, Some(value)) => Some(Note {
-                text: format!("Set in {}.", source_label(Some(&value.source()))),
+                text: format!(
+                    "Set in {}.{}",
+                    source_label(Some(&value.source())),
+                    shown_only_reason(setting, &value.value)
+                ),
                 warn: false,
             }),
             (None, None) => None,
@@ -9298,6 +9324,65 @@ mod tests {
         }
     }
 
+    /// The Push destination list offers `simple`, `upstream` and `current`, which Canopy's own push
+    /// understands. A `matching` or `nothing` the user's own configuration holds is still the row's
+    /// value, with where it is set and why it is not a choice, and is not rewritten (#261).
+    #[test]
+    fn push_destinations_git_holds_but_canopy_does_not_offer_are_shown() {
+        if !crate::repo_config::in_isolated_git_env(
+            "views::settings_screen::tests::push_destinations_git_holds_but_canopy_does_not_offer_are_shown",
+        ) {
+            return;
+        }
+        let home = crate::settings::home_dir();
+        let global_file =
+            PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").expect("private global config"));
+        let setting = Setting::PushDefault;
+        let offered = ["Current", "Simple", "Upstream"];
+        for value in ["simple", "upstream", "current", "matching", "nothing"] {
+            cli::run(&home, &["config", "--global", setting.key(), value]).expect("global write");
+            let written = std::fs::read(&global_file).expect("global file");
+            let mut editor = Editor::open(None);
+            let nodes = editor.nodes();
+            let said = crate::ui::kit::testkit::find(&nodes, setting.label())
+                .and_then(|node| node.value.clone());
+            let label = git_value_label(setting, value);
+            let expected = if value == "simple" {
+                format!("{label} (Recommended)")
+            } else {
+                label
+            };
+            assert_eq!(said, Some(expected), "{value}");
+            let note = crate::ui::kit::testkit::find(&nodes, "Note on Push destination")
+                .and_then(|n| n.description.clone())
+                .expect("the row says where the value is set");
+            assert!(
+                note.starts_with("Set in your global git config"),
+                "{value}: {note}"
+            );
+            assert_eq!(
+                note.contains("Canopy does not offer"),
+                matches!(value, "matching" | "nothing"),
+                "{value}: {note}"
+            );
+            // Opening the list lists the three, whatever the row holds.
+            editor.press(setting.label());
+            let mut options: Vec<_> = editor
+                .nodes()
+                .into_iter()
+                .filter(|n| n.role == egui::accesskit::Role::ListBoxOption)
+                .filter_map(|n| n.label)
+                .collect();
+            options.sort();
+            assert_eq!(options, offered, "{value}");
+            assert_eq!(
+                std::fs::read(&global_file).expect("global file"),
+                written,
+                "{value}: looking changes nothing"
+            );
+        }
+    }
+
     /// Git reads `init.defaultBranch` only to create a repository, never from one that exists, so a
     /// repository's own value would change nothing: its editor leaves the row out (#230).
     #[test]
@@ -10328,7 +10413,9 @@ mod tests {
                 conflict_drawn |= zoom > 1.0 && !follow && text == CONFLICT_STYLE_HELP;
                 autostash_drawn |= text.starts_with(AUTOSTASH_HELP);
                 if node.role() == egui::accesskit::Role::Label && rect.y1 - rect.y0 > two_lines {
-                    wrapped.push(format!("{section:?} (follow {follow}, zoom {zoom}): {text}"));
+                    wrapped.push(format!(
+                        "{section:?} (follow {follow}, zoom {zoom}): {text}"
+                    ));
                 }
             }
         }
@@ -10477,7 +10564,11 @@ mod tests {
             .iter()
             .map(|v| git_value_label(Setting::CommitCleanup, v))
             .collect();
-        assert_eq!(names.len(), Setting::CommitCleanup.values().len(), "{names:?}");
+        assert_eq!(
+            names.len(),
+            Setting::CommitCleanup.values().len(),
+            "{names:?}"
+        );
     }
 
     /// Any other value shows bare, and the list still marks the recommended entry.

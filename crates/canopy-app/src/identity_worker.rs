@@ -263,7 +263,7 @@ mod tests {
             repo: Some(path.clone()),
             scope: Scope::Local,
             setting: canopy_core::config::Setting::PushDefault,
-            value: Some("matching".into()),
+            value: Some("current".into()),
         }));
         for _ in 0..2 {
             match next(&worker) {
@@ -280,7 +280,7 @@ mod tests {
             }
         }
         assert_eq!(local(&path, "fetch.prune").as_deref(), Some("false"));
-        assert_eq!(local(&path, "push.default").as_deref(), Some("matching"));
+        assert_eq!(local(&path, "push.default").as_deref(), Some("current"));
         assert!(worker.send(Job::Config {
             repo: Some(path.clone()),
             scope: Scope::Local,
