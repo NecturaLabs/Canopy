@@ -153,10 +153,9 @@ pub(super) fn show(
                         Callout::new(
                             Tone::Danger,
                             format!(
-                                "{} that no branch or tag contains: only this folder's detached HEAD reaches {n}, and the removal deletes it. {n_cap} in the repository until git cleans up, but nothing points to {n} afterwards.",
-                                plural(removal.unreachable_commits, "commit", "commits"),
-                                n = if removal.unreachable_commits == 1 { "it" } else { "them" },
-                                n_cap = if removal.unreachable_commits == 1 { "It stays" } else { "They stay" }
+                                "{} reachable only from this folder's detached HEAD; once it is removed nothing points to {}.",
+                                plural(removal.unreachable_commits, "commit is", "commits are"),
+                                if removal.unreachable_commits == 1 { "it" } else { "them" },
                             ),
                         )
                         .show(ui);
@@ -165,7 +164,8 @@ pub(super) fn show(
                         note(ui, "No changed, untracked or ignored files.", p.text_dim);
                     }
                     ui.add_space(theme::XS);
-                    note(ui, "Safety is checked again before the folder is removed.", p.text_dim);
+                    note(ui, "Its HEAD reflog, config.worktree and refs/worktree/* are deleted too.", p.text_dim);
+                    note(ui, "Commits only that reflog holds are lost.", p.text_dim);
                 }
             }
         })
@@ -300,9 +300,10 @@ pub(super) fn show_forget(
                     }
                     note(
                         ui,
-                        "Git forgets these worktrees, whose folders are gone. It deletes no working folder, but it deletes each one's entry in the repository (.git/worktrees): its HEAD and reflog, its index and the repositories of its submodules. The branches stay.",
+                        "Git forgets these worktrees, whose folders are gone. It deletes no working folder, but it deletes each one's entry in the repository (.git/worktrees): its HEAD and reflog, its index, its config.worktree and refs/worktree/*, and the repositories of its submodules. The branches stay.",
                         p.text,
                     );
+                    note(ui, "Commits only a HEAD reflog holds are lost.", p.text);
                     for entry in &forget.entries {
                         forgotten(ui, entry);
                     }
@@ -525,6 +526,35 @@ mod tests {
             confirm.description.as_deref(),
             Some("The check of the worktrees failed")
         );
+    }
+
+    /// What else the removal deletes is said plainly, and the commits only a detached `HEAD`
+    /// reaches are one fact, with no filler about checks.
+    #[test]
+    fn the_removal_says_what_else_it_deletes() {
+        let ctx = setup();
+        let mut lonely = removal();
+        lonely.unreachable_commits = 2;
+        let tab = tab_with(&lonely);
+        let mut form = RemoveWorktreeForm::new(tab.path.clone(), lonely.path, 1);
+        let (nodes, _) = frames(&ctx, &mut form, &tab);
+        let said = |part: &str| {
+            nodes.iter().any(|n| {
+                [&n.label, &n.value]
+                    .into_iter()
+                    .flatten()
+                    .any(|text| text.contains(part))
+            })
+        };
+        assert!(
+            said("HEAD reflog, config.worktree and refs/worktree"),
+            "{nodes:?}"
+        );
+        assert!(said("Commits only that reflog holds are lost"));
+        assert!(said(
+            "2 commits are reachable only from this folder's detached HEAD"
+        ));
+        assert!(!said("Safety is checked again"));
     }
 
     #[test]

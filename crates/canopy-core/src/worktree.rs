@@ -423,6 +423,10 @@ impl Repo {
     /// folder, but deletes each forgotten folder's administrative files in the repository (see
     /// [`ForgottenWorktree`]). A locked one is kept.
     ///
+    /// One window stays: a folder that goes missing between the last dry run and the prune (one
+    /// process spawn) is forgotten without having been listed. That is accepted: the folder was
+    /// still there when the user was asked.
+    ///
     /// # Errors
     /// The set changed or is blocked, or git's own refusal.
     pub fn forget_worktrees(&self, expected: &WorktreeForget) -> Result<()> {
