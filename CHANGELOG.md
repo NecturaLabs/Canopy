@@ -121,6 +121,9 @@ commits since the previous build.
 - Fewer notification cards: a failure that repeats while its card shows raises no second card, an
   automatic fetch that fails reaches the notification center and the bell but not a card, and a pull,
   rebase or merge that stops on conflicts, or a missing program, is a Needs your attention notice, not an error.
+- A cherry-pick, a revert, or a stash applied or popped that stops on conflicts is a Needs your
+  attention notice that takes you to Changes, not a Git error card, like a pull, rebase or merge.
+  For a stash it says the stash stays in the stash list until you drop it.
 
 ### Changed
 

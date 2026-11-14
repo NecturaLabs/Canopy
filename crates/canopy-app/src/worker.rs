@@ -564,11 +564,14 @@ pub enum Event {
     AutostashConflict,
     /// A pull waits for the user: the branches diverged, or it would likely conflict.
     PullDecision(Box<PullDecision>),
-    /// The operation `label` (a pull, rebase or merge) stopped on conflicts for the user to
-    /// resolve; `autostashed` when git holds the uncommitted changes aside meanwhile.
+    /// The operation `label` (a pull, rebase, merge, cherry-pick, revert or stash apply) stopped
+    /// on conflicts for the user to resolve; `autostashed` when git holds the uncommitted changes
+    /// aside meanwhile. `stash` when it was a stash applied or popped: nothing is in progress
+    /// then (no continue or abort), and the stash is kept.
     Conflicted {
         label: String,
         autostashed: bool,
+        stash: bool,
     },
 }
 
@@ -1193,6 +1196,14 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     // A leftover autostash (an external `git merge --squash --autostash`) is
                     // not this operation's: only one that appears during it is reported.
                     let held_before = integrates && repo.autostash_held();
+                    // A cherry-pick, a revert and a stash apply or pop can stop on conflicts as
+                    // well. Files already conflicted before they ran are not their stop: git
+                    // refused them, and says why.
+                    let picks = matches!(op, Op::CherryPick(_) | Op::Revert(_));
+                    let applies_stash =
+                        matches!(op, Op::StashApply { .. } | Op::StashApplyCommit { .. });
+                    let conflicted_before =
+                        (picks || applies_stash) && repo.index_conflicted().unwrap_or(true);
                     let pull = match op {
                         Op::Pull {
                             strategy,
@@ -1260,9 +1271,14 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(error = %redacted(&e), "conflicts not checked");
                             false
                         });
-                    let stopped = integrates
-                        && result.is_err()
-                        && repo.stopped_on_conflicts().unwrap_or(false);
+                    let stopped = result.is_err()
+                        && if applies_stash {
+                            !conflicted_before && repo.stash_stopped_on_conflicts().unwrap_or(false)
+                        } else if picks {
+                            !conflicted_before && repo.stopped_on_conflicts().unwrap_or(false)
+                        } else {
+                            integrates && repo.stopped_on_conflicts().unwrap_or(false)
+                        };
                     // Only a fast-forward was allowed and the branches diverged after all: a
                     // choice to make, not a failure (a pull checked beforehand asks first). A
                     // failed fetch brought nothing to combine: its error is the answer.
@@ -1290,6 +1306,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         // Not a failure: the conflicts are the user's to resolve.
                         emit(Event::Conflicted {
                             autostashed: !held_before && repo.autostash_held(),
+                            stash: applies_stash,
                             label,
                         });
                     } else {
@@ -3017,6 +3034,155 @@ mod read_tests {
             ),
             "{events:?}"
         );
+    }
+
+    /// A repository whose `main` and `other` both changed `a.txt`, with a stash of `a.txt` made on
+    /// `other` that cannot apply on `main`. Returns the repository, the tip of `other` and the
+    /// stash's commit, with `main` checked out and the working tree clean.
+    fn conflicting_repo(root: &Path) -> (PathBuf, Oid, Oid) {
+        std::fs::create_dir_all(root.join("home")).expect("home");
+        std::fs::write(root.join("home").join("gitconfig"), "").expect("config");
+        let repo = root.join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["switch", "-q", "-c", "other"]);
+        std::fs::write(repo.join("a.txt"), "theirs\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "theirs"]);
+        let other = Oid::from_str(&git(&repo, &["rev-parse", "HEAD"])).expect("oid");
+        std::fs::write(repo.join("a.txt"), "stashed\n").expect("write");
+        git(&repo, &["stash", "push", "-q"]);
+        let stash = Oid::from_str(&git(&repo, &["rev-parse", "stash@{0}"])).expect("oid");
+        git(&repo, &["switch", "-q", "main"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "ours"]);
+        (repo, other, stash)
+    }
+
+    /// Runs `op` in `repo` and returns the event that ends it.
+    fn run_op(repo: &Path, op: Op) -> Event {
+        let worker = worker_with_canopys_choices(trusted(repo.to_path_buf()));
+        worker.send(Job::Op(op));
+        events_until(&worker, |e| {
+            matches!(e, Event::Conflicted { .. } | Event::OpFinished { .. })
+        })
+        .pop()
+        .expect("an ending event")
+    }
+
+    /// #265: a cherry-pick or a revert that stops on conflicts is the user's to resolve, like a
+    /// merge that does, and not a failed operation.
+    #[test]
+    fn a_cherry_pick_or_revert_that_stops_on_conflicts_is_reported_as_stopped() {
+        for (revert, state_file) in [(false, "CHERRY_PICK_HEAD"), (true, "REVERT_HEAD")] {
+            let root = tempfile::tempdir().expect("tempdir");
+            let (repo, other, _) = conflicting_repo(root.path());
+            let op = if revert {
+                Op::Revert(other)
+            } else {
+                Op::CherryPick(other)
+            };
+            let ended = run_op(&repo, op);
+            assert!(
+                matches!(
+                    &ended,
+                    Event::Conflicted {
+                        autostashed: false,
+                        stash: false,
+                        ..
+                    }
+                ),
+                "revert {revert}: {ended:?}"
+            );
+            assert!(
+                repo.join(".git").join(state_file).exists(),
+                "git is left mid-operation for the user to resolve"
+            );
+            assert_eq!(git(&repo, &["ls-files", "-u"]).lines().count(), 3);
+        }
+    }
+
+    /// #265: a stash applied or popped onto changes it conflicts with is the user's to resolve; the
+    /// stash is kept and the event says it was a stash, which has nothing to continue or abort.
+    #[test]
+    fn a_stash_apply_that_stops_on_conflicts_is_reported_as_stopped() {
+        for (by_commit, pop) in [(false, false), (false, true), (true, false), (true, true)] {
+            let root = tempfile::tempdir().expect("tempdir");
+            let (repo, _, stash) = conflicting_repo(root.path());
+            let op = if by_commit {
+                Op::StashApplyCommit { oid: stash, pop }
+            } else {
+                Op::StashApply { index: 0, pop }
+            };
+            let ended = run_op(&repo, op);
+            assert!(
+                matches!(
+                    &ended,
+                    Event::Conflicted {
+                        autostashed: false,
+                        stash: true,
+                        ..
+                    }
+                ),
+                "by commit {by_commit}, pop {pop}: {ended:?}"
+            );
+            assert_eq!(git(&repo, &["ls-files", "-u"]).lines().count(), 3);
+            assert_eq!(
+                git(&repo, &["rev-parse", "stash@{0}"]),
+                stash.to_string(),
+                "git keeps the stash after a conflicted apply or pop"
+            );
+        }
+    }
+
+    /// Only a stop on conflicts is a stop: a stash that git refuses without conflicts, an apply
+    /// onto files that are already conflicted and a cherry-pick refused for the same reason stay
+    /// failures with git's own message.
+    #[test]
+    fn a_refusal_that_is_not_a_new_conflict_stays_a_failure() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (repo, other, stash) = conflicting_repo(root.path());
+        // Uncommitted edits to the stash's file: git refuses before touching anything.
+        std::fs::write(repo.join("a.txt"), "mine\n").expect("write");
+        let ended = run_op(
+            &repo,
+            Op::StashApply {
+                index: 0,
+                pop: false,
+            },
+        );
+        assert!(
+            matches!(&ended, Event::OpFinished { result: Err(e), .. } if e.contains("a.txt")),
+            "{ended:?}"
+        );
+        assert_eq!(git(&repo, &["ls-files", "-u"]), "");
+        git(&repo, &["checkout", "-q", "--", "a.txt"]);
+        // Conflicted already (a cherry-pick stopped): another operation stops nothing new.
+        let _ = run_op(&repo, Op::CherryPick(other));
+        assert!(repo.join(".git").join("CHERRY_PICK_HEAD").exists());
+        for op in [
+            Op::CherryPick(other),
+            Op::Revert(other),
+            Op::StashApplyCommit {
+                oid: stash,
+                pop: false,
+            },
+        ] {
+            let ended = run_op(&repo, op);
+            assert!(
+                matches!(&ended, Event::OpFinished { result: Err(_), .. }),
+                "{ended:?}"
+            );
+        }
     }
 
     /// A leftover `.git/MERGE_AUTOSTASH` (an earlier `git merge --squash --autostash` outside
