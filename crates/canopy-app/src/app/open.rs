@@ -1292,7 +1292,7 @@ mod tests {
             Vec::<&str>::new()
         );
         assert!(queues[1].is_empty() && queues[2].is_empty());
-        let opened = app.tabs[2].last_fetch;
+        app.tabs[2].next_fetch = Some(Instant::now());
         assert_eq!(
             app.tabs[1].git_options, None,
             "its git options are sent when it loads"
@@ -1303,8 +1303,8 @@ mod tests {
         app.load_active_tab(&ctx);
         app.load_active_tab(&ctx);
         assert!(
-            app.tabs[2].last_fetch > opened,
-            "the fetch interval counts from the load"
+            app.tabs[2].next_fetch.is_none(),
+            "the fetch is scheduled afresh from the load"
         );
         let third: Vec<_> = queues[2].try_iter().collect();
         assert!(

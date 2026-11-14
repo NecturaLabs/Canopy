@@ -266,6 +266,8 @@ pub struct CanopyApp {
     gallery: Option<usize>,
     /// The translucent-surfaces soak run (`--glass-soak`), if one was asked for.
     glass_soak: Option<crate::ui::kit::glass::Soak>,
+    /// Frame times for the `frame stats` and `first frame` log events.
+    frame_stats: crate::frame_stats::FrameStats,
     /// Writes the settings file off the UI thread; `None` in a screenshot run and where the
     /// platform has no folder for it (eframe's storage keeps the settings then).
     settings_writer: Option<crate::settings_store::Writer>,
@@ -451,6 +453,7 @@ impl CanopyApp {
             glass_soak: launch
                 .glass_soak
                 .map(|n| crate::ui::kit::glass::Soak::new(n, crate::ui::kit::glass::Soak::CYCLE)),
+            frame_stats: crate::frame_stats::FrameStats::default(),
             settings_writer: crate::storage::layout()
                 .filter(|_| !shooting && launch.glass_soak.is_none())
                 .map(|layout| crate::settings_store::Writer::spawn(layout.settings_file())),
@@ -1057,7 +1060,8 @@ fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
 }
 
 impl eframe::App for CanopyApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.frame_stats.frame_started(frame.info().cpu_usage);
         let ctx = ui.ctx().clone();
         name_window(&ctx, self.tabs.get(self.active).map(|t| t.name.as_str()));
         update_window_minimum(&ctx);
@@ -1385,6 +1389,7 @@ impl eframe::App for CanopyApp {
         self.apply(&ctx, actions);
         self.handle_screenshot(&ctx);
         crate::ui::kit::a11y::keep_focus_in_tree(&ctx);
+        self.frame_stats.frame_finished();
     }
 
     #[expect(
@@ -1735,6 +1740,7 @@ pub(super) fn test_app() -> CanopyApp {
         applied: None,
         gallery: None,
         glass_soak: None,
+        frame_stats: crate::frame_stats::FrameStats::default(),
         settings_writer: None,
     }
 }

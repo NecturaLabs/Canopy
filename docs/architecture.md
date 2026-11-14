@@ -105,13 +105,14 @@ thread.
 | Module | Responsibility |
 |---|---|
 | `main.rs` | Argument parsing, logging, eframe launch; also the entry point of the askpass client (the same executable, started by git or ssh). |
+| `frame_stats.rs` | The `frame stats` (DEBUG, about every 5 s while frames are produced: `frames`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`, `hitches_33`, `hitches_100`) and `first frame` (INFO, `ms` since process start) log events `tools/stress_report.py` reads. A frame's time is eframe's `cpu_usage` for the previous frame, counted into a fixed histogram: O(1) and no allocation per frame. |
 | `lfs.rs` | `LfsState`, a tab's view of Git LFS: the files `Job::Lfs` found (read after every snapshot, never in a refresh) and which have no downloaded object, the install steps when `git lfs` does not work, and the patterns and locks the dialog reads (answers carry a serial; an older one is dropped), plus the size and object-id formatting of the diff card and the rows. |
 | `action.rs` | `Action`: what the user asked for during a frame. Views emit actions and never import `app`. |
 | `app/mod.rs` | `CanopyApp`: state, start-up, the frame (`eframe::App::ui`), opening repositories, theme. The window's AccessKit name ("<repository> — Canopy"); `Watched`, the copy of the settings whose change reloads diffs or forges, compared each frame instead of cloning `Settings`; and, for the app's tests, `test_app()` and `test_tab()`, a `CanopyApp` and a `RepoTab` with no threads. |
 | `app/input.rs` | Keyboard: bare keys, chords and the commands they run. |
 | `app/palette.rs` | The command palette's entries, including the Appearance ones (Style, Density, Translucent surfaces, High contrast, Motion). |
 | `app/dispatch.rs` | Applies the actions a frame collected. |
-| `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch, the timed refresh of the open request list. |
+| `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch (each tab has its own due time, `RepoTab::next_fetch`; its first is `first_fetch_delay` after the tab is scheduled, between half the interval and a whole one by a hash of the path, so it does not depend on the tab's position), the timed refresh of the open request list. |
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. Keeps commit, conflict and request-comment drafts per worktree during the run. New tabs are `RepoTab::unloaded`; every change of the active tab goes through `CanopyApp::activate`, which loads it the first time it is shown, and the per-frame `load_active_tab` is the backstop (issue #62). |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`: waits until the window is final, keeps the pointer out of the picture (`raw_input_hook` drops pointer input), opens the dialog overlays and, for `--overlay menu-*`, a context menu by a synthetic right click on the widget it finds by its AccessKit name. |

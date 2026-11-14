@@ -1258,8 +1258,12 @@ pub struct RepoTab {
     /// older one is out of date.
     trust_version: u64,
     pub avatars: crate::avatars::Avatars,
-    /// The last fetch, for auto-fetch.
-    pub last_fetch: Instant,
+    /// When the next automatic fetch is due (`None`: not scheduled yet). Set by the app's
+    /// auto-fetch pass, with a stagger so tabs do not fall due together, and again after every
+    /// fetch.
+    pub next_fetch: Option<Instant>,
+    /// The auto-fetch interval `next_fetch` was scheduled for; a different one reschedules.
+    pub fetch_every: Option<Duration>,
 }
 
 impl RepoTab {
@@ -1301,8 +1305,8 @@ impl RepoTab {
             return false;
         }
         self.worker.send(Job::Refresh(self.commit_limit));
-        // The background fetch counts its interval from now, not from when the tab was opened.
-        self.last_fetch = Instant::now();
+        // The background fetch is scheduled afresh from now, not from when the tab was opened.
+        self.next_fetch = None;
         true
     }
 
@@ -1418,7 +1422,8 @@ impl RepoTab {
             trust_asked: false,
             trust_version: 0,
             avatars: crate::avatars::Avatars::default(),
-            last_fetch: Instant::now(),
+            next_fetch: None,
+            fetch_every: None,
         }
     }
 
@@ -2932,7 +2937,9 @@ impl RepoTab {
                                 self.read_lfs_lists();
                             }
                             if kind == OpKind::Fetch {
-                                self.last_fetch = Instant::now();
+                                self.next_fetch = self
+                                    .fetch_every
+                                    .and_then(|every| Instant::now().checked_add(every));
                                 self.auto_fetch_failure = None;
                             }
                             // The remote moved, or Canopy moved it: its requests may have too.
@@ -5087,6 +5094,54 @@ mod tests {
         // The fetch the user starts always says how it went.
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
+        Ok(())
+    }
+
+    /// A fetch that finishes, the user's or the timer's, restarts the interval from then.
+    #[test]
+    fn a_finished_fetch_restarts_the_auto_fetch_interval() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let every = Duration::from_mins(10);
+        let soon = Instant::now();
+        tab.fetch_every = Some(every);
+        tab.next_fetch = Some(soon);
+        events.send(Event::OpFinished {
+            label: "Fetching".into(),
+            kind: OpKind::Fetch,
+            announce: true,
+            result: Ok(String::new()),
+        })?;
+        tab.poll(&[]);
+        let next = tab.next_fetch.expect("rescheduled");
+        assert!(
+            next >= soon + every,
+            "a whole interval after the fetch, not the old due time"
+        );
+        // Another operation leaves the schedule alone.
+        tab.next_fetch = Some(soon);
+        events.send(Event::OpFinished {
+            label: "Staging".into(),
+            kind: OpKind::Other,
+            announce: false,
+            result: Ok(String::new()),
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.next_fetch, Some(soon));
+        // Without auto-fetch there is no schedule to restart.
+        tab.fetch_every = None;
+        events.send(Event::OpFinished {
+            label: "Fetching".into(),
+            kind: OpKind::Fetch,
+            announce: true,
+            result: Ok(String::new()),
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.next_fetch, None);
         Ok(())
     }
 

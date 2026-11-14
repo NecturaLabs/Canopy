@@ -2,6 +2,8 @@
 //! and auto-fetch.
 
 use super::*;
+use std::path::Path;
+
 use canopy_core::identity::{Scope, Source};
 
 use crate::identity_worker::Event as IdentityEvent;
@@ -30,7 +32,7 @@ fn notice_route(ok: bool, delivery: Delivery) -> (ToastKind, Topic) {
 }
 
 /// Announces a repository notice under the topic and delivery it carries.
-fn announce_notice(toasts: &mut Toasts, ctx: &egui::Context, repo: &std::path::Path, n: Notice) {
+fn announce_notice(toasts: &mut Toasts, ctx: &egui::Context, repo: &Path, n: Notice) {
     let (kind, topic) = notice_route(n.ok, n.delivery);
     if n.delivery == Delivery::Quiet {
         toasts.push_quiet_for(ctx, kind, topic, n.title, n.body, repo);
@@ -127,7 +129,7 @@ fn settle_identity_dialog(dialogs: &mut DialogStack, saved: bool) {
 }
 
 /// The question before a force push: the branch and the remote branch it overwrites.
-fn force_push_dialog(repo: &std::path::Path, target: canopy_core::PushTarget) -> Dialog {
+fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
     let canopy_core::PushTarget {
         branch,
         remote,
@@ -633,31 +635,62 @@ impl CanopyApp {
         }
     }
 
-    /// Queues background fetches for tabs whose auto-fetch interval has passed. A repository
-    /// that is not trusted is read-only, so it is not fetched.
+    /// Queues background fetches for tabs whose auto-fetch fell due. A repository that is not
+    /// trusted is read-only, so it is not fetched.
+    ///
+    /// Each tab has its own due time (`RepoTab::next_fetch`). A tab is scheduled the first time
+    /// this sees auto-fetch on for it, and again when the interval changes, with a delay from
+    /// [`first_fetch_delay`] that depends only on its path: tabs scheduled together (a restored
+    /// session, or the setting turned on with many tabs open) spread their first fetches over the
+    /// second half of the interval instead of falling due in one frame. After a fetch the tab
+    /// waits one whole interval.
     pub(super) fn auto_fetch(&mut self, ctx: &egui::Context) {
         if self.screenshot.is_some() {
             return;
         }
+        if let Some(wake) = self.auto_fetch_at(Instant::now()) {
+            ctx.request_repaint_after(wake);
+        }
+    }
+
+    /// [`Self::auto_fetch`] at `now`; the time until the frame loop should look again, or `None`
+    /// when no tab has auto-fetch on.
+    fn auto_fetch_at(&mut self, now: Instant) -> Option<Duration> {
         let mut any = false;
+        let mut wake = AUTO_FETCH_POLL;
         for t in &mut self.tabs {
             let minutes = self.settings.auto_fetch_for(&t.path);
             if minutes == 0 {
+                t.next_fetch = None;
+                t.fetch_every = None;
                 continue;
             }
             any = true;
             let every = Duration::from_secs(u64::from(minutes) * 60);
+            if t.fetch_every != Some(every) {
+                t.fetch_every = Some(every);
+                t.next_fetch = None;
+            }
+            let due = *t.next_fetch.get_or_insert_with(|| {
+                now.checked_add(first_fetch_delay(&t.path, every))
+                    .unwrap_or(now)
+            });
             let idle = t.running.is_none() && t.trust != RepoTrust::Untrusted;
             let has_remote = t.snap.as_ref().is_some_and(|s| !s.remotes.is_empty());
-            if idle && has_remote && t.last_fetch.elapsed() >= every {
-                t.last_fetch = Instant::now();
+            if !idle || !has_remote {
+                // Busy, untrusted and not yet loaded tabs are looked at again by the poll, not
+                // by their own due time.
+                continue;
+            }
+            if now >= due {
+                t.next_fetch = now.checked_add(every);
                 let prune = self.settings.prune_for(&t.path);
                 t.op(Op::Fetch { prune, quiet: true });
+            } else {
+                wake = wake.min(next_due(now, due));
             }
         }
-        if any {
-            ctx.request_repaint_after(Duration::from_secs(30));
-        }
+        any.then_some(wake)
     }
 
     /// Refreshes the active tab's open request list on a timer: as often as the background
@@ -675,6 +708,40 @@ impl CanopyApp {
             ctx.request_repaint_after(next);
         }
     }
+}
+
+/// The longest the frame loop sleeps between looks at auto-fetch. A tab that is busy, untrusted
+/// or not loaded yet has no wake time of its own and is found by this poll.
+const AUTO_FETCH_POLL: Duration = Duration::from_secs(30);
+
+/// How long after a tab is scheduled its first automatic fetch falls due: from half the interval
+/// to just under a whole one, by a hash of the tab's path. The same path always gets the same
+/// delay, so closing, reordering or opening other tabs moves nothing, and a lone tab never waits
+/// longer than the interval.
+fn first_fetch_delay(path: &Path, every: Duration) -> Duration {
+    // FNV-1a: fixed by definition, unlike the standard library's default hasher.
+    let hash = path
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .fold(FNV_OFFSET_BASIS, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+        });
+    let step = u32::try_from(hash % u64::from(STAGGER_STEPS)).unwrap_or(0);
+    let half = every / 2;
+    half + (half / STAGGER_STEPS) * step
+}
+
+/// FNV-1a 64-bit parameters.
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0100_0000_01b3;
+/// How many distinct delays the second half of the interval is divided into.
+const STAGGER_STEPS: u32 = 1_024;
+
+/// How long the frame loop may sleep for a tab that falls due at `due`: until then, never past
+/// the poll.
+fn next_due(now: Instant, due: Instant) -> Duration {
+    due.saturating_duration_since(now).min(AUTO_FETCH_POLL)
 }
 
 /// How often the open request list refreshes when the background fetch runs every `minutes`
@@ -886,9 +953,13 @@ mod tests {
             let mut tab = test_tab(snap);
             tab.worker = worker;
             tab.trust = trust;
-            tab.last_fetch = Instant::now()
-                .checked_sub(Duration::from_secs(3600))
-                .expect("an hour ago");
+            // Scheduled for the interval Settings has, and long overdue.
+            tab.fetch_every = Some(Duration::from_mins(1));
+            tab.next_fetch = Some(
+                Instant::now()
+                    .checked_sub(Duration::from_hours(1))
+                    .expect("an hour ago"),
+            );
             tabs.push(tab);
             queues.push(jobs);
         }
@@ -901,6 +972,210 @@ mod tests {
                 .any(|job| matches!(job, Job::Op(Op::Fetch { quiet: true, .. }))),
             "trusted: fetched"
         );
+    }
+
+    fn tab_with_remote(path: &str) -> (RepoTab, Receiver<Job>) {
+        let (worker, _events, jobs) = crate::worker::Worker::detached();
+        let snap = canopy_core::RepoSnapshot {
+            remotes: vec![canopy_core::RemoteInfo {
+                name: "origin".into(),
+                url: None,
+                default_branch: None,
+            }],
+            ..canopy_core::RepoSnapshot::default()
+        };
+        let mut tab = test_tab(snap);
+        tab.path = path.into();
+        tab.worker = worker;
+        (tab, jobs)
+    }
+
+    fn fetched(queue: &Receiver<Job>) -> bool {
+        queue
+            .try_iter()
+            .any(|job| matches!(job, Job::Op(Op::Fetch { quiet: true, .. })))
+    }
+
+    /// Tabs with auto-fetch on, a hundred repositories under `/repos`.
+    fn app_with_tabs(count: usize, minutes: u32) -> (CanopyApp, Vec<Receiver<Job>>) {
+        let mut app = test_app();
+        app.settings.auto_fetch_minutes = minutes;
+        let mut queues = Vec::new();
+        for n in 0..count {
+            let (tab, jobs) = tab_with_remote(&format!("/repos/project-{n:03}"));
+            app.tabs.push(tab);
+            queues.push(jobs);
+        }
+        (app, queues)
+    }
+
+    #[test]
+    fn the_first_fetch_delay_is_the_second_half_of_the_interval_by_path() {
+        let every = Duration::from_mins(10);
+        let delay = |path: &str| first_fetch_delay(Path::new(path), every);
+        assert_eq!(
+            delay("/repos/a"),
+            delay("/repos/a"),
+            "the same path, the same delay"
+        );
+        let delays: Vec<Duration> = (0..100)
+            .map(|n| delay(&format!("/repos/project-{n:03}")))
+            .collect();
+        assert!(
+            delays.iter().all(|d| *d >= every / 2 && *d < every),
+            "never sooner than half the interval, never a whole one: {delays:?}"
+        );
+        let distinct: std::collections::BTreeSet<_> = delays.iter().collect();
+        assert!(
+            distinct.len() >= 90,
+            "{} distinct delays of 100",
+            distinct.len()
+        );
+        assert!(
+            delays.iter().filter(|d| **d < every * 3 / 4).count() >= 30
+                && delays.iter().filter(|d| **d >= every * 3 / 4).count() >= 30,
+            "spread over the half, not bunched"
+        );
+        assert_eq!(
+            first_fetch_delay(Path::new("/x"), Duration::ZERO),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn the_wake_time_is_the_due_time_but_never_past_the_poll() {
+        let now = Instant::now();
+        assert_eq!(
+            next_due(now, now + Duration::from_secs(7)),
+            Duration::from_secs(7)
+        );
+        assert_eq!(next_due(now, now + Duration::from_mins(5)), AUTO_FETCH_POLL);
+        assert_eq!(next_due(now, now), Duration::ZERO, "due now");
+        assert_eq!(
+            next_due(now + Duration::from_secs(5), now),
+            Duration::ZERO,
+            "already past"
+        );
+    }
+
+    /// Turning auto-fetch on, or shortening its interval, with many tabs open for an hour does not
+    /// fetch them all in one frame, nor at once after the interval: they fall due one after another.
+    #[test]
+    fn enabling_auto_fetch_spreads_tabs_that_have_been_open_for_a_while() {
+        let (mut app, queues) = app_with_tabs(40, 0);
+        let opened = Instant::now();
+        assert_eq!(app.auto_fetch_at(opened), None, "off: nothing scheduled");
+        assert!(app.tabs.iter().all(|t| t.next_fetch.is_none()));
+
+        // An hour later the user turns it on, every five minutes.
+        let on = opened + Duration::from_hours(1);
+        app.settings.auto_fetch_minutes = 5;
+        assert!(app.auto_fetch_at(on).is_some());
+        assert!(
+            queues.iter().all(|q| !fetched(q)),
+            "the pass that turns it on fetches nothing"
+        );
+        // Each tab's step is a share of the second half of the interval.
+        let every = Duration::from_mins(5);
+        let mut fired = Vec::new();
+        for second in (0..=300).step_by(5) {
+            app.auto_fetch_at(on + Duration::from_secs(second));
+            let now_fired = queues.iter().filter(|q| fetched(q)).count();
+            fired.push(now_fired);
+        }
+        assert_eq!(fired.iter().sum::<usize>(), 40, "every tab fetched once");
+        assert_eq!(
+            fired[..30].iter().sum::<usize>(),
+            0,
+            "nothing before half the interval"
+        );
+        assert!(
+            fired.iter().all(|n| *n <= 8),
+            "no more than a few in one five-second step: {fired:?}"
+        );
+        assert!(
+            app.tabs
+                .iter()
+                .all(|t| t.next_fetch.is_some_and(|n| n > on + every)),
+            "after a fetch a tab waits a whole interval"
+        );
+    }
+
+    #[test]
+    fn changing_the_interval_or_turning_it_off_reschedules() {
+        let (mut app, queues) = app_with_tabs(3, 10);
+        let t0 = Instant::now();
+        app.auto_fetch_at(t0);
+        let scheduled: Vec<_> = app.tabs.iter().map(|t| t.next_fetch).collect();
+        assert!(scheduled.iter().all(Option::is_some));
+        app.auto_fetch_at(t0 + Duration::from_secs(1));
+        assert_eq!(
+            scheduled,
+            app.tabs.iter().map(|t| t.next_fetch).collect::<Vec<_>>(),
+            "the schedule stays while nothing changes"
+        );
+
+        // Shortened to one minute: scheduled again from now, within the new interval.
+        let later = t0 + Duration::from_mins(2);
+        app.settings.auto_fetch_minutes = 1;
+        app.auto_fetch_at(later);
+        for t in &app.tabs {
+            let due = t.next_fetch.expect("scheduled");
+            assert!(due >= later + Duration::from_secs(30) && due < later + Duration::from_mins(1));
+            assert_eq!(t.fetch_every, Some(Duration::from_mins(1)));
+        }
+        assert!(
+            queues.iter().all(|q| !fetched(q)),
+            "a new schedule fetches nothing at once"
+        );
+
+        app.settings.auto_fetch_minutes = 0;
+        assert_eq!(app.auto_fetch_at(later), None);
+        assert!(
+            app.tabs
+                .iter()
+                .all(|t| t.next_fetch.is_none() && t.fetch_every.is_none())
+        );
+    }
+
+    #[test]
+    fn closing_reordering_or_opening_tabs_does_not_move_the_others() {
+        let (mut app, _queues) = app_with_tabs(6, 10);
+        let t0 = Instant::now();
+        app.auto_fetch_at(t0);
+        let due = |app: &CanopyApp| -> Vec<(PathBuf, Option<Instant>)> {
+            let mut v: Vec<_> = app
+                .tabs
+                .iter()
+                .map(|t| (t.path.clone(), t.next_fetch))
+                .collect();
+            v.sort();
+            v
+        };
+        let before = due(&app);
+
+        app.tabs.remove(2);
+        app.tabs.reverse();
+        let (lone, _jobs) = tab_with_remote("/repos/opened-later");
+        app.tabs.push(lone);
+        app.auto_fetch_at(t0 + Duration::from_secs(1));
+        let after = due(&app);
+        for (path, due) in &before {
+            if let Some((_, now)) = after.iter().find(|(p, _)| p == path) {
+                assert_eq!(due, now, "{path:?} kept its time");
+            }
+        }
+        // A tab opened ten minutes in waits like a lone tab: under one interval, not two.
+        let late = t0 + Duration::from_mins(10);
+        let (tab, _jobs) = tab_with_remote("/repos/opened-much-later");
+        app.tabs.push(tab);
+        app.auto_fetch_at(late);
+        let due = app
+            .tabs
+            .last()
+            .and_then(|t| t.next_fetch)
+            .expect("scheduled");
+        assert!(due >= late + Duration::from_mins(5) && due < late + Duration::from_mins(10));
     }
 
     #[test]
