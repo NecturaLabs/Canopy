@@ -136,6 +136,7 @@ mod tests {
             applied: None,
             gallery: None,
             glass_soak: None,
+            settings_writer: None,
         }
     }
 

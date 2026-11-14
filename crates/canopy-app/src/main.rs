@@ -19,6 +19,8 @@ mod request_view;
 mod selfupdate;
 mod settings;
 mod settings_file;
+mod settings_store;
+mod storage;
 mod system_apps;
 mod tab;
 mod trust;
@@ -92,8 +94,8 @@ ENVIRONMENT:
                   overrides Settings → Privacy → Log detail
 
 FILES:
-    Logs (one JSON-lines file per run) and crash reports are kept in Canopy's data folder
-    (~/.local/share/canopy on Linux) and never leave your computer.";
+    Logs (one JSON-lines file per run) and crash reports are kept in Canopy's state folder
+    (~/.local/state/canopy on Linux) and never leave your computer.";
 
 #[expect(
     clippy::print_stdout,
@@ -377,7 +379,10 @@ fn main() -> anyhow::Result<()> {
 
     // Normal detail until Settings load; their log setting takes over afterwards.
     ui::install_host();
+    // Folders first: the log is written into one of them.
+    storage::prepare();
     logging::init(logging::LogLevel::Normal);
+    storage::log_setup();
     canopy_hosting::set_build(build_info::NUMBER);
 
     // The editor, terminal and file manager the open actions use when Settings names none.
@@ -393,6 +398,8 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport,
         persist_window: launch.screenshot.is_none() && launch.glass_soak.is_none(),
+        // The window's place and size live beside the settings, in Canopy's own folder.
+        persistence_path: storage::layout().map(storage::Layout::window_file),
         // Gradients and glows band without it; spelled out so a changed default cannot bring
         // the bands back.
         dithering: true,

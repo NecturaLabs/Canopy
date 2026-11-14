@@ -1,5 +1,5 @@
-//! Local diagnostics: structured logs and crash reports, both in Canopy's data directory
-//! (`~/.local/share/canopy/` on Linux). Nothing here is uploaded anywhere; the user decides
+//! Local diagnostics: structured logs and crash reports, both in Canopy's state folder
+//! (`~/.local/state/canopy/` on Linux). Nothing here is uploaded anywhere; the user decides
 //! whether to share a file.
 //!
 //! - Each run writes `logs/canopy-<UTC start>-<pid>.jsonl`: one JSON object per line with
@@ -72,19 +72,14 @@ impl LogLevel {
     }
 }
 
-/// Canopy's data directory, if the platform has one.
-pub fn data_dir() -> Option<PathBuf> {
-    eframe::storage_dir("canopy")
-}
-
-/// Where logs go.
+/// Where logs go, if the platform has a home for them.
 pub fn log_dir() -> Option<PathBuf> {
-    data_dir().map(|d| d.join("logs"))
+    crate::storage::layout().map(|l| l.logs.clone())
 }
 
 /// Where crash reports go.
 pub fn crash_dir() -> Option<PathBuf> {
-    data_dir().map(|d| d.join("crashes"))
+    crate::storage::layout().map(|l| l.crashes.clone())
 }
 
 /// What identifies this run in its log and in diagnostics.

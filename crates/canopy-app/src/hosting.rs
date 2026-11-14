@@ -75,7 +75,7 @@ impl std::fmt::Debug for TokenStore {
 }
 
 fn tokens_path() -> Option<PathBuf> {
-    eframe::storage_dir("canopy").map(|d| d.join("tokens.json"))
+    crate::storage::layout().map(crate::storage::Layout::tokens_file)
 }
 
 impl TokenStore {

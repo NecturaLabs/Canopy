@@ -253,6 +253,9 @@ pub struct CanopyApp {
     gallery: Option<usize>,
     /// The translucent-surfaces soak run (`--glass-soak`), if one was asked for.
     glass_soak: Option<crate::ui::kit::glass::Soak>,
+    /// Writes the settings file off the UI thread; `None` in a screenshot run and where the
+    /// platform has no folder for it (eframe's storage keeps the settings then).
+    settings_writer: Option<crate::settings_store::Writer>,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -264,14 +267,51 @@ impl std::fmt::Debug for CanopyApp {
 }
 
 impl CanopyApp {
+    /// The saved settings, and, when the settings file was unreadable, why and where it was kept.
+    /// Without a file, the copy builds before the move kept in eframe's storage is taken once
+    /// (ADR 0016); defaults when there is neither.
+    fn load_settings(
+        storage: Option<&dyn eframe::Storage>,
+        shooting: bool,
+    ) -> (Settings, Option<(String, Option<PathBuf>)>) {
+        let legacy = || {
+            storage
+                .and_then(|s| eframe::get_value(s, settings::KEY))
+                .unwrap_or_default()
+        };
+        let Some(layout) = crate::storage::layout().filter(|_| !shooting) else {
+            return (legacy(), None);
+        };
+        match crate::settings_store::load(&layout.settings_file()) {
+            crate::settings_store::Loaded::Settings(settings) => (*settings, None),
+            crate::settings_store::Loaded::Missing => (legacy(), None),
+            crate::settings_store::Loaded::Unreadable { reason, kept } => {
+                (Settings::default(), Some((reason, kept)))
+            }
+        }
+    }
+
+    /// Tells the user when the settings file could not be written.
+    fn report_settings_write_failures(&mut self, ctx: &egui::Context) {
+        let Some(writer) = &self.settings_writer else {
+            return;
+        };
+        for why in writer.take_errors() {
+            self.toasts.push(
+                ctx,
+                ToastKind::Error,
+                Topic::Error,
+                "Settings could not be saved",
+                format!("Your settings are kept for this session only: {why}."),
+            );
+        }
+    }
+
     /// Builds the app, restoring settings and the previous session.
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Self {
-        let mut settings: Settings = cc
-            .storage
-            .and_then(|s| eframe::get_value(s, settings::KEY))
-            .unwrap_or_default();
-        settings.migrate();
         let shooting = launch.screenshot.is_some();
+        let (mut settings, unreadable_settings) = Self::load_settings(cc.storage, shooting);
+        settings.migrate();
         if shooting {
             cc.egui_ctx
                 .memory_mut(|memory| *memory = egui::Memory::default());
@@ -384,6 +424,9 @@ impl CanopyApp {
             glass_soak: launch
                 .glass_soak
                 .map(|n| crate::ui::kit::glass::Soak::new(n, crate::ui::kit::glass::Soak::CYCLE)),
+            settings_writer: crate::storage::layout()
+                .filter(|_| !shooting && launch.glass_soak.is_none())
+                .map(|layout| crate::settings_store::Writer::spawn(layout.settings_file())),
         };
         app.apply_look(&cc.egui_ctx);
         if !shooting
@@ -392,6 +435,26 @@ impl CanopyApp {
                 .and_then(|s| s.get_string(crate::ui::toast::STORAGE_KEY))
         {
             app.toasts.restore_json(&kept);
+        }
+        if let Some((reason, kept)) = unreadable_settings {
+            let body = match kept {
+                Some(kept) => format!(
+                    "Canopy started with its default settings because the file was unreadable: {reason}. \
+                     The file is kept as {}.",
+                    kept.display()
+                ),
+                None => format!(
+                    "Canopy started with its default settings because the file was unreadable: {reason}. \
+                     The file could not be moved aside, and the next save replaces it."
+                ),
+            };
+            app.toasts.push(
+                &cc.egui_ctx,
+                ToastKind::Error,
+                Topic::Error,
+                "Settings could not be read",
+                body,
+            );
         }
         let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
@@ -950,6 +1013,7 @@ impl eframe::App for CanopyApp {
         let p = palette(&ctx);
         let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
         self.poll(&ctx);
+        self.report_settings_write_failures(&ctx);
         if let Some(t) = self.tabs.get_mut(self.active) {
             t.diff_default = self.settings.diff;
         }
@@ -1284,6 +1348,9 @@ impl eframe::App for CanopyApp {
     )]
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         crate::ui::kit::glass::destroy(gl);
+        if let Some(writer) = &mut self.settings_writer {
+            writer.finish();
+        }
         // Stop every repository's threads, then wait for them all at once.
         self.tabs.clear();
         crate::worker::wait_for_threads(Duration::from_secs(1));
@@ -1315,7 +1382,15 @@ impl eframe::App for CanopyApp {
             }
         }
         self.settings.open_tabs = self.tabs.iter().map(|t| t.path.clone()).collect();
-        eframe::set_value(storage, settings::KEY, &self.settings);
+        if let Some(writer) = &self.settings_writer {
+            writer.save(&self.settings);
+            if writer.has_written() {
+                // The file has them now; the copy in eframe's storage is from before the move.
+                storage.remove_string(settings::KEY);
+            }
+        } else {
+            eframe::set_value(storage, settings::KEY, &self.settings);
+        }
         storage.set_string(
             crate::ui::toast::STORAGE_KEY,
             saved_notifications(&self.toasts),
@@ -1614,6 +1689,7 @@ pub(super) fn test_app() -> CanopyApp {
         applied: None,
         gallery: None,
         glass_soak: None,
+        settings_writer: None,
     }
 }
 
