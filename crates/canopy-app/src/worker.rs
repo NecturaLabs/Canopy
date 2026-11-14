@@ -971,7 +971,7 @@ impl Job {
             Self::MergedBranches { .. } => "merged_branches",
             Self::BaseCompare { .. } => "base_compare",
             Self::RefreshStatus => "status",
-            Self::WatchFailed(_) => "watch failed",
+            Self::WatchFailed(_) => "watch-failed",
             Self::Details(_) => "details",
             Self::Signature(_) => "signature",
             Self::Diff(_) => "diff",

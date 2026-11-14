@@ -3005,9 +3005,9 @@ impl RepoTab {
                 }
                 Event::WatchFailed(e) => notices.push(Notice {
                     ok: false,
-                    delivery: Delivery::Attention,
+                    delivery: Delivery::Quiet,
                     title: "Changes on disk are not picked up".into(),
-                    body: format!("{e}. Canopy shows them after a Refresh."),
+                    body: format!("{e} {}", crate::watcher::WATCH_FAILED_HINT),
                 }),
                 Event::Failed(e) => {
                     if self.snap.is_none() {
@@ -5866,22 +5866,24 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_that_cannot_be_watched_is_an_attention_notice()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn a_folder_that_cannot_be_watched_is_a_quiet_notice() -> Result<(), Box<dyn std::error::Error>>
+    {
         let ctx = egui::Context::default();
         let dir = tempfile::tempdir()?;
         let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
         let (worker, events, _jobs) = Worker::detached();
         tab.worker = worker;
-        events.send(Event::WatchFailed("OS file watch limit reached".into()))?;
+        events.send(Event::WatchFailed(
+            "The system's limit on watched folders is reached.".into(),
+        ))?;
         let notices = tab.poll(&[]);
         assert_eq!(notices.len(), 1);
         assert!(!notices[0].ok);
-        assert_eq!(notices[0].delivery, Delivery::Attention);
+        assert_eq!(notices[0].delivery, Delivery::Quiet);
         assert_eq!(notices[0].title, "Changes on disk are not picked up");
         assert_eq!(
             notices[0].body,
-            "OS file watch limit reached. Canopy shows them after a Refresh."
+            "The system's limit on watched folders is reached. Canopy shows changes on disk after a Refresh."
         );
         Ok(())
     }
