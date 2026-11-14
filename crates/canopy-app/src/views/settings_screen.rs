@@ -1893,7 +1893,14 @@ fn noted_row_layout(
                     HelpMark::new(title, detail).show(ui);
                 }
                 if let Some(note) = note {
-                    HelpMark::new(title, &note.text).notice(note.warn).show(ui);
+                    // Beside an explanation mark, the state remark is set apart from it.
+                    let mark = HelpMark::new(title, &note.text).notice(note.warn);
+                    if detail.is_empty() {
+                        mark.show(ui);
+                    } else {
+                        ui.add_space(theme::XS);
+                        mark.apart().show(ui);
+                    }
                 }
                 if let Some(tag) = tag {
                     ui.add_space(theme::XS);

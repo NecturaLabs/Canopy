@@ -68,6 +68,8 @@ commits since the previous build.
 
 ### Fixed
 
+- The notification center keeps its margin above and below at the smallest window size and zoom, scrolling its list when the window is short.
+- A Settings row with both an explanation mark and a state remark (Download profile pictures) draws the remark in the accent colour with a gap, so the two marks no longer look alike.
 - Settings are written to a temporary file and renamed over the old one, on a thread of their own,
   so a crash or a full disk while saving no longer leaves a truncated file. A settings file Canopy
   cannot read is kept as `settings.json.bad` instead of being overwritten, Canopy starts with its
@@ -204,6 +206,14 @@ commits since the previous build.
 - One file watcher serves every open repository instead of one per tab, so many open tabs no
   longer run into the system's limit on watchers. A tab whose files cannot be watched says so once:
   changes on disk then show after a Refresh.
+- Background fetching no longer fires in every tab at the same moment. When a tab first has
+  background fetching on (it opens, or you turn the setting on or change the interval with tabs
+  open), its first fetch comes between half the interval and a whole one later, a different time
+  for each repository; after a fetch it waits a whole interval.
+- The log records frame times and the first frame: a `frame stats` event about every 5 seconds
+  while the window is drawing (frames, p50, p95, p99 and worst frame in milliseconds, frames over
+  33 and 100 ms; Detailed log level) and a `first frame` event with the start-up time. They help
+  tell whether the window stutters; the stress-test report reads them.
 - Canopy keeps its files in a folder for each kind of data (settings, logs and crash reports,
   picture cache) following each system's convention, owner-only on Linux and macOS and marked `.canopy-data`
   (unless a folder already holds someone else's files) so the installers' `--purge` finds them, and
