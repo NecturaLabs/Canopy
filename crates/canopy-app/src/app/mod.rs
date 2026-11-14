@@ -68,6 +68,7 @@ pub const OVERLAYS: &[&str] = &[
     "privacy-trust-off",
     "diff-options",
     "settings-integrations",
+    "settings-integrations-custom",
     "settings-accounts",
     "settings-updates",
     "settings-notifications",
@@ -446,6 +447,14 @@ impl CanopyApp {
                 ));
             }
             Some("settings-integrations") => {
+                app.settings_screen =
+                    Some(SettingsScreen::at(settings_screen::Section::Integrations));
+            }
+            // Chosen commands, which show the help for the placeholders each one takes.
+            Some("settings-integrations-custom") => {
+                "code --wait %f".clone_into(&mut app.settings.editor);
+                "wezterm start --cwd %d".clone_into(&mut app.settings.terminal);
+                "nautilus %d".clone_into(&mut app.settings.file_manager);
                 app.settings_screen =
                     Some(SettingsScreen::at(settings_screen::Section::Integrations));
             }

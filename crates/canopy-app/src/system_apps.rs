@@ -1474,6 +1474,144 @@ mod tests {
         }
     }
 
+    /// An executable `bin/<name>` that writes each of its arguments on a line of `bin/<name>.out`.
+    #[cfg(unix)]
+    fn recorder(root: &Path, name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = root.join("bin");
+        write(
+            &bin,
+            name,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.tmp\" && mv \"$0.tmp\" \"$0.out\"\n",
+        );
+        let file = bin.join(name);
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        file
+    }
+
+    /// The arguments `recorder` was started with, once it has run.
+    #[cfg(unix)]
+    fn recorded(program: &Path) -> Vec<String> {
+        let out = program.with_extension("out");
+        for _ in 0..200 {
+            if let Ok(text) = std::fs::read_to_string(&out) {
+                return text.lines().map(str::to_owned).collect();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("{} never ran", program.display());
+    }
+
+    /// Entries found on disk, chosen in Settings and launched: the file or folder reaches the
+    /// program as one argument whatever its name, and an escaped `%%f` stays a literal `%f`.
+    #[cfg(unix)]
+    #[test]
+    fn a_standalone_placeholder_launches_with_the_path_as_one_argument() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let editor = recorder(root, "editor");
+        let escaped = recorder(root, "escaped");
+        let files = recorder(root, "files");
+        let term = recorder(root, "term");
+        let apps = root.join("home-data/applications");
+        for (id, kind, name, exec) in [
+            (
+                "editor",
+                Kind::Editor,
+                "Editor",
+                format!("{} --wait %F", editor.display()),
+            ),
+            (
+                "escaped",
+                Kind::Editor,
+                "Escaped",
+                format!("{} --label %%f %f", escaped.display()),
+            ),
+            (
+                "files",
+                Kind::FileManager,
+                "Files",
+                format!("{} %U", files.display()),
+            ),
+            (
+                "term",
+                Kind::Terminal,
+                "Term",
+                format!("{} --cwd %U", term.display()),
+            ),
+        ] {
+            write(
+                &apps,
+                &format!("{id}.desktop"),
+                &entry_of(kind, name, &exec),
+            );
+        }
+        let found = detect(&env(root, &[]));
+        let command = |kind: Kind, name: &str| {
+            found
+                .installed(kind)
+                .find(|a| a.name == name)
+                .unwrap_or_else(|| panic!("{name} is not offered"))
+                .command
+                .clone()
+        };
+
+        let work = root.join("work dir");
+        std::fs::create_dir_all(&work).unwrap();
+        let file = work.join("my file $(touch pwned) %f.rs");
+        std::fs::write(&file, "").unwrap();
+        crate::platform::open_in_editor(&file, &command(Kind::Editor, "Editor")).unwrap();
+        assert_eq!(recorded(&editor), ["--wait", file.to_str().unwrap()]);
+        crate::platform::open_in_editor(&file, &command(Kind::Editor, "Escaped")).unwrap();
+        assert_eq!(
+            recorded(&escaped),
+            ["--label", "%f", file.to_str().unwrap()]
+        );
+        crate::platform::open_folder(&work, &command(Kind::FileManager, "Files")).unwrap();
+        assert_eq!(recorded(&files), [work.to_str().unwrap()]);
+        crate::platform::open_terminal(&work, &command(Kind::Terminal, "Term")).unwrap();
+        assert_eq!(recorded(&term), ["--cwd", work.to_str().unwrap()]);
+        assert!(!work.join("pwned").exists() && !root.join("pwned").exists());
+    }
+
+    /// A command with a placeholder inside a larger word is refused when it is run, so a name
+    /// can never become part of another argument; the program is not started.
+    #[cfg(unix)]
+    #[test]
+    fn a_command_with_an_embedded_placeholder_is_refused_before_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let program = recorder(root, "editor");
+        let shell = |script: &str| format!("/bin/sh -c {}", crate::platform::quote(script));
+        let file = root.join("a b.rs");
+        std::fs::write(&file, "").unwrap();
+        for command in [
+            format!("{} --file=%f", program.display()),
+            format!("{} --file=%%%f", program.display()),
+            shell(&format!("{} --file=%f", program.display())),
+        ] {
+            let refused = crate::platform::open_in_editor(&file, &command).unwrap_err();
+            assert!(
+                refused.contains("must be a word of its own"),
+                "{command}: {refused}"
+            );
+            let refused =
+                crate::platform::open_folder(root, &command.replace("%f", "%d")).unwrap_err();
+            assert!(
+                refused.contains("must be a word of its own"),
+                "{command}: {refused}"
+            );
+            let refused =
+                crate::platform::open_terminal(root, &command.replace("%f", "%d")).unwrap_err();
+            assert!(
+                refused.contains("must be a word of its own"),
+                "{command}: {refused}"
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!program.with_extension("out").exists());
+    }
+
     #[test]
     fn exec_lines_are_split_as_the_desktop_entry_spec_says() {
         assert_eq!(

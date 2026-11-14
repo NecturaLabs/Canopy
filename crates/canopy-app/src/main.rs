@@ -52,7 +52,7 @@ OPTIONS:
                               merge, identity, settings-git, settings-git-pull, settings-git-commits, settings-git-config,
                               clear-identity, update-installed, update-running, trust-prompt,
                               trust-banner, trust-safety-off, privacy-trust-off, diff-options,
-                              settings-integrations, settings-accounts, settings-updates, settings-notifications,
+                              settings-integrations, settings-integrations-custom, settings-accounts, settings-updates, settings-notifications,
                               settings-keyboard, settings-backup, settings-repository,
                               settings-repository-pull, settings-repository-diffs,
                               settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, clean-merged, update-from-base, flow-init, flow-start, flow-finish, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
