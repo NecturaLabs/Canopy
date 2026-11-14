@@ -44,7 +44,7 @@
   <li>For repositories on GitHub or GitLab, Canopy talks to that service directly. NecturaLabs receives none of that traffic.</li>
 </ul>
 <h2 id="what-necturalabs-receives">What NecturaLabs receives</h2>
-<p>If you turn on crash reports, Canopy sends us crash reports and session records, described below. If you leave them off, NecturaLabs receives nothing from Canopy.</p>
+<p>If you turn on crash reports, Canopy sends us crash reports, described below. If you leave them off, NecturaLabs receives nothing from Canopy.</p>
 <p>Canopy also records, on your computer, which versions of the Terms of Service and this policy you accepted and your answer about crash reports. This record stays on your computer.</p>
 <h2 id="crash-reports">Crash reports</h2>
 <p>Canopy sends a crash report when it, or one of its background tasks, stops because of a bug in Canopy or in a library it uses. Errors that Git reports, such as a rejected push, are shown to you and are not sent.</p>
@@ -59,20 +59,18 @@
 </ul>
 <p>Before sending a report, Canopy removes your computer's name and replaces your home folder and other user folders in file paths with ~ or &lt;user&gt;.</p>
 <p>The error message comes from the code that failed. It can name a file, folder, branch or remote that Canopy was working with, and occasionally quote other text it was handling. Canopy does not add your name, email address, Git identity, access tokens, logs or repository contents to a report.</p>
-<h2 id="session-records">Session records</h2>
-<p>While crash reports are on, Canopy sends one session record each time it runs, when it closes or together with a crash report. A session record contains when the session started, how long it lasted, whether it ended normally or crashed, and the Canopy version and build type. It carries a random ID that Canopy creates at each start and never stores, so session records do not identify you and cannot be linked to each other.</p>
 <h2 id="your-ip-address">Your IP address</h2>
 <p>Every internet connection reveals your IP address to the server at the other end, so Sentry sees it when Canopy sends crash data. Canopy does not put it in the data, and our Sentry project is set not to store it.</p>
 <h2 id="how-we-use-crash-data">How we use crash data</h2>
-<p>We use crash reports and session records only to find and fix bugs and to see how stable each version of Canopy is. We do not use them for advertising or profiling, we do not combine them with other data, and we do not sell them. We make no automated decisions about you.</p>
+<p>We use crash reports only to find and fix bugs. We do not use them for advertising or profiling, we do not combine them with other data, and we do not sell them. We make no automated decisions about you.</p>
 <h2 id="legal-basis">Legal basis</h2>
 <p>We process crash data only with your consent (Article 6(1)(a) of the GDPR and the UK GDPR). Giving it is optional, and Canopy works the same either way. You can withdraw your consent at any time. Withdrawing it does not affect data sent before.</p>
 <h2 id="who-processes-crash-data">Who processes crash data</h2>
 <p>Sentry (Functional Software, Inc., United States) receives and stores crash data for us as our processor, under a data processing agreement. Our Sentry project keeps its data in the EU, in Germany. Sentry and its subprocessors may access the data from the United States or Canada, for example to provide support. These transfers are covered by the EU-US Data Privacy Framework and the European Commission's Standard Contractual Clauses. Sentry lists its subprocessors at <a href="https://sentry.io/legal/subprocessors/">https://sentry.io/legal/subprocessors/</a>.</p>
 <h2 id="how-long-we-keep-crash-data">How long we keep crash data</h2>
-<p>Sentry deletes crash reports automatically 30 days after it receives them, and session records no later than 90 days after.</p>
+<p>Sentry deletes crash reports automatically 30 days after it receives them.</p>
 <h2 id="changing-your-answer">Changing your answer</h2>
-<p>To turn crash reports on or off, use Send crash reports in the Privacy section of Settings. The change takes effect immediately. When you turn reports off, Canopy sends the record of the current session and then stops sending.</p>
+<p>To turn crash reports on or off, use Send crash reports in the Privacy section of Settings. The change takes effect immediately.</p>
 <h2 id="update-checks">Update checks</h2>
 <p>When Canopy starts, it checks for a new version if it has not checked in the last 24 hours. It also checks when you choose Check for updates in the About dialog or the command palette, or Check now in the Updates section of Settings. The first automatic check waits until you have accepted the terms and answered about crash reports.</p>
 <p>To check, Canopy downloads a small file that names the latest version from the NecturaLabs/app-updates repository on GitHub (raw.githubusercontent.com). If Include beta builds is on, it downloads a second file for beta builds. The request reveals your IP address to GitHub and names your Canopy build number in its User-Agent header. It contains nothing else about you. NecturaLabs does not receive the request or any record of it. GitHub's privacy statement covers what GitHub does with it.</p>
