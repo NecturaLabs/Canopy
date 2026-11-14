@@ -185,7 +185,7 @@ commits since the previous build.
 ### Changed
 
 - Canopy keeps its files in a folder for each kind of data (settings, logs and crash reports,
-  picture cache) following each system's convention, owner-only and marked `.canopy-data`
+  picture cache) following each system's convention, owner-only on Linux and macOS and marked `.canopy-data`
   (unless a folder already holds someone else's files) so the installers' `--purge` finds them, and
   moves what earlier builds kept in two other folders the first time it starts, never replacing a
   file. The privacy policy lists the folders.

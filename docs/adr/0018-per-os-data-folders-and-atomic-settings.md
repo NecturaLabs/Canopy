@@ -24,7 +24,7 @@ expects folders with a marker file `.canopy-data` (`packaging/README.md`), which
 
 **Folders** (`storage.rs`): config, data, state and cache, each created owner-only (0700 on Unix)
 and claimed with the empty file `.canopy-data` (0600) when it is empty or holds only Canopy's own
-files (its settings, window state, logs, crash reports, pictures and the temporary names of
+files (its settings, window state, logs, crash reports, pictures and the exact temporary names of
 a move); a folder with a stranger's file is used but left unmarked, and the installers' `--purge`
 leaves it, the Linux data folder (the old eframe folder) included. Linux follows the XDG variables (`$XDG_CONFIG_HOME/canopy`, `$XDG_DATA_HOME/canopy`,
 `$XDG_STATE_HOME/canopy`, `$XDG_CACHE_HOME/canopy`); macOS uses `Application Support/<app id>`
