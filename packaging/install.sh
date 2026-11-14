@@ -37,14 +37,16 @@ MIN_GLIBC=2.35
 # packaging/install.ps1); the contract is in packaging/README.md ("Canopy's data folders").
 # One "<kind> <path>" line per folder:
 #   vendor  a vendor-specific name: deleted when it is a folder.
-#   eframe  the folder eframe::storage_dir("canopy") gives today: deleted only when it holds
-#           .canopy-data or Canopy's own files (is_eframe_canopy).
+#   eframe  a generic name that may predate the marker (eframe::storage_dir("canopy"), which is also
+#           Linux's data folder): deleted only when it holds .canopy-data, or holds Canopy's own
+#           files and nothing else (is_eframe_canopy).
 #   marker  a generic name: deleted only when it holds the .canopy-data marker file.
 purge_targets() {
     case $OS in
         linux)
             printf '%s\n' \
                 "eframe $(xdg_home "${XDG_DATA_HOME:-}" "$HOME/.local/share")/canopy" \
+                "vendor $(xdg_home "${XDG_DATA_HOME:-}" "$HOME/.local/share")/io.necturalabs.canopy" \
                 "marker $(xdg_home "${XDG_CONFIG_HOME:-}" "$HOME/.config")/canopy" \
                 "marker $(xdg_home "${XDG_STATE_HOME:-}" "$HOME/.local/state")/canopy" \
                 "marker $(xdg_home "${XDG_CACHE_HOME:-}" "$HOME/.cache")/canopy"
@@ -59,15 +61,25 @@ purge_targets() {
     esac
 }
 
-# Whether eframe folder $1 is recognisably Canopy's: its settings key, saved tokens, or logs and
-# crash reports named the way Canopy names them.
+# Whether eframe folder $1 is Canopy's alone: it holds recognisable Canopy data (its settings key,
+# saved tokens, or logs and crash reports named the way Canopy names them) and every entry in it
+# is a name Canopy itself writes, so a stranger's file beside them keeps the folder.
 is_eframe_canopy() {
-    [ -f "$1/tokens.json" ] && return 0
-    if [ -f "$1/app.ron" ] && grep -q 'canopy-settings-v1' "$1/app.ron" 2>/dev/null; then return 0; fi
+    found=1
+    if [ -f "$1/tokens.json" ]; then found=0; fi
+    if [ -f "$1/app.ron" ] && grep -q 'canopy-settings-v1' "$1/app.ron" 2>/dev/null; then found=0; fi
     for f in "$1"/logs/canopy-*.jsonl "$1"/crashes/crash-*.txt; do
-        if [ -f "$f" ]; then return 0; fi
+        if [ -f "$f" ]; then found=0; fi
     done
-    return 1
+    [ "$found" = 0 ] || return 1
+    for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+        if [ ! -e "$f" ] && [ ! -L "$f" ]; then continue; fi
+        case ${f##*/} in
+            tokens.json | settings.json | settings.json.* | app.ron | app.ron.* | logs | crashes | avatars | .canopy-data) ;;
+            *) return 1 ;;
+        esac
+    done
+    return 0
 }
 # ---------------------------------------------------------------------------------------------
 

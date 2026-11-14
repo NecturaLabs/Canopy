@@ -74,25 +74,34 @@ param(
     # Canopy's user data, removed only by -Purge. Keep this list in step with the app (and with
     # packaging/install.sh); the contract is in packaging/README.md ("Canopy's data folders").
     #   vendor  a vendor-specific name: deleted when it is a folder.
-    #   eframe  the folder eframe::storage_dir("canopy") gives today: deleted only when it holds
-    #           .canopy-data or Canopy's own files (Test-EframeCanopy).
+    #   eframe  a generic name that may predate the marker (eframe::storage_dir("canopy")): deleted
+    #           only when it holds .canopy-data, or holds Canopy's own files and nothing else
+    #           (Test-EframeCanopy).
     function Get-PurgeTargets {
         @(
             @{ Kind = 'eframe'; Path = (Join-Path $env:APPDATA 'canopy\data') },
+            @{ Kind = 'vendor'; Path = (Join-Path $env:APPDATA 'io.necturalabs.Canopy') },
             @{ Kind = 'vendor'; Path = (Join-Path $env:APPDATA 'NecturaLabs\Canopy') },
             @{ Kind = 'vendor'; Path = (Join-Path $env:LOCALAPPDATA 'NecturaLabs\Canopy') }
         )
     }
 
     function Test-EframeCanopy([string]$Dir) {
-        if (Test-Path -LiteralPath (Join-Path $Dir 'tokens.json') -PathType Leaf) { return $true }
+        $found = $false
+        if (Test-Path -LiteralPath (Join-Path $Dir 'tokens.json') -PathType Leaf) { $found = $true }
         $ron = Join-Path $Dir 'app.ron'
-        if ((Test-Path -LiteralPath $ron -PathType Leaf) -and (Select-String -LiteralPath $ron -SimpleMatch 'canopy-settings-v1' -Quiet)) { return $true }
+        if ((Test-Path -LiteralPath $ron -PathType Leaf) -and (Select-String -LiteralPath $ron -SimpleMatch 'canopy-settings-v1' -Quiet)) { $found = $true }
         foreach ($sub in @(@('logs', 'canopy-*.jsonl'), @('crashes', 'crash-*.txt'))) {
             $d = Join-Path $Dir $sub[0]
-            if ((Test-Path -LiteralPath $d -PathType Container) -and @(Get-ChildItem -LiteralPath $d -Filter $sub[1] -File -Force).Count -gt 0) { return $true }
+            if ((Test-Path -LiteralPath $d -PathType Container) -and @(Get-ChildItem -LiteralPath $d -Filter $sub[1] -File -Force).Count -gt 0) { $found = $true }
         }
-        return $false
+        if (-not $found) { return $false }
+        # Recognisable data is not enough: a stranger's file beside it keeps the folder.
+        $own = @('tokens.json', 'settings.json', 'app.ron', 'logs', 'crashes', 'avatars', '.canopy-data')
+        foreach ($item in Get-ChildItem -LiteralPath $Dir -Force) {
+            if (($own -notcontains $item.Name) -and ($item.Name -notlike 'settings.json.*') -and ($item.Name -notlike 'app.ron.*')) { return $false }
+        }
+        return $true
     }
     # -------------------------------------------------------------------------------------------
 
