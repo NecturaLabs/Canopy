@@ -20,6 +20,10 @@ use crate::cli;
 /// run no program then.
 pub const UNREADABLE: &str = "a configuration that could not be read";
 
+/// The permission bits (owner, group, other) that let a file run.
+#[cfg(unix)]
+const EXECUTE_BITS: u32 = 0o111;
+
 /// The hooks git runs by name (`githooks`): a file with another name there is never run.
 const HOOK_NAMES: &[&str] = &[
     "applypatch-msg",
@@ -143,7 +147,7 @@ fn is_runnable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+        meta.is_file() && meta.permissions().mode() & EXECUTE_BITS != 0
     }
     // Git for Windows has no execute bit: it runs any file it finds.
     #[cfg(not(unix))]
