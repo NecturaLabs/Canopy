@@ -69,17 +69,20 @@ pub fn check_relative(path: &str) -> Result<&Path> {
 /// mount points are not symbolic links to [`std::fs::FileType::is_symlink`] but redirect the
 /// same way).
 fn is_link(meta: &std::fs::Metadata) -> bool {
-    if meta.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return true;
-        }
-    }
+    meta.file_type().is_symlink() || is_reparse_point(meta)
+}
+
+/// Whether `meta` carries the Windows reparse-point attribute (junctions, mount points).
+#[cfg(windows)]
+fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+/// Reparse points exist only on Windows.
+#[cfg(not(windows))]
+const fn is_reparse_point(_meta: &std::fs::Metadata) -> bool {
     false
 }
 
