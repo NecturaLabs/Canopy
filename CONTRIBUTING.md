@@ -60,6 +60,9 @@ Use [GitHub Issues](https://github.com/NecturaLabs/Canopy/issues) for all backlo
 Use a specific, action-oriented title without type or priority prefixes. State the problem or
 deliverable, relevant files and constraints, and checkable acceptance criteria. Bugs need observed
 and expected behaviour, reproduction steps and environment details. Say when facts are unknown.
+When it makes verification concrete, add "Where to see it": a safe fixture, the workflow and the
+exact command to run. Record each owner decision with its date, answer and alternatives, and keep
+requirements that remain unresolved.
 
 Write direct statements. Remove vague praise, canned summaries, repeated instructions and stale
 status text. Keep evidence links and unresolved requirements. Progress notes should name the

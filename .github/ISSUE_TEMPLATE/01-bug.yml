@@ -81,3 +81,11 @@ body:
     description: Attach relevant redacted evidence and links. Use CANOPY_LOG=canopy=debug when useful.
   validations:
     required: false
+- type: textarea
+  id: where_to_see
+  attributes:
+    label: Where to see it (optional)
+    description: Give a safe fixture, screenshot or reproduction route and the exact commands when
+      useful. Do not use a repository containing private or important data.
+  validations:
+    required: false
