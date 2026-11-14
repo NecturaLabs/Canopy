@@ -294,6 +294,18 @@ const HISTORY: usize = 100;
 /// The notification center's width and the height its list scrolls beyond.
 const CENTER_WIDTH: f32 = 360.0;
 const CENTER_LIST_HEIGHT: f32 = 380.0;
+/// The least the list keeps when the window is shorter still.
+const CENTER_LIST_MIN_HEIGHT: f32 = 80.0;
+
+/// The height the center's list scrolls beyond: [`CENTER_LIST_HEIGHT`], or less when the window
+/// is too short to keep the margin above and below the whole panel. `used` is what the panel
+/// holds above the list.
+fn center_list_height(ctx: &egui::Context, used: f32) -> f32 {
+    let pad = f32::from(nectura_ui::points_i8(theme::metrics().card_pad));
+    // The panel opens above the bell in the status bar, so the card stack's room applies.
+    let room = ctx.content_rect().height() - theme::metrics().status_bar_height - 2.0 * theme::LG;
+    (room - 2.0 * pad - used).clamp(CENTER_LIST_MIN_HEIGHT, CENTER_LIST_HEIGHT)
+}
 /// The lines of a notification's text the center shows; the rest is in its tooltip.
 const CENTER_BODY_LINES: usize = 4;
 
@@ -1119,10 +1131,12 @@ impl Toasts {
         let divider = theme::mix(ground, p.text, 0.08);
         // The bar keeps its own room beside the rows, so it never covers a dismiss button.
         ui.spacing_mut().scroll = theme::solid_scroll();
+        let used = ui.cursor().top() - ui.min_rect().top();
+        let list_height = center_list_height(ui.ctx(), used);
         let list = egui::ScrollArea::vertical()
             .id_salt("notification-center-list")
-            .max_height(CENTER_LIST_HEIGHT)
-            .min_scrolled_height(CENTER_LIST_HEIGHT)
+            .max_height(list_height)
+            .min_scrolled_height(list_height)
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 let settings_open = self.settings_open;
@@ -2292,6 +2306,47 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Pushed"],
             "taken, it leaves the center"
+        );
+    }
+
+    #[test]
+    fn the_center_keeps_its_margin_at_the_smallest_window_size() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut toasts = Toasts::default();
+        for i in 0..7 {
+            toasts.push_quiet(
+                &ctx,
+                ToastKind::Info,
+                Topic::Attention,
+                format!("Finding {i}"),
+                "A body that says something about it.",
+            );
+        }
+        // 900x560 at zoom 1.6.
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
+        let mut panel = egui::Rect::NOTHING;
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = toasts.center(ui);
+                    panel = ui.min_rect();
+                },
+            );
+            out.textures_delta.clear();
+        }
+        let pad = f32::from(nectura_ui::points_i8(theme::metrics().card_pad));
+        let margin = theme::LG;
+        assert!(
+            panel.height() + 2.0 * pad <= screen.height() - 2.0 * margin,
+            "the panel ({} + padding) leaves no margin in {}",
+            panel.height(),
+            screen.height()
         );
     }
 

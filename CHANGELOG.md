@@ -68,6 +68,8 @@ commits since the previous build.
 
 ### Fixed
 
+- The notification center keeps its margin above and below at the smallest window size and zoom, scrolling its list when the window is short.
+- A Settings row with both an explanation mark and a state remark (Download profile pictures) draws the remark in the accent colour with a gap, so the two marks no longer look alike.
 - What a killed or failed Canopy leaves behind is cleaned up or reported, and nothing of yours is
   deleted. At the next start Canopy removes its own staging files (the saved-token and avatar-cache
   staging files, the patch export's and the update's folders in the temporary folder, an
