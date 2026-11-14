@@ -31,6 +31,9 @@ const LATE_REGISTRATION: Duration = Duration::from_secs(1);
 /// When the system dropped queued changes, tabs refresh this far apart, not all at once.
 const RESCAN_STEP: Duration = Duration::from_millis(50);
 
+/// The reason a tab is given when the watcher itself failed.
+const WATCHER_STOPPED: &str = "Canopy's file watcher stopped.";
+
 /// What a tab says after a watch failure, behind the reason.
 pub const WATCH_FAILED_HINT: &str = "Canopy shows changes on disk after a Refresh.";
 
@@ -122,6 +125,9 @@ fn run<B: Backend>(
 ) {
     let mut hub = Hub::new(make);
     let mut closed = false;
+    // Commands not yet taken in, and the one being taken in: after a panic each is told.
+    let mut pending: std::collections::VecDeque<Command> = std::collections::VecDeque::new();
+    let opening: std::cell::RefCell<Option<Sender<Job>>> = std::cell::RefCell::new(None);
     loop {
         let stops: Vec<Receiver<()>> = hub.tabs.iter().map(|t| t.stop.clone()).collect();
         let mut select = Select::new();
@@ -141,10 +147,9 @@ fn run<B: Backend>(
             }
         }
         drop(select);
-        let mut incoming = Vec::new();
         while !closed {
             match commands.try_recv() {
-                Ok(command) => incoming.push(command),
+                Ok(command) => pending.push_back(command),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     closed = true;
@@ -152,7 +157,7 @@ fn run<B: Backend>(
                 }
             }
         }
-        hub.guarded(|hub| {
+        let ok = hub.guarded(|hub| {
             let now = Instant::now();
             for event in events.try_iter() {
                 hub.route(event, now);
@@ -165,13 +170,26 @@ fn run<B: Backend>(
                 .map(|t| t.id)
                 .collect();
             hub.remove(&gone);
-            for command in incoming {
-                if let Some(tab) = Tab::open(command) {
+            while let Some(command) = pending.pop_front() {
+                // A panic inside `add` is told through the tab it already holds.
+                *opening.borrow_mut() = Some(command.jobs.clone());
+                let tab = Tab::open(command);
+                *opening.borrow_mut() = None;
+                if let Some(tab) = tab {
                     hub.add(tab);
                 }
             }
             hub.flush(Instant::now());
         });
+        if !ok {
+            for jobs in opening
+                .take()
+                .into_iter()
+                .chain(std::mem::take(&mut pending).into_iter().map(|c| c.jobs))
+            {
+                let _ = jobs.send(Job::WatchFailed(WATCHER_STOPPED.into()));
+            }
+        }
         if closed && hub.tabs.is_empty() {
             return;
         }
@@ -317,11 +335,14 @@ impl Tab {
         )
     }
 
-    fn report(&mut self, error: &str) {
-        if !self.told_failure {
-            self.told_failure = true;
-            let _ = self.jobs.send(Job::WatchFailed(error.to_owned()));
+    /// Tells the tab once; whether this was the first time.
+    fn report(&mut self, error: &str) -> bool {
+        if self.told_failure {
+            return false;
         }
+        self.told_failure = true;
+        let _ = self.jobs.send(Job::WatchFailed(error.to_owned()));
+        true
     }
 }
 
@@ -343,6 +364,10 @@ struct Hub<B, F> {
     watched: BTreeSet<PathBuf>,
     /// Every tab folder, to the tabs it belongs to and whether it is a git folder.
     index: HashMap<PathBuf, Vec<(u64, bool)>>,
+    /// Folders that could not be watched, with why. They are tried again only after a tab
+    /// leaves (which frees watches), not at every update: retrying means unwatching the folders
+    /// inside them first, and a refresh of their tabs each time.
+    failed: std::collections::BTreeMap<PathBuf, String>,
 }
 
 impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
@@ -353,24 +378,28 @@ impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
             tabs: Vec::new(),
             watched: BTreeSet::new(),
             index: HashMap::new(),
+            failed: std::collections::BTreeMap::new(),
         }
     }
 
     /// Runs `step`; if it panics (inside the backend, say), the tabs watched until then are told
     /// their changes are no longer picked up and leave, and the backend is dropped so the next
     /// repository starts a fresh one.
-    fn guarded(&mut self, step: impl FnOnce(&mut Self)) {
+    /// Whether `step` finished without a panic.
+    fn guarded(&mut self, step: impl FnOnce(&mut Self)) -> bool {
         if std::panic::catch_unwind(AssertUnwindSafe(|| step(self))).is_ok() {
-            return;
+            return true;
         }
         tracing::warn!("no file watcher: the watcher failed");
         for tab in &mut self.tabs {
-            tab.report("Canopy's file watcher stopped.");
+            tab.report(WATCHER_STOPPED);
         }
         self.tabs.clear();
         self.index.clear();
         self.watched.clear();
+        self.failed.clear();
         self.backend = None;
+        false
     }
 
     fn add(&mut self, tab: Tab) {
@@ -394,6 +423,7 @@ impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
             return;
         }
         self.tabs.retain(|t| !ids.contains(&t.id));
+        self.failed.clear();
         self.update(None);
     }
 
@@ -402,7 +432,7 @@ impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
     /// A folder that cannot be watched is unwatched again (its partial watches would hold the
     /// limit that failed it) and the wanted folders inside it are tried on their own. Tabs
     /// (other than `newcomer`, which reads everything anyway) whose folders were unwatched for a
-    /// moment refresh. A failed folder is tried again at the next update.
+    /// moment refresh. A failed folder is tried again after a tab leaves (see `failed`).
     fn update(&mut self, newcomer: Option<u64>) {
         self.index.clear();
         for tab in &self.tabs {
@@ -438,13 +468,13 @@ impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
             .flat_map(Tab::wanted)
             .map(Path::to_path_buf)
             .collect();
-        let mut failed: Vec<(PathBuf, String)> = Vec::new();
+        self.failed.retain(|f, _| wanted.contains(f));
         let mut gone: Vec<PathBuf> = Vec::new();
         loop {
             let desired = outermost(
                 wanted
                     .iter()
-                    .filter(|w| !failed.iter().any(|(f, _)| f == *w))
+                    .filter(|w| !self.failed.contains_key(*w))
                     .map(PathBuf::as_path),
             );
             let stale: BTreeSet<PathBuf> = self.watched.difference(&desired).cloned().collect();
@@ -466,7 +496,7 @@ impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
                     Err(e) => {
                         tracing::warn!(error = %e, folder = %path.display(), "no file watcher for a folder");
                         backend.unwatch(&path);
-                        failed.push((path, e));
+                        self.failed.insert(path, e);
                         any_failed = true;
                     }
                 }
@@ -479,11 +509,9 @@ impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
         }
         let now = Instant::now();
         for tab in &mut self.tabs {
-            if let Some((_, e)) = failed
-                .iter()
-                .find(|(f, _)| tab.wanted().any(|w| w == f.as_path()))
-            {
-                tab.report(e);
+            let reason = tab.wanted().find_map(|w| self.failed.get(w)).cloned();
+            if let Some(e) = reason {
+                tab.report(&e);
             }
             let was_unwatched = gone.iter().any(|g| tab.wanted().any(|w| w.starts_with(g)));
             if was_unwatched && Some(tab.id) != newcomer {
@@ -519,17 +547,23 @@ impl<B: Backend, F: FnMut() -> Result<B, String>> Hub<B, F> {
             Ok(event) => event,
             Err(e) => {
                 let text = describe(&e);
-                tracing::warn!(error = %text, "no file watcher for a new folder");
                 let ids: Vec<u64> = e
                     .paths
                     .iter()
                     .flat_map(|p| self.owners(p))
                     .map(|(id, _, _)| id)
                     .collect();
+                let mut told = false;
                 for tab in &mut self.tabs {
                     if e.paths.is_empty() || ids.contains(&tab.id) {
-                        tab.report(&text);
+                        told |= tab.report(&text);
                     }
+                }
+                // One line per tab told, not one per folder an install creates.
+                if told {
+                    tracing::warn!(error = %text, "no file watcher for a new folder");
+                } else {
+                    tracing::debug!(error = %text, "no file watcher for a new folder");
                 }
                 return;
             }
@@ -835,12 +869,15 @@ mod tests {
         hub.add(t2);
         assert_eq!(jobs(&rx), ["WatchFailed(\"Cannot watch /p.\")"]);
         assert_eq!(jobs(&rx2), Vec::<String>::new());
-        // Tried again with the next change of tabs (its partial watches dropped each time),
-        // and not reported twice.
+        // Not retried while tabs only arrive; tried again (its partial watches dropped again)
+        // once a tab leaves and frees watches, and not reported twice.
         let (t3, _rx3, _s3) = tab("/r");
+        let r = t3.id;
         hub.add(t3);
+        assert_eq!(logged(&log), ["-/p", "+/q", "+/r"]);
+        hub.remove(&[r]);
         assert_eq!(jobs(&rx), Vec::<String>::new());
-        assert_eq!(logged(&log), ["-/p", "-/p", "+/q", "-/p", "+/r"]);
+        assert_eq!(logged(&log), ["-/p", "+/q", "+/r", "-/r", "-/p"]);
     }
 
     #[test]
@@ -857,7 +894,28 @@ mod tests {
             Vec::<String>::new(),
             "the inner one is watched"
         );
-        assert_eq!(logged(&log), ["-/big", "-/big", "+/big/sub"]);
+        assert_eq!(logged(&log), ["-/big", "+/big/sub"]);
+        // Another tab arriving leaves both alone: no unwatching, no refresh of the inner one.
+        let (other, _other_rx, _s3) = tab("/q");
+        hub.add(other);
+        hub.flush(Instant::now());
+        assert_eq!(logged(&log), ["-/big", "+/big/sub", "+/q"]);
+        assert_eq!(jobs(&inner_rx), Vec::<String>::new());
+    }
+
+    #[test]
+    fn failures_nested_two_deep_are_each_reported_and_the_rest_watched() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut hub = hub(&log, &["/big", "/big/a"]);
+        let (big, big_rx, _s1) = tab("/big");
+        let (a, a_rx, _s2) = tab("/big/a");
+        let (b, b_rx, _s3) = tab("/big/b");
+        hub.tabs.extend([big, a, b]);
+        hub.update(None);
+        assert_eq!(jobs(&big_rx), ["WatchFailed(\"Cannot watch /big.\")"]);
+        assert_eq!(jobs(&a_rx), ["WatchFailed(\"Cannot watch /big/a.\")"]);
+        assert_eq!(jobs(&b_rx), Vec::<String>::new());
+        assert_eq!(logged(&log), ["-/big", "-/big/a", "+/big/b"]);
     }
 
     #[test]
@@ -1038,6 +1096,66 @@ mod tests {
             .join()
             .map_err(|_panic| "the watcher thread panicked")?;
         assert_eq!(logged(&log), Vec::<String>::new());
+        Ok(())
+    }
+
+    /// A panic while repositories wait their turn: the one being taken in and every one still
+    /// queued are told, none silently left unwatched.
+    #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build repositories"
+    )]
+    fn a_panic_tells_every_repository_still_waiting() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let (commands_tx, commands) = unbounded::<Command>();
+        let mut receivers = Vec::new();
+        let mut keep = Vec::new();
+        for name in ["a", "b", "c"] {
+            let repo = dir.path().join(name);
+            std::fs::create_dir_all(&repo)?;
+            let made = std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&repo)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()?;
+            assert!(made.success(), "git init");
+            let (jobs, rx) = unbounded();
+            let (stop_tx, stop) = crossbeam_channel::bounded::<()>(0);
+            let (ended, ended_rx) = crossbeam_channel::bounded::<()>(0);
+            keep.push((stop_tx, ended_rx));
+            receivers.push(rx);
+            commands_tx.send(Command {
+                path: repo,
+                jobs,
+                stop,
+                ended,
+                queued: Instant::now(),
+            })?;
+        }
+        // All three wait before the loop starts; the first one's watch panics.
+        let first = dir.path().join("a");
+        let (_events_tx, events) = unbounded();
+        let thread = std::thread::spawn(move || {
+            super::run(&commands, &events, move || {
+                Ok(Recorder {
+                    panic: Some(first.clone()),
+                    ..Recorder::default()
+                })
+            });
+        });
+        for rx in &receivers {
+            let job = rx.recv_timeout(Duration::from_secs(10))?;
+            assert_eq!(
+                format!("{job:?}"),
+                "WatchFailed(\"Canopy's file watcher stopped.\")"
+            );
+        }
+        drop(commands_tx);
+        drop(keep);
+        thread
+            .join()
+            .map_err(|_panic| "the watcher thread panicked")?;
         Ok(())
     }
 

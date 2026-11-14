@@ -247,7 +247,7 @@ downloads them; to skip, run the clone as `GIT_LFS_SKIP_SMUDGE=1 tools/stress.sh
    For this session:
 
    ```sh
-   sudo sysctl fs.inotify.max_user_instances=1024 fs.inotify.max_user_watches=2097152
+   sudo sysctl fs.inotify.max_user_watches=2097152
    ulimit -n 65535        # in the shell that starts Canopy
    ```
 

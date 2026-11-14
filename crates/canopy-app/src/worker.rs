@@ -864,7 +864,7 @@ pub struct Worker {
     jobs: Sender<Job>,
     /// Events from the thread.
     pub events: Receiver<Event>,
-    /// Dropping this stops the file watcher's thread.
+    /// Dropping this ends the repository's watch on the shared watcher thread.
     stop_watcher: Sender<()>,
     /// Disconnects once the repository thread and the file watcher's have both ended.
     ended: Receiver<()>,
@@ -1042,12 +1042,12 @@ thread_local! {
 static ENDING: Mutex<Vec<Receiver<()>>> = Mutex::new(Vec::new());
 
 impl Drop for Worker {
-    /// Stops both threads without waiting for them (closing a tab never stalls the UI); the
+    /// Stops the repository thread and its watch without waiting (closing a tab never stalls the UI); the
     /// process waits for them before it exits ([`wait_for_threads`]). A test binary, which has no
     /// such moment, waits here.
     fn drop(&mut self) {
-        // Dropping the senders ends the threads: the watcher's loop, then the repository
-        // thread's once the watcher's copy of the jobs sender has gone too.
+        // Dropping the senders ends the watch (the shared watcher drops its copy of the jobs
+        // sender), then the repository thread once that copy has gone too.
         drop(std::mem::replace(
             &mut self.stop_watcher,
             crossbeam_channel::bounded(0).0,
@@ -2774,16 +2774,20 @@ mod tests {
         let (_stop, stop) = crossbeam_channel::bounded::<()>(0);
         let (ended, _ended) = crossbeam_channel::bounded::<()>(0);
         watch(linked.clone(), tx, stop, ended);
-        // Registering the watches happens on the watcher's thread; give it a moment.
-        std::thread::sleep(Duration::from_millis(500));
         // A commit in the linked worktree changes its HEAD's branch, whose ref lives in the
-        // common folder, and the worktree's own index under .git/worktrees/linked.
-        git(&linked, &["commit", "-q", "--allow-empty", "-m", "second"]);
-        assert!(wait_for(
-            &rx,
-            |j| matches!(j, Job::Refresh(_)),
-            Duration::from_secs(10)
-        ));
+        // common folder, and the worktree's own index under .git/worktrees/linked. Registering
+        // happens on the shared watcher thread, so commit again until one is seen.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen = false;
+        while !seen && Instant::now() < deadline {
+            git(&linked, &["commit", "-q", "--allow-empty", "-m", "again"]);
+            seen = wait_for(
+                &rx,
+                |j| matches!(j, Job::Refresh(_)),
+                Duration::from_secs(1),
+            );
+        }
+        assert!(seen, "a commit in the linked worktree refreshes it");
         Ok(())
     }
 
