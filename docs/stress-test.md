@@ -344,12 +344,12 @@ Record the slowest actions. The log gives `details`, `diff` and `Staging` durati
 Two things at once, for 10 to 15 minutes, with all 100 tabs open:
 
 1. **Fetch in many tabs.** Easiest and most demanding: set Settings -> Git -> **Fetch in the
-   background** to the shortest option (every 5 minutes). Every tab's timer starts when it opens;
-   a tab's schedule starts when it first sees auto-fetch on (opening the tab, or turning the
-   setting on, or changing the interval, with tabs already open), and its first fetch falls due
-   between half the interval and a whole one later, by a hash of its path, so the 100 tabs'
-   first fetches spread over the second half of the interval instead of one herd. Each tab then
-   waits a whole interval after every fetch, its own or one you ran by hand. For a burst, press `f` (fetch) in tabs by hand or with
+   background** to the shortest option (every 5 minutes). A tab's schedule starts when it first
+   sees auto-fetch on (opening the tab, or turning the setting on, or changing the interval, with
+   tabs already open), and its first fetch falls due between half the interval and a whole one
+   later, by a hash of its path, so the 100 tabs' first fetches spread over the second half of
+   the interval instead of one herd. Each tab then waits a whole interval after every fetch, its
+   own or one you ran by hand. For a burst, press `f` (fetch) in tabs by hand or with
    `for i in $(seq 100); do xdotool key --delay 150 ctrl+Tab f; done`. This uses the network:
    failures from GitHub throttling are not Canopy's; use a local mirror (`--base-url`) when you
    need to separate the two.
