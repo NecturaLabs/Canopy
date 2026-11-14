@@ -116,6 +116,7 @@ pub const OVERLAYS: &[&str] = &[
     "add-submodule",
     "git-missing",
     "remove-submodule",
+    "discard-submodule",
     "new-tag",
     "stash",
     "export-patch",

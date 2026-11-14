@@ -233,7 +233,6 @@ fn use_recommended_writes_exactly_these_keys_to_the_global_file_and_git_reads_th
         ("fetch.prune", "true"),
         ("fetch.prunetags", "false"),
         ("push.followtags", "true"),
-        ("submodule.recurse", "true"),
         ("push.default", "simple"),
         ("merge.conflictstyle", conflict_style),
         ("init.defaultbranch", "main"),
@@ -311,7 +310,7 @@ fn recommendations_by_key_for_every_supported_git() {
         ("rebase.autoStash", "true"),
         ("merge.autoStash", "true"),
         ("push.followTags", "true"),
-        ("submodule.recurse", "true"),
+        ("submodule.recurse", "false"),
         ("push.default", "simple"),
         ("init.defaultBranch", "main"),
         ("commit.cleanup", "default"),
@@ -1063,8 +1062,8 @@ fn the_recommended_commit_cleanup_is_gits_own_and_whitespace_leaks_the_editor_te
 }
 
 #[test]
-fn submodules_follow_a_checkout_and_a_push_becomes_on_demand() {
-    if !isolated("submodules_follow_a_checkout_and_a_push_becomes_on_demand") {
+fn git_recursing_into_submodules_drops_edits_and_makes_a_push_on_demand() {
+    if !isolated("git_recursing_into_submodules_drops_edits_and_makes_a_push_on_demand") {
         return;
     }
     let world = World::new();
@@ -1076,6 +1075,7 @@ fn submodules_follow_a_checkout_and_a_push_becomes_on_demand() {
         &sub_work,
         &["remote", "set-url", "origin", &sub_url.to_string_lossy()],
     );
+    commit_file(&sub_work, "b.txt", "shared\n", "s1");
     git(&sub_work, &["push", "-q", "origin", "main"]);
     let work = world.clone_to("super");
     git(
@@ -1094,18 +1094,34 @@ fn submodules_follow_a_checkout_and_a_push_becomes_on_demand() {
     git(&work, &["push", "-q", "-u", "origin", "other"]);
     git(&work, &["switch", "-q", "main"]);
     git(&work, &["submodule", "-q", "update"]);
+    // Use recommended removes git's own recursion where the global file turns it on.
+    git(&work, &["config", "--global", "submodule.recurse", "true"]);
     apply(&work);
+    assert!(!global_entries(&work).contains_key("submodule.recurse"));
 
-    // Without it a checkout leaves the submodule behind, and status says so; with it the
-    // submodule follows.
-    git(
-        &work,
-        &["-c", "submodule.recurse=false", "switch", "-q", "other"],
-    );
+    // Without it a checkout leaves the submodule behind, and status says so; `git submodule
+    // update`, which Canopy runs after a checkout, brings it along and keeps an edit inside it.
+    fs::write(m.join("b.txt"), "edited\n").expect("edit");
+    git(&work, &["switch", "-q", "other"]);
     assert_eq!(git(&work, &["status", "--porcelain"]), " M m\n");
+    git(&work, &["submodule", "-q", "update"]);
+    assert_eq!(git(&m, &["log", "-1", "--format=%s"]), "s2\n");
+    assert_eq!(
+        fs::read_to_string(m.join("b.txt")).expect("read"),
+        "edited\n"
+    );
     git(&work, &["switch", "-q", "main"]);
+    git(&work, &["submodule", "-q", "update"]);
+
+    // With it the submodule follows git's own checkout, and the edit to b.txt, the same in both
+    // submodule commits, is dropped without a word.
+    git(&work, &["config", "--global", "submodule.recurse", "true"]);
     git(&work, &["switch", "-q", "other"]);
     assert_eq!(git(&m, &["log", "-1", "--format=%s"]), "s2\n");
+    assert_eq!(
+        fs::read_to_string(m.join("b.txt")).expect("read"),
+        "shared\n"
+    );
     assert_eq!(git(&work, &["status", "--porcelain"]), "");
 
     // The documented side effect (git-config, `push.recurseSubmodules`: "unless submodule.recurse
@@ -1126,6 +1142,139 @@ fn submodules_follow_a_checkout_and_a_push_becomes_on_demand() {
     git(&work, &["commit", "-q", "-m", "bump m a third time"]);
     git(&work, &["push", "-q"]);
     assert!(git(&sub_url, &["branch", "--list", "other"]).contains("other"));
+}
+
+/// A superproject whose branch `other` records a commit of submodule `m` that is on no remote.
+/// The submodule is on branch `work` (`how` = "branch"), detached ("detached") or on a branch
+/// named like the superproject's ("same name"). Returns the superproject and the submodule's
+/// remote.
+fn superproject_with_unpushed_submodule(world: &World, how: &str) -> (PathBuf, PathBuf) {
+    let root = world.root.path();
+    let sub_url = root.join("sub.git");
+    git(root, &["init", "-q", "--bare", "-b", "main", "sub.git"]);
+    let sub_work = world.clone_to("sub-seed");
+    git(
+        &sub_work,
+        &["remote", "set-url", "origin", &sub_url.to_string_lossy()],
+    );
+    git(&sub_work, &["push", "-q", "origin", "main"]);
+    let work = world.clone_to("super");
+    git(
+        &work,
+        &["submodule", "-q", "add", &sub_url.to_string_lossy(), "m"],
+    );
+    git(&work, &["commit", "-q", "-m", "add m"]);
+    git(&work, &["push", "-q", "origin", "main"]);
+    git(&work, &["switch", "-q", "-c", "other"]);
+    git(&work, &["push", "-q", "-u", "origin", "other"]);
+    let m = work.join("m");
+    match how {
+        "detached" => git(&m, &["switch", "-q", "--detach"]),
+        "same name" => git(&m, &["switch", "-q", "-c", "other"]),
+        _ => git(&m, &["switch", "-q", "-c", "work"]),
+    };
+    commit_file(&m, "a.txt", "unpushed\n", "s2");
+    git(&work, &["add", "m"]);
+    git(&work, &["commit", "-q", "-m", "bump m"]);
+    (work, sub_url)
+}
+
+/// A push of a commit that records a submodule commit no remote has stops with git's own message
+/// naming the submodule (`--recurse-submodules=check`), whether `submodule.recurse` is on (where a
+/// bare git push would try an on-demand push and fail on the branch name) or off (where it would
+/// publish a pointer nobody can fetch), and whichever way the submodule is checked out. Nothing
+/// reaches the remote; once the submodule's commit is pushed, the push goes through.
+#[test]
+fn a_push_stops_for_a_submodule_commit_no_remote_has() {
+    if !isolated("a_push_stops_for_a_submodule_commit_no_remote_has") {
+        return;
+    }
+    for recurse in ["true", "false"] {
+        for how in ["branch", "detached", "same name"] {
+            let world = World::new();
+            let (work, sub_url) = superproject_with_unpushed_submodule(&world, how);
+            git(&work, &["config", "submodule.recurse", recurse]);
+            let remote_before = git(&work, &["ls-remote", "origin", "other"]);
+            let oracle = refused(&work, &["push", "--recurse-submodules=check"]);
+            assert_eq!(git(&work, &["ls-remote", "origin", "other"]), remote_before);
+
+            let repo = Repo::open(&work).expect("open");
+            let err = repo
+                .push(false, |_| {})
+                .expect_err("the submodule commit is on no remote")
+                .to_string();
+            assert!(
+                err.contains("not be found on any remote") && err.contains("\n  m\n"),
+                "recurse {recurse}, {how}: {err}"
+            );
+            assert!(
+                oracle.contains("not be found on any remote") && oracle.contains("\n  m\n"),
+                "{oracle}"
+            );
+            assert_eq!(
+                git(&work, &["ls-remote", "origin", "other"]),
+                remote_before,
+                "recurse {recurse}, {how}: nothing is pushed"
+            );
+            // A new branch and a tag stop the same way.
+            git(&work, &["branch", "fresh"]);
+            repo.publish_branch("fresh", "origin", |_| {})
+                .expect_err("a new branch records it too");
+            git(&work, &["tag", "-a", "-m", "v", "v1"]);
+            repo.push_tag("origin", "v1", |_| {})
+                .expect_err("a tag's commits record it too");
+            assert_eq!(git(&work, &["ls-remote", "--tags", "origin"]), "");
+
+            // The submodule's commit on a remote: the push goes through, as git's does.
+            git(
+                &work.join("m"),
+                &["push", "-q", "origin", "HEAD:refs/heads/kept"],
+            );
+            repo.push(false, |_| {})
+                .expect("push after the submodule's");
+            assert_eq!(
+                git(&work, &["rev-parse", "other"]),
+                git(&work, &["rev-parse", "origin/other"]),
+                "recurse {recurse}, {how}"
+            );
+            assert!(git(&sub_url, &["branch", "--list", "kept"]).contains("kept"));
+        }
+    }
+}
+
+/// The configuration decides where it sets `push.recurseSubmodules` and Canopy follows it, as it
+/// does for every choice; not following it, Canopy's check applies whatever it says.
+#[test]
+fn push_recurse_submodules_in_the_configuration_decides_while_followed() {
+    if !isolated("push_recurse_submodules_in_the_configuration_decides_while_followed") {
+        return;
+    }
+    for (value, follow, pushes) in [
+        ("no", true, true),
+        ("no", false, false),
+        ("check", true, false),
+        ("on-demand", true, false),
+    ] {
+        let world = World::new();
+        let (work, _) = superproject_with_unpushed_submodule(&world, "branch");
+        git(&work, &["config", "submodule.recurse", "true"]);
+        git(&work, &["config", "push.recurseSubmodules", value]);
+        let repo = Repo::open(&work).expect("open");
+        repo.set_options(GitOptions {
+            follow_config: follow,
+            ..GitOptions::default()
+        });
+        let git_alone = run(&work, &["push", "--dry-run"], &[]).status.success();
+        let result = repo.push(false, |_| {});
+        assert_eq!(
+            result.is_ok(),
+            pushes,
+            "push.recurseSubmodules={value}, follow {follow}: {result:?}"
+        );
+        if follow {
+            assert_eq!(result.is_ok(), git_alone, "git's own push: {value}");
+        }
+    }
 }
 
 #[test]
