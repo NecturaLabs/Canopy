@@ -21,7 +21,7 @@ const MAX_PICTURES: usize = 256;
 pub const CACHE_SECS: i64 = 12 * 60 * 60;
 const HOUR_SECS: i64 = 60 * 60;
 /// Provider lookups pictures may take an hour. Unauthenticated GitHub allows 60 API calls an hour
-/// to the whole computer and pull requests need them too, so pictures take half; with a token
+/// to the whole computer and pull requests need them too, so pictures take half; signed in
 /// the limit is 5000.
 const LOOKUPS_PER_HOUR_ANONYMOUS: u32 = 30;
 const LOOKUPS_PER_HOUR_SIGNED_IN: u32 = 500;
@@ -66,12 +66,12 @@ const MAX_UNKNOWN_KEPT: usize = 1024;
 /// Longest server message kept for a refusal, in characters, an ellipsis included.
 const MAX_SERVER_TEXT: usize = 160;
 
-/// Why a repository's pictures stopped, when the cause is the repository or the token rather
-/// than any author. It holds until the tab's hosting thread restarts (a new token, a new remote,
+/// Why a repository's pictures stopped, when the cause is the repository or the sign-in rather
+/// than any author. It holds until the tab's hosting thread restarts (a new sign-in, a new remote,
 /// the next start), and no author is marked as having no picture because of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Blocked {
-    /// HTTP 404 for the repository itself. GitHub: private, and the token (or its absence) cannot
+    /// HTTP 404 for the repository itself. GitHub: private, and the sign-in (or its absence) cannot
     /// see it. GitLab: the server has no picture lookup.
     NotFound,
     /// HTTP 401, or a 403 that is not a rate limit, with the server's message as plain text
@@ -126,7 +126,7 @@ pub struct Situation<'a> {
     pub consented: bool,
     /// The provider of the repository's main GitHub or GitLab remote, if it has one.
     pub forge: Option<canopy_core::forge::ForgeKind>,
-    /// Whether the hosting thread found a token; `None` until it has said.
+    /// Whether the hosting thread got the CLI's token; `None` until it has said.
     pub token: Option<bool>,
     pub status: Status<'a>,
 }
@@ -134,7 +134,7 @@ pub struct Situation<'a> {
 /// Where in Settings the user can change what keeps pictures away.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fix {
-    /// Add or replace the provider's token.
+    /// Sign in with the provider's CLI.
     Accounts,
     /// Turn Pull and merge requests on.
     Integrations,
@@ -199,31 +199,31 @@ pub fn explain(s: &Situation<'_>, now: i64) -> Option<Explanation> {
             fix: None,
         }),
         Status::Blocked(Blocked::NotFound) if token => Some(Explanation {
-            title: "Token can't see this repository",
+            title: "Sign-in can't see this repository",
             detail: format!(
-                "The {provider} token Canopy uses cannot see this repository. Use a token with access to it in Settings → Accounts."
+                "The {provider} CLI's sign-in cannot see this repository. Sign in with an account that has access, in Settings → Accounts."
             ),
             fix: Some(Fix::Accounts),
         }),
         Status::Blocked(Blocked::NotFound) => Some(Explanation {
             title: "Private repository",
             detail: format!(
-                "{provider} shows who wrote these commits only to an account that can see this repository. Add a {provider} token in Settings → Accounts."
+                "{provider} shows who wrote these commits only to an account that can see this repository. Sign in with the {provider} CLI, in Settings → Accounts."
             ),
             fix: Some(Fix::Accounts),
         }),
         Status::Blocked(Blocked::Refused(message)) if !token => Some(Explanation {
             title: "Sign-in required",
             detail: format!(
-                "{provider} answered: {}. Add a {provider} token in Settings → Accounts.",
+                "{provider} answered: {}. Sign in with the {provider} CLI, in Settings → Accounts.",
                 message.trim_end_matches('.')
             ),
             fix: Some(Fix::Accounts),
         }),
         Status::Blocked(Blocked::Refused(message)) => Some(Explanation {
-            title: "Token refused",
+            title: "Sign-in refused",
             detail: format!(
-                "{provider} refused the token: {}. Replace it in Settings → Accounts.",
+                "{provider} refused the CLI's sign-in: {}. Sign in again with the {provider} CLI, in Settings → Accounts.",
                 message.trim_end_matches('.')
             ),
             fix: Some(Fix::Accounts),
@@ -251,7 +251,7 @@ pub fn explain(s: &Situation<'_>, now: i64) -> Option<Explanation> {
                 Pause::Limit if !token => Explanation {
                     title: "Picture lookups paused",
                     detail: format!(
-                        "{provider}'s hourly request limit for pictures is used up; lookups resume {when}. A {provider} token in Settings → Accounts raises the limit."
+                        "{provider}'s hourly request limit for pictures is used up; lookups resume {when}. Signing in with the {provider} CLI, in Settings → Accounts, raises the limit."
                     ),
                     fix: Some(Fix::Accounts),
                 },
@@ -278,7 +278,7 @@ pub fn explain_tab(
         hosting_api: settings.hosting_api,
         consented: crate::ui::legal::pending(settings).is_none(),
         forge: tab.forge().map(|(_, f)| f.kind),
-        token: tab.requests.token.as_ref().map(Option::is_some),
+        token: tab.requests.has_credential(),
         status: tab.avatars.status(),
     };
     explain(&situation, chrono::Utc::now().timestamp())
@@ -1831,7 +1831,7 @@ mod tests {
                 token: Some(true),
                 ..hidden
             }),
-            Some(("Token can't see this repository", Some(Fix::Accounts)))
+            Some(("Sign-in can't see this repository", Some(Fix::Accounts)))
         );
         assert_eq!(
             why(Situation {
@@ -1847,7 +1847,7 @@ mod tests {
         assert_eq!(
             why(refused),
             Some(("Sign-in required", Some(Fix::Accounts))),
-            "a server that wants a token before it answers"
+            "a server that wants a sign-in before it answers"
         );
         let token = explain(
             &Situation {
@@ -1857,12 +1857,12 @@ mod tests {
             1000,
         )
         .unwrap();
-        assert_eq!(token.title, "Token refused");
+        assert_eq!(token.title, "Sign-in refused");
         assert_eq!(token.fix, Some(Fix::Accounts));
         assert!(
             token
                 .detail
-                .contains("refused the token: Bad credentials. Replace"),
+                .contains("refused the CLI's sign-in: Bad credentials. Sign in again"),
             "{}",
             token.detail
         );
@@ -1875,7 +1875,11 @@ mod tests {
         };
         let paused = explain(&limit, 1000).unwrap();
         assert!(paused.detail.contains("in 25 minutes"), "{}", paused.detail);
-        assert_eq!(paused.fix, Some(Fix::Accounts), "a token raises the limit");
+        assert_eq!(
+            paused.fix,
+            Some(Fix::Accounts),
+            "signing in raises the limit"
+        );
         assert_eq!(
             why(Situation {
                 token: Some(true),

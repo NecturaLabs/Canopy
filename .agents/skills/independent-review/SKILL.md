@@ -51,7 +51,7 @@ the review was not independent.
   before dispatching.
 - **Security pass first** (the harness's own, `/security-review` in Claude Code, where
   available) when the diff touches: `crates/canopy-hosting` or anything else that makes HTTP requests; how a GitHub or
-  GitLab token is read, stored (`tokens.json`), sent or logged; the update check; crash-report
+  GitLab token is read (from the `gh`/`glab` CLI), sent or logged; the update check; crash-report
   scrubbing (`crash_reports.rs`); URL building in `forge.rs` (credentials must never appear in a
   URL Canopy builds or logs); URL or file opening in `platform.rs`; argument or environment
   construction and log redaction in `cli.rs` and `logging.rs`; credential or askpass prompts

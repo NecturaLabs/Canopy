@@ -42,11 +42,13 @@ commits since the previous build.
   checks and no preview; the choice is remembered and is separate from the whole-app density.
   A request's number, author, age and labels each have their own colour in the list, and the
   request's header adds its comment count in one too, in every theme.
-- Pull and merge requests use the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) as their credential,
-  before the environment, a token saved in Canopy and git's credential helper, so no second token is
-  needed. Canopy reads the CLI's token when the repository opens, keeps it in memory only and says why
-  a CLI that is signed out, short of a scope or failing was not used. The Privacy Policy says that
-  Canopy runs the CLI.
+- Pull and merge requests use the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) as their only
+  credential. Canopy no longer stores or accepts personal access tokens, and no longer reads
+  `GH_TOKEN`, `GITLAB_TOKEN` or git's credential helper; a `tokens.json` saved by an earlier build
+  is deleted at start. Settings → Accounts shows, for each host, whether the CLI is installed,
+  signed in (the account and its scopes), signed out or short of a scope, with the command that fixes
+  it and a button to copy it, a link to the CLI's install page, and Check again; the requests view
+  and the repository's Hosting block say the same. The Privacy Policy and the Terms say so.
 - File history: right-click a file in Changes or in a commit's file list, or use the command palette,
   to list the commits that changed it, followed back through renames. Choosing one opens that
   commit with the file's diff; the working tree is not touched.
@@ -182,8 +184,8 @@ commits since the previous build.
 
 ### Changed
 
-- Canopy keeps its files in a folder for each kind of data (settings, saved tokens, logs and crash
-  reports, picture cache) following each system's convention, owner-only and marked `.canopy-data`
+- Canopy keeps its files in a folder for each kind of data (settings, logs and crash reports,
+  picture cache) following each system's convention, owner-only and marked `.canopy-data`
   (unless a folder already holds someone else's files) so the installers' `--purge` finds them, and
   moves what earlier builds kept in two other folders the first time it starts, never replacing a
   file. The privacy policy lists the folders.

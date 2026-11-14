@@ -10,12 +10,13 @@
 //! | macOS | `~/Library/Application Support/io.necturalabs.Canopy` (config and data) | | `~/Library/Logs/Canopy` | `~/Library/Caches/io.necturalabs.Canopy` |
 //! | Windows | `%APPDATA%\NecturaLabs\Canopy` (config and data) | | `%LOCALAPPDATA%\NecturaLabs\Canopy` (state and cache) | |
 //!
-//! Config holds the settings (`settings.json`) and eframe's window state (`app.ron`), data holds
-//! `tokens.json`, state holds `logs/` and `crashes/` (on macOS the logs sit in the folder itself,
-//! where Console looks), and cache holds `avatars/`.
+//! Config holds the settings (`settings.json`) and eframe's window state (`app.ron`), state holds
+//! `logs/` and `crashes/` (on macOS the logs sit in the folder itself, where Console looks), and
+//! cache holds `avatars/`. Data is for files the user would want to keep; nothing is kept there
+//! yet (no hosting token is saved, ADR 0017).
 //!
 //! Builds before this layout kept everything in two folders that `eframe::storage_dir` names (the
-//! `canopy` folder for tokens, logs, crashes and pictures, the window's app id for `app.ron`).
+//! `canopy` folder for logs, crashes and pictures, the window's app id for `app.ron`).
 //! [`migrate`] moves their contents once, at start, a file at a time: a file is never overwritten,
 //! never partly present at its new place, and removed from the old place only after it arrived,
 //! so a run cut short or run twice finishes the job.
@@ -34,6 +35,7 @@ const APP_ID: &str = "io.necturalabs.Canopy";
 /// Names Canopy has itself put in its folders; a folder holding only these is Canopy's even
 /// without the marker (the previous layout's `canopy` folder is one).
 const OWN_FILES: &[&str] = &[
+    // An earlier build's; the app deletes it at start (ADR 0017), and it is Canopy's until then.
     "tokens.json",
     "settings.json",
     "app.ron",
@@ -178,11 +180,6 @@ impl Layout {
         self.config.join("app.ron")
     }
 
-    /// Saved hosting tokens.
-    pub fn tokens_file(&self) -> PathBuf {
-        self.data.join("tokens.json")
-    }
-
     /// The distinct folders, config first.
     pub fn folders(&self) -> Vec<&Path> {
         let mut folders: Vec<&Path> = Vec::new();
@@ -198,7 +195,8 @@ impl Layout {
 /// The two folders earlier builds used, which [`migrate`] empties.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Legacy {
-    /// `eframe::storage_dir("canopy")`: tokens, logs, crashes and pictures.
+    /// `eframe::storage_dir("canopy")`: logs, crashes and pictures (and an old `tokens.json`,
+    /// which is deleted, not moved).
     pub data: PathBuf,
     /// `eframe::storage_dir("io.necturalabs.Canopy")`: `app.ron`.
     pub settings: PathBuf,
@@ -375,7 +373,6 @@ pub fn migrate(legacy: &Legacy, layout: &Layout) -> Migration {
     let mut report = Migration::default();
     let items = [
         (legacy.settings.join("app.ron"), layout.window_file()),
-        (legacy.data.join("tokens.json"), layout.tokens_file()),
         (legacy.data.join("logs"), layout.logs.clone()),
         (legacy.data.join("crashes"), layout.crashes.clone()),
         (legacy.data.join("avatars"), layout.avatars.clone()),
@@ -680,7 +677,6 @@ mod tests {
             &legacy.settings.join("app.ron"),
             "{\"canopy-settings-v1\": \"x\"}",
         );
-        write(&legacy.data.join("tokens.json"), "{\"tokens\":{}}");
         write(&legacy.data.join("logs/canopy-1.jsonl"), "log 1");
         write(&legacy.data.join("logs/canopy-2.jsonl"), "log 2");
         write(&legacy.data.join("crashes/crash-1.txt"), "crash");
@@ -698,15 +694,12 @@ mod tests {
         populate(&legacy);
         let report = migrate(&legacy, &layout);
         assert_eq!(report.failed, Vec::new());
-        // settings, two logs, a crash report and a picture; tokens.json is already where it
-        // belongs on Linux, where the data folder is the old folder.
+        // settings, two logs, a crash report and a picture.
         assert_eq!(report.moved, 5);
         assert_eq!(
             read(&layout.window_file()),
             "{\"canopy-settings-v1\": \"x\"}"
         );
-        // tokens.json stays where it was on Linux: the data folder is the old folder.
-        assert_eq!(read(&layout.tokens_file()), "{\"tokens\":{}}");
         assert_eq!(read(&layout.logs.join("canopy-2.jsonl")), "log 2");
         assert_eq!(read(&layout.crashes.join("crash-1.txt")), "crash");
         assert_eq!(read(&layout.avatars.join("ab/cd.json")), "picture");
@@ -800,14 +793,13 @@ mod tests {
         populate(&legacy);
         let report = migrate(&legacy, &layout);
         assert_eq!(report.failed, Vec::new());
-        assert_eq!(read(&layout.tokens_file()), "{\"tokens\":{}}");
         assert_eq!(read(&layout.logs.join("canopy-1.jsonl")), "log 1");
         assert!(!root.path().join("appdata/canopy").exists());
         assert!(!root.path().join("appdata/io.necturalabs.Canopy").exists());
     }
 
     #[test]
-    fn macos_keeps_settings_and_tokens_in_the_folder_they_already_have() {
+    fn macos_keeps_its_settings_in_the_folder_they_already_have() {
         let root = tempfile::tempdir().expect("tmp");
         let e = env(root.path());
         let legacy = Legacy::resolve(Os::Mac, &e).expect("legacy");
@@ -819,8 +811,29 @@ mod tests {
             read(&layout.window_file()),
             "{\"canopy-settings-v1\": \"x\"}"
         );
-        assert_eq!(read(&layout.tokens_file()), "{\"tokens\":{}}");
         assert_eq!(read(&layout.logs.join("canopy-1.jsonl")), "log 1");
+    }
+
+    /// Saved tokens are gone (ADR 0017): `hosting::remove_saved_tokens` deletes the old file from
+    /// where it was, so the move must not carry it into a new folder.
+    #[test]
+    fn an_old_token_file_is_not_moved() {
+        for os in [Os::Linux, Os::Mac, Os::Windows] {
+            let root = tempfile::tempdir().expect("tmp");
+            let e = env(root.path());
+            let legacy = Legacy::resolve(os, &e).expect("legacy");
+            let layout = Layout::resolve(os, &e).expect("layout");
+            populate(&legacy);
+            write(&legacy.data.join("tokens.json"), "{\"tokens\":{}}");
+            let report = migrate(&legacy, &layout);
+            assert_eq!(report.failed, Vec::new(), "{os:?}");
+            assert_eq!(read(&legacy.data.join("tokens.json")), "{\"tokens\":{}}");
+            for folder in layout.folders() {
+                if folder != legacy.data {
+                    assert!(!folder.join("tokens.json").exists(), "{os:?}");
+                }
+            }
+        }
     }
 
     #[test]

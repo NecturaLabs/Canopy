@@ -86,7 +86,7 @@ OPTIONS:
                               repository without a GitHub or GitLab remote: list, list-all,
                               list-closed, list-unchecked, list-overflow, list-more, list-search, filtered, no-match,
                               a request number such as 428, busy, loading, details-loading,
-                              details-error, error, no-token or empty;
+                              details-error, error, signed-out or empty;
                               prefix gitlab: for merge requests. Implies --view requests
     -h, --help                Print help
     -V, --version             Print version

@@ -124,7 +124,6 @@ mod tests {
             pending_opens: 0,
             config_reads: Vec::new(),
             git_version: String::new(),
-            tokens: TokenStore::default(),
             updater: Updater::default(),
             identity_worker: None,
             global_identity: None,

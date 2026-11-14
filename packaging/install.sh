@@ -62,11 +62,11 @@ purge_targets() {
 }
 
 # Whether eframe folder $1 is Canopy's alone: it holds recognisable Canopy data (its settings key,
-# saved tokens, or logs and crash reports named the way Canopy names them) and every entry in it
-# is a name Canopy itself writes, so a stranger's file beside them keeps the folder.
+# or logs and crash reports named the way Canopy names them) and every entry in it is a name
+# Canopy itself writes (an old tokens.json, which the app deletes, included), so a stranger's file
+# beside them keeps the folder.
 is_eframe_canopy() {
     found=1
-    if [ -f "$1/tokens.json" ]; then found=0; fi
     if [ -f "$1/app.ron" ] && grep -q 'canopy-settings-v1' "$1/app.ron" 2>/dev/null; then found=0; fi
     for f in "$1"/logs/canopy-*.jsonl "$1"/crashes/crash-*.txt; do
         if [ -f "$f" ]; then found=0; fi
@@ -589,9 +589,6 @@ purge() {
             esac
         done
     fi
-    say ""
-    say "Tokens saved in Settings -> Accounts live in tokens.json in Canopy's data folder, so a"
-    say "folder removed above took them with it; Canopy does not use the system keychain yet."
 }
 
 # ---------------------------------------------------------------------------------------------

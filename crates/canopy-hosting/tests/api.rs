@@ -548,7 +548,7 @@ fn github_details_main_request_failure_is_an_error() {
     let server = Server::start();
     let err = github(&server, Some(TOKEN)).details(77).expect_err("404");
     assert_eq!(err, Error::NotFound("Not Found".into()));
-    assert!(err.to_string().contains("token cannot see this repository"));
+    assert!(err.to_string().contains("the repository is private"));
 }
 
 #[test]
@@ -1308,7 +1308,8 @@ fn gitlab_error_mapping() {
     );
     let err = client.details(404).expect_err("404");
     assert_eq!(err, Error::NotFound("Not Found".into()));
-    assert!(err.to_string().contains("Not Found"));
+    // The server's "Not Found" adds nothing to the sentence, so it is not repeated.
+    assert_eq!(err.to_string(), "Not found, or the repository is private");
 }
 
 #[test]

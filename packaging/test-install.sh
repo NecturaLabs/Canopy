@@ -158,6 +158,7 @@ run_raw() {
 # The installer against the fake feed.
 run_status() { run_raw CANOPY_INSTALL_BASE_URL="$base" "$SH" "$installer" "$@"; }
 out_has() { grep -qF -- "$1" "$tmp/out"; }
+out_lacks() { ! grep -qiF -- "$1" "$tmp/out"; }
 # Shows the installer output of the step above, indented, so the log reads like a session.
 show() { sed 's/^/  | /' "$tmp/out"; }
 # Whether line $2 of desktop entry $1 sits in its [Desktop Entry] group, before the action group.
@@ -653,7 +654,7 @@ edited" ]
     run_status --uninstall --purge --yes
     check "purge exits 0" [ "$status" = 0 ]
     show
-    check "purge exits 0 (2)" out_has "tokens.json"
+    check "purge says nothing about saved tokens" out_lacks "token"
     check "purge also uninstalled" [ ! -e "$opt" ]
     check "eframe folder with Canopy's settings purged" [ ! -e "$home/.local/share/canopy" ]
     check "marked folder purged" [ ! -e "$home/.config/canopy" ]
@@ -670,13 +671,12 @@ edited" ]
     # Canopy's data folder on Linux is also the old eframe folder: Canopy's files beside someone
     # else's file are not enough to delete it unmarked (the marker is what makes it Canopy's).
     mkdir -p "$home/.local/share/canopy/logs" "$home/.local/share/io.necturalabs.canopy"
-    echo "{}" >"$home/.local/share/canopy/tokens.json"
     echo "log" >"$home/.local/share/canopy/logs/canopy-1.jsonl"
     echo "not Canopy's" >"$home/.local/share/canopy/notes.txt"
     echo "window" >"$home/.local/share/io.necturalabs.canopy/app.ron"
     run_status --uninstall --purge --yes
     check "unmarked data folder with a foreign file kept" [ -f "$home/.local/share/canopy/notes.txt" ]
-    check "unmarked data folder keeps Canopy's files too" [ -f "$home/.local/share/canopy/tokens.json" ]
+    check "unmarked data folder keeps Canopy's files too" [ -f "$home/.local/share/canopy/logs/canopy-1.jsonl" ]
     check "unmarked data folder listed as left" out_has "$home/.local/share/canopy"
     check "leftover app-id folder purged" [ ! -e "$home/.local/share/io.necturalabs.canopy" ]
     touch "$home/.local/share/canopy/.canopy-data"

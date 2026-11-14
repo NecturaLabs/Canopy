@@ -1,6 +1,6 @@
 # Terms of Service
 
-Last updated: 3 October 2026
+Last updated: 17 October 2026
 
 These terms are an agreement between you and NecturaLabs about Canopy (the "software"). You accept them by choosing I agree in Canopy. If you do not accept them, choose Quit and do not use the software.
 
@@ -30,7 +30,7 @@ Your repositories, code and other content remain yours. We claim no rights in th
 
 The software runs Git on your computer. Some Git operations cannot be undone, such as discarding changes, a hard reset, deleting a branch or tag, or a force push. The software asks you to confirm them, but the choice to run them is yours. Keep backups of work you cannot afford to lose.
 
-GitHub, GitLab and the other Git servers you use have their own terms, which apply to your use of them. You are responsible for the access tokens you give the software.
+GitHub, GitLab and the other Git servers you use have their own terms, which apply to your use of them. You are responsible for the GitHub and GitLab accounts you sign the GitHub CLI and GitLab CLI in with, which the software uses on your behalf.
 
 ## Ownership
 

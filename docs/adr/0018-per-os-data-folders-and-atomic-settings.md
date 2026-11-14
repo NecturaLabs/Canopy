@@ -5,8 +5,8 @@
 
 ## Context
 
-Canopy's files were in two folders that `eframe::storage_dir` names: `canopy` (tokens, logs, crash
-reports, pictures) and one named after the window's app id (`app.ron`: the settings, the window's
+Canopy's files were in two folders that `eframe::storage_dir` names: `canopy` (logs, crash
+reports, pictures and, until #227, tokens) and one named after the window's app id (`app.ron`: the settings, the window's
 place, the notifications). `app.ron` was written in place by eframe, so a write cut short left a
 truncated file; an unreadable one was read as nothing, the settings fell back to defaults without
 a word and the next save overwrote what was left (issue #40). The installers' `--purge` already
@@ -24,14 +24,17 @@ expects folders with a marker file `.canopy-data` (`packaging/README.md`), which
 
 **Folders** (`storage.rs`): config, data, state and cache, each created owner-only (0700 on Unix)
 and claimed with the empty file `.canopy-data` (0600) when it is empty or holds only Canopy's own
-files (its settings, tokens, window state, logs, crash reports, pictures and the temporary names of
+files (its settings, window state, logs, crash reports, pictures and the temporary names of
 a move); a folder with a stranger's file is used but left unmarked, and the installers' `--purge`
 leaves it, the Linux data folder (the old eframe folder) included. Linux follows the XDG variables (`$XDG_CONFIG_HOME/canopy`, `$XDG_DATA_HOME/canopy`,
 `$XDG_STATE_HOME/canopy`, `$XDG_CACHE_HOME/canopy`); macOS uses `Application Support/<app id>`
 (config and data), `Logs/Canopy` and `Caches/<app id>`; Windows uses `%APPDATA%\NecturaLabs\Canopy`
 and `%LOCALAPPDATA%\NecturaLabs\Canopy`. This is the table in `packaging/README.md`, which the
-installers already purge. Settings and window state are config; saved tokens are data (until
-#227 removes them); logs and crash reports are state; pictures are cache.
+installers already purge. Settings and window state are config; logs and crash reports are
+state; pictures are cache. Data is for files the user would want to keep and is empty today: #227
+(ADR 0017) removed saved tokens, and the move leaves an old `tokens.json` where it is for
+`hosting::remove_saved_tokens` to delete, so no token is ever copied to a new place. The folder is
+still created and marked, as the issue's layout and the installers' table have it.
 
 **Migration** (`storage::migrate`, first thing in `main`): the contents of the two old folders move
 one file at a time to their new places. A file is never overwritten (the move is a hard link that
