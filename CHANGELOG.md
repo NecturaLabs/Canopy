@@ -76,6 +76,15 @@ commits since the previous build.
 
 ### Fixed
 
+- A select never cuts a label short (#225). The closed control widens to the value it shows (a long
+  program name in Settings → Integrations is no longer limited to the text-field width) and, when
+  the window has no more room, wraps it onto a second line; the open list is as wide as its
+  longest entry, and wraps the entries that still do not fit, so the recommended entry keeps its
+  whole label beside the Recommended badge even in a window narrower than the two together (#255).
+- A select's open list lines up with its control instead of sticking out past its right edge: it
+  starts at the control's left edge (its right edge when it is wider and would not fit to the
+  right), is as wide as the control or its longest entry, whichever is more, with no 200-point
+  minimum of its own, and stays inside the window or dialog (#225).
 - The notification center keeps its margin above and below at the smallest window size and zoom, scrolling its list when the window is short.
 - A Settings row with both an explanation mark and a state remark (Download profile pictures) draws the remark in the accent colour with a gap, so the two marks no longer look alike.
 - Settings are written to a temporary file and renamed over the old one, on a thread of their own,
