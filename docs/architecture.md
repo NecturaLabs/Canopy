@@ -273,9 +273,11 @@ repository and update the submodule pointer here.
   Automatic fetching (`app/background.rs`, `auto_fetch_at`) runs at most
   `MAX_BACKGROUND_FETCHES` (4) fetches at once across all tabs: a tab counts from the moment its
   fetch is sent (`RepoTab::auto_fetch`, which sets `RepoTab::auto_fetch_pending`) until the
-  worker's answer to that fetch (`OpFinished`; the tab tells it from other quiet fetches by
-  their order, since a tab's operations are answered in order, and a batch the thread cannot run
-  because the repository will not open answers each of its operations with an error); a tab whose
+  worker's answer to that fetch. A quiet fetch always ends in exactly one `OpFinished` (unlike a
+  pull or a merge, which can end in `PullDecision` or `Conflicted`; a batch the thread cannot run
+  because the repository will not open answers each of its operations with an error), and a tab's
+  operations run in the order sent, so the tab tells the automatic fetch's answer from other quiet
+  fetches' by their order. A tab whose
   thread has ended (`Worker::is_alive`) is not counted. A tab that falls due while all four run keeps its due time, and the next pass starts
   it, longest-waiting first, once an event from a finished fetch has repainted the frame (the
   30 second poll at the latest; an overdue tab sets no wake time, so the loop never spins). A

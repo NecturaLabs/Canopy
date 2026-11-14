@@ -1269,9 +1269,11 @@ pub struct RepoTab {
     /// that fetch (also when it could not run it, as when the repository would not open); a tab whose
     /// worker thread has ended is not counted ([`Worker::is_alive`]).
     pub auto_fetch_pending: bool,
-    /// The quiet fetches sent and not yet finished, oldest first, each `true` when it was the
-    /// automatic one: the worker runs a tab's operations in order and answers each once, so the
-    /// first answer to a quiet fetch belongs to the first of these.
+    /// The quiet fetches sent and not yet answered, oldest first, each `true` when it was the
+    /// automatic one. The worker runs a tab's operations in the order sent, and a quiet fetch
+    /// always ends in exactly one `OpFinished` (it cannot stop to ask or on conflicts, as a pull
+    /// or a merge can, and a batch that cannot run answers it with an error), so the first quiet
+    /// `OpFinished` belongs to the first of these.
     quiet_fetches: std::collections::VecDeque<bool>,
 }
 
@@ -1293,8 +1295,7 @@ impl RepoTab {
     /// Sends an automatic fetch (the timer's, never the user's) and counts it against the limit on
     /// background fetches until it finishes.
     pub fn auto_fetch(&mut self, prune: bool) {
-        self.auto_fetch_pending = true;
-        self.send_op(Op::Fetch { prune, quiet: true }, true);
+        self.auto_fetch_pending = self.send_op(Op::Fetch { prune, quiet: true }, true);
     }
 
     /// Opens a tab that loads nothing until it is first shown ([`Self::load`]): no thread, no
@@ -1475,12 +1476,15 @@ impl RepoTab {
         self.send_op(op, false);
     }
 
-    /// Queues `op`; a quiet fetch is remembered, to tell its end from the automatic one's.
-    fn send_op(&mut self, op: Op, automatic: bool) {
-        if matches!(op, Op::Fetch { quiet: true, .. }) && self.worker.is_started() {
+    /// Queues `op` and says whether the worker took it (a tab that has not loaded drops it). A
+    /// quiet fetch is remembered, to tell its end from the automatic one's.
+    fn send_op(&mut self, op: Op, automatic: bool) -> bool {
+        let sent = self.worker.is_started();
+        if sent && matches!(op, Op::Fetch { quiet: true, .. }) {
             self.quiet_fetches.push_back(automatic);
         }
         self.worker.send(Job::Op(op));
+        sent
     }
 
     /// Asks for the Git LFS dialog's lists: the tracked patterns (needs git-lfs) and the locks
@@ -5218,6 +5222,19 @@ mod tests {
         quiet_fetch_finished(&mut tab, &events)?;
         assert!(!tab.auto_fetch_pending, "its own end frees it");
         Ok(())
+    }
+
+    /// #62: a fetch a tab that has not loaded dropped is never answered, so it holds no slot and
+    /// no place in the order of quiet fetches.
+    #[test]
+    fn an_automatic_fetch_that_was_not_sent_holds_no_slot() {
+        let (worker, _events, _jobs) = Worker::lazy_detached(PathBuf::from("fixture"));
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.auto_fetch(false);
+        assert!(!tab.auto_fetch_pending);
+        assert!(tab.quiet_fetches.is_empty());
+        assert_eq!(Worker::take_unstarted_sends(), ["operation"]);
     }
 
     /// #62: the quiet fetch sent after a request is merged is not the automatic one, whichever

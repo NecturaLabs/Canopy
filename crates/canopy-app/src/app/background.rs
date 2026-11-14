@@ -711,11 +711,15 @@ impl CanopyApp {
         let waiting = due_now.len().saturating_sub(free);
         // Said when the number changes, not at every frame the limit holds tabs back.
         if waiting_changed(&mut self.fetch_waiting, waiting) {
-            tracing::debug!(
-                waiting,
-                running,
-                "background fetches limited; the rest wait for a slot"
-            );
+            if waiting == 0 {
+                tracing::debug!(running, "background fetches no longer held back");
+            } else {
+                tracing::debug!(
+                    waiting,
+                    running,
+                    "background fetches limited; the rest wait for a slot"
+                );
+            }
         }
         for (_, index) in due_now.into_iter().take(free) {
             let prune = self.settings.prune_for(&self.tabs[index].path);
@@ -1238,6 +1242,18 @@ mod tests {
             app.tabs[..4].iter().all(|t| t.auto_fetch_pending),
             "their own state is left alone"
         );
+    }
+
+    /// #62: a tab whose repository thread has ended is not sent a fetch, however overdue.
+    #[test]
+    fn a_tab_whose_thread_ended_is_not_fetched() {
+        let now = Instant::now();
+        let (mut app, queues, _senders) = overdue_tabs(2, now);
+        app.tabs[0].worker.end_thread_for_test();
+        app.auto_fetch_at(now);
+        assert!(!fetched(&queues[0]), "a dead tab was sent a fetch");
+        assert!(!app.tabs[0].auto_fetch_pending);
+        assert!(fetched(&queues[1]), "the live tab was fetched");
     }
 
     /// #62: the line that says fetches are held back is written when the number held back

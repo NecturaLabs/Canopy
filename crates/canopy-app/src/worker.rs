@@ -1249,7 +1249,25 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         });
                     }
                 }
-                emit(Event::Failed(e.to_string()));
+                // The failure reaches the user once. An operation's answer is its own error (a
+                // card, or a quiet note for the timer's fetch), so the batch's `Failed` (a "Git
+                // error" card; it also sets the tab's load error and clears the refusals it
+                // holds) is sent unless the answers cover it: an announced operation was
+                // answered, or only operations that announce nothing were and no read was asked
+                // for. Skipping it there loses no load error: the timer's fetch is only sent to
+                // a tab that has loaded, and a tab loads with a read.
+                let asked_a_read = want_full.is_some() || want_status;
+                let answered_announced = rest
+                    .iter()
+                    .any(|job| matches!(job, Job::Op(op) if op.announce()));
+                let only_quiet_ops = !rest.is_empty()
+                    && !asked_a_read
+                    && rest
+                        .iter()
+                        .all(|job| matches!(job, Job::Op(op) if !op.announce()));
+                if !answered_announced && !only_quiet_ops {
+                    emit(Event::Failed(e.to_string()));
+                }
                 continue;
             }
         };
@@ -2691,27 +2709,19 @@ mod tests {
         assert_eq!(limiter.waiting(), 0);
     }
 
-    /// #62: a batch the thread cannot run because the repository will not open still answers
-    /// every operation in it, so the tab that waits for the end of one (the limit on background
-    /// fetches counts it) hears of it.
-    #[test]
-    fn a_batch_that_cannot_run_reports_each_of_its_operations() {
-        // A folder that is not a repository: it will not open.
+    /// What a worker on a folder that is not a repository sends for `jobs` (queued together, one
+    /// batch when the thread is slow to start): each answer to an operation as (kind, announce,
+    /// is an error), and how many `Failed` events came, once it has gone quiet.
+    fn answers_for_an_unopenable_repository(jobs: Vec<Job>) -> (Vec<(OpKind, bool, bool)>, usize) {
         let dir = tempfile::tempdir().expect("tempdir");
         let worker = super::Worker::spawn(dir.path().to_path_buf(), &egui::Context::default());
-        worker.send(Job::Op(Op::Fetch {
-            prune: false,
-            quiet: true,
-        }));
-        worker.send(Job::Op(Op::StageAll));
-        let mut finished = Vec::new();
-        let mut failed = 0;
-        let end = Instant::now() + Duration::from_secs(60);
-        while finished.len() < 2 || failed < 1 {
-            let Some(left) = end.checked_duration_since(Instant::now()) else {
-                break;
-            };
-            match worker.events.recv_timeout(left) {
+        for job in jobs {
+            worker.send(job);
+        }
+        let (mut finished, mut failed) = (Vec::new(), 0);
+        let mut wait = Duration::from_secs(60);
+        loop {
+            match worker.events.recv_timeout(wait) {
                 Ok(super::Event::OpFinished {
                     kind,
                     announce,
@@ -2720,15 +2730,39 @@ mod tests {
                 }) => finished.push((kind, announce, result.is_err())),
                 Ok(super::Event::Failed(_)) => failed += 1,
                 Ok(_) => {}
-                Err(_) => break,
+                Err(_) => return (finished, failed),
             }
+            // Everything of one batch is sent together: a quiet second means it is over.
+            wait = Duration::from_millis(600);
         }
-        assert_eq!(
-            finished,
-            [(OpKind::Fetch, false, true), (OpKind::Other, false, true)],
-            "one answer per operation, in order, each an error"
-        );
-        assert!(failed >= 1, "the refresh error still reaches the tab");
+    }
+
+    /// #62: a batch the thread cannot run because the repository will not open answers every
+    /// operation in it, so whoever waits for the end of one (the limit on background fetches
+    /// counts it) hears of it; and the user sees one error for it, not two.
+    #[test]
+    fn a_batch_that_cannot_run_reports_each_of_its_operations_once() {
+        let fetch = |quiet| {
+            Job::Op(Op::Fetch {
+                prune: false,
+                quiet,
+            })
+        };
+        // An operation the user started: its own failure card, and no second one.
+        let (finished, failed) = answers_for_an_unopenable_repository(vec![fetch(false)]);
+        assert_eq!(finished, [(OpKind::Fetch, true, true)]);
+        assert_eq!(failed, 0, "one error for one failure");
+
+        // The timer's fetch alone: answered quietly, no "Git error" card besides.
+        let (finished, failed) = answers_for_an_unopenable_repository(vec![fetch(true)]);
+        assert_eq!(finished, [(OpKind::Fetch, false, true)]);
+        assert_eq!(failed, 0, "the quiet answer covers it");
+
+        // A refresh asked for, with nothing to answer: the tab still hears of the failure (its
+        // load error, and the refusals it clears).
+        let (finished, failed) = answers_for_an_unopenable_repository(vec![Job::RefreshStatus]);
+        assert_eq!(finished, []);
+        assert_eq!(failed, 1);
     }
 
     /// #62: a worker whose repository thread has ended says so; one that never started, or runs,
@@ -3694,6 +3728,64 @@ mod read_tests {
                 "configured {configured}, follow {follow}"
             );
         }
+    }
+
+    /// #62: the tab counts a quiet fetch's end by order, which holds because each one ends in
+    /// exactly one `OpFinished`, even with a pull between them that ends in a question.
+    #[test]
+    fn a_quiet_fetch_ends_in_one_op_finished_around_a_pull_that_asks() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_quiet_fetch_ends_in_one_op_finished_around_a_pull_that_asks",
+        ) {
+            return;
+        }
+        let root = tempfile::tempdir().expect("tempdir");
+        let worker = worker_with_canopys_choices(trusted(diverged_clone(root.path())));
+        let quiet_fetch = || {
+            Job::Op(Op::Fetch {
+                prune: false,
+                quiet: true,
+            })
+        };
+        worker.send(quiet_fetch());
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::FastForwardOnly,
+            follow_config: false,
+            prune: false,
+            checked: None,
+        }));
+        worker.send(quiet_fetch());
+        let mut seen = Vec::new();
+        let mut wait = Duration::from_secs(60);
+        // The answers, then a quiet second to show there are no more.
+        while let Ok(event) = worker.events.recv_timeout(wait) {
+            match event {
+                Event::OpFinished {
+                    kind,
+                    announce,
+                    result,
+                    ..
+                } => seen.push(format!(
+                    "finished {kind:?} announce={announce} ok={}",
+                    result.is_ok()
+                )),
+                Event::PullDecision(_) => seen.push("decision".to_owned()),
+                Event::Conflicted { .. } => seen.push("conflicted".to_owned()),
+                _ => {}
+            }
+            if seen.len() >= 3 {
+                wait = Duration::from_millis(800);
+            }
+        }
+        assert_eq!(
+            seen,
+            [
+                "finished Fetch announce=false ok=true",
+                "decision",
+                "finished Fetch announce=false ok=true"
+            ],
+            "the pull asked, and each quiet fetch ended in one answer"
+        );
     }
 
     /// Dropping a worker ends its repository thread and its file watcher's: nothing of it is
