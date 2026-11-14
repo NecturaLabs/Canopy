@@ -14,9 +14,45 @@ use canopy_core::{
     RepoState, Whitespace, WorkingStatus,
 };
 
+/// Where a finished git-flow branch is pushed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlowPush {
+    pub remote: String,
+    /// Also delete the finished branch on the remote.
+    pub delete_remote: bool,
+}
+
 /// A request to change the repository. Each one is followed by a refresh.
 #[derive(Debug, Clone)]
 pub enum Op {
+    /// `git flow init`: write the configuration and create the development branch.
+    FlowInit(canopy_core::FlowConfig),
+    /// Start a git-flow branch of `kind` called `name` from `base` (the kind's own when `None`).
+    FlowStart {
+        kind: canopy_core::FlowKind,
+        name: String,
+        base: Option<String>,
+    },
+    /// Finish a git-flow branch, then push what it changed when `push` says so.
+    FlowFinish {
+        kind: canopy_core::FlowKind,
+        name: String,
+        options: canopy_core::FlowFinish,
+        push: Option<FlowPush>,
+    },
+    /// Delete merged branches (`Repo::remove_merged_branches`); `allow_unproven` is the user's
+    /// confirmation to force-delete the ones that only look merged.
+    CleanMerged {
+        bases: Vec<String>,
+        names: Vec<String>,
+        allow_unproven: bool,
+    },
+    /// Bring `tip`, the commit of `base` the user was shown, into the checked-out branch.
+    UpdateFromBase {
+        base: String,
+        strategy: PullStrategy,
+        tip: Oid,
+    },
     CleanStale {
         candidates: Vec<canopy_core::StaleCandidate>,
         older_than_days: u32,
@@ -26,6 +62,24 @@ pub enum Op {
         target: canopy_core::IgnoreTarget,
     },
     StopTracking(String),
+    /// `git lfs pull`: downloads the LFS objects of the current checkout and writes them into the
+    /// working tree.
+    LfsPull,
+    /// `git lfs fetch`: downloads the LFS objects of the current branch into the local store.
+    LfsFetch,
+    /// `git lfs track`; `literal` names one file, not a glob.
+    LfsTrack {
+        pattern: String,
+        literal: bool,
+    },
+    /// `git lfs untrack`, with the pattern as `.gitattributes` spells it.
+    LfsUntrack(String),
+    LfsLock(String),
+    /// `git lfs unlock`; `force` also releases a lock another user holds.
+    LfsUnlock {
+        path: String,
+        force: bool,
+    },
     /// `git submodule update` for one submodule or, with `None`, all of them; `init` also clones
     /// those never initialised.
     SubmoduleUpdate {
@@ -220,7 +274,7 @@ impl Op {
             Self::Pull { .. } => OpKind::Pull,
             Self::Push { .. } | Self::PublishBranch { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
-            Self::Merge(..) | Self::Rebase(_) => OpKind::Merge,
+            Self::Merge(..) | Self::Rebase(_) | Self::UpdateFromBase { .. } => OpKind::Merge,
             Self::StashSave { .. } => OpKind::Stash,
             Self::StashApply { pop: true, .. } | Self::StashApplyCommit { pop: true, .. } => {
                 OpKind::Pop
@@ -228,6 +282,12 @@ impl Op {
             Self::CreateBranch { .. } => OpKind::Branch,
             Self::AddWorktree { .. } => OpKind::Worktree,
             Self::AddRemote { .. } => OpKind::Publish,
+            Self::LfsPull
+            | Self::LfsFetch
+            | Self::LfsTrack { .. }
+            | Self::LfsUntrack(_)
+            | Self::LfsLock(_)
+            | Self::LfsUnlock { .. } => OpKind::Lfs,
             _ => OpKind::Other,
         }
     }
@@ -235,10 +295,34 @@ impl Op {
     /// Present-tense label shown while the operation runs.
     pub fn label(&self) -> String {
         match self {
+            Self::FlowInit(_) => "Initialising git-flow".into(),
+            Self::FlowStart { kind, name, .. } => {
+                format!("Starting {} {name}", kind.label().to_lowercase())
+            }
+            Self::FlowFinish { kind, name, .. } => {
+                format!("Finishing {} {name}", kind.label().to_lowercase())
+            }
+            Self::CleanMerged { names, .. } => format!(
+                "Deleting {} merged {}",
+                names.len(),
+                if names.len() == 1 {
+                    "branch"
+                } else {
+                    "branches"
+                }
+            ),
+            Self::UpdateFromBase { base, .. } => format!("Updating from {base}"),
             Self::CleanStale { .. } => "Cleaning up stale worktrees and branches".into(),
             Self::Stage(_) | Self::StageAll => "Staging".into(),
             Self::AddIgnore { .. } => "Adding ignore rule".into(),
             Self::StopTracking(path) => format!("Untracking {path}"),
+            Self::LfsPull => "Downloading LFS files".into(),
+            Self::LfsFetch => "Fetching LFS objects".into(),
+            Self::LfsTrack { pattern, .. } => format!("Tracking {pattern} with Git LFS"),
+            Self::LfsUntrack(pattern) => format!("Untracking {pattern} from Git LFS"),
+            Self::LfsLock(path) => format!("Locking {path}"),
+            Self::LfsUnlock { path, force: true } => format!("Force-unlocking {path}"),
+            Self::LfsUnlock { path, .. } => format!("Unlocking {path}"),
             Self::SubmoduleUpdate { path: Some(p), .. } => format!("Updating submodule {p}"),
             Self::SubmoduleUpdate { path: None, .. } => "Updating submodules".into(),
             Self::SubmoduleSync(Some(p)) => format!("Syncing submodule {p}"),
@@ -346,6 +430,18 @@ impl Op {
 /// Work for the repository thread.
 #[derive(Debug, Clone)]
 pub enum Job {
+    /// Which local branches are merged into `base`; the serial ties the reply to the newest
+    /// request. `squash` also runs the per-branch squash check.
+    MergedBranches {
+        serial: u64,
+        bases: Vec<String>,
+        squash: bool,
+    },
+    /// What bringing `base` into the checked-out branch would do (no fetch).
+    BaseCompare {
+        serial: u64,
+        base: String,
+    },
     StaleCandidates {
         serial: u64,
         older_than_days: u32,
@@ -406,6 +502,18 @@ pub enum Job {
     PullConfig,
     /// The programs the repository needs that the system lacks (`Repo::missing_tools`).
     Tools,
+    /// The files stored with Git LFS and whether git-lfs is there. `known`: the tab has seen an
+    /// LFS file, so the repository is read for them even where `.gitattributes` at the top does
+    /// not say so.
+    Lfs {
+        known: bool,
+    },
+    /// The locks on the LFS server (a network read, only when the user asks); the serial ties the
+    /// reply to the newest request.
+    LfsLocks(u64),
+    /// The patterns stored with LFS (`git lfs track`); the serial ties the reply to the newest
+    /// request.
+    LfsPatterns(u64),
     /// Where a force push of the current branch would go ([`Repo::force_push_target`]), for the
     /// question that asks before it.
     PushTarget,
@@ -464,6 +572,15 @@ pub struct DiffKey {
 /// hold them across a frame without copying.
 #[derive(Debug)]
 pub enum Event {
+    MergedBranches {
+        serial: u64,
+        bases: Vec<String>,
+        result: Result<Arc<[canopy_core::MergedBranch]>, String>,
+    },
+    BaseCompare {
+        serial: u64,
+        result: Result<canopy_core::PullPreview, String>,
+    },
     StaleCandidates {
         serial: u64,
         result: Result<Arc<[canopy_core::StaleCandidate]>, String>,
@@ -534,6 +651,18 @@ pub enum Event {
     PullConfig(Result<canopy_core::PullConfig, String>),
     /// The answer to [`Job::Tools`].
     ToolsMissing(Vec<canopy_core::MissingTool>),
+    /// The answer to [`Job::Lfs`].
+    Lfs(Arc<LfsInfo>),
+    /// The answer to [`Job::LfsLocks`]: git-lfs's own message when it cannot list them.
+    LfsLocks {
+        serial: u64,
+        result: Result<Vec<canopy_core::LfsLock>, String>,
+    },
+    /// The answer to [`Job::LfsPatterns`].
+    LfsPatterns {
+        serial: u64,
+        result: Result<Vec<canopy_core::LfsPattern>, String>,
+    },
     /// The answer to [`Job::PushTarget`]: git's own message when it cannot tell.
     PushTarget(Result<canopy_core::PushTarget, String>),
     MergeMessage(String),
@@ -564,12 +693,26 @@ pub enum Event {
     AutostashConflict,
     /// A pull waits for the user: the branches diverged, or it would likely conflict.
     PullDecision(Box<PullDecision>),
-    /// The operation `label` (a pull, rebase or merge) stopped on conflicts for the user to
-    /// resolve; `autostashed` when git holds the uncommitted changes aside meanwhile.
+    /// The operation `label` (a pull, rebase, merge, cherry-pick, revert or stash apply) stopped
+    /// on conflicts for the user to resolve; `autostashed` when git holds the uncommitted changes
+    /// aside meanwhile. `stash` when it was a stash applied or popped: nothing is in progress
+    /// then (no continue or abort), and the stash is kept.
     Conflicted {
         label: String,
         autostashed: bool,
+        stash: bool,
     },
+}
+
+/// What the repository stores with Git LFS ([`Job::Lfs`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LfsInfo {
+    /// The repository stores files with LFS.
+    pub in_use: bool,
+    /// Every LFS file in the index, with whether its object is downloaded.
+    pub files: Vec<canopy_core::LfsFile>,
+    /// Set when `git lfs` does not work here: what to install.
+    pub missing: Option<canopy_core::MissingTool>,
 }
 
 /// What a pull asks before it runs ([`Op::Pull`]).
@@ -694,6 +837,8 @@ pub enum OpKind {
     Publish,
     /// `git worktree add`: its result goes back to the New worktree dialog that asked for it.
     Worktree,
+    /// A Git LFS command: its lists (patterns, locks, files) are read again.
+    Lfs,
     Other,
 }
 
@@ -819,6 +964,8 @@ impl Job {
             Self::RetryDownloads => "retry-downloads",
             Self::Ignore { .. } => "ignore",
             Self::StaleCandidates { .. } => "stale_candidates",
+            Self::MergedBranches { .. } => "merged_branches",
+            Self::BaseCompare { .. } => "base_compare",
             Self::RefreshStatus => "status",
             Self::Details(_) => "details",
             Self::Signature(_) => "signature",
@@ -834,6 +981,9 @@ impl Job {
             Self::FileHistory { .. } => "file-history",
             Self::SearchChanges { .. } => "search-changes",
             Self::Tools => "tools",
+            Self::Lfs { .. } => "lfs",
+            Self::LfsLocks(_) => "lfs-locks",
+            Self::LfsPatterns(_) => "lfs-patterns",
             Self::PushTarget => "push-target",
             Self::Options(_) => "options",
             Self::Op(_) => "operation",
@@ -865,6 +1015,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     // Why the last download of the working tree status failed: later refreshes show it instead
     // of trying the network again, until the user retries.
     let mut status_failure: Option<canopy_core::StatusUnavailable> = None;
+    // Whether `git lfs` works, asked once: installing it needs a restart of Canopy anyway.
+    let mut lfs_missing: Option<Option<canopy_core::MissingTool>> = None;
     let mut trust_folders = Vec::new();
     // The last (trusted, version of the list) this thread told the tab.
     let mut told_trust: Option<(bool, u64)> = None;
@@ -923,6 +1075,27 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             let kind = job.kind();
             let started = Instant::now();
             match job {
+                Job::MergedBranches {
+                    serial,
+                    bases,
+                    squash,
+                } => {
+                    let result = repo
+                        .merged_branches_among(&bases, squash)
+                        .map(Arc::from)
+                        .map_err(|error| error.to_string());
+                    emit(Event::MergedBranches {
+                        serial,
+                        bases,
+                        result,
+                    });
+                }
+                Job::BaseCompare { serial, base } => {
+                    emit(Event::BaseCompare {
+                        serial,
+                        result: repo.compare_base(&base).map_err(|error| error.to_string()),
+                    });
+                }
                 Job::StaleCandidates {
                     serial,
                     older_than_days,
@@ -1157,6 +1330,45 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     });
                 }
                 Job::Tools => emit(Event::ToolsMissing(repo.missing_tools())),
+                Job::Lfs { known } => {
+                    let in_use = known || repo.uses_lfs();
+                    let mut info = LfsInfo {
+                        in_use,
+                        ..LfsInfo::default()
+                    };
+                    if in_use {
+                        info.missing.clone_from(
+                            lfs_missing.get_or_insert_with(|| {
+                                canopy_core::git_lfs_missing(repo.workdir())
+                            }),
+                        );
+                        match repo.lfs_files() {
+                            Ok(files) => info.files = files,
+                            Err(error) => {
+                                tracing::warn!(error = %redacted(&error), "LFS files not read");
+                                continue;
+                            }
+                        }
+                    }
+                    emit(Event::Lfs(Arc::new(info)));
+                }
+                Job::LfsLocks(serial) => {
+                    // git-lfs is a program the repository's own configuration can steer.
+                    let result = if allowed() {
+                        repo.lfs_locks().map_err(|e| e.to_string())
+                    } else {
+                        Err(READ_ONLY.to_owned())
+                    };
+                    emit(Event::LfsLocks { serial, result });
+                }
+                Job::LfsPatterns(serial) => {
+                    let result = if allowed() {
+                        repo.lfs_patterns().map_err(|e| e.to_string())
+                    } else {
+                        Err(READ_ONLY.to_owned())
+                    };
+                    emit(Event::LfsPatterns { serial, result });
+                }
                 Job::PushTarget => {
                     emit(Event::PushTarget(
                         repo.force_push_target().map_err(|e| e.to_string()),
@@ -1189,10 +1401,21 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     let announce = op.announce();
                     // A pull, a rebase or a merge: it can autostash, and stopping on conflicts is
                     // not a failure.
-                    let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_) | Op::Merge(..));
+                    let integrates = matches!(
+                        op,
+                        Op::Pull { .. } | Op::Rebase(_) | Op::Merge(..) | Op::UpdateFromBase { .. }
+                    );
                     // A leftover autostash (an external `git merge --squash --autostash`) is
                     // not this operation's: only one that appears during it is reported.
                     let held_before = integrates && repo.autostash_held();
+                    // A cherry-pick, a revert and a stash apply or pop can stop on conflicts as
+                    // well. Files already conflicted before they ran are not their stop: git
+                    // refused them, and says why.
+                    let picks = matches!(op, Op::CherryPick(_) | Op::Revert(_));
+                    let applies_stash =
+                        matches!(op, Op::StashApply { .. } | Op::StashApplyCommit { .. });
+                    let conflicted_before =
+                        (picks || applies_stash) && repo.index_conflicted().unwrap_or(true);
                     let pull = match op {
                         Op::Pull {
                             strategy,
@@ -1260,9 +1483,14 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(error = %redacted(&e), "conflicts not checked");
                             false
                         });
-                    let stopped = integrates
-                        && result.is_err()
-                        && repo.stopped_on_conflicts().unwrap_or(false);
+                    let stopped = result.is_err()
+                        && if applies_stash {
+                            !conflicted_before && repo.stash_stopped_on_conflicts().unwrap_or(false)
+                        } else if picks {
+                            !conflicted_before && repo.stopped_on_conflicts().unwrap_or(false)
+                        } else {
+                            integrates && repo.stopped_on_conflicts().unwrap_or(false)
+                        };
                     // Only a fast-forward was allowed and the branches diverged after all: a
                     // choice to make, not a failure (a pull checked beforehand asks first). A
                     // failed fetch brought nothing to combine: its error is the answer.
@@ -1290,6 +1518,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         // Not a failure: the conflicts are the user's to resolve.
                         emit(Event::Conflicted {
                             autostashed: !held_before && repo.autostash_held(),
+                            stash: applies_stash,
                             label,
                         });
                     } else {
@@ -1364,6 +1593,9 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
     let mut file_history_seen = false;
     let mut change_search_seen = false;
     let mut blame_seen = false;
+    let mut lfs_seen = false;
+    let mut lfs_locks_seen = false;
+    let mut lfs_patterns_seen = false;
     let mut diff_sources = Vec::new();
     for (i, job) in jobs.iter().enumerate().rev() {
         match job {
@@ -1377,6 +1609,9 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
             Job::Details(_) => keep[i] = !std::mem::replace(&mut details_seen, true),
             Job::Signature(_) => keep[i] = !std::mem::replace(&mut signature_seen, true),
             Job::Blame { .. } => keep[i] = !std::mem::replace(&mut blame_seen, true),
+            Job::Lfs { .. } => keep[i] = !std::mem::replace(&mut lfs_seen, true),
+            Job::LfsLocks(_) => keep[i] = !std::mem::replace(&mut lfs_locks_seen, true),
+            Job::LfsPatterns(_) => keep[i] = !std::mem::replace(&mut lfs_patterns_seen, true),
             Job::Diff(key) => {
                 let source = std::mem::discriminant(&key.source);
                 if diff_sources.contains(&source) {
@@ -1575,10 +1810,11 @@ fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::
             )));
         }
     }
-    // A pull or a checkout moves what the submodules should be at.
+    // A pull, rebase or checkout moves what the submodules should be at.
     let moves = matches!(
         op,
         Op::Pull { .. }
+            | Op::Rebase(_)
             | Op::Checkout(_)
             | Op::CheckoutRequest { .. }
             | Op::CheckoutRemote { .. }
@@ -1596,6 +1832,56 @@ fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::
 fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Result<String> {
     let done = |r: canopy_core::Result<()>| r.map(|()| String::new());
     match op {
+        Op::FlowInit(config) => repo.flow_init(&config).map(|()| {
+            format!(
+                "git-flow is set up: {} and {}",
+                config.master, config.develop
+            )
+        }),
+        Op::FlowStart { kind, name, base } => repo
+            .flow_start(kind, &name, base.as_deref())
+            .map(|branch| format!("Started {branch}")),
+        Op::FlowFinish {
+            kind,
+            name,
+            options,
+            push,
+        } => {
+            let mut message = repo.flow_finish(kind, &name, &options)?;
+            if let Some(push) = push {
+                repo.flow_push(kind, &name, &push.remote, push.delete_remote, progress)
+                    .map_err(|e| {
+                        canopy_core::Error::Invalid(format!(
+                            "{message}, but pushing to {} failed: {e}",
+                            push.remote
+                        ))
+                    })?;
+                message = format!("{message} and pushed to {}", push.remote);
+            }
+            Ok(message)
+        }
+        Op::CleanMerged {
+            bases,
+            names,
+            allow_unproven,
+        } => {
+            let removal = repo.remove_merged_branches(&bases, &names, allow_unproven)?;
+            if removal.removed.is_empty() && !removal.failed.is_empty() {
+                return Err(canopy_core::Error::Invalid(removal.summary()));
+            }
+            Ok(removal.summary())
+        }
+        Op::UpdateFromBase {
+            base,
+            strategy,
+            tip,
+        } => repo.update_from_base(strategy, tip, progress).map(|out| {
+            if out.trim().is_empty() {
+                format!("Updated from {base}")
+            } else {
+                out
+            }
+        }),
         Op::CleanStale {
             candidates,
             older_than_days,
@@ -1637,6 +1923,16 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         Op::SubmoduleRemove(path) => repo
             .submodule_remove(&path)
             .map(|()| format!("Removed {path}; the removal is staged.")),
+        Op::LfsPull => repo
+            .lfs_pull(progress)
+            .map(|_| "Downloaded the LFS files of this checkout.".to_owned()),
+        Op::LfsFetch => repo
+            .lfs_fetch(progress)
+            .map(|_| "Downloaded the LFS objects of this branch.".to_owned()),
+        Op::LfsTrack { pattern, literal } => repo.lfs_track(&pattern, literal),
+        Op::LfsUntrack(pattern) => repo.lfs_untrack(&pattern),
+        Op::LfsLock(path) => repo.lfs_lock(&path),
+        Op::LfsUnlock { path, force } => repo.lfs_unlock(&path, force),
         Op::StopTracking(path) => repo
             .stop_tracking(&path)
             .map(|()| format!("Kept {path} locally and staged its removal from Git.")),
@@ -2020,7 +2316,7 @@ fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>, ended: Sender<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{Job, Op, OpKind, watch};
+    use super::{Job, Op, OpKind, PullStrategy, watch};
     use std::path::Path;
     use std::process::Command;
     use std::time::{Duration, Instant};
@@ -2037,6 +2333,22 @@ mod tests {
             .status()
             .is_ok_and(|s| s.success());
         assert!(ok, "git {args:?}");
+    }
+
+    /// Standard output of `git` in `dir`, without its final newline.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
     }
 
     /// Waits up to `limit` for a job matching `want`.
@@ -2093,6 +2405,215 @@ mod tests {
             folders,
             [linked.canonicalize()?, main.join(".git").canonicalize()?]
         );
+        Ok(())
+    }
+
+    /// The next finished operation's label and result, and nothing before it that matters.
+    fn next_finished(
+        worker: &super::Worker,
+    ) -> Result<(String, Result<String, String>), Box<dyn std::error::Error>> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let event = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?;
+            if let super::Event::OpFinished { label, result, .. } = event {
+                return Ok((label, result));
+            }
+        }
+    }
+
+    /// git-flow through the repository thread: set up, start, finish with a push, and the
+    /// snapshot that follows knows git-flow is set up and the branch is gone.
+    #[test]
+    fn git_flow_runs_through_the_worker_from_set_up_to_the_push()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use canopy_core::{FlowConfig, FlowFinish, FlowKind};
+        let dir = tempfile::tempdir()?;
+        let main = dir.path().join("main");
+        let remote = dir.path().join("remote.git");
+        std::fs::create_dir(&main)?;
+        std::fs::create_dir(&remote)?;
+        git(&remote, &["init", "-q", "--bare", "-b", "main"]);
+        git(&main, &["init", "-q", "-b", "main"]);
+        for (key, value) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+        ] {
+            git(&main, &["config", key, value]);
+        }
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(
+            &main,
+            &["remote", "add", "origin", &remote.to_string_lossy()],
+        );
+        git(&main, &["push", "-q", "-u", "origin", "main"]);
+
+        crate::trust::add_for_tests(dir.path().to_path_buf());
+        let worker = super::Worker::spawn(main.clone(), &egui::Context::default());
+        let config = FlowConfig {
+            master: "main".into(),
+            ..FlowConfig::default()
+        };
+        worker.send(Job::Op(Op::FlowInit(config)));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(
+            result,
+            Ok("git-flow is set up: main and develop".to_owned())
+        );
+
+        worker.send(Job::Op(Op::FlowStart {
+            kind: FlowKind::Feature,
+            name: "login".into(),
+            base: None,
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(result, Ok("Started feature/login".to_owned()));
+        std::fs::write(main.join("login.txt"), "x\n")?;
+        git(&main, &["add", "login.txt"]);
+        git(&main, &["commit", "-q", "-m", "feat: login"]);
+
+        // A start that git-flow refuses comes back as its own sentence.
+        worker.send(Job::Op(Op::FlowStart {
+            kind: FlowKind::Feature,
+            name: "login".into(),
+            base: None,
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(
+            result,
+            Err("Branch 'feature/login' already exists.".to_owned())
+        );
+
+        worker.send(Job::Op(Op::FlowFinish {
+            kind: FlowKind::Feature,
+            name: "login".into(),
+            options: FlowFinish::default(),
+            push: Some(super::FlowPush {
+                remote: "origin".into(),
+                delete_remote: false,
+            }),
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(
+            result,
+            Ok("Merged feature/login into develop and pushed to origin".to_owned())
+        );
+        assert_eq!(
+            git_out(&main, &["rev-parse", "develop"]),
+            git_out(&remote, &["rev-parse", "develop"]),
+            "develop reached the remote"
+        );
+        assert_eq!(git_out(&main, &["branch", "--list", "feature/login"]), "");
+        assert_eq!(
+            git_out(&main, &["symbolic-ref", "--short", "HEAD"]),
+            "develop"
+        );
+
+        // The snapshot after the operation says git-flow is set up.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let snapshot = loop {
+            if let super::Event::Snapshot(s) = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+                && s.head.branch.as_deref() == Some("develop")
+            {
+                break s;
+            }
+        };
+        assert_eq!(
+            snapshot.workflow.flow.as_ref().map(|f| f.develop.as_str()),
+            Some("develop")
+        );
+        Ok(())
+    }
+
+    /// Cleaning up merged branches and updating from the base through the repository thread.
+    #[test]
+    fn merged_branches_and_the_base_update_run_through_the_worker()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let main = dir.path().join("main");
+        std::fs::create_dir(&main)?;
+        git(&main, &["init", "-q", "-b", "main"]);
+        for (key, value) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+        ] {
+            git(&main, &["config", key, value]);
+        }
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(&main, &["switch", "-q", "-c", "topic"]);
+        std::fs::write(main.join("topic.txt"), "topic\n")?;
+        git(&main, &["add", "topic.txt"]);
+        git(&main, &["commit", "-q", "-m", "feat: topic"]);
+        git(&main, &["switch", "-q", "main"]);
+        git(&main, &["merge", "-q", "--no-ff", "--no-edit", "topic"]);
+        git(&main, &["switch", "-q", "-c", "work", "main~1"]);
+        std::fs::write(main.join("mine.txt"), "mine\n")?;
+        git(&main, &["add", "mine.txt"]);
+        git(&main, &["commit", "-q", "-m", "feat: mine"]);
+
+        crate::trust::add_for_tests(dir.path().to_path_buf());
+        let worker = super::Worker::spawn(main.clone(), &egui::Context::default());
+        worker.send(Job::MergedBranches {
+            serial: 1,
+            bases: vec!["main".into()],
+            squash: true,
+        });
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let rows = loop {
+            if let super::Event::MergedBranches {
+                serial: 1, result, ..
+            } = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+            {
+                break result?;
+            }
+        };
+        let reasons: Vec<(&str, bool)> = rows
+            .iter()
+            .map(|b| (b.name.as_str(), b.reason.is_some()))
+            .collect();
+        assert_eq!(reasons, [("topic", true), ("work", false)]);
+
+        worker.send(Job::BaseCompare {
+            serial: 1,
+            base: "main".into(),
+        });
+        let preview = loop {
+            if let super::Event::BaseCompare { serial: 1, result } = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))?
+            {
+                break result?;
+            }
+        };
+        assert_eq!((preview.ahead, preview.behind), (1, 2));
+
+        worker.send(Job::Op(Op::UpdateFromBase {
+            base: "main".into(),
+            strategy: PullStrategy::Rebase,
+            tip: preview.tip.ok_or("no tip")?,
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(git_out(&main, &["rev-list", "--count", "main..work"]), "1");
+        assert_eq!(git_out(&main, &["rev-list", "--count", "work..main"]), "0");
+
+        worker.send(Job::Op(Op::CleanMerged {
+            bases: vec!["main".into()],
+            names: vec!["topic".into()],
+            allow_unproven: false,
+        }));
+        let (_, result) = next_finished(&worker)?;
+        assert_eq!(result, Ok("Deleted 1 branch".to_owned()));
+        assert_eq!(git_out(&main, &["branch", "--list", "topic"]), "");
         Ok(())
     }
 
@@ -2442,6 +2963,75 @@ mod read_tests {
                 );
             }
         }
+    }
+
+    /// A direct rebase gets the same explicit submodule follow-up as a continued pull, without
+    /// letting the sequencer discard an edit inside the submodule.
+    #[test]
+    fn a_direct_rebase_follows_the_new_submodule_pointer_and_keeps_edits() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home/gitconfig"), "").expect("gitconfig");
+        let library = root.path().join("library");
+        let sup = root.path().join("super");
+        for path in [&library, &sup] {
+            std::fs::create_dir(path).expect("repo folder");
+            git(path, &["init", "-q", "-b", "main"]);
+            git(path, &["config", "commit.gpgsign", "false"]);
+            git(path, &["config", "core.autocrlf", "false"]);
+            std::fs::write(path.join("a.txt"), "base\n").expect("file");
+            git(path, &["add", "a.txt"]);
+            git(path, &["commit", "-q", "-m", "initial"]);
+        }
+        let library_url = library.to_string_lossy();
+        git(
+            &sup,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "--",
+                &library_url,
+                "deps/lib",
+            ],
+        );
+        git(&sup, &["commit", "-q", "-m", "add library"]);
+        git(&sup, &["switch", "-q", "-c", "topic"]);
+        git(&sup, &["switch", "-q", "main"]);
+        std::fs::write(library.join("b.txt"), "new library\n").expect("file");
+        git(&library, &["add", "b.txt"]);
+        git(&library, &["commit", "-q", "-m", "advance library"]);
+        let new = Oid::from_str(&git(&library, &["rev-parse", "HEAD"])).expect("new");
+        let sub = sup.join("deps/lib");
+        git(&sub, &["fetch", "-q", "origin"]);
+        git(&sub, &["checkout", "-q", "--detach", &new.to_string()]);
+        git(&sup, &["add", "deps/lib"]);
+        git(&sup, &["commit", "-q", "-m", "advance library pointer"]);
+        git(&sup, &["switch", "-q", "topic"]);
+        std::fs::write(sup.join("topic.txt"), "topic\n").expect("file");
+        git(&sup, &["add", "topic.txt"]);
+        git(&sup, &["commit", "-q", "-m", "topic"]);
+        git(&sub, &["checkout", "-q", "HEAD~1"]);
+        std::fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+        let repo = Repo::open(&sup).expect("open");
+        repo.set_options(canopy_core::GitOptions {
+            follow_config: false,
+            recurse_submodules: true,
+            autostash: false,
+            ..Default::default()
+        });
+
+        perform(&repo, Op::Rebase("main".into()), |_| {}).expect("rebase");
+
+        assert_eq!(
+            repo.submodules(false).expect("submodules")[0].workdir_id,
+            Some(new)
+        );
+        assert_eq!(
+            std::fs::read_to_string(sub.join("a.txt")).expect("read edit"),
+            "edited\n"
+        );
     }
 
     /// A pull asks first when only a fast-forward is allowed and the branches diverged, or when
@@ -3019,6 +3609,155 @@ mod read_tests {
         );
     }
 
+    /// A repository whose `main` and `other` both changed `a.txt`, with a stash of `a.txt` made on
+    /// `other` that cannot apply on `main`. Returns the repository, the tip of `other` and the
+    /// stash's commit, with `main` checked out and the working tree clean.
+    fn conflicting_repo(root: &Path) -> (PathBuf, Oid, Oid) {
+        std::fs::create_dir_all(root.join("home")).expect("home");
+        std::fs::write(root.join("home").join("gitconfig"), "").expect("config");
+        let repo = root.join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["switch", "-q", "-c", "other"]);
+        std::fs::write(repo.join("a.txt"), "theirs\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "theirs"]);
+        let other = Oid::from_str(&git(&repo, &["rev-parse", "HEAD"])).expect("oid");
+        std::fs::write(repo.join("a.txt"), "stashed\n").expect("write");
+        git(&repo, &["stash", "push", "-q"]);
+        let stash = Oid::from_str(&git(&repo, &["rev-parse", "stash@{0}"])).expect("oid");
+        git(&repo, &["switch", "-q", "main"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "ours"]);
+        (repo, other, stash)
+    }
+
+    /// Runs `op` in `repo` and returns the event that ends it.
+    fn run_op(repo: &Path, op: Op) -> Event {
+        let worker = worker_with_canopys_choices(trusted(repo.to_path_buf()));
+        worker.send(Job::Op(op));
+        events_until(&worker, |e| {
+            matches!(e, Event::Conflicted { .. } | Event::OpFinished { .. })
+        })
+        .pop()
+        .expect("an ending event")
+    }
+
+    /// #265: a cherry-pick or a revert that stops on conflicts is the user's to resolve, like a
+    /// merge that does, and not a failed operation.
+    #[test]
+    fn a_cherry_pick_or_revert_that_stops_on_conflicts_is_reported_as_stopped() {
+        for (revert, state_file) in [(false, "CHERRY_PICK_HEAD"), (true, "REVERT_HEAD")] {
+            let root = tempfile::tempdir().expect("tempdir");
+            let (repo, other, _) = conflicting_repo(root.path());
+            let op = if revert {
+                Op::Revert(other)
+            } else {
+                Op::CherryPick(other)
+            };
+            let ended = run_op(&repo, op);
+            assert!(
+                matches!(
+                    &ended,
+                    Event::Conflicted {
+                        autostashed: false,
+                        stash: false,
+                        ..
+                    }
+                ),
+                "revert {revert}: {ended:?}"
+            );
+            assert!(
+                repo.join(".git").join(state_file).exists(),
+                "git is left mid-operation for the user to resolve"
+            );
+            assert_eq!(git(&repo, &["ls-files", "-u"]).lines().count(), 3);
+        }
+    }
+
+    /// #265: a stash applied or popped onto changes it conflicts with is the user's to resolve; the
+    /// stash is kept and the event says it was a stash, which has nothing to continue or abort.
+    #[test]
+    fn a_stash_apply_that_stops_on_conflicts_is_reported_as_stopped() {
+        for (by_commit, pop) in [(false, false), (false, true), (true, false), (true, true)] {
+            let root = tempfile::tempdir().expect("tempdir");
+            let (repo, _, stash) = conflicting_repo(root.path());
+            let op = if by_commit {
+                Op::StashApplyCommit { oid: stash, pop }
+            } else {
+                Op::StashApply { index: 0, pop }
+            };
+            let ended = run_op(&repo, op);
+            assert!(
+                matches!(
+                    &ended,
+                    Event::Conflicted {
+                        autostashed: false,
+                        stash: true,
+                        ..
+                    }
+                ),
+                "by commit {by_commit}, pop {pop}: {ended:?}"
+            );
+            assert_eq!(git(&repo, &["ls-files", "-u"]).lines().count(), 3);
+            assert_eq!(
+                git(&repo, &["rev-parse", "stash@{0}"]),
+                stash.to_string(),
+                "git keeps the stash after a conflicted apply or pop"
+            );
+        }
+    }
+
+    /// Only a stop on conflicts is a stop: a stash that git refuses without conflicts, an apply
+    /// onto files that are already conflicted and a cherry-pick refused for the same reason stay
+    /// failures with git's own message.
+    #[test]
+    fn a_refusal_that_is_not_a_new_conflict_stays_a_failure() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (repo, other, stash) = conflicting_repo(root.path());
+        // Uncommitted edits to the stash's file: git refuses before touching anything.
+        std::fs::write(repo.join("a.txt"), "mine\n").expect("write");
+        let ended = run_op(
+            &repo,
+            Op::StashApply {
+                index: 0,
+                pop: false,
+            },
+        );
+        assert!(
+            matches!(&ended, Event::OpFinished { result: Err(e), .. } if e.contains("a.txt")),
+            "{ended:?}"
+        );
+        assert_eq!(git(&repo, &["ls-files", "-u"]), "");
+        git(&repo, &["checkout", "-q", "--", "a.txt"]);
+        // Conflicted already (a cherry-pick stopped): another operation stops nothing new.
+        let _ = run_op(&repo, Op::CherryPick(other));
+        assert!(repo.join(".git").join("CHERRY_PICK_HEAD").exists());
+        for op in [
+            Op::CherryPick(other),
+            Op::Revert(other),
+            Op::StashApplyCommit {
+                oid: stash,
+                pop: false,
+            },
+        ] {
+            let ended = run_op(&repo, op);
+            assert!(
+                matches!(&ended, Event::OpFinished { result: Err(_), .. }),
+                "{ended:?}"
+            );
+        }
+    }
+
     /// A leftover `.git/MERGE_AUTOSTASH` (an earlier `git merge --squash --autostash` outside
     /// Canopy) is not this merge's: a merge that stops on conflicts without stashing anything
     /// does not claim to hold the user's changes.
@@ -3232,6 +3971,14 @@ mod read_tests {
                 start: None,
                 checkout: true,
             },
+            // git-lfs is a program the repository's own configuration steers.
+            Op::LfsPull,
+            Op::LfsFetch,
+            Op::LfsLock("a.txt".into()),
+            Op::LfsTrack {
+                pattern: "*.bin".into(),
+                literal: false,
+            },
         ] {
             let label = op.label();
             assert_eq!(
@@ -3259,6 +4006,41 @@ mod read_tests {
         assert_eq!(refusal_of(&worker, commit), None);
         assert!(hook.exists(), "the hook is the user's once they trust it");
         assert!(!fsmonitor.exists(), "core.fsmonitor is never run");
+    }
+
+    /// Git LFS reads that run git-lfs (the patterns, the locks) are refused in a repository that
+    /// is not trusted, like its commands; the files it stores are read without the program and
+    /// are not.
+    #[cfg(unix)]
+    #[test]
+    fn git_lfs_programs_do_not_run_for_an_untrusted_repository() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (repo, _hook, _fsmonitor) = hostile_repository(root.path());
+        let worker = Worker::spawn(repo, &egui::Context::default());
+        worker.send(Job::Refresh(100));
+        events_until(&worker, |e| matches!(e, Event::Trust { .. }));
+        worker.send(Job::LfsLocks(7));
+        worker.send(Job::LfsPatterns(8));
+        worker.send(Job::Lfs { known: false });
+        let events = events_until(&worker, |e| matches!(e, Event::Lfs(_)));
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::LfsLocks { serial: 7, result: Err(m) } if m == READ_ONLY
+            )),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::LfsPatterns { serial: 8, result: Err(m) } if m == READ_ONLY
+            )),
+            "{events:?}"
+        );
+        assert!(
+            matches!(events.last(), Some(Event::Lfs(info)) if !info.in_use && info.files.is_empty()),
+            "a repository without LFS attributes has nothing to read: {events:?}"
+        );
     }
 
     /// #228: with trust safety off nothing is refused or told to be read-only, the trusted list

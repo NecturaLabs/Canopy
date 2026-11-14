@@ -30,6 +30,16 @@ pub enum AppearanceChoice {
 #[derive(Debug, Clone)]
 pub enum Action {
     CleanStale,
+    /// List the branches merged into the base, to delete.
+    CleanMerged,
+    /// Bring the base branch's new commits into the checked-out branch.
+    UpdateFromBase,
+    /// Set up git-flow.
+    FlowInit,
+    /// Start a git-flow branch, of this kind when given.
+    FlowStart(Option<canopy_core::FlowKind>),
+    /// Finish a git-flow branch: this one, else the checked-out one.
+    FlowFinish(Option<String>),
     RememberSidebar {
         repo: PathBuf,
         closed: std::collections::BTreeSet<String>,
@@ -55,6 +65,10 @@ pub enum Action {
     ShowFileVersion(canopy_core::FileHistoryEntry),
     /// Show who last changed each line of the selected file, in place of its diff.
     BlameFile,
+    /// Open the Git LFS dialog on one page and read its lists.
+    Lfs(crate::views::dialogs::LfsPage),
+    /// Read the Git LFS dialog's lists again (the LFS server is asked for its locks).
+    LfsLists,
     ReadIgnore {
         repo: PathBuf,
         query: crate::worker::IgnoreQuery,

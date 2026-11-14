@@ -7,20 +7,27 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
 use canopy_core::{
     ChangeKind, DiffSource, FlowConfig, FlowFinish, FlowKind, GitOptions, MergedReason,
-    MissingObjects, Repo, SubmoduleState, Whitespace, submodule_add_problem,
+    MissingObjects, PullStrategy, Repo, SubmoduleState, Whitespace, flow_finish_requirement,
+    submodule_add_problem,
 };
+
+fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    git_output_os(dir, &args)
+}
 
 #[expect(
     clippy::disallowed_methods,
     reason = "tests drive git directly to build and check repositories"
 )]
-fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+fn git_output_os(dir: &Path, args: &[&OsStr]) -> std::process::Output {
     Command::new("git")
         .current_dir(dir)
         .args(args)
@@ -549,6 +556,496 @@ fn merged_branches_keep_the_cause_of_a_base_that_is_no_commit() {
     );
 }
 
+#[test]
+fn a_finish_with_rebase_matches_the_git_commands() {
+    let (dir, repo, cli) = flow_twins();
+    let (p, c) = (dir.path(), cli.path());
+    let branch = repo
+        .flow_start(FlowKind::Feature, "wide", None)
+        .expect("start");
+    git(c, &["switch", "-q", "-c", &branch, "develop"]);
+    for d in [p, c] {
+        commit_file(d, "one.txt", "1\n", "feat: one");
+        commit_file(d, "two.txt", "2\n", "feat: two");
+        git(d, &["switch", "-q", "develop"]);
+        commit_file(d, "other.txt", "x\n", "feat: develop moved");
+    }
+
+    let options = FlowFinish {
+        rebase: true,
+        ..FlowFinish::default()
+    };
+    repo.flow_finish(FlowKind::Feature, "wide", &options)
+        .expect("finish");
+    git(c, &["switch", "-q", &branch]);
+    git(c, &["rebase", "-q", "develop"]);
+    git(c, &["switch", "-q", "develop"]);
+    git(c, &["merge", "--no-ff", "--no-edit", "-q", &branch]);
+    git(c, &["branch", "-d", &branch]);
+
+    assert_eq!(shape(p), shape(c));
+    // The rebase made the history linear under the merge commit.
+    assert_eq!(
+        git(p, &["rev-list", "--merges", "--count", "develop"]).trim(),
+        "1"
+    );
+}
+
+#[test]
+fn a_rebase_that_conflicts_refuses_and_changes_nothing() {
+    let (dir, repo, _cli) = flow_twins();
+    let p = dir.path();
+    let branch = repo
+        .flow_start(FlowKind::Feature, "clash", None)
+        .expect("start");
+    commit_file(p, "dev.txt", "feature\n", "feat: feature edit");
+    commit_file(p, "extra.txt", "e\n", "feat: more");
+    git(p, &["switch", "-q", "develop"]);
+    commit_file(p, "dev.txt", "develop\n", "feat: develop edit");
+    let before = shape(p);
+
+    let options = FlowFinish {
+        rebase: true,
+        ..FlowFinish::default()
+    };
+    let error = repo
+        .flow_finish(FlowKind::Feature, "clash", &options)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("would conflict in dev.txt") && error.contains("Nothing was changed"),
+        "{error}"
+    );
+    assert_eq!(shape(p), before);
+    assert_eq!(git(p, &["status", "--porcelain"]).trim(), "");
+    assert_eq!(
+        git(p, &["rev-parse", "--verify", "-q", &branch])
+            .trim()
+            .len(),
+        40,
+        "the branch is still there"
+    );
+}
+
+#[test]
+fn a_rebase_is_refused_for_a_release() {
+    let (_dir, repo, _cli) = flow_twins();
+    repo.flow_start(FlowKind::Release, "1.0", None)
+        .expect("start");
+    let options = FlowFinish {
+        rebase: true,
+        ..FlowFinish::default()
+    };
+    let error = repo
+        .flow_finish(FlowKind::Release, "1.0", &options)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("feature or bugfix"), "{error}");
+}
+
+#[test]
+fn a_hotfix_finishes_into_the_open_release_instead_of_develop() {
+    let (dir, repo, cli) = flow_twins();
+    let (p, c) = (dir.path(), cli.path());
+    repo.flow_start(FlowKind::Release, "1.1", None)
+        .expect("start");
+    git(c, &["switch", "-q", "-c", "release/1.1", "develop"]);
+    for d in [p, c] {
+        commit_file(d, "VERSION", "1.1\n", "chore: bump version");
+        git(d, &["switch", "-q", "main"]);
+    }
+    repo.flow_start(FlowKind::Hotfix, "1.0.1", None)
+        .expect("start");
+    git(c, &["switch", "-q", "-c", "hotfix/1.0.1", "main"]);
+    for d in [p, c] {
+        commit_file(d, "a.txt", "one\ntwo\nthree\nfixed\n", "fix: urgent");
+    }
+    let config = repo.flow_config().expect("config").expect("initialised");
+    assert_eq!(
+        repo.flow_back_merge_target(&config, FlowKind::Hotfix)
+            .expect("target"),
+        "release/1.1"
+    );
+    assert_eq!(
+        repo.flow_back_merge_target(&config, FlowKind::Release)
+            .expect("target"),
+        "develop"
+    );
+
+    let options = FlowFinish {
+        tag: false,
+        ..FlowFinish::default()
+    };
+    let message = repo
+        .flow_finish(FlowKind::Hotfix, "1.0.1", &options)
+        .expect("finish");
+    git(c, &["switch", "-q", "main"]);
+    git(c, &["merge", "--no-ff", "--no-edit", "-q", "hotfix/1.0.1"]);
+    git(c, &["switch", "-q", "release/1.1"]);
+    git(c, &["merge", "--no-ff", "--no-edit", "-q", "main"]);
+    git(c, &["branch", "-d", "hotfix/1.0.1"]);
+    git(c, &["switch", "-q", "develop"]);
+
+    assert!(message.contains("release/1.1"), "{message}");
+    assert_eq!(shape(p), shape(c));
+    // develop did not get the fix; the release did.
+    assert_eq!(
+        git(p, &["rev-list", "--count", "develop..release/1.1"]).trim(),
+        "4"
+    );
+    assert_eq!(
+        git(p, &["rev-list", "--count", "release/1.1..develop"]).trim(),
+        "0"
+    );
+}
+
+#[test]
+fn a_back_merge_conflict_with_the_open_release_refuses_before_merging() {
+    let (dir, repo, _cli) = flow_twins();
+    let p = dir.path();
+    repo.flow_start(FlowKind::Release, "1.1", None)
+        .expect("start");
+    commit_file(p, "a.txt", "release\n", "chore: release edit");
+    git(p, &["switch", "-q", "main"]);
+    repo.flow_start(FlowKind::Hotfix, "1.0.1", None)
+        .expect("start");
+    commit_file(p, "a.txt", "hotfix\n", "fix: urgent");
+    let before = shape(p);
+    let error = repo
+        .flow_finish(FlowKind::Hotfix, "1.0.1", &FlowFinish::default())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("back into release/1.1 would conflict in a.txt"),
+        "{error}"
+    );
+    assert_eq!(shape(p), before);
+}
+
+#[test]
+fn finishing_needs_git_2_38() {
+    assert!(flow_finish_requirement(Some((2, 37))).is_some_and(|r| r.contains("Git 2.38")));
+    assert!(flow_finish_requirement(None).is_some());
+    assert_eq!(flow_finish_requirement(Some((2, 38))), None);
+    assert_eq!(flow_finish_requirement(Some((3, 0))), None);
+}
+
+/// The bases the cleanup fixture's branches are compared with.
+fn bases() -> Vec<String> {
+    vec!["main".to_owned(), "origin/main".to_owned()]
+}
+
+/// `main` with merged, squash-merged, unmerged and checked-out branches, and an `origin` whose
+/// default branch is `main`.
+fn cleanup_fixture() -> (tempfile::TempDir, Repo, tempfile::TempDir) {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let remote = tempfile::tempdir().expect("tempdir");
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+    git(
+        p,
+        &["remote", "add", "origin", &remote.path().to_string_lossy()],
+    );
+    git(p, &["push", "-q", "-u", "origin", "main"]);
+    git(p, &["remote", "set-head", "origin", "main"]);
+    git(p, &["switch", "-q", "-c", "feature/merged"]);
+    commit_file(p, "m.txt", "m\n", "feat: m");
+    git(p, &["switch", "-q", "main"]);
+    git(
+        p,
+        &["merge", "-q", "--no-ff", "--no-edit", "feature/merged"],
+    );
+    git(p, &["switch", "-q", "-c", "feature/squashed"]);
+    commit_file(p, "s.txt", "s\n", "feat: s1");
+    commit_file(p, "s.txt", "s\ns\n", "feat: s2");
+    git(p, &["switch", "-q", "main"]);
+    git(p, &["merge", "-q", "--squash", "feature/squashed"]);
+    git(p, &["commit", "-q", "-m", "feat: s"]);
+    git(p, &["switch", "-q", "-c", "feature/open", "main"]);
+    commit_file(p, "o.txt", "o\n", "feat: o");
+    git(p, &["push", "-q", "origin", "main"]);
+    git(p, &["switch", "-q", "main"]);
+    (dir, repo, remote)
+}
+
+#[test]
+fn the_base_is_the_remote_default_branch_and_long_lived_branches_are_protected() {
+    let (_dir, repo, _remote) = cleanup_fixture();
+    let base = repo.branch_base().expect("base").expect("some");
+    assert_eq!(base.references, ["main", "origin/main"]);
+    assert!(base.protected.contains(&"main".to_owned()));
+    assert!(!base.protected.contains(&"feature/merged".to_owned()));
+}
+
+#[test]
+fn the_base_is_develop_in_a_git_flow_repository() {
+    let (_dir, repo, _cli) = flow_twins();
+    let base = repo.branch_base().expect("base").expect("some");
+    assert_eq!(base.references, ["develop"]);
+    assert!(base.protected.contains(&"main".to_owned()));
+    assert!(base.protected.contains(&"develop".to_owned()));
+}
+
+#[test]
+fn a_repository_without_a_default_branch_has_no_base() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "trunk"]);
+    let repo = Repo::open(dir.path()).expect("open");
+    assert_eq!(repo.branch_base().expect("base"), None);
+}
+
+#[test]
+fn removal_deletes_proven_branches_with_d_and_heuristic_ones_only_when_allowed() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+
+    // A heuristic match without the user's confirmation is refused before anything is deleted.
+    let error = repo
+        .remove_merged_branches(
+            &bases(),
+            &names(&["feature/merged", "feature/squashed"]),
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("feature/squashed") && error.contains("confirmation"),
+        "{error}"
+    );
+    assert!(git(p, &["branch", "--list", "feature/merged"]).contains("feature/merged"));
+
+    // Not merged, the base itself, a name that is no branch and the checked-out branch are
+    // refused.
+    git(p, &["branch", "develop", "main"]);
+    for (name, why) in [
+        ("feature/open", "no longer merged"),
+        ("main", "not a local branch"),
+        ("nope", "not a local branch"),
+        ("develop", "long-lived"),
+    ] {
+        let error = repo
+            .remove_merged_branches(&bases(), &names(&[name]), true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(why), "{name}: {error}");
+    }
+    git(p, &["switch", "-q", "feature/merged"]);
+    let error = repo
+        .remove_merged_branches(&bases(), &names(&["feature/merged"]), true)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("checked out"), "{error}");
+    git(p, &["switch", "-q", "feature/open"]);
+
+    let done = repo
+        .remove_merged_branches(
+            &bases(),
+            &names(&["feature/merged", "feature/squashed"]),
+            true,
+        )
+        .expect("remove");
+    assert_eq!(done.removed, ["feature/merged", "feature/squashed"]);
+    assert_eq!(done.failed, Vec::<(String, String)>::new());
+    let left = git(p, &["branch", "--format=%(refname:short)"]);
+    assert_eq!(
+        left.lines().collect::<Vec<_>>(),
+        ["develop", "feature/open", "main"]
+    );
+}
+
+#[test]
+fn a_merge_made_on_the_server_counts_though_the_local_base_is_behind() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    git(p, &["switch", "-q", "-c", "on-server", "main"]);
+    commit_file(p, "srv.txt", "s\n", "feat: merged on the server");
+    git(p, &["push", "-q", "origin", "on-server:main"]);
+    git(p, &["switch", "-q", "main"]);
+    let only_local = repo.merged_branches("main", false).expect("merged");
+    let reason = |rows: &[canopy_core::MergedBranch]| {
+        rows.iter()
+            .find(|b| b.name == "on-server")
+            .map(|b| b.reason)
+    };
+    assert_eq!(reason(&only_local), Some(None));
+    let both = repo.merged_branches_among(&bases(), false).expect("merged");
+    assert_eq!(reason(&both), Some(Some(MergedReason::Reachable)));
+    repo.merged_branches_among(&[], false).unwrap_err();
+}
+
+#[test]
+fn git_refusing_one_branch_is_reported_and_the_others_still_go() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    // `branch -d` compares with HEAD when a branch has no upstream: from a branch that lacks the
+    // merged work it refuses, though the work is in the base. `feature/squashed` has no upstream
+    // either and only looks merged, so `-D` removes it regardless.
+    let root = git(p, &["rev-list", "--max-parents=0", "main"]);
+    git(p, &["switch", "-q", "-c", "side", root.trim()]);
+    let done = repo
+        .remove_merged_branches(
+            &bases(),
+            &["feature/merged".to_owned(), "feature/squashed".to_owned()],
+            true,
+        )
+        .expect("remove");
+    assert_eq!(done.removed, ["feature/squashed"]);
+    assert_eq!(done.failed.len(), 1);
+    assert_eq!(done.failed[0].0, "feature/merged");
+    assert!(
+        done.failed[0].1.contains("not fully merged"),
+        "{:?}",
+        done.failed
+    );
+    let summary = done.summary();
+    assert!(
+        summary.starts_with("Deleted 1 branch\nCould not delete feature/merged: "),
+        "{summary}"
+    );
+}
+
+#[test]
+fn a_branch_updates_from_the_base_its_kind_or_remote_names() {
+    let (_dir, repo, _remote) = cleanup_fixture();
+    assert_eq!(
+        repo.update_base("feature/open").expect("base"),
+        Some("origin/main".to_owned())
+    );
+    // The base itself is a pull's business.
+    assert_eq!(repo.update_base("main").expect("base"), None);
+
+    let (_dir, flow, _cli) = flow_twins();
+    flow.flow_start(FlowKind::Feature, "x", None)
+        .expect("start");
+    assert_eq!(
+        flow.update_base("feature/x").expect("base"),
+        Some("develop".to_owned())
+    );
+    assert_eq!(
+        flow.update_base("hotfix/y").expect("base"),
+        Some("main".to_owned())
+    );
+}
+
+#[test]
+fn updating_from_the_base_merges_or_rebases_what_the_base_gained() {
+    for strategy in [PullStrategy::Merge, PullStrategy::Rebase] {
+        let (dir, repo, _remote) = cleanup_fixture();
+        let p = dir.path();
+        git(p, &["switch", "-q", "feature/open"]);
+        commit_file(p, "mine.txt", "mine\n", "feat: mine");
+        git(p, &["switch", "-q", "main"]);
+        commit_file(p, "base.txt", "base\n", "feat: base moved");
+        git(p, &["push", "-q", "origin", "main"]);
+        git(p, &["switch", "-q", "feature/open"]);
+
+        let preview = repo.compare_base("origin/main").expect("preview");
+        assert_eq!((preview.ahead, preview.behind), (2, 1), "{preview:?}");
+        assert_eq!(preview.conflicts, Some(Vec::new()));
+        repo.update_from_base(strategy, preview.tip.expect("tip"), |_| {})
+            .expect("update");
+
+        assert_eq!(
+            git(p, &["rev-list", "--count", "HEAD..origin/main"]).trim(),
+            "0"
+        );
+        assert_eq!(
+            git(p, &["rev-list", "--count", "origin/main..HEAD"]).trim(),
+            if strategy == PullStrategy::Merge {
+                "3"
+            } else {
+                "2"
+            }
+        );
+        let merges = git(p, &["rev-list", "--merges", "--count", "origin/main..HEAD"]);
+        assert_eq!(
+            merges.trim(),
+            if strategy == PullStrategy::Merge {
+                "1"
+            } else {
+                "0"
+            }
+        );
+        assert!(p.join("base.txt").exists() && p.join("mine.txt").exists());
+    }
+}
+
+#[test]
+fn updating_from_the_base_fast_forwards_a_branch_that_only_fell_behind() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    git(p, &["switch", "-q", "-c", "behind", "main~1"]);
+    git(p, &["reset", "-q", "--hard", "main"]);
+    git(p, &["switch", "-q", "main"]);
+    commit_file(p, "base.txt", "base\n", "feat: base moved");
+    git(p, &["push", "-q", "origin", "main"]);
+    git(p, &["switch", "-q", "behind"]);
+    let preview = repo.compare_base("origin/main").expect("preview");
+    assert_eq!((preview.ahead, preview.behind), (0, 1));
+    repo.update_from_base(
+        PullStrategy::FastForwardOnly,
+        preview.tip.expect("tip"),
+        |_| {},
+    )
+    .expect("update");
+    assert_eq!(
+        git(p, &["rev-parse", "HEAD"]),
+        git(p, &["rev-parse", "origin/main"])
+    );
+}
+
+#[test]
+fn a_fast_forward_only_update_refuses_diverged_branches() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    git(p, &["switch", "-q", "main"]);
+    commit_file(p, "base.txt", "base\n", "feat: base moved");
+    git(p, &["push", "-q", "origin", "main"]);
+    git(p, &["switch", "-q", "feature/open"]);
+    let preview = repo.compare_base("origin/main").expect("preview");
+    assert!(preview.diverged());
+    let before = git(p, &["rev-parse", "HEAD"]);
+    repo.update_from_base(
+        PullStrategy::FastForwardOnly,
+        preview.tip.expect("tip"),
+        |_| {},
+    )
+    .unwrap_err();
+    assert_eq!(git(p, &["rev-parse", "HEAD"]), before);
+}
+
+#[test]
+fn comparing_with_an_unknown_base_names_it() {
+    let (_dir, repo, _remote) = cleanup_fixture();
+    let error = repo.compare_base("origin/nope").unwrap_err().to_string();
+    assert!(
+        error.contains("Could not resolve the base 'origin/nope'"),
+        "{error}"
+    );
+    repo.compare_base("--force").unwrap_err();
+}
+
+#[test]
+fn a_snapshot_carries_the_feature_branch_facts() {
+    let (_dir, flow, _cli) = flow_twins();
+    flow.flow_start(FlowKind::Feature, "x", None)
+        .expect("start");
+    let snap = flow.snapshot(10).expect("snapshot");
+    assert_eq!(
+        snap.workflow.flow.as_ref().map(|f| f.develop.as_str()),
+        Some("develop")
+    );
+    assert_eq!(snap.workflow.head_base.as_deref(), Some("develop"));
+    assert_eq!(
+        snap.workflow
+            .base
+            .as_ref()
+            .map(canopy_core::BranchBase::shown),
+        Some("develop")
+    );
+}
+
 const POINTER_OID: &str = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
 
 fn pointer_text(size: u64) -> String {
@@ -894,11 +1391,41 @@ fn a_checkout_moves_submodules_only_as_canopy_or_a_followed_configuration_says()
     repo.checkout_branch("advanced").expect("checkout");
     assert_eq!(git(&sub, &["rev-parse", "HEAD"]), first);
 
-    // Following the configuration, git's value decides: it recurses.
+    // Following the configuration, git's value decides: it recurses (the worker follows every
+    // checkout with `follow_submodules`).
     repo.set_options(GitOptions::default());
     repo.checkout_branch("main").expect("checkout back");
+    repo.follow_submodules(|_| {}).expect("follow");
     repo.checkout_branch("advanced").expect("checkout");
+    repo.follow_submodules(|_| {}).expect("follow");
     assert_ne!(git(&sub, &["rev-parse", "HEAD"]), first);
+}
+
+/// `git switch --recurse-submodules`, which `submodule.recurse = true` turns on, drops an edit
+/// inside a submodule to a file both submodule commits share, without a word (git 2.56).
+/// `git submodule update` keeps it, so Canopy moves submodules only that way.
+#[test]
+fn a_checkout_keeps_uncommitted_edits_inside_a_submodule_when_git_recurses() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    let first = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+    git(&sup, &["switch", "-q", "-c", "advanced"]);
+    git(&sub, &["checkout", "-q", "main"]);
+    git(&sup, &["add", "deps/lib"]);
+    git(&sup, &["commit", "-q", "-m", "chore: advance lib"]);
+    git(&sup, &["config", "submodule.recurse", "true"]);
+    // a.txt is the same in both submodule commits.
+    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+
+    repo.checkout_branch("main").expect("checkout");
+    repo.follow_submodules(|_| {}).expect("follow");
+
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), first);
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "edited\n",
+        "the edit inside the submodule must survive the checkout"
+    );
 }
 
 #[test]
@@ -1224,4 +1751,490 @@ fn submodule_remove_refuses_a_module_directory_behind_a_symlink() {
     assert!(repo.submodule_remove("deps/lib").is_err());
     assert!(outside.join("lib").is_dir());
     assert_eq!(git(&sup, &["ls-files", "--stage"]), before);
+}
+
+/// The Changes row of the submodule at `deps/lib`.
+fn submodule_row(repo: &Repo) -> Vec<canopy_core::FileEntry> {
+    repo.snapshot(10)
+        .expect("snapshot")
+        .status
+        .unstaged
+        .into_iter()
+        .filter(|f| f.path == "deps/lib")
+        .collect()
+}
+
+/// #285: Discard on a submodule row brings the submodule back to what the superproject records:
+/// tracked edits inside it go, the recorded commit is checked out, and untracked files stay.
+/// `git checkout -- <submodule>` alone did nothing, whatever the row showed.
+#[test]
+fn discarding_a_submodule_restores_what_the_superproject_records_and_keeps_untracked_files() {
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        let sup = dir.path().join("super");
+        git(
+            &sup,
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+        // A new commit on a branch, an edit to a tracked file and an untracked file inside.
+        git(&sub, &["checkout", "-q", "main"]);
+        fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+        fs::write(sub.join("mine.txt"), "keep me\n").expect("untracked");
+        let row = submodule_row(&repo);
+        assert_eq!(row.len(), 1, "the submodule shows as changed");
+        assert!(row[0].is_submodule(), "{row:?}");
+
+        repo.discard(&row).expect("discard");
+
+        assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+        assert_eq!(
+            fs::read_to_string(sub.join("a.txt")).expect("read"),
+            "one\ntwo\nthree\n"
+        );
+        assert_eq!(
+            fs::read_to_string(sub.join("mine.txt")).expect("read"),
+            "keep me\n",
+            "recurse={recurse}: an untracked file inside the submodule stays"
+        );
+        assert!(git(&sub, &["branch", "--list", "main"]).contains("main"));
+    }
+}
+
+/// A commit made in a submodule on no branch would be left behind by going back to the recorded
+/// commit: Discard refuses and changes nothing.
+#[test]
+fn discarding_a_submodule_refuses_to_strand_a_commit_on_no_branch() {
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        git(
+            &dir.path().join("super"),
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        fs::write(sub.join("a.txt"), "detached work\n").expect("edit");
+        git(&sub, &["commit", "-q", "-am", "feat: detached"]);
+        let detached = git(&sub, &["rev-parse", "HEAD"]);
+        fs::write(sub.join("a.txt"), "more\n").expect("edit");
+
+        let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+
+        assert!(err.to_string().contains("no branch"), "{err}");
+        assert_eq!(git(&sub, &["rev-parse", "HEAD"]), detached);
+        assert_eq!(
+            fs::read_to_string(sub.join("a.txt")).expect("read"),
+            "more\n",
+            "recurse={recurse}: nothing was discarded"
+        );
+    }
+}
+
+/// A submodule whose folder was deleted shows as a change; Discard checks it out again at the
+/// recorded commit instead of failing on the missing folder.
+#[test]
+fn discarding_a_submodule_whose_folder_was_deleted_checks_it_out_again() {
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        let sup = dir.path().join("super");
+        git(
+            &sup,
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
+        fs::remove_dir_all(&sub).expect("delete the submodule folder");
+        let row = submodule_row(&repo);
+
+        repo.discard(&row).expect("discard");
+
+        assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+        assert!(sub.join("a.txt").exists());
+    }
+}
+
+/// With Canopy's choice to delete them, Discard on a submodule also deletes its untracked files;
+/// ignored files stay.
+#[test]
+fn discarding_a_submodule_deletes_its_untracked_files_when_chosen() {
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        git(
+            &dir.path().join("super"),
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        fs::write(sub.join(".gitignore"), "*.log\n").expect("ignore");
+        fs::write(sub.join("debug.log"), "ignored\n").expect("ignored");
+        fs::write(sub.join("mine.txt"), "untracked\n").expect("untracked");
+        fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+        repo.set_options(GitOptions {
+            discard_untracked_in_submodules: true,
+            ..GitOptions::default()
+        });
+
+        repo.discard(&submodule_row(&repo)).expect("discard");
+
+        assert!(
+            !sub.join("mine.txt").exists(),
+            "recurse={recurse}: the untracked file is deleted"
+        );
+        assert!(sub.join("debug.log").exists(), "an ignored file stays");
+        assert_eq!(
+            fs::read_to_string(sub.join("a.txt")).expect("read"),
+            "one\ntwo\nthree\n"
+        );
+    }
+}
+
+/// An untracked file or directory obstructing a tracked path makes `git reset --hard` delete it.
+/// Keep-untracked Discard must refuse before changing anything, whatever recursive setting Git has.
+#[test]
+fn discarding_a_submodule_refuses_to_delete_an_obstructing_untracked_path() {
+    for recurse in [false, true] {
+        let (dir, repo, sub) = submodule_fixture();
+        git(
+            &dir.path().join("super"),
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+        fs::create_dir(sub.join("a.txt")).expect("make untracked directory");
+        fs::write(sub.join("a.txt").join("notes"), "precious\n").expect("write note");
+
+        let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+
+        assert!(err.to_string().contains("obstruct"), "{err}");
+        assert_eq!(
+            fs::read_to_string(sub.join("a.txt").join("notes")).expect("read note"),
+            "precious\n",
+            "recurse={recurse}: the untracked note was not deleted"
+        );
+    }
+}
+
+/// Ignored files always stay, even when deleting untracked files was chosen, so an ignored path
+/// obstructing a tracked path is refused too.
+#[test]
+fn discarding_a_submodule_refuses_to_delete_an_obstructing_ignored_path() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::write(sub.join(".gitignore"), "a.txt\n").expect("ignore");
+    fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+    fs::create_dir(sub.join("a.txt")).expect("make ignored directory");
+    fs::write(sub.join("a.txt").join("notes"), "precious\n").expect("write note");
+    repo.set_options(GitOptions {
+        discard_untracked_in_submodules: true,
+        ..GitOptions::default()
+    });
+
+    let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+
+    assert!(err.to_string().contains("ignored"), "{err}");
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt").join("notes")).expect("read note"),
+        "precious\n"
+    );
+}
+
+/// Different spellings are unrelated on a case-sensitive filesystem. They are allowed and kept;
+/// on a case-insensitive or normalizing one the canonical-path preflight sees the collision.
+#[test]
+fn discarding_a_submodule_allows_an_unrelated_case_variant_path() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+    fs::create_dir(sub.join("A.TXT")).expect("make case-variant directory");
+    fs::write(sub.join("A.TXT").join("notes"), "precious\n").expect("write note");
+
+    repo.discard(&submodule_row(&repo)).expect("discard");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("restored file"),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs::read_to_string(sub.join("A.TXT").join("notes")).expect("read note"),
+        "precious\n"
+    );
+}
+
+/// A staged deletion is restored by reset --hard too, and must not overwrite an untracked
+/// directory at that path.
+#[test]
+fn discarding_a_submodule_refuses_an_obstruction_after_a_staged_deletion() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    git(&sub, &["rm", "--cached", "-q", "a.txt"]);
+    fs::remove_file(sub.join("a.txt")).expect("remove untracked file");
+    fs::create_dir(sub.join("a.txt")).expect("make untracked directory");
+    fs::write(sub.join("a.txt").join("notes"), "precious\n").expect("write note");
+
+    let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+
+    assert!(err.to_string().contains("obstruct"), "{err}");
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt").join("notes")).expect("read note"),
+        "precious\n"
+    );
+}
+
+/// A dangling symlink has no target whose contents need preserving: reset can replace it with the
+/// tracked file instead of failing canonicalization.
+#[cfg(unix)]
+#[test]
+fn discarding_a_submodule_replaces_a_dangling_symlink() {
+    use std::os::unix::fs::symlink;
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+    symlink("missing-target", sub.join("a.txt")).expect("dangling symlink");
+
+    repo.discard(&submodule_row(&repo)).expect("discard");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("restored file"),
+        "one\ntwo\nthree\n"
+    );
+    assert!(!sub.join("missing-target").exists());
+}
+
+/// An unrelated untracked file is not an obstruction just because another tracked file was
+/// deleted: reset restores the latter and leaves the former alone.
+#[test]
+fn discarding_a_submodule_allows_an_unrelated_untracked_file_beside_a_deletion() {
+    let (dir, repo, sub) = submodule_fixture();
+    let _ = dir;
+    fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
+    fs::write(sub.join("notes.txt"), "unrelated\n").expect("write unrelated");
+
+    repo.discard(&submodule_row(&repo)).expect("discard");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("restored file"),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs::read_to_string(sub.join("notes.txt")).expect("read unrelated"),
+        "unrelated\n"
+    );
+}
+
+/// All selected submodules are checked before the first one is reset: a later obstruction cannot
+/// turn a reported refusal into a partial Discard.
+#[test]
+fn discarding_multiple_submodules_checks_all_before_resetting_any() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    let url = dir.path().join("lib").to_string_lossy().into_owned();
+    git(
+        &sup,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            "--",
+            &url,
+            "deps/other",
+        ],
+    );
+    let other = sup.join("deps/other");
+    git(&other, &["checkout", "-q", "HEAD~1"]);
+    git(&sup, &["add", "deps/other"]);
+    git(&sup, &["commit", "-q", "-m", "feat: add another lib"]);
+    fs::write(sub.join("a.txt"), "first edit\n").expect("first edit");
+    fs::remove_file(other.join("a.txt")).expect("remove second tracked file");
+    fs::create_dir(other.join("a.txt")).expect("make second obstruction");
+    fs::write(other.join("a.txt").join("notes"), "precious\n").expect("write note");
+    let mut rows = repo
+        .snapshot(10)
+        .expect("snapshot")
+        .status
+        .unstaged
+        .into_iter()
+        .filter(|f| ["deps/lib", "deps/other"].contains(&f.path.as_str()))
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(rows.len(), 2);
+
+    let err = repo.discard(&rows).expect_err("refused");
+
+    assert!(err.to_string().contains("obstruct"), "{err}");
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("first file"),
+        "first edit\n",
+        "the earlier submodule was not reset"
+    );
+    assert_eq!(
+        fs::read_to_string(other.join("a.txt").join("notes")).expect("read note"),
+        "precious\n"
+    );
+}
+
+/// A submodule path is a literal path, never a pathspec that can select another submodule.
+#[test]
+fn discarding_a_submodule_with_glob_characters_touches_only_its_literal_path() {
+    for recurse in [false, true] {
+        let (dir, repo, _sub) = submodule_fixture();
+        let sup = dir.path().join("super");
+        let url = dir.path().join("lib").to_string_lossy().into_owned();
+        for path in ["deps/lib1", "deps/lib[1]"] {
+            git(
+                &sup,
+                &[
+                    "--literal-pathspecs",
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    "-q",
+                    "--",
+                    &url,
+                    path,
+                ],
+            );
+            let sub = sup.join(path);
+            git(&sub, &["checkout", "-q", "HEAD~1"]);
+        }
+        git(&sup, &["add", "."]);
+        git(
+            &sup,
+            &["commit", "-q", "-m", "feat: add literal path fixtures"],
+        );
+        git(
+            &sup,
+            &[
+                "config",
+                "submodule.recurse",
+                if recurse { "true" } else { "false" },
+            ],
+        );
+        let glob = sup.join("deps/lib[1]");
+        let plain = sup.join("deps/lib1");
+        git(&glob, &["checkout", "-q", "main"]);
+        git(&plain, &["checkout", "-q", "main"]);
+        let plain_head = git(&plain, &["rev-parse", "HEAD"]);
+        let row = repo
+            .snapshot(10)
+            .expect("snapshot")
+            .status
+            .unstaged
+            .into_iter()
+            .filter(|f| f.path == "deps/lib[1]")
+            .collect::<Vec<_>>();
+        assert_eq!(row.len(), 1);
+
+        repo.discard(&row).expect("discard literal path");
+
+        let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib[1]"]);
+        assert_eq!(git(&glob, &["rev-parse", "HEAD"]), recorded);
+        assert_eq!(
+            git(&plain, &["rev-parse", "HEAD"]),
+            plain_head,
+            "recurse={recurse}: deps/lib[1] must not match deps/lib1"
+        );
+    }
+}
+
+/// Submodule operations keep a native non-UTF-8 path rather than looking for U+FFFD on disk.
+#[cfg(unix)]
+#[test]
+fn discarding_a_submodule_uses_its_non_utf8_path() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lib = dir.path().join("lib");
+    let sup = dir.path().join("super");
+    fs::create_dir_all(&lib).expect("mkdir");
+    fs::create_dir_all(&sup).expect("mkdir");
+    init(&lib);
+    commit_file(&lib, "b.txt", "b\n", "feat: second");
+    init(&sup);
+    let native = OsStr::from_bytes(b"deps/lib\xff");
+    let added = git_output_os(
+        &sup,
+        &[
+            OsStr::new("-c"),
+            OsStr::new("protocol.file.allow=always"),
+            OsStr::new("submodule"),
+            OsStr::new("add"),
+            OsStr::new("-q"),
+            OsStr::new("--"),
+            lib.as_os_str(),
+            native,
+        ],
+    );
+    assert!(
+        added.status.success(),
+        "add non-UTF-8 submodule: {}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let sub = sup.join(native);
+    git(&sub, &["checkout", "-q", "HEAD~1"]);
+    git(&sup, &["add", "."]);
+    git(&sup, &["commit", "-q", "-m", "feat: add non-UTF-8 lib"]);
+    let repo = Repo::open(&sup).expect("open");
+    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+    let row = repo
+        .snapshot(10)
+        .expect("snapshot")
+        .status
+        .unstaged
+        .into_iter()
+        .filter(canopy_core::FileEntry::is_submodule)
+        .collect::<Vec<_>>();
+    assert_eq!(row.len(), 1, "the native path must reach the changed row");
+
+    repo.discard(&row).expect("discard non-UTF-8 path");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "one\ntwo\nthree\n"
+    );
+}
+
+/// A direct rebase must not let Git's own recursive update drop an edit inside a submodule;
+/// Canopy's explicit update afterwards preserves it.
+#[test]
+fn rebasing_keeps_edits_inside_submodules() {
+    let (dir, repo, sub) = submodule_fixture();
+    let sup = dir.path().join("super");
+    git(&sup, &["switch", "-q", "-c", "topic"]);
+    git(&sup, &["switch", "-q", "main"]);
+    git(&sub, &["checkout", "-q", "main"]);
+    let recorded = git(&sub, &["rev-parse", "HEAD"]);
+    git(&sup, &["add", "deps/lib"]);
+    git(&sup, &["commit", "-q", "-m", "feat: update lib"]);
+    git(&sup, &["switch", "-q", "topic"]);
+    commit_file(&sup, "topic.txt", "topic\n", "feat: topic");
+    git(&sup, &["config", "submodule.recurse", "true"]);
+    git(&sub, &["checkout", "-q", "HEAD~1"]);
+    fs::write(sub.join("a.txt"), "edited\n").expect("edit");
+
+    repo.rebase("main").expect("rebase");
+    repo.follow_submodules(&mut |_: &str| {}).expect("follow");
+
+    assert_eq!(
+        fs::read_to_string(sub.join("a.txt")).expect("read"),
+        "edited\n",
+        "the recursive sequencer must not drop the edit"
+    );
+    assert_eq!(git(&sub, &["rev-parse", "HEAD"]), recorded);
+    assert_eq!(git(&sup, &["rev-parse", "HEAD:deps/lib"]), recorded);
 }

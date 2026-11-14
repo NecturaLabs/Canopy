@@ -917,8 +917,11 @@ fn synonyms(title: &str) -> &'static str {
             "pull strategy rebase merge fast-forward ff only pull.ff"
         }
         "Follow my git config" => "pull rebase pull.rebase pull.ff configuration follow default",
+        "Edit my git config" => "write change global config gitconfig recommended permission",
         "Prune on fetch" => "prune stale remote branches delete",
         "Update submodules" => "submodule recurse pull checkout clone recursive",
+        "Discard in a submodule" => "submodule discard untracked clean delete reset",
+        "Recurse into submodules" => "submodule.recurse submodule recursive git config",
         "Fetch in the background" => "auto fetch automatic interval minutes",
         "Add Signed-off-by" => "signoff sign-off dco trailer",
         "Check commit messages" => {
@@ -1328,7 +1331,7 @@ fn git_setting_help(setting: Setting) -> &'static str {
         }
         Setting::PushFollowTags => "Pushes the annotated tags on the commits being pushed.",
         Setting::SubmoduleRecurse => {
-            "Checkout, switch and pull also update submodules; a push also pushes the submodule commits it needs."
+            "Checkout, reset and restore also reset submodules and can lose edits; a push includes their commits."
         }
         Setting::PushDefault => "Simple pushes to the upstream branch only when the names match.",
         Setting::ConflictStyle => "zdiff3 and diff3 also show the original text between the sides.",
@@ -3024,6 +3027,7 @@ fn git_config_editor(
     repo: Option<&Path>,
     scope: Scope,
     facts: Option<&GitFacts>,
+    editable: bool,
     actions: &mut Vec<Action>,
 ) {
     heading(
@@ -3038,16 +3042,21 @@ fn git_config_editor(
     if !Filter::searching(ui.ctx()) {
         help_label(
             ui,
-            if scope == Scope::Global {
-                "Changes apply to Git everywhere, not only in Canopy."
-            } else {
-                "Changes apply to this repository everywhere, not only in Canopy."
+            match (editable, scope) {
+                (false, Scope::Global) => {
+                    "Read only. Turn on Edit my git config above to change these."
+                }
+                (false, _) => {
+                    "Read only. Turn on Edit my git config in Settings → Git to change these."
+                }
+                (true, Scope::Global) => "Changes apply to Git everywhere, not only in Canopy.",
+                (true, _) => "Changes apply to this repository everywhere, not only in Canopy.",
             },
         );
         ui.add_space(theme::SM);
     }
     // A read error stays editable: saving a valid value is how the user repairs it.
-    let ready = facts.is_some() && !screen.git_config_pending;
+    let ready = editable && facts.is_some() && !screen.git_config_pending;
     if screen.git_config_pending && !Filter::searching(ui.ctx()) {
         help_label(ui, "Saving Git configuration…");
     }
@@ -3081,6 +3090,14 @@ fn git_config_editor(
         };
         let help = git_setting_help(setting);
         row_with_note(ui, setting.label(), help, note.as_ref(), |ui| {
+            // Read only: the value as text, so nothing looks like a control that does nothing.
+            if !editable {
+                ui.label(invalid.or(value).map_or_else(
+                    || unset_value(setting, recommended),
+                    |value| git_value_label(setting, &value.value),
+                ));
+                return;
+            }
             ui.add_enabled_ui(ready, |ui| {
                 let mut selected = value.map(|value| value.value.clone());
                 if setting == Setting::InitialBranch {
@@ -3093,16 +3110,17 @@ fn git_config_editor(
                         .filter(|draft: &BranchDraft| draft.saved == saved);
                     let mut text = draft.map_or_else(|| saved.clone(), |draft| draft.text);
                     let problem = initial_branch_problem(&text);
-                    TextField::new(&mut text)
+                    // A select says it after its value; a field's text is the user's own, so
+                    // the mark goes under it, where a field's messages go.
+                    let marked = text.trim() == recommended;
+                    let mut field = TextField::new(&mut text)
                         .width(BRANCH_FIELD_WIDTH)
                         .name(setting.label())
-                        .placeholder(format!(
-                            "{} (Recommended)",
-                            setting.recommendation_for(facts.and_then(|facts| facts.git))
-                        ))
-                        .error(problem)
-                        .id_salt("git-first-branch")
-                        .show(ui);
+                        .placeholder(format!("{recommended} (Recommended)"));
+                    if marked {
+                        field = field.helper("(Recommended)");
+                    }
+                    field.error(problem).id_salt("git-first-branch").show(ui);
                     if Button::new("Save")
                         .enabled(!text.trim().is_empty() && problem.is_none())
                         .id_salt("save-git-first-branch")
@@ -3276,24 +3294,41 @@ fn git(
     );
     row(
         ui,
-        "Recommended settings",
-        "Writes the recommended values to your global git config. Signing and line endings stay.",
+        "Edit my git config",
+        "Lets Canopy write the git settings you choose here. Canopy works without it.",
         |ui| {
-            ui.add_enabled_ui(!screen.git_config_pending && f.is_some(), |ui| {
-                if confirm_button(
-                    ui,
-                    "use-recommended-git",
-                    "Use recommended",
-                    "Apply to global Git config",
-                ) {
-                    screen.git_config_pending = true;
-                    actions.push(Action::UseRecommendedGitConfig);
-                }
-            });
+            revert(
+                ui,
+                &mut s.edit_git_config,
+                &DEFAULTS.edit_git_config,
+                "Edit my git config",
+            );
+            switch(ui, &mut s.edit_git_config, "Edit my git config");
         },
     );
+    let editable = s.edit_git_config;
+    if editable {
+        row(
+            ui,
+            "Recommended settings",
+            "Writes the recommended values to your global git config. Signing and line endings stay.",
+            |ui| {
+                ui.add_enabled_ui(!screen.git_config_pending && f.is_some(), |ui| {
+                    if confirm_button(
+                        ui,
+                        "use-recommended-git",
+                        "Use recommended",
+                        "Apply to global Git config",
+                    ) {
+                        screen.git_config_pending = true;
+                        actions.push(Action::UseRecommendedGitConfig);
+                    }
+                });
+            },
+        );
+    }
     if follow {
-        git_config_editor(ui, screen, None, Scope::Global, f, actions);
+        git_config_editor(ui, screen, None, Scope::Global, f, editable, actions);
     }
     if !follow {
         heading(ui, "Canopy choices");
@@ -3592,6 +3627,30 @@ fn git(
             commit_page(ui, s);
         },
     );
+    heading(ui, "Submodules");
+    row(
+        ui,
+        "Discard in a submodule",
+        "What Discard does with untracked files inside a submodule.",
+        |ui| {
+            revert(
+                ui,
+                &mut s.discard_untracked_in_submodules,
+                &DEFAULTS.discard_untracked_in_submodules,
+                "Discard in a submodule",
+            );
+            let options = [
+                (false, "Keep untracked files"),
+                (true, "Delete untracked files too"),
+            ];
+            Select::new(&mut s.discard_untracked_in_submodules, &options)
+                .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                .name("Discard in a submodule")
+                .recommended(DEFAULTS.discard_untracked_in_submodules)
+                .id_salt("discard-untracked-in-submodules")
+                .show(ui);
+        },
+    );
     heading(ui, "Diffs");
     row(
         ui,
@@ -3720,6 +3779,7 @@ fn repository(
         Some(path),
         Scope::Local,
         facts.as_deref(),
+        s.edit_git_config,
         actions,
     );
 
@@ -7818,13 +7878,16 @@ mod tests {
             "without a repository only the global configuration can be written"
         );
     }
-    /// The Git page drawn with `facts` as the global configuration; the AccessKit nodes it spoke.
+    /// The Git page drawn with `facts` as the global configuration and Edit my git config on (the
+    /// read-only page: `the_git_configuration_is_read_only_until_editing_is_turned_on`); the
+    /// AccessKit nodes it spoke.
     fn git_page(facts: GitFacts, follow: bool) -> Vec<crate::ui::kit::testkit::Spoken> {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let mut settings = Settings {
             follow_git_config: follow,
+            edit_git_config: true,
             ..Settings::default()
         };
         let mut screen = SettingsScreen::default();
@@ -8022,7 +8085,7 @@ mod tests {
             let mut screen = SettingsScreen::default();
             let drawn = |ctx: &egui::Context, screen: &mut SettingsScreen| {
                 crate::ui::kit::testkit::spoken(ctx, |ui| {
-                    git_config_editor(ui, screen, None, scope, None, &mut Vec::new());
+                    git_config_editor(ui, screen, None, scope, None, true, &mut Vec::new());
                 })
             };
             let shown = format!("{:?}", drawn(&ctx, &mut screen));
@@ -8155,6 +8218,7 @@ mod tests {
                         Some(Path::new("fixture")),
                         scope,
                         Some(&facts),
+                        true,
                         &mut Vec::new(),
                     );
                 });
@@ -8171,6 +8235,69 @@ mod tests {
         let local = resets(Scope::Local);
         assert_eq!(local.len(), 1, "{local:?}");
         assert!(!local[0].disabled, "{local:?}");
+    }
+
+    /// Edit my git config is off by default; until it is on, the editor shows its values as text
+    /// with no control and the caption says how to change that, at both scopes.
+    #[test]
+    fn the_git_configuration_is_read_only_until_editing_is_turned_on() {
+        assert!(!Settings::default().edit_git_config);
+        let facts = GitFacts {
+            values: vec![fact("fetch.prune", "false")],
+            direct: vec![fact("fetch.prune", "false")],
+            ..GitFacts::default()
+        };
+        for scope in [Scope::Global, Scope::Local] {
+            for editable in [false, true] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::install(&ctx);
+                let mut screen = SettingsScreen::default();
+                let mut actions = Vec::new();
+                let nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        git_config_editor(
+                            ui,
+                            &mut screen,
+                            Some(Path::new("fixture")),
+                            scope,
+                            Some(&facts),
+                            editable,
+                            &mut actions,
+                        );
+                    });
+                });
+                let controls = nodes
+                    .iter()
+                    .filter(|n| n.role != egui::accesskit::Role::Label)
+                    .filter(|n| {
+                        n.label
+                            .as_deref()
+                            .is_some_and(|l| Setting::ALL.iter().any(|s| s.label() == l))
+                    })
+                    .count();
+                assert_eq!(controls > 0, editable, "{scope:?}: {controls} controls");
+                let shown = |text: &str| {
+                    nodes.iter().any(|n| {
+                        [n.label.as_deref(), n.value.as_deref()]
+                            .into_iter()
+                            .flatten()
+                            .any(|t| t == text)
+                    })
+                };
+                assert!(
+                    editable || shown("Off"),
+                    "{scope:?}: the configured value is shown as text"
+                );
+                let caption = nodes.iter().any(|n| {
+                    [n.label.as_deref(), n.value.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .any(|t| t.starts_with("Read only."))
+                });
+                assert_eq!(caption, !editable, "{scope:?} editable {editable}");
+                assert!(actions.is_empty());
+            }
+        }
     }
 
     /// Each setting a repository can override, with a global value and a different value for the
@@ -8245,7 +8372,15 @@ mod tests {
             } = self;
             crate::ui::kit::testkit::frame(ctx, events, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    git_config_editor(ui, screen, repo.as_deref(), *scope, Some(facts), actions);
+                    git_config_editor(
+                        ui,
+                        screen,
+                        repo.as_deref(),
+                        *scope,
+                        Some(facts),
+                        true,
+                        actions,
+                    );
                 });
             });
         }
@@ -8269,6 +8404,7 @@ mod tests {
                             repo.as_deref(),
                             *scope,
                             Some(facts),
+                            true,
                             &mut Vec::new(),
                         );
                     });
@@ -8328,7 +8464,15 @@ mod tests {
             PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").expect("private global config"));
         for (setting, global, local) in CASES {
             let key = setting.key();
-            let label = |value: &str| git_value_label(setting, value);
+            // A closed select says Recommended after the value that is the recommendation (#232).
+            let label = |value: &str| {
+                let label = git_value_label(setting, value);
+                if value == setting.recommendation() {
+                    format!("{label} (Recommended)")
+                } else {
+                    label
+                }
+            };
             config::set(repo, Scope::Global, setting, Some(global)).expect("global write");
             let global_bytes = std::fs::read(&global_file).expect("global file");
 
@@ -8902,7 +9046,7 @@ mod tests {
             conflict_style: Some(fact("merge.conflictStyle", "merge")),
             cleanup: Some(fact("commit.cleanup", "strip")),
             initial_branch: Some(fact("init.defaultBranch", "trunk")),
-            submodule_recurse: Some(fact("submodule.recurse", "false")),
+            submodule_recurse: Some(fact("submodule.recurse", "true")),
             git: Some((2, 55)),
             ..GitFacts::default()
         };
@@ -8930,19 +9074,19 @@ mod tests {
     #[test]
     fn a_finding_names_the_recommendation_as_the_list_does() {
         let spelled = GitFacts {
-            submodule_recurse: Some(fact("submodule.recurse", "yes")),
+            submodule_recurse: Some(fact("submodule.recurse", "no")),
             git: Some((2, 55)),
             ..GitFacts::default()
         };
         assert_eq!(
             against_recommendation(&spelled, &Settings::default(), Path::new("fixture")),
             Vec::<String>::new(),
-            "yes is true"
+            "no is false"
         );
         let facts = GitFacts {
             fetch_prune: Some(fact("fetch.prune", "false")),
             cleanup: Some(fact("commit.cleanup", "whitespace")),
-            submodule_recurse: Some(fact("submodule.recurse", "no")),
+            submodule_recurse: Some(fact("submodule.recurse", "yes")),
             git: Some((2, 55)),
             ..GitFacts::default()
         };
@@ -8950,7 +9094,7 @@ mod tests {
         for (row, name) in [
             ("Prune remote branches", "On"),
             ("Commit message cleanup", "Default"),
-            ("Update submodules", "On"),
+            ("Recurse into submodules", "Off"),
         ] {
             assert!(
                 lines
@@ -9480,5 +9624,121 @@ mod tests {
         assert!(!pressed.get(), "reaching it does not press it");
         draw(crate::ui::kit::testkit::key(egui::Key::Enter));
         assert!(pressed.get(), "Enter presses the focused button");
+    }
+
+    /// Facts whose editable values are `value_of(setting)` for every setting that has one.
+    fn facts_with(value_of: impl Fn(Setting) -> Option<String>) -> GitFacts {
+        GitFacts {
+            git: Some((2, 55)),
+            values: Setting::ALL
+                .into_iter()
+                .filter_map(|setting| Some(fact(setting.key(), &value_of(setting)?)))
+                .collect(),
+            ..GitFacts::default()
+        }
+    }
+
+    /// What every select of the editor says closed, by the row's name (#232).
+    fn shown(facts: GitFacts) -> Vec<(Setting, String)> {
+        let nodes = git_page(facts, true);
+        Setting::ALL
+            .into_iter()
+            .filter(|setting| *setting != Setting::InitialBranch)
+            .map(|setting| {
+                let node = crate::ui::kit::testkit::find(&nodes, setting.label())
+                    .unwrap_or_else(|| panic!("{} is on the page", setting.label()));
+                (
+                    setting,
+                    node.value.clone().expect("a select speaks its value"),
+                )
+            })
+            .collect()
+    }
+
+    /// After Use recommended, and after choosing the value by hand, the value is the
+    /// recommended one and the closed select says so, as it does for an unset one.
+    #[test]
+    fn a_selected_recommended_value_says_recommended() {
+        let facts =
+            facts_with(|setting| Some(setting.recommendation_for(Some((2, 55))).to_owned()));
+        for (setting, said) in shown(facts) {
+            let value = git_value_label(setting, setting.recommendation_for(Some((2, 55))));
+            assert_eq!(
+                said,
+                format!("{value} (Recommended)"),
+                "{}",
+                setting.label()
+            );
+        }
+    }
+
+    /// Any other value shows bare, and the list still marks the recommended entry.
+    #[test]
+    fn a_selected_value_that_is_not_recommended_says_nothing_more() {
+        let recommended = |setting: Setting| setting.recommendation_for(Some((2, 55)));
+        let facts = facts_with(|setting| {
+            setting
+                .values()
+                .iter()
+                .find(|value| **value != recommended(setting))
+                .map(|value| (*value).to_owned())
+        });
+        for (setting, said) in shown(facts) {
+            let other = setting
+                .values()
+                .iter()
+                .find(|value| **value != recommended(setting))
+                .expect("a second value");
+            assert_eq!(said, git_value_label(setting, other), "{}", setting.label());
+        }
+    }
+
+    /// The first branch is a text field: "(Recommended)" sits under it while it holds `main`.
+    #[test]
+    fn the_first_branch_is_marked_while_it_holds_the_recommendation() {
+        for (branch, marked) in [("main", true), ("trunk", false)] {
+            let facts = facts_with(|setting| {
+                (setting == Setting::InitialBranch).then(|| branch.to_owned())
+            });
+            let nodes = git_page(facts, true);
+            assert_eq!(
+                nodes
+                    .iter()
+                    .any(|node| node.description.as_deref() == Some("(Recommended)")),
+                marked,
+                "{branch}: {nodes:?}"
+            );
+        }
+    }
+
+    /// What the selects show, what the global file holds and what Git uses agree after Use
+    /// recommended (temporary global configuration).
+    #[test]
+    fn the_selects_show_what_git_uses_after_the_recommendations_are_written() {
+        if !crate::repo_config::in_isolated_git_env(
+            "views::settings_screen::tests::the_selects_show_what_git_uses_after_the_recommendations_are_written",
+        ) {
+            return;
+        }
+        let home = crate::settings::home_dir();
+        config::apply_recommended(&home).expect("written");
+        let facts = crate::repo_config::read(None);
+        assert_eq!(facts.error, None);
+        for (setting, said) in shown(facts) {
+            let effective = cli::run(&home, &["config", "--get", setting.key()]);
+            match setting.recommended_write() {
+                Some(value) => {
+                    assert_eq!(effective.expect("set").trim(), value, "{}", setting.key());
+                    assert_eq!(
+                        said,
+                        format!("{} (Recommended)", git_value_label(setting, value)),
+                        "{}",
+                        setting.label()
+                    );
+                }
+                // Left to Git: unset, and the row says the value Git uses.
+                None => assert!(effective.is_err(), "{} stays unset", setting.key()),
+            }
+        }
     }
 }

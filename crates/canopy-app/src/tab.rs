@@ -51,16 +51,75 @@ pub enum SidebarItem {
     Worktree(PathBuf),
 }
 
+/// Past this many local branches the merged markers skip the squash check, which runs one git
+/// process per branch that is not plainly merged; the cheaper checks still run.
+const SQUASH_CHECK_LIMIT: usize = 150;
+
+/// Which local branches are merged into `base`, by name.
+#[derive(Debug, Clone)]
+pub struct MergedMarks {
+    /// What the branches were compared with: the base branch and its remote-tracking branch.
+    pub bases: Vec<String>,
+    /// Every local branch but the base, by name, with the check that matched.
+    pub rows: Arc<[canopy_core::MergedBranch]>,
+    reasons: std::collections::HashMap<String, canopy_core::MergedReason>,
+}
+
+impl MergedMarks {
+    pub fn new(bases: Vec<String>, rows: Arc<[canopy_core::MergedBranch]>) -> Self {
+        let reasons = rows
+            .iter()
+            .filter_map(|b| Some((b.name.clone(), b.reason?)))
+            .collect();
+        Self {
+            bases,
+            rows,
+            reasons,
+        }
+    }
+
+    /// The base as the user sees it (`develop`, `main`, `origin/main`).
+    pub fn shown(&self) -> &str {
+        self.bases.first().map_or("", String::as_str)
+    }
+
+    /// The check that found `branch` merged; `None` when it is not or is unknown.
+    pub fn reason(&self, branch: &str) -> Option<canopy_core::MergedReason> {
+        self.reasons.get(branch).copied()
+    }
+}
+
+/// What the merged markers depend on: the base, every branch's tip and every remote-tracking
+/// branch's (an upstream that went away shows there).
+fn merged_key(snap: &RepoSnapshot, bases: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bases.hash(&mut hasher);
+    for b in &snap.branches {
+        (&b.name, b.target, b.is_head).hash(&mut hasher);
+    }
+    for b in &snap.remote_branches {
+        (&b.remote, &b.branch, b.target).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// The sidebar sections a new tab starts with closed: only Branches is the daily surface. The
 /// user's own opening or closing of a section replaces this in [`RepoTab::collapsed`]. A saved
 /// set lists the closed sections, so a section added here opens in repositories that have one.
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
-/// What a merge, rebase or pull that stopped on conflicts asks of the user. When git holds their
-/// uncommitted changes aside (`--autostash`), they are not in the stash list: it says where they
-/// are and when they come back.
-fn stopped_body(autostashed: bool) -> String {
+/// What a merge, rebase, pull, cherry-pick or revert that stopped on conflicts asks of the user.
+/// When git holds their uncommitted changes aside (`--autostash`), they are not in the stash
+/// list: it says where they are and when they come back. A stash that was applied or popped
+/// (`stash`) leaves nothing to continue or abort and is kept in the stash list: it says so.
+fn stopped_body(autostashed: bool, stash: bool) -> String {
+    if stash {
+        return String::from(
+            "Resolve each conflicted file in Changes. The stash stays in the stash list until you drop it.",
+        );
+    }
     let mut body = String::from(
         "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.",
     );
@@ -584,6 +643,7 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
         | OpKind::Stash
         | OpKind::Pop
         | OpKind::Branch
+        | OpKind::Lfs
         | OpKind::Publish => {
             if let Some(told) = changes.describe() {
                 told
@@ -915,6 +975,8 @@ pub struct SnapIndex {
     pub graph_lanes: u16,
     /// Visible submodule indices and their status, including unstaged content changes.
     pub submodules: Vec<(usize, canopy_core::SubmoduleState)>,
+    /// The local branches grouped into folders by their prefixes.
+    pub branch_tree: Vec<crate::branch_tree::Node>,
 }
 
 impl SnapIndex {
@@ -935,6 +997,7 @@ impl SnapIndex {
             remote_branches,
             graph_lanes: s.graph.iter().map(|g| g.width).max().unwrap_or(1),
             submodules: Vec::new(),
+            branch_tree: crate::branch_tree::build(&s.branches),
         };
         index.update_submodules(s);
         index
@@ -1007,6 +1070,23 @@ pub fn folder_name(path: &std::path::Path) -> String {
 /// a frame clones the pointer, never the data, so its cost does not grow with the repository.
 #[derive(Debug)]
 pub struct RepoTab {
+    /// Which branches are merged into the base: the newest answer to [`Self::read_merged`],
+    /// `None` before the first.
+    pub merged: Option<Result<MergedMarks, String>>,
+    /// The newest request for [`Self::merged`]; an older reply is dropped.
+    pub merged_serial: u64,
+    /// The serial of the reply [`Self::merged`] holds (a form waits for one at least as new as
+    /// its own request).
+    pub merged_applied: u64,
+    /// What the last automatic request was made for ([`merged_key`]), so a refresh that moved
+    /// no branch does not run the checks again.
+    merged_for: Option<u64>,
+    /// The newest [`Self::read_base_compare`] request; an older reply is dropped.
+    pub base_serial: u64,
+    /// Its answer, `None` while it is on its way.
+    pub base_result: Option<Result<canopy_core::PullPreview, String>>,
+    /// Git LFS: the files stored with it, whether it works here, and the dialog's lists.
+    pub lfs: crate::lfs::LfsState,
     pub stale_serial: u64,
     pub stale_result: Option<Result<Arc<[canopy_core::StaleCandidate]>, String>>,
     file_history_serial: u64,
@@ -1208,6 +1288,7 @@ impl RepoTab {
         let name = folder_name(&path);
         Self {
             path,
+            lfs: crate::lfs::LfsState::default(),
             file_history_serial: 0,
             change_search_serial: 0,
             change_search: None,
@@ -1217,6 +1298,12 @@ impl RepoTab {
             blame_serial: 0,
             blame: None,
             ignore_query: None,
+            merged: None,
+            merged_serial: 0,
+            merged_applied: 0,
+            merged_for: None,
+            base_serial: 0,
+            base_result: None,
             stale_serial: 0,
             stale_result: None,
             ignore_result: None,
@@ -1339,6 +1426,16 @@ impl RepoTab {
         self.worker.send(Job::Op(op));
     }
 
+    /// Asks for the Git LFS dialog's lists: the tracked patterns (needs git-lfs) and the locks
+    /// (the LFS server).
+    pub fn read_lfs_lists(&mut self) {
+        self.lfs.dialog_seen = true;
+        let patterns = self.lfs.next_patterns_serial();
+        self.worker.send(Job::LfsPatterns(patterns));
+        let locks = self.lfs.next_locks_serial();
+        self.worker.send(Job::LfsLocks(locks));
+    }
+
     /// Asks for the history of `path` (relative to the repository root), through renames, from
     /// the commit `from` (`HEAD` when `None`).
     pub fn read_file_history(&mut self, from: Option<Oid>, path: String) {
@@ -1435,6 +1532,45 @@ impl RepoTab {
             serial: self.ignore_serial,
             query,
         });
+    }
+
+    /// Asks which local branches are merged into the base ([`MergedMarks`]). The branches' names
+    /// and tips decide whether it is needed again: a refresh that moved none leaves the markers
+    /// as they are, since the squash check runs one git process per branch. `force` asks anyway
+    /// (a cleanup form wants a reading made now). Returns the request's serial.
+    pub fn read_merged(&mut self, force: bool) -> u64 {
+        let Some(snap) = self.snap.as_ref() else {
+            return self.merged_serial;
+        };
+        let Some(base) = snap.workflow.base.as_ref() else {
+            self.merged = None;
+            self.merged_for = None;
+            return self.merged_serial;
+        };
+        let key = merged_key(snap, &base.references);
+        if !force && self.merged_for == Some(key) {
+            return self.merged_serial;
+        }
+        self.merged_for = Some(key);
+        self.merged_serial = self.merged_serial.wrapping_add(1);
+        self.worker.send(Job::MergedBranches {
+            serial: self.merged_serial,
+            bases: base.references.clone(),
+            squash: snap.branches.len() <= SQUASH_CHECK_LIMIT,
+        });
+        self.merged_serial
+    }
+
+    /// Asks what bringing `base` into the checked-out branch would do; the answer lands in
+    /// [`Self::base_result`]. Returns the request's serial.
+    pub fn read_base_compare(&mut self, base: &str) -> u64 {
+        self.base_serial = self.base_serial.wrapping_add(1);
+        self.base_result = None;
+        self.worker.send(Job::BaseCompare {
+            serial: self.base_serial,
+            base: base.to_owned(),
+        });
+        self.base_serial
     }
 
     /// A new cleanup form always gets a fresh preview; replies for older forms are discarded.
@@ -2289,6 +2425,21 @@ impl RepoTab {
         let mut notices = Vec::new();
         while let Ok(ev) = self.worker.events.try_recv() {
             match ev {
+                Event::MergedBranches {
+                    serial,
+                    bases,
+                    result,
+                } => {
+                    if serial == self.merged_serial {
+                        self.merged_applied = serial;
+                        self.merged = Some(result.map(|rows| MergedMarks::new(bases, rows)));
+                    }
+                }
+                Event::BaseCompare { serial, result } => {
+                    if serial == self.base_serial {
+                        self.base_result = Some(result);
+                    }
+                }
                 Event::StaleCandidates { serial, result } => {
                     if serial == self.stale_serial {
                         self.stale_result = Some(result);
@@ -2328,6 +2479,15 @@ impl RepoTab {
                         self.tools_asked = true;
                         self.worker.send(Job::Tools);
                     }
+                    let lfs_seen = s
+                        .status
+                        .staged
+                        .iter()
+                        .chain(&s.status.unstaged)
+                        .any(|f| f.lfs);
+                    self.worker.send(Job::Lfs {
+                        known: self.lfs.in_use() || lfs_seen,
+                    });
                     if !self.template_asked {
                         self.template_asked = true;
                         self.worker.send(Job::CommitTemplate);
@@ -2342,6 +2502,7 @@ impl RepoTab {
                     let had = self.snap.is_some();
                     self.snap_index = SnapIndex::new(&s);
                     self.snap = Some(s);
+                    self.read_merged(false);
                     self.prune_marked();
                     self.prune_parked();
                     self.generation += 1;
@@ -2636,6 +2797,9 @@ impl RepoTab {
                         });
                     }
                 }
+                Event::Lfs(info) => self.lfs.set(info),
+                Event::LfsLocks { serial, result } => self.lfs.accept_locks(serial, result),
+                Event::LfsPatterns { serial, result } => self.lfs.accept_patterns(serial, result),
                 Event::PushTarget(result) => match result {
                     Ok(target) => self.force_push_offer = Some(target),
                     Err(e) => notices.push(Notice {
@@ -2732,6 +2896,9 @@ impl RepoTab {
                             if kind == OpKind::Worktree {
                                 self.worktree_result = Some(Ok(()));
                             }
+                            if kind == OpKind::Lfs && self.lfs.dialog_seen {
+                                self.read_lfs_lists();
+                            }
                             if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
                                 self.auto_fetch_failure = None;
@@ -2809,7 +2976,11 @@ impl RepoTab {
                     self.progress = None;
                     self.pull_decision = Some(*decision);
                 }
-                Event::Conflicted { label, autostashed } => {
+                Event::Conflicted {
+                    label,
+                    autostashed,
+                    stash,
+                } => {
                     self.running = None;
                     self.running_kind = None;
                     self.progress = None;
@@ -2819,7 +2990,7 @@ impl RepoTab {
                         ok: false,
                         delivery: Delivery::Attention,
                         title: format!("{label} stopped on conflicts"),
-                        body: stopped_body(autostashed),
+                        body: stopped_body(autostashed, stash),
                     });
                 }
                 Event::AutostashConflict => {
@@ -3480,6 +3651,10 @@ mod tests {
             tab.poll(&[]);
             assert_eq!(tab.file.as_ref(), Some(&selection));
             assert!(Arc::ptr_eq(tab.diff.as_ref().expect("retained diff"), &old));
+            if full {
+                // A snapshot also asks for the repository's LFS files (`Job::Lfs`).
+                assert!(matches!(jobs.try_recv(), Ok(Job::Lfs { known: false })));
+            }
             assert!(
                 matches!(jobs.try_recv(), Ok(Job::Diff(refreshed)) if refreshed == key),
                 "historical gitlink availability can change on refresh, full={full}"
@@ -4918,7 +5093,8 @@ mod tests {
                 &mut tab,
                 Event::Conflicted {
                     label: "Pulling".into(),
-                    autostashed: false
+                    autostashed: false,
+                    stash: false
                 }
             )?,
             Delivery::Attention
@@ -4927,6 +5103,100 @@ mod tests {
             delivery(&mut tab, Event::AutostashConflict)?,
             Delivery::Attention
         );
+        Ok(())
+    }
+
+    /// The merged markers cost a git process per branch that is not plainly merged: they are asked
+    /// again only when a branch or remote-tracking tip, or the base, changed, never on a refresh
+    /// that moved nothing; a cleanup form asks anyway; an older answer is dropped.
+    #[test]
+    fn the_merged_readings_run_again_only_when_a_branch_moves()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, jobs) = Worker::detached();
+        tab.worker = worker;
+        let oid = |n: u8| Oid::from_bytes(&[n; 20]).expect("oid");
+        let snapshot = |tip: u8| RepoSnapshot {
+            branches: vec![canopy_core::BranchInfo {
+                name: "topic".into(),
+                target: Some(oid(tip)),
+                is_head: false,
+                upstream: None,
+                ahead: 0,
+                behind: 0,
+                worktree: None,
+            }],
+            workflow: canopy_core::WorkflowInfo {
+                base: Some(canopy_core::BranchBase {
+                    references: vec!["main".into(), "origin/main".into()],
+                    protected: vec!["main".into()],
+                }),
+                ..canopy_core::WorkflowInfo::default()
+            },
+            ..RepoSnapshot::default()
+        };
+        let asked = |jobs: &crossbeam_channel::Receiver<Job>| {
+            jobs.try_iter()
+                .filter(|j| matches!(j, Job::MergedBranches { .. }))
+                .count()
+        };
+
+        tab.snap = Some(Arc::new(snapshot(1)));
+        let first = tab.read_merged(false);
+        assert_eq!(asked(&jobs), 1);
+        // A refresh that moved nothing.
+        tab.snap = Some(Arc::new(snapshot(1)));
+        assert_eq!(tab.read_merged(false), first);
+        assert_eq!(asked(&jobs), 0);
+        // A branch moved.
+        tab.snap = Some(Arc::new(snapshot(2)));
+        let second = tab.read_merged(false);
+        assert_ne!(second, first);
+        assert_eq!(asked(&jobs), 1);
+        // A form asks for a reading made now.
+        let third = tab.read_merged(true);
+        assert_ne!(third, second);
+        assert_eq!(asked(&jobs), 1);
+
+        // Only the newest answer counts.
+        let rows = |name: &str| -> Arc<[canopy_core::MergedBranch]> {
+            Arc::from(vec![canopy_core::MergedBranch {
+                name: name.into(),
+                is_head: false,
+                reason: Some(canopy_core::MergedReason::Reachable),
+            }])
+        };
+        events.send(Event::MergedBranches {
+            serial: second,
+            bases: vec!["main".into()],
+            result: Ok(rows("old")),
+        })?;
+        events.send(Event::MergedBranches {
+            serial: third,
+            bases: vec!["main".into(), "origin/main".into()],
+            result: Ok(rows("new")),
+        })?;
+        tab.poll(&[]);
+        let Some(Ok(marks)) = &tab.merged else {
+            panic!("an answer");
+        };
+        assert_eq!(tab.merged_applied, third);
+        assert_eq!(marks.shown(), "main");
+        assert_eq!(
+            marks.reason("new"),
+            Some(canopy_core::MergedReason::Reachable)
+        );
+        assert_eq!(marks.reason("old"), None);
+
+        // No base, no markers.
+        let mut bare = snapshot(2);
+        bare.workflow.base = None;
+        tab.snap = Some(Arc::new(bare));
+        tab.read_merged(false);
+        assert!(tab.merged.is_none());
+        assert_eq!(asked(&jobs), 0);
         Ok(())
     }
 
@@ -5054,6 +5324,7 @@ mod tests {
         events.send(Event::Conflicted {
             label: "Pulling".into(),
             autostashed: false,
+            stash: false,
         })?;
         let notices = tab.poll(&[]);
         assert_eq!((tab.running.as_deref(), tab.view), (None, View::Changes));
@@ -5065,10 +5336,10 @@ mod tests {
     /// nothing of them when it does not.
     #[test]
     fn a_stop_on_conflicts_says_where_set_aside_changes_are() {
-        let plain = stopped_body(false);
+        let plain = stopped_body(false, false);
         assert!(plain.starts_with("Resolve each conflicted file in Changes"));
         assert!(!plain.contains("uncommitted"), "{plain}");
-        let held = stopped_body(true);
+        let held = stopped_body(true, false);
         assert!(held.starts_with(&plain), "{held}");
         assert!(
             held.contains("uncommitted changes are held by git")
@@ -5076,6 +5347,23 @@ mod tests {
             "{held}"
         );
         assert!(!held.contains("\n\n"), "one paragraph: {held}");
+    }
+
+    /// #265: a stash that stopped on conflicts has nothing to continue or abort, and says the
+    /// stash is kept; changes git holds aside do not come into it.
+    #[test]
+    fn a_stash_that_stopped_on_conflicts_is_not_asked_to_continue_or_abort() {
+        let body = stopped_body(false, true);
+        assert!(
+            body.starts_with("Resolve each conflicted file in Changes"),
+            "{body}"
+        );
+        assert!(body.contains("stays in the stash list"), "{body}");
+        assert!(
+            !body.contains("abort") && !body.contains("continue"),
+            "{body}"
+        );
+        assert_eq!(stopped_body(true, true), body);
     }
 
     /// The notice of a stop carries what [`stopped_body`] says for the event's `autostashed`.
@@ -5091,10 +5379,11 @@ mod tests {
             events.send(Event::Conflicted {
                 label: "Merging".into(),
                 autostashed,
+                stash: false,
             })?;
             let notices = tab.poll(&[]);
             assert_eq!(notices.len(), 1);
-            assert_eq!(notices[0].body, stopped_body(autostashed));
+            assert_eq!(notices[0].body, stopped_body(autostashed, false));
         }
         Ok(())
     }
@@ -5341,6 +5630,67 @@ mod tests {
         assert!(matches!(tab.file_history, Some(Err(_))));
         tab.read_file_history(None, "b.txt".into());
         assert!(tab.file_history.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn the_lfs_state_follows_the_workers_answers_and_lists_are_read_again_after_a_command()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        assert!(!tab.lfs.in_use());
+        events.send(Event::Lfs(Arc::new(crate::worker::LfsInfo {
+            in_use: true,
+            files: vec![canopy_core::LfsFile {
+                path: "big.bin".into(),
+                pointer: canopy_core::LfsPointer {
+                    oid: "a".repeat(64),
+                    size: 9,
+                    extensions: false,
+                },
+                downloaded: false,
+            }],
+            missing: None,
+        })))?;
+        tab.poll(&[]);
+        assert!(tab.lfs.is_pointer_only("big.bin"));
+
+        // Opening the dialog reads both lists; a stale answer is dropped.
+        tab.read_lfs_lists();
+        let Job::LfsPatterns(patterns) = jobs.recv()? else {
+            panic!("patterns job");
+        };
+        let Job::LfsLocks(locks) = jobs.recv()? else {
+            panic!("locks job");
+        };
+        events.send(Event::LfsLocks {
+            serial: locks.wrapping_sub(1),
+            result: Err("old".into()),
+        })?;
+        events.send(Event::LfsLocks {
+            serial: locks,
+            result: Ok(Vec::new()),
+        })?;
+        events.send(Event::LfsPatterns {
+            serial: patterns,
+            result: Err("git-lfs said no".into()),
+        })?;
+        tab.poll(&[]);
+        assert!(matches!(tab.lfs.locks, Some(Ok(_))));
+        assert!(matches!(&tab.lfs.patterns, Some(Err(e)) if e == "git-lfs said no"));
+
+        // An LFS command that finished changes what the lists say.
+        events.send(Event::OpFinished {
+            label: "Locking big.bin".into(),
+            kind: OpKind::Lfs,
+            announce: true,
+            result: Ok("Locked big.bin".into()),
+        })?;
+        tab.poll(&[]);
+        assert!(matches!(jobs.recv()?, Job::LfsPatterns(_)));
+        assert!(matches!(jobs.recv()?, Job::LfsLocks(_)));
+        assert!(tab.lfs.locks.is_none(), "the lists are on their way again");
         Ok(())
     }
 

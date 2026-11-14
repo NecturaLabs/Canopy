@@ -36,6 +36,39 @@ impl CanopyApp {
                         self.dialogs.open(Dialog::CleanStale(Box::new(form)));
                     }
                 }
+                Action::CleanMerged => {
+                    if let Some(tab) = self.tab() {
+                        let serial = tab.read_merged(true);
+                        let form = dialogs::MergedForm::new(tab.path.clone(), serial);
+                        self.dialogs.open(Dialog::CleanMerged(Box::new(form)));
+                    }
+                }
+                Action::UpdateFromBase => {
+                    if let Some(tab) = self.tab() {
+                        let base = tab.snap.as_ref().and_then(|s| s.workflow.head_base.clone());
+                        if let Some(base) = base {
+                            let serial = tab.read_base_compare(&base);
+                            let form = dialogs::UpdateBaseForm::new(tab.path.clone(), base, serial);
+                            self.dialogs.open(Dialog::UpdateFromBase(Box::new(form)));
+                        }
+                    }
+                }
+                Action::FlowInit => {
+                    let snap = self.tab().and_then(|t| t.snap.clone());
+                    let form = dialogs::FlowInitForm::new(snap.as_deref());
+                    self.dialogs.open(Dialog::FlowInit(Box::new(form)));
+                }
+                Action::FlowStart(kind) => {
+                    self.dialogs
+                        .open(Dialog::FlowStart(Box::new(dialogs::FlowStartForm::new(
+                            kind,
+                        ))));
+                }
+                Action::FlowFinish(branch) => {
+                    let snap = self.tab().and_then(|t| t.snap.clone());
+                    let form = dialogs::FlowFinishForm::new(branch, snap.as_deref());
+                    self.dialogs.open(Dialog::FlowFinish(Box::new(form)));
+                }
                 Action::ReadIgnore { repo, query } => {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.path == repo) {
                         t.read_ignore(query);
@@ -96,6 +129,19 @@ impl CanopyApp {
                         tab.read_file_history(from, path.clone());
                         let repo = tab.path.clone();
                         self.dialogs.open(Dialog::FileHistory { repo, path, from });
+                    }
+                }
+                Action::Lfs(page) => {
+                    if let Some(tab) = self.tab() {
+                        tab.read_lfs_lists();
+                        let repo = tab.path.clone();
+                        self.dialogs
+                            .open(Dialog::Lfs(Box::new(dialogs::LfsForm::new(repo, page))));
+                    }
+                }
+                Action::LfsLists => {
+                    if let Some(tab) = self.tab() {
+                        tab.read_lfs_lists();
                     }
                 }
                 Action::SearchChanges { query, regex } => {
@@ -477,18 +523,22 @@ impl CanopyApp {
                     setting,
                     value,
                 } => {
-                    self.request_git_config(
-                        ctx,
-                        IdentityJob::Config {
-                            repo,
-                            scope,
-                            setting,
-                            value,
-                        },
-                    );
+                    if self.may_edit_git_config(ctx) {
+                        self.request_git_config(
+                            ctx,
+                            IdentityJob::Config {
+                                repo,
+                                scope,
+                                setting,
+                                value,
+                            },
+                        );
+                    }
                 }
                 Action::UseRecommendedGitConfig => {
-                    self.request_git_config(ctx, IdentityJob::Recommendations);
+                    if self.may_edit_git_config(ctx) {
+                        self.request_git_config(ctx, IdentityJob::Recommendations);
+                    }
                 }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();
