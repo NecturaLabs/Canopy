@@ -146,11 +146,11 @@ Only when no text field has focus.
 | Keys | Action |
 |---|---|
 | ] / [ | Next / previous conflict |
-| H | Take Current (left) |
-| L | Take Incoming (right) |
-| B | Take both, Current first |
-| Shift+B | Take both, Incoming first |
-| Shift+A | Take the common ancestor |
+| H | Accept current (left) |
+| L | Accept incoming (right) |
+| B | Accept both, current first |
+| Shift+B | Accept both, incoming first |
+| Shift+A | Accept the common ancestor |
 | E | Edit the conflict by hand |
 | Z | Undo the choice for this conflict |
 
