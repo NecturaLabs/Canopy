@@ -31,7 +31,7 @@
 #
 # The builds keep to the self-hosted runners, but take nothing from earlier jobs on them: each
 # starts from an empty workspace (a reused .git could carry hooks or config that run code) and
-# installs rustup, the toolchain from rust-toolchain.toml and the crates into job-local homes
+# installs rustup, the latest stable toolchain and the crates into job-local homes
 # under RUNNER_TEMP, with no build cache (setup-rust `isolated`).
 name: Release
 
