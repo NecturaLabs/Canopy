@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use git2::{BranchType, Oid, StatusOptions};
 
 use crate::flow::{MergeTree, merge_tree};
-use crate::{Repo, Result, cli};
+use crate::{Error, Repo, Result, cli};
 
 /// The checked-out branch's upstream.
 struct Upstream {
@@ -75,19 +75,43 @@ impl Repo {
         let Some(upstream) = self.head_upstream() else {
             return Ok(None);
         };
+        self.compare_head_with(&upstream.reference, upstream.shown)
+            .map(Some)
+    }
+
+    /// What bringing `base` (a branch, remote-tracking branch or tag) into the checked-out
+    /// branch would do, as [`Repo::compare_upstream`] works it out for the upstream; the
+    /// preview's `upstream` is `base` as given. Does not fetch.
+    pub fn compare_base(&self, base: &str) -> Result<PullPreview> {
+        if base.starts_with('-') {
+            return Err(Error::invalid(format!("'{base}' is not a valid base.")));
+        }
+        let reference = self
+            .git()
+            .resolve_reference_from_short_name(base)
+            .map_err(|e| Error::invalid(format!("Could not resolve the base '{base}': {e}")))?;
+        let full = reference
+            .name()
+            .ok()
+            .map(str::to_owned)
+            .ok_or_else(|| Error::invalid(format!("The base '{base}' has no usable name.")))?;
+        self.compare_head_with(&full, base.to_owned())
+    }
+
+    fn compare_head_with(&self, reference: &str, shown: String) -> Result<PullPreview> {
         let git = self.git();
         let ours = git.head()?.peel_to_commit()?.id();
-        let theirs = git.refname_to_id(&upstream.reference)?;
+        let theirs = git.refname_to_id(reference)?;
         let (ahead, behind) = git.graph_ahead_behind(ours, theirs)?;
         let mut preview = PullPreview {
-            upstream: upstream.shown,
+            upstream: shown,
             tip: Some(theirs),
             ahead,
             behind,
             ..PullPreview::default()
         };
         if behind == 0 {
-            return Ok(Some(preview));
+            return Ok(preview);
         }
         let base = git.merge_base(ours, theirs)?;
         let incoming = self.changed_between(base, theirs)?;
@@ -106,7 +130,7 @@ impl Repo {
                 None
             };
         }
-        Ok(Some(preview))
+        Ok(preview)
     }
 
     /// The merge-commit subject for a checked pull, naming the upstream branch and its remote

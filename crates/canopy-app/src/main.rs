@@ -6,6 +6,7 @@ mod action;
 mod app;
 mod askpass;
 mod avatars;
+mod branch_tree;
 mod build_info;
 mod crash_reports;
 mod highlight;
@@ -54,7 +55,7 @@ OPTIONS:
                               settings-integrations, settings-accounts, settings-updates, settings-notifications,
                               settings-keyboard, settings-backup, settings-repository,
                               settings-repository-pull, settings-repository-diffs,
-                              settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
+                              settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, clean-merged, update-from-base, flow-init, flow-start, flow-finish, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
                               long-message,
                               gallery, menu-branch, menu-commit, menu-file, menu-lfs-file, blame, open,
                               open-error, clone,
