@@ -35,6 +35,7 @@ detail) sets the detail; `tools/stress.sh open` sets `CANOPY_LOG` to the Detaile
 |---|---|---|---|---|
 | `canopy started` | INFO | `run`, `version`, `pid`, `filter` | Normal | time zero |
 | `snapshot` | DEBUG | `commits`, `ms` | Detailed | the first one per repository marks "tab loaded"; later ones are refreshes |
+| `loading the tab shown for the first time` | DEBUG | `path` | Detailed | when a tab was first shown (#62); a tab's load time runs from here to its first `snapshot` |
 | `job done` | DEBUG | `job` (`details`, `diff`, `conflict`, `head-message`, `squash-message`, `operation`), `ms` | Detailed | job durations |
 | `operation started` / `operation succeeded` / `operation failed` | INFO / INFO / WARN | `operation` (a label such as `Fetching` or `Checking out feature/x`), `ms`, `error` | Normal | operation durations, hung operations |
 | `git finished` / `git failed` | DEBUG / WARN | `command`, `args`, `ms`, `exit`, `stderr` | Detailed | git command durations |
@@ -288,9 +289,20 @@ used below. By hand works equally.
 ```sh
 sync; echo 3 | sudo tee /proc/sys/vm/drop_caches     # cold cache; skip for a warm run
 tools/stress.sh open --label a-cold --duration 600
-# touch nothing for the first five minutes, then close Canopy or let --duration do it
+# touch nothing for the first minute (one tab loaded), then show every tab once (see below),
+# leave it idle for five minutes, then close Canopy or let --duration do it
 tools/stress.sh report
 ```
+
+**Tabs load when first shown (#62).** Canopy loads the active tab at once and lists the other 99
+by name only: no repository thread, file watcher or snapshot until a tab is first shown. So a run
+that touches nothing measures one loaded tab (threads are about 1 per loaded tab plus the shared
+threads; one inotify instance serves them all). To load them all, show each tab once, for example holding
+`Ctrl+Tab` (or `xdotool key --repeat 100 --delay 300 ctrl+Tab`). The report's "all tabs loaded"
+criterion fails until every tab has been shown; each tab's load time runs from the moment it was
+first shown (the `loading the tab shown for the first time` event) to its first snapshot, so the
+pace of your switching does not count against it. Every other scenario below starts from
+"everything loaded" and therefore from this step.
 
 Watch: how long until the tabs fill in (the report's "Loading" section: first snapshot per
 repository), whether the window stays responsive while loading (try moving and resizing it),
@@ -422,7 +434,7 @@ progress or prepared conflict, so nothing fights the person resolving. Afterward
 | What | How | Where it ends up |
 |---|---|---|
 | Start-up to first frame | `first frame` event (`ms` since process start) | `report`, "Loading" |
-| Start-up to all tabs loaded | first `snapshot` event per repository, relative to `canopy started` | `report`, "Loading" |
+| Load time per tab | first `snapshot` event per repository, relative to its `loading the tab shown for the first time` event (the process start when that event is absent) | `report`, "Loading" |
 | Frame times p50/p95/p99, hitches over 33 ms | `frame stats` events | `report`, "Frame times" |
 | RSS over time (total, heap `RssAnon`, mapped files `RssFile`) | `/proc/<pid>/status`, every second | `samples.csv` |
 | Thread count | `/proc/<pid>/status` `Threads`; names every 5 min | `samples.csv`, `threads.txt` |
@@ -450,7 +462,7 @@ fails.
 | Warnings | each read and explained; unexpected ones fail the run (REVIEW until judged) | all |
 | Every repository opens (no `cannot open the repository`) | 100 of 100 | a |
 | First frame | at most 2 s | a |
-| All tabs loaded (first snapshot of the last one) | at most 120 s; 95 % of tabs within 60 s | a |
+| Load time of a tab (from first shown to its first snapshot) | slowest at most 120 s; 95 % of tabs within 60 s | a |
 | UI usable while tabs load (no frozen window) | by eye, and the report's loading line (first 30 s): a worst frame of about 1 s or more is a frozen window; not a verdict | a |
 | Frames while tab switching | none over 100 ms; at most 1 % over 33 ms | b |
 | Frames while scrolling history | p95 at most 16.7 ms, p99 at most 33 ms, none over 100 ms (use `--from/--until`) | c |
@@ -472,7 +484,8 @@ fails.
 | Log not truncated | the 20 MiB cap not reached | all |
 
 The memory and thread figures are first estimates from reading the code (one worker thread per
-loaded tab, and one watcher thread and one inotify backend thread in all): the first real run should set them
+tab that has been shown, and one watcher thread and one inotify backend thread in all; a tab that
+has not been shown has none, see "Tabs load when first shown" under (a)): the first real run should set them
 properly. Tighten them to what the first clean run shows, with headroom, and write the values here.
 
 ## Reporting results

@@ -14,7 +14,7 @@ report transport).
 │                     │  ▲                                            │
 │               Job   │  │  Event        (crossbeam channels)     │
 │                     ▼  │                                            │
-│              worker.rs: one thread per repository; one watcher      │
+│      worker.rs: one thread per shown repository; one watcher       │
 └─────────────────────────────┬───────────────────────────────────────┘
                               │ plain function calls
 ┌──────────────────────────── canopy-core ────────────────────────────┐
@@ -113,12 +113,12 @@ thread.
 | `app/palette.rs` | The command palette's entries, including the Appearance ones (Style, Density, Translucent surfaces, High contrast, Motion). |
 | `app/dispatch.rs` | Applies the actions a frame collected. |
 | `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch (each tab has its own due time, `RepoTab::next_fetch`; its first is `first_fetch_delay` after the tab is scheduled, between half the interval and a whole one by a hash of the path, so it does not depend on the tab's position), the timed refresh of the open request list. |
-| `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. Keeps commit, conflict and request-comment drafts per worktree during the run. |
+| `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. Keeps commit, conflict and request-comment drafts per worktree during the run. New tabs are `RepoTab::unloaded`; every change of the active tab goes through `CanopyApp::activate`, which loads it the first time it is shown, and the per-frame `load_active_tab` is the backstop (issue #62). |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`: waits until the window is final, keeps the pointer out of the picture (`raw_input_hook` drops pointer input), opens the dialog overlays and, for `--overlay menu-*`, a context menu by a synthetic right click on the widget it finds by its AccessKit name. |
 | `app/demo_requests.rs` | Invented pull and merge requests the requests view shows under `--screenshot --demo-requests`, each row carrying a rollup as with a token; never reachable in a normal run, no network. |
 | `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
-| `worker.rs` | Reads Git's pending merge message off the UI thread, applied only to an empty composer still in a merge. One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; its file watching is `watcher.rs`'s. `Job::PushTarget` answers with `Event::PushTarget` (where a force push would go, for its confirmation). Dropping a `Worker` (closing its tab) ends its thread and its watch on the shared watcher thread without waiting; the app's exit waits for them all at once (`wait_for_threads`), so no thread is still inside libgit2 or OpenSSL when the process tears them down. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it, but only in a trusted folder; elsewhere it sends `Event::DownloadsRefused` and fails the read with a message that says why. Every batch tells the tab whether the repository is trusted (`Event::Trust`, with the version of the trusted list that said so), and every `Job::Op` asks the list again when it starts: in a repository that is not trusted it ends in `OpFinished` with `READ_ONLY` and runs nothing (ADR 0014). |
+| `worker.rs` | Reads Git's pending merge message off the UI thread, applied only to an empty composer still in a merge. One background thread per repository whose tab has been shown (a `Worker::lazy` of a tab never shown has none, starts with `start`, and drops, with a WARN, any job sent to it before); `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; its file watching is `watcher.rs`'s. `Job::PushTarget` answers with `Event::PushTarget` (where a force push would go, for its confirmation). Dropping a `Worker` (closing its tab) ends its thread and its watch on the shared watcher thread without waiting; the app's exit waits for them all at once (`wait_for_threads`), so no thread is still inside libgit2 or OpenSSL when the process tears them down. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it, but only in a trusted folder; elsewhere it sends `Event::DownloadsRefused` and fails the read with a message that says why. Every batch tells the tab whether the repository is trusted (`Event::Trust`, with the version of the trusted list that said so), and every `Job::Op` asks the list again when it starts: in a repository that is not trusted it ends in `OpFinished` with `READ_ONLY` and runs nothing (ADR 0014). |
 | `watcher.rs` | One `notify` watcher on one thread for every open repository: watches only the outermost wanted folders, routes each change to the tabs it belongs to, debounces per tab and sends `Job::Refresh` or `Job::RefreshStatus`; a folder it cannot watch is reported once (`Job::WatchFailed`). See "File watching and refresh". |
 | `identity_worker.rs` | Serial background jobs for identity and supported Git configuration writes, including global recommendations; events refresh identity, Settings facts and affected tabs, with Git errors surfaced as toasts. |
 | `avatars.rs` | Twelve-hour persistent thumbnail and no-picture cache that classifies misses (about the author: cached; repository refused: the tab stops asking; unknown commit: another of the author's is tried, at most 1024 remembered; unreachable: a 10-minute pause), the off switch and budget checked before every provider request, `explain` (why pictures are missing, for the views), serialized across the per-host picture threads (which pull request jobs never wait for), an hourly lookup budget that leaves GitHub's anonymous quota to pull requests, files unused for 30 days deleted at start-up, with bounded PNG/JPEG decoding off the UI thread and a per-tab texture cache that drops the least recently shown picture past 256. |
@@ -251,9 +251,23 @@ repository and update the submodule pointer here.
 - Native folder choosers run on a separate thread and return through a bounded channel polled
   with `try_recv`. Dialogs share a picker; Settings owns its own. Closing the requesting field
   drops its receiver, so a late result cannot update a replacement field.
-- Each open repository owns one worker thread with its own `git2::Repository` handle
+- Each loaded repository owns one worker thread with its own `git2::Repository` handle
   (`Repository` is not `Sync`). Jobs for one repository therefore run in order, which keeps
   operations like "stage, then commit" consistent without locking.
+- Tabs load lazily (issue #62). A tab opened without being shown (a session restore, the second
+  and later `canopy <repo>…` arguments) is a `RepoTab` made with `RepoTab::unloaded`: its `Worker`
+  has no thread and no file watcher. Work that reaches every tab (timers, trust and settings
+  changes, auto-fetch) skips it, and a job sent to it anyway is dropped with a WARN naming the job
+  (a caller's mistake), so nothing reaches a repository nobody has looked at. Every change of the
+  active tab goes through `CanopyApp::activate` (switching, adding, replacing and closing tabs, the
+  repository settings action), which loads the tab at once if it has not been shown before
+  (`RepoTab::load`: `Worker::start`, then the first `Job::Refresh`); `CanopyApp::load_active_tab`,
+  which also runs every frame, is the backstop. Loading also starts that tab's configuration,
+  leftover-file and identity reads. The
+  tab strip shows an unloaded tab by name only, without its ahead/behind counts. Closing one drops
+  a worker with nothing to wait for. Threads therefore grow with the tabs shown, not with the tabs
+  open: a restore of 100 tabs starts one repository thread and one watcher until the user visits
+  another. (The opener thread, `git-identity` and the highlighters stay shared.)
 - `Job` and `Event` travel over `crossbeam-channel` channels. After sending a result the worker
   calls `request_repaint` on the egui context so an idle UI wakes up.
 - Long-running CLI jobs (clone, fetch, push, ...) stream progress lines back as intermediate

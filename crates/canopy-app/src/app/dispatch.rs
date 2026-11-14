@@ -176,16 +176,21 @@ impl CanopyApp {
                     if i < self.tabs.len() {
                         let closed = self.tabs.remove(i);
                         open::keep_draft(ctx, &closed);
-                        if self.active >= self.tabs.len() {
-                            self.active = self.tabs.len().saturating_sub(1);
-                        }
+                        // Whichever tab now sits at the active index (a neighbour, or the last one
+                        // when the closed tab was) is the shown one, so it loads now.
+                        self.activate(ctx, self.active);
                     }
                 }
                 Action::SwitchTab(i) => {
                     if i < self.tabs.len() {
-                        self.active = i;
-                        self.tabs[i].refresh();
-                        self.request_identity(IdentityJob::ReadRepo(self.tabs[i].path.clone()));
+                        // A tab shown for the first time loads in full ([`CanopyApp::activate`])
+                        // instead of refreshing.
+                        let loaded = self.tabs[i].is_loaded();
+                        self.activate(ctx, i);
+                        if loaded {
+                            self.tabs[i].refresh();
+                            self.request_identity(IdentityJob::ReadRepo(self.tabs[i].path.clone()));
+                        }
                     }
                 }
                 Action::SetView(v) => {
@@ -430,7 +435,7 @@ impl CanopyApp {
                 }
                 Action::RepositorySettings(path) => {
                     if let Some(i) = self.tabs.iter().position(|t| t.path == path) {
-                        self.active = i;
+                        self.activate(ctx, i);
                         self.open_settings(SettingsScreen::at(
                             settings_screen::Section::Repository,
                         ));
@@ -767,7 +772,9 @@ impl CanopyApp {
             }
             t.pull = self.settings.pull_for(&t.path);
             let options = self.settings.git_options();
-            if t.git_options != Some(options) {
+            // A tab that has not loaded has no thread to tell: it hears of them in the frame
+            // that loads it, as a new tab always did.
+            if t.is_loaded() && t.git_options != Some(options) {
                 t.git_options = Some(options);
                 t.worker.send(Job::Options(options));
             }

@@ -1267,7 +1267,9 @@ pub struct RepoTab {
 }
 
 impl RepoTab {
-    /// Opens a tab and asks for the first snapshot.
+    /// Opens a tab and asks for the first snapshot at once (the app opens tabs with
+    /// [`Self::unloaded`] and loads the shown one).
+    #[cfg(test)]
     pub fn new(
         path: PathBuf,
         ctx: &egui::Context,
@@ -1277,6 +1279,35 @@ impl RepoTab {
         let worker = Worker::spawn(path.clone(), ctx);
         worker.send(Job::Refresh(commit_limit));
         Self::with_worker(path, commit_limit, diff_prefs, worker)
+    }
+
+    /// Opens a tab that loads nothing until it is first shown ([`Self::load`]): no thread, no
+    /// file watcher, no snapshot. The tab strip shows its name meanwhile.
+    pub fn unloaded(
+        path: PathBuf,
+        ctx: &egui::Context,
+        commit_limit: usize,
+        diff_prefs: DiffPrefs,
+    ) -> Self {
+        let worker = Worker::lazy(path.clone(), ctx);
+        Self::with_worker(path, commit_limit, diff_prefs, worker)
+    }
+
+    /// Whether the tab's repository thread and file watcher run.
+    pub fn is_loaded(&self) -> bool {
+        self.worker.is_started()
+    }
+
+    /// Starts the thread and watcher of a tab opened with [`Self::unloaded`] and asks for its
+    /// first snapshot. Returns whether it did so now, `false` for a tab that was loaded already.
+    pub fn load(&mut self) -> bool {
+        if !self.worker.start() {
+            return false;
+        }
+        self.worker.send(Job::Refresh(self.commit_limit));
+        // The background fetch is scheduled afresh from now, not from when the tab was opened.
+        self.next_fetch = None;
+        true
     }
 
     pub(crate) fn with_worker(
@@ -1586,6 +1617,10 @@ impl RepoTab {
 
     /// Requests a full refresh.
     pub fn refresh(&self) {
+        // A tab that has not loaded has nothing to refresh: its first load reads everything.
+        if !self.is_loaded() {
+            return;
+        }
         self.worker.send(Job::Refresh(self.commit_limit));
     }
 
@@ -2057,6 +2092,10 @@ impl RepoTab {
     pub fn trust_changed(&mut self, version: u64) {
         self.trust_version = version;
         self.auto_fetch_failure = None;
+        // A tab that has not loaded has no worker to ask; its first load reads the trust anew.
+        if !self.is_loaded() {
+            return;
+        }
         // The worker tells the tab how the change left this repository.
         self.worker.send(Job::RefreshStatus);
         if self.template_asked && !self.template_loaded {
