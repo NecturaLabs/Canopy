@@ -1365,9 +1365,26 @@ fn a_force_push_says_where_it_will_push() {
     choose(PushDefault::Simple);
     let refused = copy.force_push_target().expect_err("git refuses it too");
     assert!(
-        refused.to_string().contains("push.default=simple"),
+        refused
+            .to_string()
+            .contains("Canopy's Push to choice (simple)"),
         "{refused}"
     );
+    // The configuration's own single-branch value is named as the configuration's.
+    git(copy.workdir(), &["config", "push.default", "simple"]);
+    copy.set_options(GitOptions::default());
+    let refused = copy.force_push_target().expect_err("git refuses it too");
+    assert!(
+        refused.to_string().contains("with push.default=simple"),
+        "{refused}"
+    );
+    // A configured `matching` names no one branch: Canopy's own choice decided, and the message
+    // does not blame the user's configuration for it.
+    git(copy.workdir(), &["config", "push.default", "matching"]);
+    let refused = copy.force_push_target().expect_err("git refuses it too");
+    let text = refused.to_string();
+    assert!(text.contains("Canopy's Push to choice (simple)"), "{text}");
+    assert!(!text.contains("push.default="), "{text}");
 }
 
 #[test]
