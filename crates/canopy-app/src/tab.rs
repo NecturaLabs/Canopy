@@ -4845,8 +4845,8 @@ mod tests {
         Ok(())
     }
 
-    /// An automatic fetch that fails the same way every interval (an untrusted folder's guard,
-    /// a server that is down) is shown once; a different failure, or a fetch that works, shows
+    /// An automatic fetch that fails the same way every interval (a server that is down) is shown
+    /// once; a different failure, or a fetch that works, shows
     /// again.
     #[test]
     fn an_automatic_fetch_failure_is_shown_once() -> Result<(), Box<dyn std::error::Error>> {
@@ -4865,7 +4865,7 @@ mod tests {
             events.send(e)?;
             Ok(tab.poll(&[]).len())
         };
-        let refusal = "Auto-fetch skipped: this repository's own files run programs";
+        let refusal = "could not read from the remote repository";
         assert_eq!(shown(&mut tab, finished(false, Err(refusal)))?, 1);
         assert_eq!(
             shown(&mut tab, finished(false, Err(refusal)))?,

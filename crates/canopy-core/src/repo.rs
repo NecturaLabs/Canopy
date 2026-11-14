@@ -600,10 +600,10 @@ impl Repo {
         partial::is_in_trusted_folder(&self.git, trusted)
     }
 
-    /// The configuration keys and hooks of the repository itself that make a fetch run a
-    /// program (see [`partial::fetch_programs`]); empty when there are none.
-    pub fn fetch_programs(&self) -> Vec<String> {
-        partial::fetch_programs(&self.git)
+    /// The configuration keys and hooks of the repository itself that make git run a program
+    /// (see [`crate::programs::programs`]); empty when there are none.
+    pub fn programs(&self) -> Vec<String> {
+        crate::programs::programs(&self.git)
     }
 
     /// The promisor remote a download would use first, to name in a progress message; `None` for

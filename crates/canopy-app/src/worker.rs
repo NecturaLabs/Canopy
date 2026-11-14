@@ -520,7 +520,7 @@ pub enum Event {
     TrustFolders(Vec<PathBuf>),
     /// Whether Canopy trusts this repository, as of the version of the trusted list
     /// (`trust::changes()`) that said so; sent when either changes. An untrusted repository is
-    /// read-only (`READ_ONLY`).
+    /// read-only (`read_only_message`).
     Trust {
         trusted: bool,
         version: u64,
@@ -1184,7 +1184,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             label,
                             kind,
                             announce,
-                            result: Err(READ_ONLY.to_owned()),
+                            result: Err(read_only_message(&repo.programs())),
                         });
                         continue;
                     }
@@ -1453,11 +1453,35 @@ const CHANGE_SEARCH_LIMIT: usize = 300;
 pub(crate) const NOT_TRUSTED: &str = "Canopy downloads it only for a trusted repository. \
                            Choose Trust… in the status bar to allow it for this one.";
 
+/// How a refusal in a repository that is not trusted begins.
+pub(crate) const READ_ONLY: &str = "This repository is not trusted, so it is read-only";
+
+/// The most program sources a refusal names before it counts the rest.
+const NAMED_PROGRAMS: usize = 4;
+
 /// Why an action did not run in a repository that is not trusted: every action runs `git`, which
-/// follows the repository's own hooks and configuration.
-pub(crate) const READ_ONLY: &str = "This repository is not trusted, so it is read-only: its hooks \
-                           and settings can run programs on this computer. Choose Trust… in the \
-                           banner above it to allow changes.";
+/// follows the repository's own hooks and configuration. `programs` are the ones its own files
+/// name ([`Repo::programs`]); the message says which.
+fn read_only_message(programs: &[String]) -> String {
+    let named = if programs.is_empty() {
+        "its hooks and settings can run programs on this computer".to_owned()
+    } else {
+        let shown = programs
+            .iter()
+            .take(NAMED_PROGRAMS)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = programs.len().saturating_sub(NAMED_PROGRAMS);
+        let more = if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        };
+        format!("its own files make git run programs ({shown}{more})")
+    };
+    format!("{READ_ONLY}: {named}. Choose Trust… in the banner above it to allow changes.")
+}
 
 /// Reports a download that was not run because the repository is not in a trusted folder, and
 /// returns the error the read ends with. `can_download()` is false for it: trying again cannot
@@ -1580,18 +1604,6 @@ fn snapshot_completing(
 }
 
 fn perform(repo: &Repo, op: Op, mut progress: impl FnMut(&str)) -> canopy_core::Result<String> {
-    // A fetch nobody asked for does not run what the repository's own files name.
-    if matches!(op, Op::Fetch { quiet: true, .. }) && !trusted_now(repo) {
-        let programs = repo.fetch_programs();
-        if !programs.is_empty() {
-            tracing::info!(programs = ?programs, "auto-fetch skipped: folder not trusted");
-            return Err(canopy_core::Error::Invalid(format!(
-                "Auto-fetch skipped: this repository's own files run programs ({}). \
-                 Trust its folder to allow it.",
-                programs.join(", ")
-            )));
-        }
-    }
     // A pull or a checkout moves what the submodules should be at.
     let moves = matches!(
         op,
@@ -1744,13 +1756,7 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         Op::StashApply { index, pop } => done(repo.stash_apply(index, pop)),
         Op::StashApplyCommit { oid, pop } => done(repo.stash_apply_commit(oid, pop)),
         Op::StashDrop(oid) => done(repo.stash_drop_commit(oid)),
-        Op::Fetch { prune, quiet } => {
-            if quiet && !trusted_now(repo) {
-                repo.fetch_unattended(prune, progress)
-            } else {
-                repo.fetch(None, prune, progress)
-            }
-        }
+        Op::Fetch { prune, .. } => repo.fetch(None, prune, progress),
         Op::Pull {
             strategy,
             follow_config,
@@ -3400,11 +3406,18 @@ mod read_tests {
             },
         ] {
             let label = op.label();
-            assert_eq!(
-                refusal_of(&worker, op).as_deref(),
-                Some(READ_ONLY),
-                "{label} is refused and says why"
+            let refusal = refusal_of(&worker, op).unwrap_or_default();
+            assert!(
+                refusal.starts_with(READ_ONLY),
+                "{label} is refused and says why: {refusal}"
             );
+            // The refusal names the program sources, not only that there are some.
+            for source in ["core.fsmonitor", "hook pre-commit"] {
+                assert!(
+                    refusal.contains(source),
+                    "{label} names {source}: {refusal}"
+                );
+            }
         }
         assert!(!hook.exists(), "the pre-commit hook did not run");
         assert!(!fsmonitor.exists(), "core.fsmonitor did not run");
@@ -3453,9 +3466,9 @@ mod read_tests {
         crate::trust::publish(&settings(true, &[]));
         let worker = Worker::spawn(repo.clone(), &egui::Context::default());
         assert!(!told(&worker), "untrusted to begin with");
-        assert_eq!(
-            refusal_of(&worker, Op::StageAll).as_deref(),
-            Some(READ_ONLY)
+        assert!(
+            refusal_of(&worker, Op::StageAll).is_some_and(|m| m.starts_with(READ_ONLY)),
+            "refused"
         );
 
         crate::trust::publish(&settings(false, &[]));
@@ -3468,9 +3481,8 @@ mod read_tests {
 
         crate::trust::publish(&settings(true, &[]));
         assert!(!told(&worker), "on again: read-only again");
-        assert_eq!(
-            refusal_of(&worker, Op::UnstageAll).as_deref(),
-            Some(READ_ONLY),
+        assert!(
+            refusal_of(&worker, Op::UnstageAll).is_some_and(|m| m.starts_with(READ_ONLY)),
             "on again: refused again"
         );
 
@@ -3590,67 +3602,6 @@ mod read_tests {
         assert!(matches!(events.last(), Some(Event::Details(d)) if d.oid == oldest));
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn an_automatic_fetch_runs_a_repositorys_own_programs_only_in_a_trusted_folder() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let root = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(root.path().join("home")).expect("home");
-        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
-        let up = root.path().join("up");
-        std::fs::create_dir(&up).expect("up");
-        git(&up, &["init", "-q", "-b", "main"]);
-        std::fs::write(up.join("a.txt"), "base\n").expect("write");
-        git(&up, &["add", "."]);
-        git(&up, &["commit", "-q", "-m", "base"]);
-        git(root.path(), &["clone", "-q", "up", "copy"]);
-        let copy = root.path().join("copy");
-        let marker = root.path().join("ran");
-        let probe = root.path().join("probe");
-        std::fs::write(
-            &probe,
-            format!(
-                "#!/bin/sh\ntouch '{}'\nexec git-upload-pack \"$@\"\n",
-                marker.display()
-            ),
-        )
-        .expect("probe");
-        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).expect("mode");
-        git(
-            &copy,
-            &[
-                "config",
-                "remote.origin.uploadpack",
-                &probe.to_string_lossy(),
-            ],
-        );
-        let repo = Repo::open(&copy).expect("open");
-        let fetch = |quiet| Op::Fetch {
-            prune: false,
-            quiet,
-        };
-
-        let error = perform(&repo, fetch(true), |_| {}).expect_err("not trusted");
-        assert!(
-            error.to_string().contains("remote.origin.uploadpack"),
-            "{error}"
-        );
-        assert!(!marker.exists(), "the program ran");
-
-        // A fetch the user starts is theirs to decide, as in a terminal.
-        perform(&repo, fetch(false), |_| {}).expect("fetch");
-        assert!(
-            marker.exists(),
-            "the user's own fetch does not run the program"
-        );
-        std::fs::remove_file(&marker).expect("reset");
-
-        crate::trust::add_for_tests(root.path().to_path_buf());
-        perform(&repo, fetch(true), |_| {}).expect("trusted");
-        assert!(marker.exists());
-    }
-
     /// #36: a diff that failed because a partial clone could not download its blobs is reported
     /// with the retryable marker, so the tab offers Retry rather than asking on every refresh.
     #[test]
@@ -3685,164 +3636,6 @@ mod read_tests {
             matches!(events.last(), Some(Event::Diff(_, Ok(_)))),
             "{events:?}"
         );
-    }
-
-    /// What an untrusted folder's own files can make a fetch run besides the keys the guard
-    /// lists: an `ext::` remote URL (with `protocol.ext.allow`), the command that advertises the
-    /// tips of an alternate (`core.alternateRefsCommand`) and the fetch of each submodule, which
-    /// reads the submodule's own configuration. An automatic fetch neutralises them on its
-    /// command line; the fetch the user starts runs as in a terminal.
-    #[cfg(unix)]
-    #[test]
-    fn an_automatic_fetch_neutralises_what_the_guard_cannot_list() {
-        use std::os::unix::fs::PermissionsExt;
-
-        fn script(path: &Path, marker: &Path, then: &str) {
-            std::fs::write(
-                path,
-                format!("#!/bin/sh\ntouch '{}'\n{then}\n", marker.display()),
-            )
-            .expect("script");
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("mode");
-        }
-        // Each case: how to arm `copy` so that a fetch runs `marker`'s script.
-        type Arm = fn(&Path, &Path, &Path, &Path);
-        let cases: [(&str, Arm); 3] = [
-            ("core.alternateRefsCommand", |root, up, copy, marker| {
-                let program = root.join("alternates");
-                script(&program, marker, "exit 0");
-                std::fs::write(
-                    copy.join(".git/objects/info/alternates"),
-                    format!("{}\n", up.join(".git/objects").display()),
-                )
-                .expect("alternates");
-                git(
-                    copy,
-                    &[
-                        "config",
-                        "core.alternateRefsCommand",
-                        &program.to_string_lossy(),
-                    ],
-                );
-            }),
-            ("an ext:: remote", |root, _, copy, marker| {
-                let program = root.join("ext");
-                script(&program, marker, "exec git-upload-pack \"$1\"");
-                git(copy, &["config", "protocol.ext.allow", "always"]);
-                let url = format!(
-                    "ext::{} %S {}",
-                    program.display(),
-                    root.join("up").display()
-                );
-                git(copy, &["config", "remote.origin.url", &url]);
-            }),
-            (
-                "a submodule's own configuration",
-                |root, _, copy, marker| {
-                    let program = root.join("sub-upload");
-                    script(&program, marker, "exec git-upload-pack \"$@\"");
-                    git(copy, &["config", "fetch.recurseSubmodules", "true"]);
-                    let sub = copy.join("sub");
-                    git(
-                        &sub,
-                        &[
-                            "config",
-                            "remote.origin.uploadpack",
-                            &program.to_string_lossy(),
-                        ],
-                    );
-                },
-            ),
-        ];
-        for (name, arm) in cases {
-            let root = tempfile::tempdir().expect("tempdir");
-            std::fs::create_dir_all(root.path().join("home")).expect("home");
-            std::fs::write(
-                root.path().join("home").join("gitconfig"),
-                "[protocol \"file\"]\n\tallow = always\n",
-            )
-            .expect("config");
-            let up = root.path().join("up");
-            std::fs::create_dir(&up).expect("up");
-            git(&up, &["init", "-q", "-b", "main"]);
-            std::fs::write(up.join("a.txt"), "base\n").expect("write");
-            git(&up, &["add", "."]);
-            git(&up, &["commit", "-q", "-m", "base"]);
-            let subsrc = root.path().join("subsrc");
-            std::fs::create_dir(&subsrc).expect("subsrc");
-            git(&subsrc, &["init", "-q", "-b", "main"]);
-            std::fs::write(subsrc.join("s.txt"), "s\n").expect("write");
-            git(&subsrc, &["add", "."]);
-            git(&subsrc, &["commit", "-q", "-m", "s"]);
-            git(
-                &up,
-                &["submodule", "add", "-q", &subsrc.to_string_lossy(), "sub"],
-            );
-            git(&up, &["commit", "-q", "-m", "sub"]);
-            git(
-                root.path(),
-                &["clone", "-q", "--recurse-submodules", "up", "copy"],
-            );
-            let copy = root.path().join("copy");
-            let marker = root.path().join("ran");
-            arm(root.path(), &up, &copy, &marker);
-            // The upstream moves, so the fetch has something to do.
-            std::fs::write(up.join("b.txt"), "more\n").expect("write");
-            git(&up, &["add", "."]);
-            git(&up, &["commit", "-q", "-m", "more"]);
-            let repo = Repo::open(&copy).expect("open");
-            let fetch = |quiet| Op::Fetch {
-                prune: false,
-                quiet,
-            };
-
-            // The guard's key list names none of these, so it lets the fetch through; the
-            // fetch itself must not run them.
-            let _ = perform(&repo, fetch(true), |_| {});
-            assert!(!marker.exists(), "{name}: an automatic fetch ran it");
-
-            // The user's own fetch is theirs to decide, as in a terminal.
-            let _ = perform(&repo, fetch(false), |_| {});
-            assert!(
-                marker.exists(),
-                "{name}: the control fetch never ran it, so the case proves nothing"
-            );
-        }
-    }
-
-    /// The guard names what it found in the message and the log: a credential helper keyed by a
-    /// URL with a password in it is named without the password.
-    #[test]
-    fn the_automatic_fetch_guard_redacts_what_it_names() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let copy = diverged_clone(root.path());
-        git(
-            &copy,
-            &[
-                "config",
-                "credential.https://ada:hunter2@example.com.helper",
-                "store",
-            ],
-        );
-        let repo = Repo::open(&copy).expect("open");
-        let fetch = Op::Fetch {
-            prune: false,
-            quiet: true,
-        };
-        let error = perform(&repo, fetch.clone(), |_| {}).expect_err("not trusted");
-        let message = error.to_string();
-        assert!(message.contains("credential."), "{message}");
-        assert!(!message.contains("hunter2"), "{message}");
-
-        git(
-            &copy,
-            &[
-                "config",
-                "--unset",
-                "credential.https://ada:hunter2@example.com.helper",
-            ],
-        );
-        perform(&repo, fetch, |_| {}).expect("nothing to refuse on");
     }
 
     /// #43: Publish works on any local branch, not only the checked-out one, and makes the remote

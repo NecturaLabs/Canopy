@@ -1023,42 +1023,9 @@ impl Repo {
         prune: bool,
         progress: impl FnMut(&str),
     ) -> Result<String> {
-        self.fetch_with(remote, prune, false, progress)
-    }
-
-    /// [`Self::fetch`] for a fetch nobody asked for in a repository nobody trusted: besides the
-    /// settings [`crate::partial::fetch_programs`] refuses on, it switches off on the command
-    /// line what a repository's own files could make a fetch run, so the list does not have to
-    /// name every way: the `ext::` transport, the command that advertises an alternate's tips,
-    /// and the fetch of each submodule (which reads that submodule's own configuration).
-    pub fn fetch_unattended(&self, prune: bool, progress: impl FnMut(&str)) -> Result<String> {
-        self.fetch_with(None, prune, true, progress)
-    }
-
-    fn fetch_with(
-        &self,
-        remote: Option<&str>,
-        prune: bool,
-        unattended: bool,
-        progress: impl FnMut(&str),
-    ) -> Result<String> {
         let (config, flags) = self.prune_args(prune);
-        let mut args: Vec<&str> = Vec::new();
-        if unattended {
-            args.extend([
-                "-c",
-                "core.alternateRefsCommand=",
-                "-c",
-                "protocol.ext.allow=never",
-                "-c",
-                "fetch.recurseSubmodules=false",
-            ]);
-        }
-        args.extend(config.iter().map(String::as_str));
+        let mut args: Vec<&str> = config.iter().map(String::as_str).collect();
         args.extend(["fetch", "--progress", "--tags"]);
-        if unattended {
-            args.push("--no-recurse-submodules");
-        }
         args.extend(flags);
         match remote {
             Some(r) => args.extend(["--", r]),

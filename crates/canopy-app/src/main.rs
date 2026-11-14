@@ -9,6 +9,9 @@ mod avatars;
 mod build_info;
 mod crash_reports;
 mod highlight;
+#[cfg(test)]
+#[cfg(unix)]
+mod hostile;
 mod hosting;
 mod identity_worker;
 mod keymap;
