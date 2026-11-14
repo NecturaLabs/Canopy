@@ -48,6 +48,10 @@ commits since the previous build.
 
 ### Fixed
 
+- A Git setting that holds the recommended value says "(Recommended)" after it in its closed select,
+  whether it was chosen by hand, written by Use recommended or read from your config, not only while
+  it is unset; one that does not shows the bare value. The first branch field says "(Recommended)"
+  under it while it holds `main`.
 - Settings → Integrations marks the program your system would use as "<name> (Default)" instead of
   "Recommended", and no longer names the `$TERMINAL`, `$VISUAL` or `$EDITOR` it came from. The desktop's
   default text editor is offered only when it is installed, like the other defaults. Searching
