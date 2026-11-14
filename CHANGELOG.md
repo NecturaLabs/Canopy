@@ -67,7 +67,6 @@ commits since the previous build.
   with a staging file an interrupted save left in its working tree gets one notification with the
   path; Canopy never deletes it, nor Git's own lock files. Exporting patches now stages in the
   temporary folder instead of the folder you chose.
-||||||| 395ef36
 - Discard on a submodule in Changes now works: the submodule goes back to the commit this
   repository records and changes to its tracked files are thrown away, while untracked files inside
   it stay (Settings → Git → Discard in a submodule can delete them too). It refuses when that would
