@@ -25,8 +25,8 @@ commands against real repositories.
 ## What the app logs, and what it does not
 
 The report is built from what Canopy writes today (`crates/canopy-app/src/logging.rs`,
-`worker.rs`, `canopy-core/src/cli.rs`). One JSON-lines file per run in the data folder's `logs/`
-(`~/.local/share/canopy/logs/canopy-<UTC start>-<pid>.jsonl`); every event carries `timestamp`,
+`worker.rs`, `canopy-core/src/cli.rs`). One JSON-lines file per run in the state folder's `logs/`
+(`~/.local/state/canopy/logs/canopy-<UTC start>-<pid>.jsonl`); every event carries `timestamp`,
 `level`, `target`, `threadName`, `message`, its own fields, and `span` (`{"name":"repo","path":...}`)
 when it comes from a repository's worker thread. `CANOPY_LOG` (or Settings -> Privacy -> Log
 detail) sets the detail; `tools/stress.sh open` sets `CANOPY_LOG` to the Detailed filter.

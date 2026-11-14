@@ -359,7 +359,7 @@ impl CanopyApp {
                         ToastKind::Error,
                         Topic::Error,
                         "No log folder",
-                        "This platform has no data folder for Canopy.",
+                        "This platform has no folder for Canopy's files.",
                     ),
                 },
                 Action::ShowUpdate => {

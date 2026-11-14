@@ -68,6 +68,10 @@ commits since the previous build.
 
 ### Fixed
 
+- Settings are written to a temporary file and renamed over the old one, on a thread of their own,
+  so a crash or a full disk while saving no longer leaves a truncated file. A settings file Canopy
+  cannot read is kept as `settings.json.bad` instead of being overwritten, Canopy starts with its
+  default settings and the notification center says so once.
 - What a killed or failed Canopy leaves behind is cleaned up or reported, and nothing of yours is
   deleted. At the next start Canopy removes its own staging files (the saved-token and avatar-cache
   staging files, the patch export's and the update's folders in the temporary folder, an
@@ -200,6 +204,11 @@ commits since the previous build.
 - Background fetching no longer fires in every tab at the same moment. A tab's first automatic fetch
   waits an extra part of the interval, from nothing for the first tab to nearly a whole interval for
   the last, so tabs opened together spread their fetches out; each tab then keeps its interval.
+- Canopy keeps its files in a folder for each kind of data (settings, logs and crash reports,
+  picture cache) following each system's convention, owner-only on Linux and macOS and marked `.canopy-data`
+  (unless a folder already holds someone else's files) so the installers' `--purge` finds them, and
+  moves what earlier builds kept in two other folders the first time it starts, never replacing a
+  file. The privacy policy lists the folders.
 - Canopy no longer changes your git configuration unless you turn on Settings → Git → Edit my git
   config (off by default). Until then the git configuration in Settings is read only and Use
   recommended is hidden; Canopy still passes its own choices to every git command. A settings file

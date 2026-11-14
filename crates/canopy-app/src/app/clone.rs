@@ -138,6 +138,7 @@ mod tests {
             gallery: None,
             glass_soak: None,
             frame_stats: crate::frame_stats::FrameStats::default(),
+            settings_writer: None,
         }
     }
 

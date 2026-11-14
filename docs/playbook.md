@@ -29,6 +29,17 @@ access), `python3 tools/stall-check.py`, `packaging/test-install.sh`.
   `crates/nectura-ui` checkout lags the recorded pointer (`git status` shows the submodule
   modified). Another session may own that checkout: work in your own git worktree and run
   `git submodule update --init` there.
+- Give every git worktree its own `CARGO_TARGET_DIR`. Cargo hashes the workspace's path crates
+  by their path relative to the workspace root and judges freshness by file mtime, so a worktree
+  whose files are older than another worktree's last build reuses that build: its tests then run
+  against the other worktree's `nectura-ui` and fail (or pass) for the wrong reason. A target is
+  about 10 GB; delete it once its branch merges, and keep 5 GB free on the drive.
+- Run cargo only under your real `HOME` (or with `RUSTUP_HOME` and `CARGO_HOME` set to the real
+  ones). Under a scratch `HOME` the rustup proxy installs a whole toolchain into it. Give a private
+  `HOME` to the app or `git` process only.
+- After a merge that `gh pr merge` refuses with "Base branch was modified", `main` moved during
+  the check: merge `main` again and rerun the whole check. Merge nothing by hand while another
+  branch's check runs.
 
 ## Running the app live (private Xvfb)
 
@@ -59,12 +70,12 @@ ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `x
    pull and merge requests view use `tools/screenshot.sh FIXTURE out.png --demo-requests SCENARIO`
    (it implies `--view requests`): invented requests, no network, only under `--screenshot`, in a
    repository without a GitHub or GitLab remote. Scenarios are in `tools/README.md`.
-5. Settings are `$XDG_DATA_HOME/io.necturalabs.canopy/app.ron`, written on a graceful close
+5. Settings are `$XDG_CONFIG_HOME/canopy/settings.json`, written atomically on a graceful close
    (`xdotool key ctrl+q`) and by the periodic autosave. A fresh scratch folder starts at the real
    first-launch path: terms ("I agree"), crash reports ("Don't send"), then the Git identity
-   question. To skip the dialogs edit key `canopy-settings-v1`: `accepted_terms:"<TERMS_VERSION>"`,
-   `accepted_privacy:"<PRIVACY_VERSION>"`, `crash_reports:Some(false)`, `seen_intro:true`,
-   `identity_asked:true`.
+   question. To skip the dialogs edit the `settings` object: `"accepted_terms": "<TERMS_VERSION>"`,
+   `"accepted_privacy": "<PRIVACY_VERSION>"`, `"crash_reports": false`, `"seen_intro": true`,
+   `"identity_asked": true`.
 6. Clean up: quit with Ctrl+Q, kill `Xvfb` by its PID, delete the scratch folder, and remove any
    file the run wrote outside it.
 

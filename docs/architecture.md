@@ -132,8 +132,10 @@ thread.
 | `highlight.rs` | Diff syntax highlighting (`syntect`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
 | `hostile.rs` | Test only (Unix): one hostile repository per program source (hooks, filters, merge driver, submodule update command, `core.sshCommand`, credential helper, `gpg.program`). Ordinary git runs the program, the repository thread of an untrusted repository refuses the action and starts nothing, a trusted one runs it as in a terminal. |
 | `keymap.rs` | Every keyboard shortcut in one table (`BINDINGS`) that dispatches keys and renders the cheatsheet and Settings → Keyboard; the keys the user changed (`Settings::keybindings`) are applied on top of it each frame (`apply_saved`) and Settings → Keyboard listens for a new key with `capture_key`; see `docs/keybindings.md`. |
-| `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders and the trust safety switch, per-repository choices (`repos`, keyed by working directory), recent and open repositories. A saved theme or option this build no longer has reads as its default (`known`, `known_option`) and a setting it no longer has is ignored; the next save writes the file without either. |
+| `settings.rs` | Settings persisted through `settings_store.rs`: appearance, Git, integrations, updates, privacy answers, trusted folders and the trust safety switch, per-repository choices (`repos`, keyed by working directory), recent and open repositories. A saved theme or option this build no longer has reads as its default (`known`, `known_option`) and a setting it no longer has is ignored; the next save writes the file without either. |
 | `settings_file.rs` | Export, import and reset of preferences: the versioned JSON format, the keys that are never exported or replaced (consent, trust, session memory), validation, and the file choosers on a background thread. |
+| `settings_store.rs` | The settings file (`settings.json`, schema 1): atomic writes (temporary file, flush, rename, folder flush) on the `settings-writer` thread, and reading with recovery (an unreadable file is kept as `settings.json.bad`, ADR 0018). |
+| `storage.rs` | Canopy's per-OS config, data, state and cache folders, their `.canopy-data` markers and permissions, and the one-time move from the folders earlier builds used (ADR 0018). |
 | `request_view.rs` | The request list's text, draft, checks, review and author filters and its sort, applied to the loaded rows (`RequestView::visible`), with the part the host can do (`host_query`) sent as a search once the list is longer than a page (`remaining` is what is left for the loaded rows); one value per repository in `Settings::repo_requests`, kept like the sidebar's sections (`Action::RememberRequestView`). |
 | `repo_config.rs` | Background Git facts for Settings and notifications: effective and directly editable supported values, remote-specific pruning, pull/autostash precedence, signing diagnostics and hooks-path information; failed reads retain contextual errors rather than masquerading as absent configuration. |
 | `system_apps.rs` | The editor, terminal and file manager the system provides (`$VISUAL`/`$EDITOR`/`$TERMINAL`, desktop defaults, `PATH`) and the installed ones (Linux desktop entries, macOS `/Applications` and Spotlight, Windows App Paths), resolved on one background thread and cached; `launch` is what the open actions run: the command chosen in Settings, else the system's. Every program has an `id`, what it runs and never its name or command text (Linux: the executable with its folder resolved, or the entry itself for a launcher such as `flatpak`, `env` or `sh`; macOS: the bundle; Windows: the App Paths name), so one program found twice is one row and the system's choice (`SystemChoice::is`) is the listed program it starts, not a second row. `KNOWN` is the table of well-known programs (commands and desktop entry ids on Linux, bundle on macOS, App Paths key on Windows); the ones found as programs but not installed are `Apps::missing` (Linux and macOS only; ADR 0016), and `launch` swaps a saved choice that starts one of them by its bare name, or by a path to a file that is gone (`Apps::absent`, checked on the detection thread from the saved commands `refresh` is given; a path to a file that is there runs as typed), for the system's program with a `Fallback` the app reports. An entry whose `Exec` carries `--server`, `--daemon` or `--gapplication-service`, or runs `footclient`, `urxvtc` or `emacsclient`, is a helper and is not listed. |
@@ -413,14 +415,23 @@ which covers file systems where watching is unreliable (network mounts, some WSL
 
 ## Persistence
 
-Settings (appearance, Git and integration preferences, the terms and crash-report answers, recent
-and open repositories) are serialised with serde through eframe's storage under the key
-`canopy-settings-v1`, which writes to the platform's application data directory
-(`~/.local/share/canopy/` on Linux). No hosting token is saved (ADR 0017; an earlier build's
-`tokens.json` is deleted at start), and `logs/` and `crashes/` hold the per-run logs and local
-crash reports. Repository state is never cached on disk; it is always read from the
-repository. GitHub issue #40 (secure persistent storage) moves all of this into
-Canopy-specific folders.
+Files live in per-OS folders (`storage.rs`, ADR 0018): config, data, state and cache, each owner-only
+(0700 on Unix) and claimed with the marker `.canopy-data`, which the installers' `--purge` looks
+for (a folder holding someone else's file is used but left unmarked, and `--purge` leaves it). Linux: `$XDG_CONFIG_HOME/canopy`, `$XDG_DATA_HOME/canopy`, `$XDG_STATE_HOME/canopy`,
+`$XDG_CACHE_HOME/canopy`; macOS and Windows: the table in `packaging/README.md`. Settings
+(appearance, Git and integration preferences, the terms and crash-report answers, recent and open
+repositories) are `settings.json` in the config folder, `{"schema": 1, "settings": {…}}`
+(`settings_store.rs`). A frame that saves only serialises them; the `settings-writer` thread
+writes a temporary file, flushes it, renames it over the real one and flushes the folder, so an
+interrupted write leaves the previous file. An unreadable file is moved to `settings.json.bad`,
+defaults load and the notification center says so once. eframe's `app.ron` (same folder) keeps
+the window's place and size and the notifications. No hosting token is saved (ADR 0017; an earlier
+build's `tokens.json` is deleted at start from its old folder, and the move leaves it there),
+`logs/` and `crashes/` in the state folder hold the per-run logs and local crash reports, and
+`avatars/` in the cache folder the profile pictures. The data folder is created and marked but
+holds nothing yet. At start, `storage::migrate` moves what the two folders of earlier builds held
+(`eframe::storage_dir("canopy")` and the one named after the app id) a file at a time, never
+overwriting. Repository state is never cached on disk; it is always read from the repository.
 
 ## Error handling
 
