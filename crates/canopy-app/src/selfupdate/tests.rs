@@ -469,6 +469,41 @@ fn a_rollback_that_cannot_finish_says_where_the_old_files_are() {
     );
 }
 
+/// The update's work folder (with whatever staging was left) is deleted when the update returns,
+/// so the next start's sweep sees no staging after a rollback that failed. It must still not
+/// take the old version's only copy for a finished swap's leftovers.
+#[test]
+fn a_rollback_that_could_not_finish_is_not_swept_away_at_the_next_start() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[("bin/canopy", "old binary"), ("share/old", "old share")],
+    );
+    let new = tmp.path().join("new");
+    folder(
+        &new,
+        &[("bin/canopy", "new binary"), ("share/new", "new share")],
+    );
+    let previous = root.join(".previous.t");
+    let mut moves = 0;
+    let err = swap_in(&root, &new, &previous, &["bin", "share"], &mut |a, b| {
+        moves += 1;
+        // Both go aside, the new `bin` fails, and another process makes `share` in the way.
+        if moves == 3 {
+            write(&root.join("share/squatter"), "squatter");
+            return Err(io::Error::other("failed"));
+        }
+        fs::rename(a, b)
+    })
+    .expect_err("failed");
+    assert!(err.contains("not all of the previous version"), "{err}");
+    let refusal = sweep(&root).expect_err("the start sweep refuses");
+    assert!(refusal.contains("run the installer again"), "{refusal}");
+    assert_eq!(read(&previous.join("share/old")), "old share");
+    assert_eq!(read(&root.join("bin/canopy")), "old binary");
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sweeping, locking, the receipt
 
@@ -497,6 +532,460 @@ fn a_sweep_refuses_to_delete_the_only_copy_of_the_old_version() {
     let err = sweep(&root).expect_err("refused");
     assert!(err.contains("run the installer again"), "{err}");
     assert_eq!(read(&root.join(".previous.2/bin/canopy")), "the only one");
+}
+
+#[test]
+fn a_sweep_removes_the_receipts_staging_file() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[
+            ("bin/canopy", "x"),
+            (RECEIPT, "receipt"),
+            (".canopy-install.new", "half"),
+        ],
+    );
+    sweep(&root).expect("sweep");
+    assert_eq!(
+        names(&root),
+        [RECEIPT, "bin"].map(String::from).into_iter().collect()
+    );
+    assert_eq!(read(&root.join(RECEIPT)), "receipt");
+}
+
+/// The folder an update killed while moving the old version aside leaves: some old entries are
+/// still in the install, some are in `.previous`, and the whole new version waits in `.staging`.
+#[test]
+fn a_kill_while_moving_the_old_version_aside_is_put_back_by_the_next_sweep() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[
+            ("share/old", "old share"),
+            ("VERSION", "412"),
+            (".previous.1-1-0/bin/canopy", "old binary"),
+            (".staging.1-1-1/new/bin/canopy", "new binary"),
+            (".staging.1-1-1/new/share/new", "new share"),
+            (".staging.1-1-1/new/VERSION", "413"),
+            ("mine.txt", "not Canopy's"),
+        ],
+    );
+    sweep(&root).expect("sweep");
+    assert_eq!(read(&root.join("bin/canopy")), "old binary");
+    assert_eq!(read(&root.join("share/old")), "old share");
+    assert_eq!(read(&root.join("VERSION")), "412");
+    assert_eq!(read(&root.join("mine.txt")), "not Canopy's");
+    assert!(!root.join("share/new").exists());
+    assert_eq!(
+        names(&root),
+        ["VERSION", "bin", "mine.txt", "share"]
+            .map(String::from)
+            .into_iter()
+            .collect()
+    );
+}
+
+/// Killed while moving the new version in: `bin` is new, `share` and `VERSION` are still waiting
+/// in `.staging` and the old ones are all in `.previous`. A sweep that took `bin/canopy` for proof
+/// that the install is whole would delete the old `share` and leave a new binary without it.
+#[test]
+fn a_kill_while_moving_the_new_version_in_is_rolled_back_by_the_next_sweep() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[
+            ("bin/canopy", "new binary"),
+            (".previous.1-1-0/bin/canopy", "old binary"),
+            (".previous.1-1-0/share/old", "old share"),
+            (".previous.1-1-0/VERSION", "412"),
+            (".staging.1-1-1/new/share/new", "new share"),
+            (".staging.1-1-1/new/VERSION", "413"),
+        ],
+    );
+    sweep(&root).expect("sweep");
+    assert_eq!(read(&root.join("bin/canopy")), "old binary");
+    assert_eq!(read(&root.join("share/old")), "old share");
+    assert_eq!(read(&root.join("VERSION")), "412");
+    assert!(!root.join("share/new").exists());
+    assert_eq!(
+        names(&root),
+        ["VERSION", "bin", "share"]
+            .map(String::from)
+            .into_iter()
+            .collect()
+    );
+}
+
+/// Killed while moving the new version in, and the old version cannot be put back (here its
+/// folder cannot be read): the sweep refuses and keeps both halves for the installer to repair,
+/// instead of deleting the staged rest of the new version and the old one.
+#[cfg(unix)]
+#[test]
+fn a_halfway_swap_that_cannot_be_put_back_keeps_both_versions() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[
+            ("bin/canopy", "new binary"),
+            (".previous.1-1-0/bin/canopy", "old binary"),
+            (".previous.1-1-0/share/old", "old share"),
+            (".staging.1-1-1/new/share/new", "new share"),
+        ],
+    );
+    let previous = root.join(".previous.1-1-0");
+    fs::set_permissions(&previous, fs::Permissions::from_mode(0o000)).expect("lock");
+    let swept = sweep(&root);
+    fs::set_permissions(&previous, fs::Permissions::from_mode(0o755)).expect("unlock");
+    let refusal = swept.expect_err("refused");
+    assert!(refusal.contains("run the installer again"), "{refusal}");
+    assert_eq!(
+        read(&root.join(".staging.1-1-1/new/share/new")),
+        "new share"
+    );
+    assert_eq!(read(&previous.join("share/old")), "old share");
+    assert_eq!(read(&root.join("bin/canopy")), "new binary");
+}
+
+/// Killed after the swap finished, before the old files were deleted: the new version is whole
+/// and only the old copy is cleared.
+#[test]
+fn a_kill_after_the_swap_keeps_the_new_version_and_clears_the_old_one() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[
+            ("bin/canopy", "new binary"),
+            ("share/new", "new share"),
+            (".previous.1-1-0/bin/canopy", "old binary"),
+            (".previous.1-1-0/share/old", "old share"),
+            (".staging.1-1-1/new/.keep", "nothing waits here"),
+        ],
+    );
+    sweep(&root).expect("sweep");
+    assert_eq!(read(&root.join("bin/canopy")), "new binary");
+    assert_eq!(read(&root.join("share/new")), "new share");
+    assert_eq!(
+        names(&root),
+        ["bin", "share"].map(String::from).into_iter().collect()
+    );
+}
+
+#[test]
+fn a_sweep_at_start_leaves_an_install_somebody_else_holds_alone() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(&root, &[("bin/canopy", "x"), (".staging.1-1-1/a", "x")]);
+    let lock = Lock::take(&root).expect("another update holds the lock");
+    sweep_unlocked(&root).expect("nothing to do");
+    assert!(
+        root.join(".staging.1-1-1/a").is_file(),
+        "an update in progress is not touched"
+    );
+    drop(lock);
+    sweep_unlocked(&root).expect("sweep");
+    assert_eq!(
+        names(&root),
+        ["bin"].map(String::from).into_iter().collect()
+    );
+    assert!(!root.join(".lock").exists(), "the lock is released");
+}
+
+/// Runs a swap of the old `bin`, `share` and `VERSION` for a new version that also has `legal`,
+/// and stops it as a kill would after `moves` moves (a panic that nothing undoes).
+fn killed_swap(moves: usize) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[
+            ("bin/canopy", "old binary"),
+            ("share/old", "old share"),
+            ("VERSION", "412"),
+            ("mine.txt", "not Canopy's"),
+        ],
+    );
+    let new = root.join(".staging.1-1-1/new");
+    folder(
+        &new,
+        &[
+            ("bin/canopy", "new binary"),
+            ("share/new", "new share"),
+            ("VERSION", "413"),
+            ("legal/new", "new legal"),
+        ],
+    );
+    let mut done = 0;
+    let swap = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        swap_in(
+            &root,
+            &new,
+            &root.join(".previous.1-1-0"),
+            &ENTRIES,
+            &mut |a, b| {
+                assert!(done < moves, "killed");
+                done += 1;
+                fs::rename(a, b)
+            },
+        )
+    }));
+    assert!(swap.is_err(), "the swap was stopped");
+    (tmp, root)
+}
+
+/// Killed while moving the new version in, after `legal`, which the old version has none of: it
+/// is the new version's, and goes with the rest of it.
+#[test]
+fn a_kill_in_the_second_phase_removes_every_entry_of_the_new_version_that_moved_in() {
+    // Three old entries aside, then VERSION, bin and legal in; share still waits.
+    let (_tmp, root) = killed_swap(6);
+    assert_eq!(read(&root.join("legal/new")), "new legal", "moved in");
+    assert!(sweep(&root).expect("sweep"));
+    assert_eq!(read(&root.join("bin/canopy")), "old binary");
+    assert_eq!(read(&root.join("share/old")), "old share");
+    assert_eq!(read(&root.join("VERSION")), "412");
+    assert_eq!(read(&root.join("mine.txt")), "not Canopy's");
+    assert_eq!(
+        names(&root),
+        ["VERSION", "bin", "mine.txt", "share"]
+            .map(String::from)
+            .into_iter()
+            .collect(),
+        "the new-only legal folder is gone with the staging and the old copy"
+    );
+}
+
+/// Killed while moving the old version aside: nothing of the new one moved in, so an old entry
+/// that has not moved yet is not the new version's and stays.
+#[test]
+fn a_kill_in_the_first_phase_leaves_the_old_entries_that_did_not_move_alone() {
+    let (_tmp, root) = killed_swap(1);
+    assert!(sweep(&root).expect("sweep"));
+    assert_eq!(read(&root.join("bin/canopy")), "old binary");
+    assert_eq!(read(&root.join("share/old")), "old share");
+    assert_eq!(read(&root.join("VERSION")), "412");
+    assert!(!root.join("legal").exists());
+    assert_eq!(
+        names(&root),
+        ["VERSION", "bin", "mine.txt", "share"]
+            .map(String::from)
+            .into_iter()
+            .collect()
+    );
+}
+
+/// A process id that certainly belongs to no process: a child that has been waited for.
+#[cfg(target_os = "linux")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "starts and waits for a throwaway child to get a process id that is gone"
+)]
+fn dead_pid() -> u32 {
+    let mut child = Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("spawn");
+    let pid = child.id();
+    child.wait().expect("wait");
+    assert!(!Path::new("/proc").join(pid.to_string()).exists());
+    pid
+}
+
+/// A lock folder as a killed update leaves it: `mkdir` made it, `Drop` never ran.
+fn left_lock(root: &Path, pid: Option<&str>) {
+    fs::create_dir_all(root.join(".lock")).expect("lock");
+    if let Some(pid) = pid {
+        write(&root.join(".lock/pid"), pid);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_lock_a_killed_update_left_is_taken_over_and_the_start_sweep_runs() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(&root, &[("bin/canopy", "x"), (".staging.1-1-1/a", "x")]);
+    left_lock(&root, Some(&format!("{}\n", dead_pid())));
+    let swept = sweep_unlocked(&root).expect("sweep");
+    assert_eq!(swept.stuck_lock, None);
+    assert_eq!(
+        names(&root),
+        ["bin"].map(String::from).into_iter().collect(),
+        "the dead update's staging and lock are gone"
+    );
+}
+
+/// A takeover killed between moving a dead lock aside and deleting it leaves `.lock-dead.*`; the
+/// sweep clears it once the pid it names is gone, and not before.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_sweep_clears_the_dead_lock_a_killed_takeover_left_aside() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(&root, &[("bin/canopy", "x")]);
+    write(&root.join(".lock-dead.a/pid"), &format!("{}\n", dead_pid()));
+    write(
+        &root.join(".lock-dead.b/pid"),
+        &format!("{}\n", std::process::id()),
+    );
+    write(&root.join(".lock-dead.c/other"), "no process id");
+    sweep(&root).expect("sweep");
+    assert_eq!(
+        names(&root),
+        [".lock-dead.b", ".lock-dead.c", "bin"]
+            .map(String::from)
+            .into_iter()
+            .collect(),
+        "only the one whose process is gone"
+    );
+}
+
+#[test]
+fn a_lock_whose_owner_is_running_is_left_alone() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(&root, &[("bin/canopy", "x"), (".staging.1-1-1/a", "x")]);
+    left_lock(&root, Some(&std::process::id().to_string()));
+    assert_eq!(
+        sweep_unlocked(&root).expect("nothing to do"),
+        UpdateSweep::default(),
+        "a running update is not reported"
+    );
+    assert!(root.join(".staging.1-1-1/a").is_file());
+    assert_eq!(
+        read(&root.join(".lock/pid")),
+        std::process::id().to_string()
+    );
+}
+
+#[test]
+fn a_lock_without_a_process_id_is_left_alone() {
+    for pid in [None, Some(""), Some("not a number"), Some("-5"), Some("0")] {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let root = tmp.path().join("root");
+        folder(&root, &[("bin/canopy", "x"), (".staging.1-1-1/a", "x")]);
+        left_lock(&root, pid);
+        let swept = sweep_unlocked(&root).expect("nothing to do");
+        assert_eq!(
+            swept.stuck_lock,
+            Some(root.join(".lock")),
+            "it is reported: {pid:?}"
+        );
+        assert!(!swept.put_back);
+        assert!(root.join(".staging.1-1-1/a").is_file(), "{pid:?}");
+        assert!(root.join(".lock").is_dir(), "{pid:?}");
+    }
+}
+
+#[test]
+fn the_lock_records_its_owner_and_removes_the_record() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let lock = Lock::take(tmp.path()).expect("take");
+    assert_eq!(
+        read(&tmp.path().join(".lock/pid")).trim(),
+        std::process::id().to_string()
+    );
+    drop(lock);
+    assert!(!tmp.path().join(".lock").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_update_takes_over_the_lock_of_a_dead_one() {
+    let old = installed();
+    left_lock(&old.root, Some(&dead_pid().to_string()));
+    let err = install_managed(
+        &old.root,
+        &plan_for("http://127.0.0.1:1", b"x", None),
+        &mut |_| {},
+    )
+    .expect_err("no server");
+    assert!(
+        !err.contains("another Canopy install or update"),
+        "the dead lock did not stop it: {err}"
+    );
+    assert!(!old.root.join(".lock").exists(), "released afterwards");
+}
+
+#[test]
+fn the_work_folder_guard_removes_the_folder_it_guards() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let work = tmp.path().join("canopy-update.1-2-3");
+    write(&work.join("install.sh"), "script");
+    drop(Cleanup(work.clone()));
+    assert!(!work.exists());
+}
+
+#[test]
+fn a_registered_file_that_cannot_be_replaced_leaves_no_staging_file() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let from = tmp.path().join("from");
+    write(&from, "new");
+    // The copy works, the final rename onto a folder does not.
+    let to = tmp.path().join("apps/entry.desktop");
+    fs::create_dir_all(&to).expect("a folder in the way");
+    put_file(&from, &to).expect_err("cannot replace a folder");
+    // And a source that is gone fails before anything is written.
+    put_file(&tmp.path().join("missing"), &tmp.path().join("apps/other")).expect_err("no source");
+    assert_eq!(
+        names(&tmp.path().join("apps")),
+        ["entry.desktop"].map(String::from).into()
+    );
+}
+
+#[test]
+fn a_receipt_that_cannot_be_replaced_leaves_no_staging_file() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    fs::create_dir_all(root.join(RECEIPT)).expect("a folder where the receipt goes");
+    let mut notes = Vec::new();
+    integrate_with(&root, 413, &Receipt::default(), &mut notes, &[]);
+    assert!(!root.join(".canopy-install.new").exists());
+    assert!(
+        notes.iter().any(|n| n.contains("could not update")),
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn a_file_an_interrupted_write_left_beside_a_registered_one_is_reported_never_deleted() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let apps = tmp.path().join("apps");
+    let entry = apps.join("io.necturalabs.Canopy.desktop");
+    write(&entry, "entry");
+    let gone = apps.join(format!(
+        "{}.canopy-new.{}",
+        "io.necturalabs.Canopy.desktop",
+        u32::MAX
+    ));
+    write(&gone, "half a copy");
+    // Not this entry's, not a process id, and a write in progress in this very process.
+    write(
+        &apps.join(format!("other.desktop.canopy-new.{}", u32::MAX)),
+        "x",
+    );
+    write(
+        &apps.join("io.necturalabs.Canopy.desktop.canopy-new.abc"),
+        "x",
+    );
+    write(
+        &apps.join(format!(
+            "io.necturalabs.Canopy.desktop.canopy-new.{}",
+            std::process::id()
+        )),
+        "being written",
+    );
+    assert_eq!(abandoned_beside(&entry), std::slice::from_ref(&gone));
+    let mut notes = Vec::new();
+    note_abandoned_beside(&entry, &mut notes);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains(&gone.display().to_string()), "{notes:?}");
+    assert_eq!(read(&gone), "half a copy", "it is never deleted");
 }
 
 #[test]

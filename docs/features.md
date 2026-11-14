@@ -28,6 +28,7 @@ Update this table in the same change that adds or alters a feature.
 |---|---|---|---|---|
 | Open, init | Done | Yes | Yes | Yes |
 | Ignore management: file/extension/folder/pattern rules, preview, local/global exclude, ignored paths, why ignored, stop tracking; optional starter templates on init | In progress (#59) | Yes | Yes | Yes |
+| Leftovers of failed or killed operations: Canopy's own staging files are removed at the next start once their process is gone; an update killed halfway is put back and a lock a killed update or install left is taken over (Linux, where the process can be shown gone), each with a notification; a lock whose holder cannot be told is left and reported; a staging file an interrupted save left in a working tree is reported in the notification center with its path and never deleted; Git's lock files stay and git's message names them | Unreleased | ? | ? | ? |
 | Clone with live progress; a clone whose submodules cannot be downloaded is kept and opened with git's message, never deleted | Done | Yes | Yes | Yes |
 | Several repositories in tabs; closing or changing a worktree preserves unsent commit messages, conflict edits and request comments for this session | Done | Yes | Yes | Yes |
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
@@ -80,12 +81,15 @@ A download of the working tree status that failed (server unreachable) is rememb
 refreshes the file watcher makes show the same message without trying the network again, until
 the user presses Retry or Refresh. A download is killed after ten minutes.
 
-The same list guards auto-fetch. A repository whose own files name a program a fetch would run
-(`core.sshCommand`, a credential helper, `remote.<name>.uploadpack`, `core.hooksPath`, a
-`reference-transaction` or `pre-auto-gc` hook) is not fetched by the timer outside a trusted
-folder, and the failure names what it found; a fetch the user starts runs as in a terminal. Every
-git command Canopy runs disables `core.fsmonitor`, which a repository can set to a command that
-git would run on every `git status`.
+An untrusted repository starts no program: the refusal of an action names what the repository's own
+files would run (`core.sshCommand`, `hook pre-commit`, `filter.lfs.clean`, a merge driver, a
+credential helper, `gpg.program`, a `submodule.<name>.update` command ...), and the reads that run
+`git` (blame, a file's history, the change search) switch off textconv and external diff programs
+on their command line. The branch cleanup's squash-merge check and the update-from-base preview
+use `git merge-tree`, which runs merge drivers: an untrusted repository skips the squash check
+(and trusting it runs the check) and refuses the preview. Every git command Canopy runs disables
+`core.fsmonitor`, which a repository can set to a command that git would run on every `git status`.
+In a trusted repository git runs these as in a terminal.
 
 ## History
 

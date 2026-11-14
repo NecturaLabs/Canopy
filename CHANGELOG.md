@@ -68,6 +68,21 @@ commits since the previous build.
 
 ### Fixed
 
+- What a killed or failed Canopy leaves behind is cleaned up or reported, and nothing of yours is
+  deleted. At the next start Canopy removes its own staging files (the saved-token and avatar-cache
+  staging files, the patch export's and the update's folders in the temporary folder, an
+  interrupted update's staging in the install folder) once the process that made them is gone. An
+  update killed halfway through its swap is undone and the old version is back, with a
+  notification; the lock a killed update or install leaves in the install folder is taken over on
+  Linux, where Canopy can tell its process is gone. Where it cannot (no process id in the lock,
+  another system) it clears nothing and says so in a notification; so does an update it refuses
+  to clear because no Canopy would be left. A repository you open with a staging file an
+  interrupted save left in its working tree gets one notification with the path; Canopy never
+  deletes it, nor Git's own lock files. An update whose roll-back could not put every old file
+  back keeps them, and the next start refuses to delete them instead of mistaking them for a
+  finished update's leftovers. The leftovers of a lock takeover that was itself killed are cleared
+  once their process is gone. Exporting patches now stages in the temporary folder
+  instead of the folder you chose.
 - A Git setting that holds the recommended value says "(Recommended)" after it in its closed select,
   whether it was chosen by hand, written by Use recommended or read from your config, not only while
   it is unset; one that does not shows the bare value. The first branch field says "(Recommended)"
@@ -121,11 +136,13 @@ commits since the previous build.
   a URL in a title or in Git's error text, and the Privacy Policy now lists those saved
   notifications among the data that stays on your computer (updated 9 October 2026).
 
-- An automatic fetch in a folder you have not trusted now also switches off, on its command line,
-  the `ext::` transport, the command that advertises an alternate's tips and the fetch of
-  submodules, which a repository's own files could use to run a program; a setting the guard
-  names with a password in its URL is shown without it; and a failure of an automatic fetch that
-  is the same as the last one is shown once instead of at every interval.
+- A repository that is not trusted is read-only, and the refusal now names what its own files would
+  run (a hook, a clean or smudge filter, a merge driver, `core.sshCommand`, a credential helper,
+  `gpg.program`, a submodule update command) instead of saying only that programs could run, and
+  says only what is true when it finds none. The checks that only the automatic fetch made now
+  cover the whole repository. In a repository that is not trusted the branch cleanup no longer
+  checks for squash merges (git's merge machinery runs merge drivers) and the base comparison is
+  refused; both work as before once the folder is trusted.
 
 - Feature-branch workflows. The sidebar's Branches group names by their `/` prefixes into
   collapsible folders (nested for deeper prefixes, open by default, remembered per repository,
