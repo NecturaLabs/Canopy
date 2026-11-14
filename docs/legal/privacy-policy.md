@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 14 October 2026
+Last updated: 14 November 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -62,7 +62,7 @@ Sentry (Functional Software, Inc., United States) receives and stores crash data
 
 ## How long we keep crash data
 
-Sentry deletes crash reports and session records automatically 90 days after it receives them.
+Sentry deletes crash reports automatically 30 days after it receives them, and session records no later than 90 days after.
 
 ## Changing your answer
 

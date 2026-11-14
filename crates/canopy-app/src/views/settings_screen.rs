@@ -5295,7 +5295,7 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
             ui,
             "Send crash reports",
             "When Canopy crashes, send the error and a stack trace to NecturaLabs.",
-            "Also sent: the Canopy version, your operating system and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
+            "Also sent: the Canopy version, your operating system and a short record of each session. Stored by Sentry in the EU: reports are deleted after 30 days, session records within 90. Takes effect immediately.",
             |ui| {
                 switch(ui, &mut on, "Send crash reports");
             },
