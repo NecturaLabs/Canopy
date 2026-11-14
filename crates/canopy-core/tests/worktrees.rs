@@ -599,3 +599,109 @@ fn the_forget_preview_names_what_forgetting_loses() {
     );
     assert!(contains.trim().is_empty(), "{contains}");
 }
+
+impl Fixture {
+    /// A repository `deps/sub` as a submodule of the main one, committed, and a linked folder
+    /// `name` where it is initialized (`init`) or not.
+    fn with_submodule(&self, name: &str, init: bool) -> PathBuf {
+        let sub = self.beside.join("sub-origin");
+        if !sub.exists() {
+            fs::create_dir_all(&sub).expect("folder");
+            git(&sub, &["init", "-q", "-b", "main"]);
+            fs::write(sub.join("lib.txt"), "lib\n").expect("file");
+            git(&sub, &["add", "."]);
+            git(&sub, &["commit", "-q", "-m", "lib"]);
+            git(
+                &self.main,
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    "-q",
+                    &sub.to_string_lossy(),
+                    "deps/sub",
+                ],
+            );
+            git(&self.main, &["commit", "-q", "-m", "add the submodule"]);
+        }
+        let wt = self.linked(name);
+        if init {
+            git(
+                &wt,
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "update",
+                    "-q",
+                    "--init",
+                ],
+            );
+        }
+        wt
+    }
+}
+
+/// A plain `git worktree remove` refuses a worktree with an initialized submodule, and `--force`
+/// deletes the submodule's repository (under `.git/worktrees/<n>/modules`) with any commit that
+/// was never pushed. Canopy says so up front and removes nothing, whatever the submodule holds.
+#[test]
+fn a_worktree_with_an_initialized_submodule_is_never_removed() {
+    let f = fixture();
+    let admin_modules = |name: &str| f.main.join(".git/worktrees").join(name).join("modules");
+
+    // An unpushed commit in the submodule.
+    let unpushed = f.with_submodule("unpushed", true);
+    fs::write(unpushed.join("deps/sub/new.txt"), "work\n").expect("file");
+    git(&unpushed.join("deps/sub"), &["add", "new.txt"]);
+    git(
+        &unpushed.join("deps/sub"),
+        &["commit", "-q", "-m", "never pushed"],
+    );
+    // Only an untracked file in the submodule.
+    let untracked = f.with_submodule("untracked", true);
+    fs::write(untracked.join("deps/sub/scratch.txt"), "x\n").expect("file");
+    // Nothing at all: git refuses it too.
+    let clean = f.with_submodule("clean", true);
+    let plain = git_output(
+        &f.main,
+        &["worktree", "remove", "--", &clean.to_string_lossy()],
+    );
+    assert!(!plain.status.success(), "git itself refuses a clean one");
+
+    for (name, folder) in [
+        ("unpushed", &unpushed),
+        ("untracked", &untracked),
+        ("clean", &clean),
+    ] {
+        let removal = f.repo.worktree_removal(folder).expect("inspect");
+        let reason = removal.blocked.clone().unwrap_or_default();
+        assert!(
+            reason.contains("submodule") && reason.contains("deps/sub"),
+            "{name}: {reason}"
+        );
+        let error = f.repo.remove_worktree(&removal).expect_err("refused");
+        assert!(error.to_string().contains("submodule"), "{name}: {error}");
+        assert!(exists(folder), "{name}: folder kept");
+        assert!(
+            admin_modules(name).is_dir(),
+            "{name}: the submodule's repository is kept"
+        );
+    }
+    // The commit that was never pushed is still there.
+    let log = git(&unpushed.join("deps/sub"), &["log", "--oneline", "-1"]);
+    assert!(log.contains("never pushed"), "{log}");
+}
+
+/// A submodule that was never initialized is an empty folder: git removes the worktree, and so
+/// does Canopy.
+#[test]
+fn a_worktree_with_an_uninitialized_submodule_is_removed() {
+    let f = fixture();
+    let wt = f.with_submodule("fresh", false);
+    let removal = f.repo.worktree_removal(&wt).expect("inspect");
+    assert_eq!(removal.blocked, None);
+    f.repo.remove_worktree(&removal).expect("remove");
+    assert!(!exists(&wt));
+}

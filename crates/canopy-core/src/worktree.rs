@@ -149,6 +149,10 @@ impl Repo {
                 return Ok(removal);
             }
         }
+        if let Some(reason) = initialized_submodules(&repo, &folder) {
+            removal.blocked = Some(reason);
+            return Ok(removal);
+        }
         let mut options = StatusOptions::new();
         // Untracked folders are listed file by file, ignored ones as the single item git
         // reports (a `target/` is one entry, not a hundred thousand).
@@ -349,6 +353,36 @@ impl Repo {
         walk.try_fold(0, |count, commit| commit.map(|_| count + 1))
             .map_err(Into::into)
     }
+}
+
+/// Why a worktree whose index holds initialized submodules is not removed, or `None` when it has
+/// none. A submodule's repository lives under `.git/worktrees/<id>/modules`, which the removal
+/// deletes with every commit in it that was never pushed. Git refuses such a worktree unless
+/// forced, and `--force` is exactly what loses that work, so Canopy does not run it.
+fn initialized_submodules(repo: &Repository, folder: &Path) -> Option<String> {
+    /// The file mode of a submodule entry in the index.
+    const GITLINK: u32 = 0o160_000;
+    let index = repo.index().ok()?;
+    let names: Vec<String> = index
+        .iter()
+        .filter(|entry| entry.mode == GITLINK)
+        .filter_map(|entry| {
+            let path = std::str::from_utf8(&entry.path).ok()?;
+            folder
+                .join(path)
+                .join(".git")
+                .symlink_metadata()
+                .ok()
+                .map(|_| path.to_owned())
+        })
+        .collect();
+    (!names.is_empty()).then(|| {
+        format!(
+            "It has initialized {} ({}). Git refuses to remove such a worktree without --force, and --force deletes the submodule repositories with any commits that were never pushed. Deinitialize them with git submodule deinit, or remove the folder yourself.",
+            if names.len() == 1 { "submodule" } else { "submodules" },
+            names.join(", ")
+        )
+    })
 }
 
 /// The operation in progress in the administrative folder `admin` of a linked worktree, which

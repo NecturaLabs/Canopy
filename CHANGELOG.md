@@ -16,7 +16,8 @@ commits since the previous build.
   detached `HEAD` there reaches. A folder with changes or untracked files asks a second time
   before git deletes them (`git worktree remove --force`); a clean one is removed without
   `--force`. The checks run again just before git, and a folder that changed since the
-  confirmation is refused. The main folder, the one open in this tab, a locked one and one open in
+  confirmation is refused. The main folder, the one open in this tab, a locked one, one with initialized
+  submodules (removing it would delete their repositories and unpushed commits) and one open in
   another tab cannot be removed. The Worktrees section now also lists folders that are missing
   and locked ones (with git's reason), and Forget missing worktrees… (`git worktree prune`) asks git
   which ones it would forget, says what that deletes in the repository (each one's `HEAD`, reflog,
