@@ -91,6 +91,8 @@ pub struct FileDiff {
     pub deletions: usize,
     /// The path is a submodule on either side: the commits it moved between.
     pub submodule: Option<crate::submodule::SubmoduleChange>,
+    /// The path is stored with Git LFS: what the pointers say instead of a diff of the file.
+    pub lfs: Option<crate::lfs::LfsDiff>,
     /// Git file mode on the old side; `None` when it does not exist (or the diff is empty).
     pub old_mode: Option<u32>,
     /// Git file mode on the new side; `None` when it does not exist (or the diff is empty).
@@ -243,14 +245,7 @@ fn side_lines(bytes: &[u8]) -> TypechangeSide {
 /// path goes through [`crate::paths::safe_join`] for its folders, and its last component is read
 /// as a link when it is one, so no link is ever followed.
 fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<TypechangeSide> {
-    use std::io::Read;
-    let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
-    let base = if dir.is_empty() {
-        workdir.to_path_buf()
-    } else {
-        crate::paths::safe_join(workdir, dir)?
-    };
-    let full = base.join(name);
+    let full = workdir_path(workdir, path)?;
     let meta = std::fs::symlink_metadata(&full)?;
     if meta.file_type().is_symlink() {
         let target = std::fs::read_link(&full)?;
@@ -259,12 +254,39 @@ fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<TypechangeSide>
     if !meta.is_file() {
         return Err(crate::Error::invalid("This file type cannot be previewed."));
     }
-    if meta.len() > TYPECHANGE_READ_LIMIT {
-        return Ok(TypechangeSide::TooLarge);
+    Ok(
+        match read_workdir_file(&full, &meta, TYPECHANGE_READ_LIMIT)? {
+            Some(bytes) => side_lines(&bytes),
+            None => TypechangeSide::TooLarge,
+        },
+    )
+}
+
+/// `path` below `workdir`, its folders checked by [`crate::paths::safe_join`] so that none is a
+/// link out of the repository; its last component is not followed.
+pub(crate) fn workdir_path(workdir: &std::path::Path, path: &str) -> Result<std::path::PathBuf> {
+    let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let base = if dir.is_empty() {
+        workdir.to_path_buf()
+    } else {
+        crate::paths::safe_join(workdir, dir)?
+    };
+    Ok(base.join(name))
+}
+
+/// The contents of the regular file `full` (whose `symlink_metadata` is `meta`), or `None` when
+/// it is longer than `limit`. It reads only the very file that was checked: the path may have
+/// been swapped for a link since.
+pub(crate) fn read_workdir_file(
+    full: &std::path::Path,
+    meta: &std::fs::Metadata,
+    limit: u64,
+) -> Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    if meta.len() > limit {
+        return Ok(None);
     }
-    let file = std::fs::File::open(&full)?;
-    // The path may have been swapped for a link since it was checked: read only the very file
-    // that was checked.
+    let file = std::fs::File::open(full)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -276,13 +298,8 @@ fn workdir_side(workdir: &std::path::Path, path: &str) -> Result<TypechangeSide>
         }
     }
     let mut bytes = Vec::new();
-    file.take(TYPECHANGE_READ_LIMIT + 1)
-        .read_to_end(&mut bytes)?;
-    Ok(if bytes.len() as u64 > TYPECHANGE_READ_LIMIT {
-        TypechangeSide::TooLarge
-    } else {
-        side_lines(&bytes)
-    })
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    Ok((bytes.len() as u64 <= limit).then_some(bytes))
 }
 
 /// Counts a committed type change without building display lines or applying the display cap.
@@ -422,6 +439,47 @@ pub(crate) fn typechange_hunks(
     Ok(())
 }
 
+/// Appends the hunks of `patch` to `out` and counts its added and removed lines.
+pub(crate) fn fill_hunks(out: &mut FileDiff, patch: &Patch<'_>) -> Result<()> {
+    for h in 0..patch.num_hunks() {
+        let (hunk, n) = patch.hunk(h)?;
+        let mut lines = Vec::with_capacity(n);
+        for l in 0..n {
+            let line = patch.line_in_hunk(h, l)?;
+            let kind = match line.origin() {
+                '+' => LineKind::Added,
+                '-' => LineKind::Removed,
+                ' ' => LineKind::Context,
+                _ => continue,
+            };
+            match kind {
+                LineKind::Added => out.additions += 1,
+                LineKind::Removed => out.deletions += 1,
+                LineKind::Context => {}
+            }
+            let mut text = String::from_utf8_lossy(line.content()).into_owned();
+            while text.ends_with('\n') || text.ends_with('\r') {
+                text.pop();
+            }
+            lines.push(DiffLine {
+                kind,
+                old_no: line.old_lineno(),
+                new_no: line.new_lineno(),
+                text,
+            });
+        }
+        out.hunks.push(Hunk {
+            header: String::from_utf8_lossy(hunk.header()).trim_end().to_owned(),
+            old_start: hunk.old_start(),
+            old_lines: hunk.old_lines(),
+            new_start: hunk.new_start(),
+            new_lines: hunk.new_lines(),
+            lines,
+        });
+    }
+    Ok(())
+}
+
 /// Converts every delta of `diff` into one [`FileDiff`] (deltas are merged; callers pass a
 /// diff restricted to one file).
 pub(crate) fn to_file_diff(diff: &Diff<'_>, path: &str) -> Result<FileDiff> {
@@ -454,42 +512,7 @@ pub(crate) fn to_file_diff(diff: &Diff<'_>, path: &str) -> Result<FileDiff> {
             out.binary = true;
             continue;
         }
-        for h in 0..patch.num_hunks() {
-            let (hunk, n) = patch.hunk(h)?;
-            let mut lines = Vec::with_capacity(n);
-            for l in 0..n {
-                let line = patch.line_in_hunk(h, l)?;
-                let kind = match line.origin() {
-                    '+' => LineKind::Added,
-                    '-' => LineKind::Removed,
-                    ' ' => LineKind::Context,
-                    _ => continue,
-                };
-                match kind {
-                    LineKind::Added => out.additions += 1,
-                    LineKind::Removed => out.deletions += 1,
-                    LineKind::Context => {}
-                }
-                let mut text = String::from_utf8_lossy(line.content()).into_owned();
-                while text.ends_with('\n') || text.ends_with('\r') {
-                    text.pop();
-                }
-                lines.push(DiffLine {
-                    kind,
-                    old_no: line.old_lineno(),
-                    new_no: line.new_lineno(),
-                    text,
-                });
-            }
-            out.hunks.push(Hunk {
-                header: String::from_utf8_lossy(hunk.header()).trim_end().to_owned(),
-                old_start: hunk.old_start(),
-                old_lines: hunk.old_lines(),
-                new_start: hunk.new_start(),
-                new_lines: hunk.new_lines(),
-                lines,
-            });
-        }
+        fill_hunks(&mut out, &patch)?;
     }
     Ok(out)
 }

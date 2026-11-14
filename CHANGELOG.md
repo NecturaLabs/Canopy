@@ -10,6 +10,17 @@ commits since the previous build.
 
 ### Added
 
+- Git LFS is visible and usable. Files stored with LFS carry an `LFS` tag in the Changes lists and
+  commit details, and a file that holds only its pointer says "not downloaded", with one entry in
+  the status bar that downloads the missing files. The diff of an LFS file is a card with each
+  side's size and object id, old to new (and the pointer text on request) instead of a diff of the
+  file; the content is compared only when it is local, small and text, and is never staged by hunk
+  or line. The palette has LFS: Pull and Fetch objects, and a Git LFS dialog lists the files not
+  downloaded, the tracked patterns (track and untrack) and the locks on the LFS server (lock,
+  unlock, confirmed force unlock); a file's menu can track it, lock it or unlock it. These run
+  only when asked, show git-lfs's own message when they fail, and are disabled with the install
+  steps when `git-lfs` is missing. An LFS file whose content is exactly its pointer is no longer
+  listed as modified because its timestamp changed.
 - Canopy asks before it acts on a repository it does not trust: opening one outside every trusted
   folder shows a prompt that says a repository can run programs on this computer through its hooks
   and settings, with Trust and Don't trust. Don't trust opens it read-only: history and diffs show,
@@ -107,6 +118,19 @@ commits since the previous build.
   names with a password in its URL is shown without it; and a failure of an automatic fetch that
   is the same as the last one is shown once instead of at every interval.
 
+- Feature-branch workflows. The sidebar's Branches group names by their `/` prefixes into
+  collapsible folders (nested for deeper prefixes, open by default, remembered per repository,
+  with the Remotes tree's arrow keys). A branch merged into the base (`develop` in a git-flow
+  repository, else the remote's default branch) shows a merged marker, a branch whose upstream was
+  deleted shows `gone`, and one that looks squash-merged shows `squash?`; the tooltip names the
+  check, and the readings run once per change of branches, off the UI thread. "Clean up merged
+  branches…" deletes the proven ones with `git branch -d` and the unproven ones with `-D` only after
+  a confirmation, never the checked-out branch, the base or `main`, `master` and `develop`.
+  "Update from base" brings the base's new commits into the checked-out branch (fast-forward, or
+  Rebase (recommended) or Merge when they diverged, naming the files that would conflict). Set up,
+  Start and Finish for git-flow work from the palette and the Branches menu: Finish can rebase a
+  feature or bugfix onto develop first, merges a hotfix into an open release instead of develop,
+  and pushes the result (deleting the remote branch only when asked).
 - Windows uninstall help and purge confirmation now say that saved hosting tokens are deleted
   along with settings, logs and caches.
 - Finishing a single-commit git-flow feature or bugfix fast-forwards when possible, matching
