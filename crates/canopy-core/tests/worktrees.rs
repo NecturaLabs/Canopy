@@ -2,13 +2,13 @@
 //! would delete, the checks repeated right before git runs, and the missing and locked states,
 //! each compared with the `git` command line on a temporary repository.
 
-#![cfg(unix)]
 #![expect(
     clippy::expect_used,
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,7 +28,10 @@ fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
         .output()
         .expect("git runs")
 }
@@ -94,9 +97,15 @@ impl Fixture {
             .expect("the folder is listed")
     }
 
+    /// `git worktree list --porcelain`, with `/` in every path whatever the platform.
     fn registered(&self) -> String {
-        git(&self.main, &["worktree", "list", "--porcelain"])
+        git(&self.main, &["worktree", "list", "--porcelain"]).replace('\\', "/")
     }
+}
+
+/// `path` as git prints it: with `/` between the parts.
+fn slashed(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn exists(path: &Path) -> bool {
@@ -118,7 +127,7 @@ fn a_clean_worktree_is_removed_and_its_branch_stays() {
     f.repo.remove_worktree(&removal, &[]).expect("remove");
     assert!(!exists(&wt));
     assert!(!f.registered().contains("topic\n"), "{}", f.registered());
-    assert!(!f.registered().contains(&*wt.to_string_lossy()));
+    assert!(!f.registered().contains(&slashed(&wt)));
     let branches = git(&f.main, &["branch", "--list", "topic"]);
     assert!(branches.contains("topic"), "branch stays: {branches}");
     assert_eq!(f.repo.worktrees().len(), 1);
@@ -163,7 +172,7 @@ fn each_kind_of_dirt_is_counted_and_git_refuses_it_without_force() {
         .remove_worktree(&removal, &[])
         .expect("forced removal");
     assert!(!exists(&wt));
-    assert!(!f.registered().contains(&*wt.to_string_lossy()));
+    assert!(!f.registered().contains(&slashed(&wt)));
 }
 
 #[test]
@@ -448,18 +457,18 @@ fn missing_worktrees_are_listed_and_forgetting_matches_git_prune() {
     f.repo
         .forget_worktrees(&listed)
         .expect_err("the set changed");
-    assert!(f.registered().contains(&*gone.to_string_lossy()));
+    assert!(f.registered().contains(&slashed(&gone)));
     fs::create_dir_all(&kept).expect("put the folder back");
     // (An empty folder without `.git` is as gone as a deleted one to git.)
     let expected = f.repo.forget_preview().expect("preview");
     assert_eq!(expected.entries.len(), 3);
     f.repo.forget_worktrees(&expected).expect("forget");
     let after = f.registered();
-    assert!(!after.contains(&*gone.to_string_lossy()), "{after}");
-    assert!(!after.contains(&*also.to_string_lossy()), "{after}");
-    assert!(!after.contains(&*kept.to_string_lossy()), "{after}");
+    assert!(!after.contains(&slashed(&gone)), "{after}");
+    assert!(!after.contains(&slashed(&also)), "{after}");
+    assert!(!after.contains(&slashed(&kept)), "{after}");
     // The locked one stays registered, with its reason, and so do the branches.
-    assert!(after.contains(&*held.to_string_lossy()), "{after}");
+    assert!(after.contains(&slashed(&held)), "{after}");
     assert!(after.contains("locked drive"), "{after}");
     let branches = git(&f.main, &["branch", "--list"]);
     assert!(branches.contains("gone") && branches.contains("held"));
@@ -481,6 +490,7 @@ fn removing_a_missing_worktree_is_refused_with_the_way_out() {
     assert!(f.registered().contains("vanished"));
 }
 
+#[cfg(unix)]
 #[test]
 fn a_folder_that_cannot_be_read_is_listed_as_unreadable_not_missing() {
     let f = fixture();
@@ -505,6 +515,7 @@ fn a_folder_that_cannot_be_read_is_listed_as_unreadable_not_missing() {
 /// cannot be read goes with the missing ones. Forgetting must not drop what the user was not
 /// told about: the preview is git's own set, says which folder Canopy does not see as gone, and
 /// the forgetting is refused.
+#[cfg(unix)]
 #[test]
 fn forgetting_does_not_prune_an_unreadable_folder_next_to_a_missing_one() {
     let f = fixture();
@@ -526,11 +537,8 @@ fn forgetting_does_not_prune_an_unreadable_folder_next_to_a_missing_one() {
     let reason = preview.blocked.clone().expect("blocked");
     assert!(reason.contains("lo"), "{reason}");
     result.expect_err("refused");
-    assert!(after.contains(&*lo.to_string_lossy()), "still registered");
-    assert!(
-        after.contains(&*gone.to_string_lossy()),
-        "nothing was pruned"
-    );
+    assert!(after.contains(&slashed(&lo)), "still registered");
+    assert!(after.contains(&slashed(&gone)), "nothing was pruned");
 }
 
 /// What forgetting deletes is in the preview: a detached `HEAD` whose commits nothing else
@@ -763,7 +771,7 @@ fn a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it() {
     );
     f.repo.remove_worktree(&removal, &[]).expect_err("refused");
     assert!(exists(&guest), "the inner worktree is kept");
-    assert!(f.registered().contains(&*guest.to_string_lossy()));
+    assert!(f.registered().contains(&slashed(&guest)));
 
     // The inner one is removable by itself, and then the outer one is too.
     let inner_removal = f.repo.worktree_removal(&guest, &[]).expect("inspect");
@@ -780,6 +788,7 @@ fn a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it() {
 
 /// A folder another tab has open is refused whatever way that tab spells its path, and a tab
 /// opened after the confirmation counts, because the list is read when the removal runs.
+#[cfg(unix)]
 #[test]
 fn a_folder_open_in_another_tab_is_refused_however_it_is_spelled() {
     let f = fixture();
@@ -868,4 +877,117 @@ fn a_change_past_the_first_shown_names_is_a_change_since_the_confirmation() {
     let again = f.repo.worktree_removal(&cache, &[]).expect("inspect");
     f.repo.remove_worktree(&again, &[]).expect("remove");
     assert!(!exists(&cache));
+}
+
+/// A folder whose name is not valid UTF-8 gets an administrative folder with a name that is not
+/// text either, which libgit2 cannot list. Canopy leaves it out of the list, refuses to remove
+/// it, and refuses to forget it (git's prune would) without it having been shown.
+#[cfg(unix)]
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the folder name is bytes, which the text helper above cannot pass to git"
+)]
+fn a_folder_with_a_name_that_is_not_utf8_is_neither_removed_nor_forgotten() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let f = fixture();
+    let name = OsString::from_vec(b"odd-\xff-name".to_vec());
+    let bad = f.beside.join(name);
+    let out = Command::new("git")
+        .current_dir(&f.main)
+        .args(["worktree", "add", "-q", "-b", "odd"])
+        .arg("--")
+        .arg(&bad)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .expect("git runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        f.repo
+            .worktrees()
+            .iter()
+            .all(|w| w.branch.as_deref() != Some("odd")),
+        "not listed: libgit2 cannot name it"
+    );
+    f.repo
+        .worktree_removal(&bad, &[])
+        .expect_err("not a worktree Canopy knows");
+    assert!(exists(&bad), "the folder is kept");
+
+    // Gone, git would forget it all the same: Canopy refuses rather than hide that.
+    fs::remove_dir_all(&bad).expect("delete by hand");
+    let preview = f.repo.forget_preview().expect("preview");
+    let reason = preview.blocked.clone().expect("blocked");
+    assert!(reason.contains("odd-"), "{reason}");
+    f.repo.forget_worktrees(&preview).expect_err("refused");
+    let listing = git_output(&f.main, &["worktree", "list", "--porcelain"]).stdout;
+    assert!(
+        String::from_utf8_lossy(&listing).contains("odd"),
+        "still registered"
+    );
+}
+
+/// The folder may be named by a link, with `..`, or with a trailing slash, and it is the same
+/// folder; one whose name only starts the same is another.
+#[test]
+fn the_same_folder_is_found_however_it_is_spelled_and_a_name_prefix_is_not_it() {
+    let f = fixture();
+    let alpha = f.linked("alpha");
+    let alpha2 = f.linked("alpha2");
+    fs::write(alpha2.join("keep.txt"), "x").expect("file");
+
+    let dotted = f.beside.join("alpha2/../alpha");
+    let slashed_path = PathBuf::from(format!("{}/", alpha.display()));
+    for spelling in [dotted, slashed_path] {
+        let removal = f.repo.worktree_removal(&spelling, &[]).expect("found");
+        assert_eq!(removal.branch.as_deref(), Some("alpha"), "{spelling:?}");
+        assert_eq!(removal.untracked.count, 0, "alpha2's file is not alpha's");
+        assert_eq!(removal.blocked, None);
+    }
+    #[cfg(unix)]
+    {
+        let link = f.beside.join("link-to-alpha");
+        std::os::unix::fs::symlink(&alpha, &link).expect("symlink");
+        let removal = f.repo.worktree_removal(&link, &[]).expect("found");
+        assert_eq!(removal.branch.as_deref(), Some("alpha"));
+    }
+
+    // alpha is not "inside" alpha2, nor the reverse: no other worktree blocks the removal.
+    let removal = f.repo.worktree_removal(&alpha, &[]).expect("inspect");
+    f.repo.remove_worktree(&removal, &[]).expect("remove alpha");
+    assert!(!exists(&alpha));
+    assert!(exists(&alpha2.join("keep.txt")), "alpha2 is untouched");
+    assert!(f.registered().contains(&slashed(&alpha2)));
+
+    // A path that is only a prefix of a registered folder is no worktree.
+    let prefix = f.beside.join("alph");
+    fs::create_dir_all(&prefix).expect("folder");
+    f.repo
+        .worktree_removal(&prefix, &[])
+        .expect_err("not a worktree");
+    f.repo
+        .worktree_removal(&f.beside.join("alpha2x"), &[])
+        .expect_err("not a worktree");
+}
+
+/// Forgetting `wt` must not be confused by `wt2` existing, and the other way round.
+#[test]
+fn forgetting_one_folder_leaves_a_neighbour_with_the_same_prefix() {
+    let f = fixture();
+    let wt = f.linked("wt");
+    let wt2 = f.linked("wt2");
+    fs::remove_dir_all(&wt).expect("delete by hand");
+    let preview = f.repo.forget_preview().expect("preview");
+    assert_eq!(preview.entries.len(), 1, "{preview:?}");
+    assert_eq!(preview.entries[0].id, "wt");
+    f.repo.forget_worktrees(&preview).expect("forget");
+    let after = f.registered();
+    assert!(!after.contains(&format!("{}\n", slashed(&wt))), "{after}");
+    assert!(after.contains(&slashed(&wt2)), "{after}");
+    assert!(exists(&wt2));
 }
