@@ -57,10 +57,16 @@ pub enum SidebarItem {
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
-/// What a merge, rebase or pull that stopped on conflicts asks of the user. When git holds their
-/// uncommitted changes aside (`--autostash`), they are not in the stash list: it says where they
-/// are and when they come back.
-fn stopped_body(autostashed: bool) -> String {
+/// What a merge, rebase, pull, cherry-pick or revert that stopped on conflicts asks of the user.
+/// When git holds their uncommitted changes aside (`--autostash`), they are not in the stash
+/// list: it says where they are and when they come back. A stash that was applied or popped
+/// (`stash`) leaves nothing to continue or abort and is kept in the stash list: it says so.
+fn stopped_body(autostashed: bool, stash: bool) -> String {
+    if stash {
+        return String::from(
+            "Resolve each conflicted file in Changes. The stash stays in the stash list until you drop it.",
+        );
+    }
     let mut body = String::from(
         "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.",
     );
@@ -2809,7 +2815,11 @@ impl RepoTab {
                     self.progress = None;
                     self.pull_decision = Some(*decision);
                 }
-                Event::Conflicted { label, autostashed } => {
+                Event::Conflicted {
+                    label,
+                    autostashed,
+                    stash,
+                } => {
                     self.running = None;
                     self.running_kind = None;
                     self.progress = None;
@@ -2819,7 +2829,7 @@ impl RepoTab {
                         ok: false,
                         delivery: Delivery::Attention,
                         title: format!("{label} stopped on conflicts"),
-                        body: stopped_body(autostashed),
+                        body: stopped_body(autostashed, stash),
                     });
                 }
                 Event::AutostashConflict => {
@@ -4918,7 +4928,8 @@ mod tests {
                 &mut tab,
                 Event::Conflicted {
                     label: "Pulling".into(),
-                    autostashed: false
+                    autostashed: false,
+                    stash: false
                 }
             )?,
             Delivery::Attention
@@ -5054,6 +5065,7 @@ mod tests {
         events.send(Event::Conflicted {
             label: "Pulling".into(),
             autostashed: false,
+            stash: false,
         })?;
         let notices = tab.poll(&[]);
         assert_eq!((tab.running.as_deref(), tab.view), (None, View::Changes));
@@ -5065,10 +5077,10 @@ mod tests {
     /// nothing of them when it does not.
     #[test]
     fn a_stop_on_conflicts_says_where_set_aside_changes_are() {
-        let plain = stopped_body(false);
+        let plain = stopped_body(false, false);
         assert!(plain.starts_with("Resolve each conflicted file in Changes"));
         assert!(!plain.contains("uncommitted"), "{plain}");
-        let held = stopped_body(true);
+        let held = stopped_body(true, false);
         assert!(held.starts_with(&plain), "{held}");
         assert!(
             held.contains("uncommitted changes are held by git")
@@ -5076,6 +5088,23 @@ mod tests {
             "{held}"
         );
         assert!(!held.contains("\n\n"), "one paragraph: {held}");
+    }
+
+    /// #265: a stash that stopped on conflicts has nothing to continue or abort, and says the
+    /// stash is kept; changes git holds aside do not come into it.
+    #[test]
+    fn a_stash_that_stopped_on_conflicts_is_not_asked_to_continue_or_abort() {
+        let body = stopped_body(false, true);
+        assert!(
+            body.starts_with("Resolve each conflicted file in Changes"),
+            "{body}"
+        );
+        assert!(body.contains("stays in the stash list"), "{body}");
+        assert!(
+            !body.contains("abort") && !body.contains("continue"),
+            "{body}"
+        );
+        assert_eq!(stopped_body(true, true), body);
     }
 
     /// The notice of a stop carries what [`stopped_body`] says for the event's `autostashed`.
@@ -5091,10 +5120,11 @@ mod tests {
             events.send(Event::Conflicted {
                 label: "Merging".into(),
                 autostashed,
+                stash: false,
             })?;
             let notices = tab.poll(&[]);
             assert_eq!(notices.len(), 1);
-            assert_eq!(notices[0].body, stopped_body(autostashed));
+            assert_eq!(notices[0].body, stopped_body(autostashed, false));
         }
         Ok(())
     }

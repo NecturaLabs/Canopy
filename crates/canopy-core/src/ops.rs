@@ -1424,6 +1424,7 @@ impl Repo {
         let mut args = self.push_default_override();
         args.extend(["push".to_owned(), "--progress".to_owned()]);
         args.extend(self.follow_tags_flag().map(str::to_owned));
+        args.extend(self.push_submodules_flag().map(str::to_owned));
         if force {
             args.push("--force-with-lease".to_owned());
         }
@@ -1562,6 +1563,7 @@ impl Repo {
         let refspec = format!("refs/heads/{name}:refs/heads/{name}");
         let mut args = vec!["push", "--progress"];
         args.extend(self.follow_tags_flag());
+        args.extend(self.push_submodules_flag());
         args.extend(["--set-upstream", remote, &refspec]);
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
@@ -1569,11 +1571,10 @@ impl Repo {
     /// Pushes one tag to `remote`.
     pub fn push_tag(&self, remote: &str, tag: &str, progress: impl FnMut(&str)) -> Result<String> {
         let refspec = format!("refs/tags/{tag}");
-        cli::run_streaming(
-            Some(self.workdir()),
-            &["push", "--progress", "--", remote, &refspec],
-            progress,
-        )
+        let mut args = vec!["push", "--progress"];
+        args.extend(self.push_submodules_flag());
+        args.extend(["--", remote, &refspec]);
+        cli::run_streaming(Some(self.workdir()), &args, progress)
     }
 
     /// Checks out a pull or merge request head such as `refs/pull/12/head` (GitHub) or

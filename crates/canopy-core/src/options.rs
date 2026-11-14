@@ -277,6 +277,15 @@ impl Repo {
         })
     }
 
+    /// `--recurse-submodules=check` for a push that publishes commits: git refuses, naming the
+    /// submodules whose recorded commits are on no remote, before anything is sent. Without it a
+    /// repository with `submodule.recurse` on pushes on demand, which fails where the submodule
+    /// has no branch named like the superproject's, and one with it off publishes a commit nobody
+    /// can fetch. Nothing where the configuration decides: `push.recurseSubmodules`.
+    pub(crate) fn push_submodules_flag(&self) -> Option<&'static str> {
+        (!self.config_decides(r"^push\.recursesubmodules$")).then_some("--recurse-submodules=check")
+    }
+
     /// The `-c push.default=…` override for a push without a destination.
     pub(crate) fn push_default_override(&self) -> Vec<String> {
         if self.config_decides(r"^push\.default$") {
