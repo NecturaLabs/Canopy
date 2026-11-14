@@ -80,6 +80,27 @@ commits since the previous build.
   change how git signs in: the notice says the host did not accept the user name and password git
   sent, and that GitHub and GitLab take an access token as the password. Open Accounts now
   follows every refusal of the GitHub or GitLab CLI's sign-in by the host's API, not only GitHub's.
+- Settings → Git and This repository no longer offer `matching` and `nothing` as Push destination
+  choices: Canopy's own push understands `simple`, `upstream` and `current`, and `matching` pushes
+  every branch with a same-named branch on the remote. A value your own git configuration holds
+  still shows on the row with where it is set and why Canopy does not offer it, and is left alone
+  until you pick another one.
+- Settings → Git with Canopy choosing the Git settings shows one Commits heading over its rows
+  instead of two, and a commit cleanup value has one name in the list of Git values, in the notes
+  and notices that say where it is set, and in Canopy's own Message cleanup row (Spaces and blank
+  lines, Also lines starting with #, Nothing; before, the same value was Whitespace, whitespace and
+  Spaces and blank lines).
+- The Conflict style help in Settings → Git, with Canopy choosing the Git settings, reads on one
+  line, also at zoom 1.6.
+- A select never cuts a label short (#225). The closed control widens to the value it shows (a long
+  program name in Settings → Integrations is no longer limited to the text-field width) and, when
+  the window has no more room, wraps it onto a second line; the open list is as wide as its
+  longest entry, and wraps the entries that still do not fit, so the recommended entry keeps its
+  whole label beside the Recommended badge even in a window narrower than the two together (#255).
+- A select's open list lines up with its control instead of sticking out past its right edge: it
+  starts at the control's left edge (its right edge when it is wider and would not fit to the
+  right), is as wide as the control or its longest entry, whichever is more, with no 200-point
+  minimum of its own, and stays inside the window or dialog (#225).
 - The notification center keeps its margin above and below at the smallest window size and zoom, scrolling its list when the window is short.
 - A Settings row with both an explanation mark and a state remark (Download profile pictures) draws the remark in the accent colour with a gap, so the two marks no longer look alike.
 - Settings are written to a temporary file and renamed over the old one, on a thread of their own,
@@ -215,6 +236,9 @@ commits since the previous build.
 
 ### Changed
 
+- The conflict shortcuts are named like the resolver's buttons: the shortcuts sheet and Settings →
+  Keyboard now say "Accept current version", "Accept incoming version", "Accept both" and "Accept
+  the common ancestor" instead of "Take …".
 - Background work no longer grows with the number of tabs. At most four background fetches run
   at once across all tabs: a tab that falls due while four run waits for one to finish, then
   fetches, so a long session fetches everything within each interval without starting a `git`

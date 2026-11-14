@@ -107,6 +107,14 @@ impl Cleanup {
         }
     }
 
+    /// The choice a `commit.cleanup` value names; `None` for git's `scissors` and `default`,
+    /// which Canopy's own choice does not offer.
+    pub fn from_value(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|c| value.trim().eq_ignore_ascii_case(c.value()))
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Whitespace => "Spaces and blank lines",
@@ -297,17 +305,14 @@ impl Repo {
         ]
     }
 
-    /// Where a push without a destination sends the current branch: the configuration's
-    /// `push.default` while Canopy follows it and it names one branch (`simple`, `upstream` or
-    /// `current`), else Canopy's choice.
-    pub(crate) fn push_default(&self) -> PushDefault {
-        self.configured_value("push.default")
-            .and_then(|v| {
-                PushDefault::ALL
-                    .into_iter()
-                    .find(|d| v.eq_ignore_ascii_case(d.value()))
-            })
-            .unwrap_or(self.options().push_default)
+    /// The `push.default` the git configuration holds while Canopy follows it, when it is one
+    /// of the three that name one branch; `None` for `matching`, `nothing` or no value.
+    pub(crate) fn configured_push_default(&self) -> Option<PushDefault> {
+        self.configured_value("push.default").and_then(|v| {
+            PushDefault::ALL
+                .into_iter()
+                .find(|d| v.eq_ignore_ascii_case(d.value()))
+        })
     }
 
     pub(crate) fn cleanup_flag(&self) -> Option<String> {
