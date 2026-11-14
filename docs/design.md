@@ -623,8 +623,14 @@ view. A list that ends up under a modal layer (egui keeps each layer's rank betw
 press and release in one frame can leave it there) is raised above it at once.
 
 A select can mark one option with the kit's Recommended badge, and then lists it first; its
-accessible description announces the recommendation without repeating the option name. The list reserves room for the
+accessible description announces the recommendation without repeating the option name. While that
+option is the value the closed select says "(Recommended)" after it, quieter than the value, and
+speaks it that way too, however the value came about (chosen, written by a button, read from a
+file); a fitted select is as wide for it as for its longest label. An unavailable option shows its
+note instead. The list reserves room for the
 badge and check, truncating only the painted label while keeping its full accessible name. A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
+
+An option can be unavailable (`unavailable(value, "Not installed")`): its label is dimmed (`disabled_text`) and a neutral badge with the note ends the row where the Recommended badge would; the arrow keys, Home, End and typing pass over it, a click or Enter does nothing, and it is spoken as disabled with the note as its description. It can still be the current value (a saved choice that has gone): the closed control shows the label dimmed with the same badge before the caret, widens to hold it (an explicit width is otherwise kept), and carries the note as its accessible description. The kit gallery shows both states.
 
 Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
 open and closed; app-launcher selects stop at the 280-pixel text-field width. Number fields are
@@ -633,7 +639,9 @@ Repository selects show the effective value once. Explicit selection pins even t
 only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset
 controls name their setting. Context lines and whitespace are one saved diff preset, with one
 shared reset that returns both to the app defaults. Help text never types the recommendation
-("Recommended: …"); the badge in the list is the only mark, in Settings → Git as well.
+("Recommended: …"); the badge in the list and "(Recommended)" after the selected value are the
+only marks, in Settings → Git as well, and a text field holding the recommended value (the first
+branch) has "(Recommended)" under it, where its messages go.
 
 ### Popover and the smaller components
 
@@ -1008,8 +1016,9 @@ is an ordinary dialog opened once after the consent dialogs. History's column he
 The Git page edits the main global Git file; This repository edits its common local Git file.
 Rows use the existing Select/TextField and row layout, with where a value is set in a note mark,
 named by scope and path ("your global git config (~/.gitconfig)"), or by path alone for an
-included file. An unset row's select reads "Value (Recommended)", or just the value Git uses where Canopy
-leaves the choice to Git. Enumerated values have one option each; unsupported configured values
+included file. A row's select reads "Value (Recommended)" while the value is the recommended one,
+set or unset (an unset row shows the recommendation), and the bare value otherwise; where Canopy
+leaves the choice to Git it shows the value Git uses. Enumerated values have one option each; unsupported configured values
 remain visible as text. Recommendations are badges, never a reason to lock a control. A global
 value is changed, never cleared; a repository's own value has the reset button, which removes the
 override and leaves includes and higher-priority scopes intact. The

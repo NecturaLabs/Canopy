@@ -281,7 +281,8 @@ const SECRET_LABELS: [&str; 13] = [
     "PRIVATE-TOKEN=",
     "private_token=",
     "access_token=",
-    // The variables Canopy reads tokens from (`canopy_hosting::token_from_env_for`).
+    // The variables the GitHub and GitLab CLIs read tokens from: Canopy reads none of them, but an
+    // environment dump in a report could carry them.
     "GH_TOKEN=",
     "GITHUB_TOKEN=",
     "GITLAB_TOKEN=",

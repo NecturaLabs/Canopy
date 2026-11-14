@@ -69,7 +69,7 @@ impl Document {
         text.split_once('\n').map_or(text, |(_, rest)| rest).trim()
     }
 
-    /// The "Last updated" date as the document writes it ("3 October 2026").
+    /// The "Last updated" date as the document writes it ("17 October 2026").
     pub fn updated(self) -> &'static str {
         self.text()
             .lines()
@@ -480,6 +480,20 @@ mod tests {
         assert_eq!(last_updated(PRIVACY), PRIVACY_VERSION);
         assert!(Document::Terms.body().starts_with("Last updated"));
         assert_eq!(Document::Terms.updated(), "14 November 2026");
+    }
+
+    /// Canopy keeps no token (ADR 0017), so no sentence may still speak of one it saved or that
+    /// the user could change.
+    #[test]
+    fn the_documents_speak_of_no_saved_token() {
+        for doc in [TERMS, PRIVACY] {
+            for stale in ["saved token", "token you saved", "change the token"] {
+                assert!(
+                    !doc.to_lowercase().contains(stale),
+                    "{stale:?} is still there"
+                );
+            }
+        }
     }
 
     #[test]

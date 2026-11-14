@@ -783,6 +783,11 @@ impl Settings {
         }
     }
 
+    /// The commands the editor, terminal and file manager settings hold, in that order.
+    pub fn launcher_commands(&self) -> [&str; 3] {
+        [&self.editor, &self.terminal, &self.file_manager].map(String::as_str)
+    }
+
     /// How Canopy has git fetch, pull, push, commit, rebase and write conflicts.
     pub fn git_options(&self) -> GitOptions {
         GitOptions {
@@ -922,6 +927,17 @@ fn expand_home_in(typed: &str, home: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_launcher_commands_are_the_editor_terminal_and_file_manager_settings() {
+        let s = Settings {
+            editor: "zed".to_owned(),
+            terminal: "kitty".to_owned(),
+            file_manager: "thunar %d".to_owned(),
+            ..Settings::default()
+        };
+        assert_eq!(s.launcher_commands(), ["zed", "kitty", "thunar %d"]);
+    }
+
     #[test]
     fn use_recommended_resets_every_git_choice_and_nothing_else() {
         let mut s = Settings {
