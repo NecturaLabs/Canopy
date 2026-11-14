@@ -12,10 +12,10 @@ Update this table in the same change that adds or alters a feature.
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
 |---|---|---|---|---|
 | Linux | Done | No | Yes | No |
-| macOS | Done | Yes | Yes | Yes |
+| macOS | Planned | Yes | Yes | Yes |
 | Windows | Done | Yes | Yes | Yes |
 | Native (non-Electron) UI | Done | Yes | No | Yes |
-| One-line install into its own folder, with uninstall (Linux, macOS, Windows) | Done | No | No | No |
+| One-line install into its own folder, with uninstall (Linux, Windows) | Done | No | No | No |
 | In-app update: download, SHA-256 check and install in place where the installer put Canopy (Linux), the installer elsewhere, then restart | Done | ? | ? | ? |
 | Releases named by build number (`build 412 (a1b2c3d)`), shown in About, `--version`, logs and the update check; no version bumps | Done | ? | ? | ? |
 | Builds for Linux arm64 and Intel macOS | Experimental | No | Yes | Yes |
