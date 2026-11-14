@@ -265,11 +265,15 @@ impl CanopyApp {
                 ));
                 // Removing a linked working folder: each one that is here, not open in this tab
                 // and not locked, and forgetting the ones that are gone.
-                let folder_of = |path: &std::path::Path| {
-                    path.file_name().map_or_else(
-                        || path.display().to_string(),
-                        |n| n.to_string_lossy().into_owned(),
-                    )
+                // The parent folder too, so two folders of one name can be told apart.
+                let folder_of = |path: &std::path::Path| match (
+                    path.parent().and_then(std::path::Path::file_name),
+                    path.file_name(),
+                ) {
+                    (Some(parent), Some(name)) => {
+                        format!("{}/{}", parent.to_string_lossy(), name.to_string_lossy())
+                    }
+                    _ => path.display().to_string(),
                 };
                 for w in s.worktrees.iter().filter(|w| {
                     !w.main
@@ -796,6 +800,8 @@ mod tests {
             worktrees: vec![
                 info("/work/main", WorktreeState::Ready, None, true, true),
                 info("/work/free", WorktreeState::Ready, None, false, false),
+                info("/x/dup", WorktreeState::Ready, None, false, false),
+                info("/y/dup", WorktreeState::Ready, None, false, false),
                 info(
                     "/work/usb",
                     WorktreeState::Ready,
@@ -808,12 +814,20 @@ mod tests {
         }));
         let entries = app.palette_entries();
         let labels = labels(&entries);
-        assert!(labels.contains(&"Worktree: Remove free…"), "{labels:?}");
+        assert!(
+            labels.contains(&"Worktree: Remove work/free…"),
+            "{labels:?}"
+        );
         assert!(
             !labels
                 .iter()
                 .any(|l| l.contains("usb") || l.contains("main")),
             "{labels:?}"
+        );
+        assert!(
+            labels.contains(&"Worktree: Remove x/dup…")
+                && labels.contains(&"Worktree: Remove y/dup…"),
+            "two folders of one name are told apart: {labels:?}"
         );
         assert!(!labels.contains(&"Worktree: Forget missing…"));
         app.tabs.clear();

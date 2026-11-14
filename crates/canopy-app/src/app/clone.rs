@@ -111,6 +111,7 @@ mod tests {
             settings: Settings::default(),
             tabs: Vec::new(),
             active: 0,
+            elsewhere_key: 0,
             dialogs: DialogStack::default(),
             settings_screen: None,
             folder_picker: crate::ui::folder_picker::FolderPicker::default(),

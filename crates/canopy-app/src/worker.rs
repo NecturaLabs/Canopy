@@ -4609,6 +4609,7 @@ mod read_tests {
                     ignored: canopy_core::WorktreeLoss::default(),
                     unreachable_commits: 0,
                     blocked: None,
+                    operation: None,
                     fingerprint: 0,
                 }),
                 open_in: Vec::new(),

@@ -991,3 +991,50 @@ fn forgetting_one_folder_leaves_a_neighbour_with_the_same_prefix() {
     assert!(after.contains(&slashed(&wt2)), "{after}");
     assert!(exists(&wt2));
 }
+
+/// A rebase or bisect in progress lives in the worktree's own administrative folder and goes with
+/// it: the reading says so.
+#[test]
+fn an_operation_in_progress_in_the_folder_is_reported() {
+    let f = fixture();
+    let wt = f.linked("busy");
+    assert_eq!(
+        f.repo
+            .worktree_removal(&wt, &[])
+            .expect("inspect")
+            .operation,
+        None
+    );
+    let admin = f.main.join(".git/worktrees/busy");
+    fs::write(admin.join("BISECT_LOG"), "git bisect start\n").expect("state");
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
+    assert_eq!(removal.operation.as_deref(), Some("bisect"));
+    // It is part of what was confirmed.
+    fs::remove_file(admin.join("BISECT_LOG")).expect("state");
+    f.repo
+        .remove_worktree(&removal, &[])
+        .expect_err("changed since");
+    assert!(exists(&wt));
+}
+
+/// Git refuses a branch checked out in a worktree whose folder is gone, as if it were there.
+/// The refusal says how to get out of it.
+#[test]
+fn checking_out_a_branch_of_a_missing_worktree_points_to_forgetting_it() {
+    let f = fixture();
+    let wt = f.linked("topic");
+    fs::remove_dir_all(&wt).expect("delete by hand");
+    let error = f.repo.checkout_branch("topic").expect_err("git refuses");
+    let text = error.to_string();
+    assert!(
+        text.contains("already used by worktree") || text.contains("already checked out"),
+        "{text}"
+    );
+    assert!(text.contains("Forget missing worktrees"), "{text}");
+
+    // A branch checked out in a folder that is there gets git's words alone.
+    let there = f.linked("there");
+    let error = f.repo.checkout_branch("there").expect_err("git refuses");
+    assert!(!error.to_string().contains("Forget"), "{error}");
+    assert!(exists(&there));
+}

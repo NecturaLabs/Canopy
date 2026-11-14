@@ -138,6 +138,13 @@ pub(super) fn show(
                         (None, Some(head)) => note(ui, format!("Detached at {}.", short_id(head)), p.text),
                         (None, None) => note(ui, "Nothing is checked out there.", p.text),
                     }
+                    if let Some(operation) = &removal.operation {
+                        note(
+                            ui,
+                            format!("A {operation} is in progress in this folder; removing it drops that state."),
+                            p.warning,
+                        );
+                    }
                     loss(ui, &format!("{} deleted:", plural(removal.modified.count, "modified tracked file", "modified tracked files")), &removal.modified, p.danger);
                     loss(ui, &format!("{} deleted:", plural(removal.untracked.count, "untracked file", "untracked files")), &removal.untracked, p.danger);
                     loss(ui, &format!("{} deleted without asking:", plural(removal.ignored.count, "ignored file or folder", "ignored files and folders")), &removal.ignored, p.warning);
@@ -170,6 +177,8 @@ pub(super) fn show(
                 footer.confirm_disabled("Wait for repository operations to finish");
             } else if let Some(reason) = &blocked {
                 footer.confirm_disabled(reason.clone());
+            } else if let Some(Err(_)) = reading {
+                footer.confirm_disabled("The check of the folder failed");
             } else if removal.is_none() {
                 footer.confirm_disabled("Wait for the check of the folder");
             }
@@ -343,6 +352,7 @@ mod tests {
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
             blocked: None,
+            operation: None,
             fingerprint: 0,
         }
     }
@@ -521,6 +531,48 @@ mod tests {
         let (nodes, _) = frames(&ctx, &mut form, &tab);
         assert!(button(&nodes, "Remove worktree").is_some_and(|n| !n.disabled));
         assert!(button(&nodes, "Continue").is_none());
+    }
+
+    #[test]
+    fn a_failed_check_says_it_failed_and_a_rebase_in_progress_is_named() {
+        let ctx = setup();
+        let mut busy = removal();
+        busy.operation = Some("rebase".into());
+        let tab = tab_with(&busy);
+        let mut form = RemoveWorktreeForm::new(tab.path.clone(), busy.path.clone(), 1);
+        let (nodes, _) = frames(&ctx, &mut form, &tab);
+        assert!(nodes.iter().any(|n| {
+            [&n.label, &n.value]
+                .into_iter()
+                .flatten()
+                .any(|t| t.contains("A rebase is in progress in this folder"))
+        }));
+
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut failed = RepoTab::with_worker(
+            PathBuf::from("/work/canopy"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        failed.worktree_removal_serial = 1;
+        failed.worktree_removal = Some(Err("git went away".into()));
+        let mut form = RemoveWorktreeForm::new(failed.path.clone(), busy.path, 1);
+        let (nodes, _) = frames(&ctx, &mut form, &failed);
+        let confirm = nodes
+            .iter()
+            .find(|n| {
+                n.role == egui::accesskit::Role::Button
+                    && n.label
+                        .as_deref()
+                        .is_some_and(|l| l.starts_with("Remove worktree"))
+            })
+            .expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("The check of the folder failed")
+        );
     }
 
     #[test]

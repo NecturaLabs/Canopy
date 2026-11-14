@@ -125,6 +125,7 @@ impl Repo {
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
             blocked: None,
+            operation: None,
             fingerprint: 0,
         };
         removal.blocked = if same_folder(&folder, self.workdir()) {
@@ -171,6 +172,7 @@ impl Repo {
             .and_then(|t| t.strip_prefix("refs/heads/"))
             .map(str::to_owned);
         removal.head = head.resolve().ok().and_then(|r| r.target());
+        removal.operation = admin_operation(repo.path());
         match worktree_index_protection(&repo) {
             Ok(None) => {}
             Ok(Some(reason)) => {
@@ -431,6 +433,31 @@ impl Repo {
             return Ok(());
         }
         self.git_cmd(&["worktree", "prune"]).map(drop)
+    }
+
+    /// Adds the way out to git's refusal of a branch that is checked out in a worktree whose
+    /// folder is gone: git refuses it as if the folder were there.
+    pub(crate) fn explain_missing_worktree(&self, error: Error) -> Error {
+        let Error::Cli { command, stderr } = error else {
+            return error;
+        };
+        let refused = stderr.contains("already used by worktree")
+            || stderr.contains("already checked out at");
+        let missing = refused
+            && self.worktrees().iter().any(|w| {
+                w.state == crate::WorktreeState::Missing
+                    && stderr.contains(w.path.to_string_lossy().trim_end_matches('/'))
+            });
+        Error::Cli {
+            stderr: if missing {
+                format!(
+                    "{stderr}\nThat folder is missing. Forget it (Forget missing worktrees… in the Worktrees section or the palette), then check the branch out."
+                )
+            } else {
+                stderr
+            },
+            command,
+        }
     }
 
     /// Commits reachable from `head` that no branch, remote branch or tag reaches.
