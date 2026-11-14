@@ -31,7 +31,7 @@
 #
 # The builds keep to the self-hosted runners, but take nothing from earlier jobs on them: each
 # starts from an empty workspace (a reused .git could carry hooks or config that run code) and
-# installs rustup, the toolchain from rust-toolchain.toml and the crates into job-local homes
+# installs rustup, the latest stable toolchain and the crates into job-local homes
 # under RUNNER_TEMP, with no build cache (setup-rust `isolated`).
 name: Release
 
@@ -407,7 +407,7 @@ jobs:
         run: cp packaging/install.sh packaging/install.ps1 dist/
       - name: Checksums
         run: cd dist && sha256sum -- * > SHA256SUMS
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ inputs.tag }}
           name: Canopy build ${{ needs.identity.outputs.build }}
@@ -466,7 +466,7 @@ jobs:
             echo "build=$BUILD"
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         if: steps.token.outputs.present == 'true'
         with:
           repository: NecturaLabs/app-updates

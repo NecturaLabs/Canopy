@@ -72,3 +72,11 @@ body:
       - [ ] Second checkable outcome'
   validations:
     required: true
+- type: textarea
+  id: where_to_see
+  attributes:
+    label: Where to see it (optional)
+    description: Give the check, fixture or real workflow that demonstrates the current problem
+      and will verify the result, with exact commands when useful.
+  validations:
+    required: false

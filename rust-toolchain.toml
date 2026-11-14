@@ -1,7 +1,0 @@
-# An exact release, not `stable`: the clippy configuration in Cargo.toml is fitted to this
-# version, and a newer clippy could turn an `#[expect]` into a `-D warnings` failure with no code
-# change. Bump it on purpose, together with whatever the new clippy finds (CONTRIBUTING.md).
-[toolchain]
-channel = "1.99.0"
-components = ["rustfmt", "clippy"]
-profile = "minimal"
