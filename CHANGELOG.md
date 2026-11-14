@@ -76,6 +76,7 @@ commits since the previous build.
 
 ### Fixed
 
+- The Conflict style help in Settings → Git, with Canopy choosing the Git settings, reads on one line, also at zoom 1.6.
 - The notification center keeps its margin above and below at the smallest window size and zoom, scrolling its list when the window is short.
 - A Settings row with both an explanation mark and a state remark (Download profile pictures) draws the remark in the accent colour with a gap, so the two marks no longer look alike.
 - Settings are written to a temporary file and renamed over the old one, on a thread of their own,

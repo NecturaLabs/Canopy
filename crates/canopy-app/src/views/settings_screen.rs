@@ -1659,6 +1659,10 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
     )
 }
 
+/// What the Conflict style row says under its title; one line even at zoom 1.6
+/// (`help_fits_on_one_line`).
+const CONFLICT_STYLE_HELP: &str = "Showing the original too makes each side's change clear.";
+
 /// The Autostash row's help. A squash merge is left out: git would keep its stash unapplied and
 /// hidden, so `Repo::merge` never autostashes one, whatever Canopy's choice or git's key says.
 const AUTOSTASH_HELP: &str = "Sets uncommitted changes aside around a pull, rebase or merge (never a squash) and restores them after.";
@@ -3494,7 +3498,7 @@ fn git(
         row_with_note(
             ui,
             "Conflict style",
-            "How conflicted files show both sides. Showing the original too makes each side's change clear.",
+            CONFLICT_STYLE_HELP,
             f.and_then(|f| {
                 let ours = s.conflict_style.style();
                 config_note(
@@ -10241,21 +10245,23 @@ mod tests {
     #[test]
     fn help_fits_on_one_line() {
         let mut autostash_drawn = false;
+        let mut conflict_drawn = false;
         let mut wrapped = Vec::new();
         // With a repository open, so This repository is drawn too.
         let repo = Some(Path::new("/work/canopy"));
         // With Canopy following git's configuration or choosing for itself: the rows differ.
-        for (follow, section) in [true, false].into_iter().flat_map(|follow| {
+        // And at the usual zoom and at 1.6, where the window is 1.6 times fewer points wide.
+        for (follow, section, zoom) in [true, false].into_iter().flat_map(|follow| {
             Section::ALL
                 .into_iter()
                 .chain([Section::Repository])
-                .map(move |section| (follow, section))
+                .flat_map(move |section| [1.0_f32, 1.6].map(move |zoom| (follow, section, zoom)))
         }) {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
             ctx.enable_accesskit();
             theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
-            let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 6000.0));
+            let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0 / zoom, 6000.0));
             let mut settings = Settings {
                 follow_git_config: follow,
                 ..Settings::default()
@@ -10307,19 +10313,20 @@ mod tests {
                 let (Some(text), Some(rect)) = (node.value(), node.bounds()) else {
                     continue;
                 };
-                // Canopy's own choices (follow off) are checked for the Autostash row only: the
-                // conflict markers row there wraps already (filed apart from this change).
-                if !follow && !text.starts_with(AUTOSTASH_HELP) {
+                // At zoom 1.6 only this row is held to one line; the page's longer helps wrap.
+                if zoom > 1.0 && text != CONFLICT_STYLE_HELP {
                     continue;
                 }
+                conflict_drawn |= zoom > 1.0 && !follow && text == CONFLICT_STYLE_HELP;
                 autostash_drawn |= text.starts_with(AUTOSTASH_HELP);
                 if node.role() == egui::accesskit::Role::Label && rect.y1 - rect.y0 > two_lines {
-                    wrapped.push(format!("{section:?} (follow {follow}): {text}"));
+                    wrapped.push(format!("{section:?} (follow {follow}, zoom {zoom}): {text}"));
                 }
             }
         }
         assert!(wrapped.is_empty(), "{wrapped:#?}");
         assert!(autostash_drawn, "the Autostash row was not drawn");
+        assert!(conflict_drawn, "the Conflict style row was not drawn");
     }
 
     /// While this repository's git configuration decides its pulls or pruning, Canopy's own
