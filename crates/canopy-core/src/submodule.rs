@@ -1,7 +1,7 @@
 //! Submodules: a cheap status read kept off the main status path, the `git submodule` operations,
 //! and the commit pair a submodule's diff shows.
 
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use git2::{FileMode, Oid, Repository, SubmoduleIgnore, SubmoduleStatus};
 
@@ -40,8 +40,10 @@ impl SubmoduleState {
 pub struct SubmoduleInfo {
     /// Name in `.gitmodules` (often the path).
     pub name: String,
-    /// Path relative to the superproject's root, `/`-separated.
+    /// Path relative to the superproject's root, `/`-separated, for display and matching a row.
     pub path: String,
+    /// The same path without lossy UTF-8 conversion, for filesystem and Git operations.
+    pub path_os: PathBuf,
     /// URL from `.gitmodules`, when set.
     pub url: Option<String>,
     /// The commit `HEAD`'s tree records.
@@ -276,6 +278,7 @@ impl Repo {
                 dirty: None,
                 name,
                 path,
+                path_os: sm.path().to_path_buf(),
             };
             if check_dirty && info.is_initialized() {
                 info.dirty = Some(self.dirty_by_name(&info.name)?);
@@ -341,8 +344,9 @@ impl Repo {
     /// Brings the submodules to the commits the checked-out commit records, after a pull or a
     /// checkout, when [`crate::GitOptions::recurse_submodules`] says so, or where Canopy follows
     /// the git configuration and `submodule.recurse` is true. (Git's own commands run with
-    /// `-c submodule.recurse=false` unless the configuration decides, so this one rule also
-    /// covers a pull that merges, which git would not recurse for.)
+    /// `-c submodule.recurse=false`, so this one rule also covers a pull that merges, which git
+    /// would not recurse for, and keeps uncommitted edits inside a submodule that a recursive
+    /// switch would drop.)
     /// A failure says the pull or checkout itself succeeded.
     pub fn follow_submodules(&self, progress: impl FnMut(&str)) -> Result<()> {
         if !self.recurses_into_submodules()? {
@@ -427,7 +431,7 @@ impl Repo {
     /// Where git keeps the repository of submodule `name` (`git rev-parse --git-path
     /// modules/<name>`), if it exists. Refuses a name that could point outside the `modules`
     /// directory or a location reached through a symbolic link.
-    fn submodule_git_dir(&self, name: &str) -> Result<Option<std::path::PathBuf>> {
+    fn submodule_git_dir(&self, name: &str) -> Result<Option<PathBuf>> {
         let unsafe_name = name.is_empty()
             || name.contains('\\')
             || Path::new(name)
@@ -491,7 +495,7 @@ impl Repo {
     }
 
     /// `git rev-parse --git-path <rel>`, made absolute.
-    pub(crate) fn git_path(&self, rel: &str) -> Result<std::path::PathBuf> {
+    pub(crate) fn git_path(&self, rel: &str) -> Result<PathBuf> {
         let out = self.git_cmd(&["rev-parse", "--git-path", rel])?;
         let p = Path::new(out.trim_end_matches(['\n', '\r']));
         Ok(if p.is_absolute() {

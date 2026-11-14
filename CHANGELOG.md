@@ -52,6 +52,22 @@ commits since the previous build.
   whether it was chosen by hand, written by Use recommended or read from your config, not only while
   it is unset; one that does not shows the bare value. The first branch field says "(Recommended)"
   under it while it holds `main`.
+- Discard on a submodule in Changes now works: the submodule goes back to the commit this
+  repository records and changes to its tracked files are thrown away, while untracked files inside
+  it stay (Settings → Git → Discard in a submodule can delete them too). It refuses when that would
+  leave a commit on no branch. Before, it did nothing.
+- Opening a repository that stores its references in Git's reftable format says so plainly;
+  Canopy cannot open such a repository yet.
+- A pull or checkout with `submodule.recurse` on in your git configuration no longer throws away
+  uncommitted edits inside a submodule: Canopy updates submodules itself, the way it does when the
+  key is unset, and that keeps them.
+- A push whose commits record a submodule commit that is on no remote now stops before sending
+  anything and names the submodules to push first, instead of failing with git's "src refspec must
+  name a ref" while Update submodules is on, or publishing a commit nobody can fetch while it is
+  off. A `push.recurseSubmodules` in your git configuration decides instead.
+- Upgrades preserve an edited or custom legacy SVG app icon even when an old installer receipt
+  still lists it: only a regular file whose current bytes match an icon Canopy shipped is removed.
+
 - Settings → Integrations marks the program your system would use as "<name> (Default)" instead of
   "Recommended", and no longer names the `$TERMINAL`, `$VISUAL` or `$EDITOR` it came from. The desktop's
   default text editor is offered only when it is installed, like the other defaults. Searching
@@ -125,9 +141,19 @@ commits since the previous build.
 - Fewer notification cards: a failure that repeats while its card shows raises no second card, an
   automatic fetch that fails reaches the notification center and the bell but not a card, and a pull,
   rebase or merge that stops on conflicts, or a missing program, is a Needs your attention notice, not an error.
+- A cherry-pick, a revert, or a stash applied or popped that stops on conflicts is a Needs your
+  attention notice that takes you to Changes, not a Git error card, like a pull, rebase or merge.
+  For a stash it says the stash stays in the stash list until you drop it.
 
 ### Changed
 
+- Canopy no longer changes your git configuration unless you turn on Settings → Git → Edit my git
+  config (off by default). Until then the git configuration in Settings is read only and Use
+  recommended is hidden; Canopy still passes its own choices to every git command. A settings file
+  cannot turn it on.
+- Settings recommends leaving git's `submodule.recurse` off (Recurse into submodules): with it on,
+  git's own checkout, reset and restore can drop edits inside submodules. Use recommended removes it
+  from your global git config. Canopy's own Update submodules stays on.
 - The commit details header now shows the author, the commit id and the parents before the commit
   subject, and the subject takes the rest of the row. The commit identity card describes the
   author and names the committer only when someone else committed.

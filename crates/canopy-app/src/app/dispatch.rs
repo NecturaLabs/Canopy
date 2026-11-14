@@ -479,18 +479,22 @@ impl CanopyApp {
                     setting,
                     value,
                 } => {
-                    self.request_git_config(
-                        ctx,
-                        IdentityJob::Config {
-                            repo,
-                            scope,
-                            setting,
-                            value,
-                        },
-                    );
+                    if self.may_edit_git_config(ctx) {
+                        self.request_git_config(
+                            ctx,
+                            IdentityJob::Config {
+                                repo,
+                                scope,
+                                setting,
+                                value,
+                            },
+                        );
+                    }
                 }
                 Action::UseRecommendedGitConfig => {
-                    self.request_git_config(ctx, IdentityJob::Recommendations);
+                    if self.may_edit_git_config(ctx) {
+                        self.request_git_config(ctx, IdentityJob::Recommendations);
+                    }
                 }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();

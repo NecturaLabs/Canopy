@@ -1354,3 +1354,20 @@ fn non_utf8_folders_are_listed_and_never_staged_as_gitlinks() {
     ));
     assert!(!git(p, &["ls-files", "-s"]).contains("160000"));
 }
+
+/// libgit2 cannot read the reftable ref format (git 2.45 and later, Git 3.0's planned default):
+/// opening such a repository says so plainly instead of naming a libgit2 extension (#286).
+#[test]
+fn a_reftable_repository_is_refused_with_a_plain_message() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    if !run_git(dir.path(), &["init", "-q", "--ref-format=reftable", "repo"])
+        .status
+        .success()
+    {
+        // A git that cannot create one (before 2.45) cannot have made the user one either.
+        return;
+    }
+    let err = Repo::open(&dir.path().join("repo")).expect_err("libgit2 reads no reftable");
+    assert!(matches!(err, Error::Reftable), "{err:?}");
+    assert!(err.to_string().contains("reftable"), "{err}");
+}
