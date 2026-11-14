@@ -192,6 +192,7 @@ class LogData:
         self.repo_slow = Counter()  # events over 1 s
         self.repo_problems = Counter()
         self.first_snapshot = {}  # repo -> epoch
+        self.first_shown = {}  # repo -> epoch of "loading the tab shown for the first time"
         self.snapshot_times = defaultdict(list)  # repo -> sorted epochs
         self.open_ops = {}  # (repo, label) -> epoch started
         self.frames = []  # (epoch, dict)
@@ -307,6 +308,12 @@ def read_log(path, t_from, t_until):
                 if ts is not None:
                     d.first_snapshot.setdefault(repo, ts)
                     d.snapshot_times[repo].append(ts)
+        elif msg == "loading the tab shown for the first time" and ts is not None:
+            # Logged by the UI thread (no repo span): the folder is a field. A tab loads when it
+            # is first shown (#62), so its load time runs from here, not from process start.
+            shown = obj.get("path")
+            if shown:
+                d.first_shown.setdefault(str(shown), ts)
         elif msg == "operation started":
             if repo and ts is not None:
                 d.open_ops[(repo, str(obj.get("operation", "?")))] = ts
@@ -566,18 +573,25 @@ def main():
     if log is not None:
         section("Loading")
         if log.first_snapshot and log.start:
-            times = sorted(t - log.start for t in log.first_snapshot.values())
+            # Each tab's load time runs from when it was first shown (a log without that event
+            # falls back to the process start, as before lazy tabs).
+            def load_s(repo, t):
+                return max(0.0, t - log.first_shown.get(repo, log.start))
+
+            times = sorted(load_s(r, t) for r, t in log.first_snapshot.items())
             print(f"  tabs with a first snapshot: {len(times)}" + (f" of {expect}" if expect else ""))
-            print(f"  first snapshot after start: p50 {pct(times, 50):.1f} s   p95 {pct(times, 95):.1f} s   "
-                  f"last {times[-1]:.1f} s")
-            slow = sorted(((t - log.start, r) for r, t in log.first_snapshot.items()), reverse=True)[: args.top]
+            print(f"  first snapshot after the tab was first shown: p50 {pct(times, 50):.1f} s   "
+                  f"p95 {pct(times, 95):.1f} s   slowest {times[-1]:.1f} s")
+            slow = sorted(((load_s(r, t), r) for r, t in log.first_snapshot.items()), reverse=True)[: args.top]
             print("  slowest to load:")
             for t, r in slow:
                 print(f"    {t:8.1f} s  {short_repo(r)}")
             all_loaded = (expect is None or len(times) >= expect)
-            verdict.check("all tabs loaded", all_loaded,
+            # Canopy loads a tab when it is first shown (#62): a run that never showed some tabs
+            # fails here by design (docs/stress-test.md, scenario (a)).
+            verdict.check("all tabs loaded (each tab shown once)", all_loaded,
                           f"{len(times)}" + (f"/{expect}" if expect else ""), str(expect or "all"))
-            verdict.check("all tabs loaded in time", times[-1] <= LIMITS["all_loaded_s"],
+            verdict.check("slowest tab loaded in time", times[-1] <= LIMITS["all_loaded_s"],
                           f"{times[-1]:.1f} s", f"<= {LIMITS['all_loaded_s']:g} s")
             verdict.check("95% of tabs loaded in time", pct(times, 95) <= LIMITS["repo_loaded_s"],
                           f"p95 {pct(times, 95):.1f} s", f"<= {LIMITS['repo_loaded_s']:g} s")

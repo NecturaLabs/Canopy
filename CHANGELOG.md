@@ -10,6 +10,14 @@ commits since the previous build.
 
 ### Added
 
+- Tabs that are open but not shown load only when you first show them. Restoring a session, or
+  opening several repositories from the command line, loads the tab you see at once and lists the
+  others by name in the tab strip; each one reads its repository, starts watching its files and
+  joins background fetching the first time you switch to it. Before, every restored tab started
+  its own threads and read its repository at launch, so many tabs made start-up slow and heavy.
+  A tab not yet shown has no ahead/behind counts in the strip (its tooltip says it is not loaded
+  yet), and the notices that come with opening a repository (Git settings that differ from the
+  recommendation, leftover files from an interrupted save) appear when you first show the tab.
 - Settings → Integrations lists the well-known editors, terminals and file managers that are not
   installed after the installed ones, dimmed and tagged Not installed, so you see what exists; they
   cannot be picked, and the keyboard passes over them (Linux and macOS; Windows lists the installed

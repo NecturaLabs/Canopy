@@ -270,9 +270,11 @@ impl CanopyApp {
                         Err(error) => self.toasts.push(ctx, ToastKind::Error, Topic::Error,
                             "Git settings were not fully saved", error),
                     }
+                    // A tab that has not loaded reads all of this when it first does.
                     let paths: Vec<_> = self
                         .tabs
                         .iter()
+                        .filter(|tab| tab.is_loaded())
                         .filter(|tab| repo.as_ref().is_none_or(|path| tab.path == *path))
                         .map(|tab| {
                             tab.refresh();
@@ -326,7 +328,13 @@ impl CanopyApp {
                         Topic::Confirmation
                     };
                     self.toasts.push(ctx, kind, topic, title, body);
-                    for path in self.tabs.iter().map(|t| t.path.clone()).collect::<Vec<_>>() {
+                    let loaded: Vec<_> = self
+                        .tabs
+                        .iter()
+                        .filter(|t| t.is_loaded())
+                        .map(|t| t.path.clone())
+                        .collect();
+                    for path in loaded {
                         self.request_identity(IdentityJob::ReadRepo(path));
                     }
                     self.request_identity(IdentityJob::ReadGlobal);
@@ -368,6 +376,7 @@ impl CanopyApp {
     }
 
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
+        self.load_active_tab(ctx);
         self.toasts.set_prefs(self.settings.notifications);
         self.toasts
             .set_settings_open(self.settings_screen.is_some());

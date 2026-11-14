@@ -130,6 +130,25 @@ pub fn tabs(
     });
 }
 
+/// What a tab's tooltip says besides its name: its path, the shortcut that switches to it (the
+/// first nine), and, for a tab that has not been shown yet and so has no counts, that it is not
+/// loaded, so that nothing about it reads as "in sync".
+fn tab_detail(tab: &RepoTab, index: usize) -> String {
+    let mut detail = tab.path.display().to_string();
+    if index < 9 {
+        let modifier = if cfg!(target_os = "macos") {
+            "Cmd"
+        } else {
+            "Ctrl"
+        };
+        let _ = write!(detail, "  ·  {modifier}+{}", index + 1);
+    }
+    if !tab.is_loaded() {
+        detail.push_str("  ·  Not loaded yet: it loads when you switch to it");
+    }
+    detail
+}
+
 /// The kit's document tabs for the open repositories: keyed by path, with each one's sync state,
 /// whether it is working, and its path and switch shortcut in the tooltip.
 fn doc_tabs(tabs: &[RepoTab]) -> Vec<DocTab<'_>> {
@@ -143,15 +162,7 @@ fn doc_tabs(tabs: &[RepoTab]) -> Vec<DocTab<'_>> {
                 .and_then(|s| s.current_branch())
                 .filter(|b| b.upstream.is_some())
                 .map_or((0, 0), |b| (b.ahead, b.behind));
-            let mut detail = tab.path.display().to_string();
-            if i < 9 {
-                let modifier = if cfg!(target_os = "macos") {
-                    "Cmd"
-                } else {
-                    "Ctrl"
-                };
-                let _ = write!(detail, "  ·  {modifier}+{}", i + 1);
-            }
+            let detail = tab_detail(tab, i);
             let doc = DocTab::new(&tab.path, &tab.name)
                 .icon(tab.icon)
                 .sync(ahead, behind)
@@ -1646,5 +1657,23 @@ mod tests {
             }
             assert!(painted(&shapes, tip), "{tool} shows {tip:?} at Helpful");
         }
+    }
+
+    /// #62: the tooltip of a tab that has not loaded says so; a loaded one does not.
+    #[test]
+    fn the_tooltip_of_a_tab_that_is_not_loaded_says_so() {
+        let ctx = egui::Context::default();
+        let unloaded = RepoTab::unloaded(PathBuf::from("alpha"), &ctx, 100, DiffPrefs::default());
+        let loaded = repo_tab("beta");
+        let note = "Not loaded yet: it loads when you switch to it";
+        let tabs = [unloaded, loaded];
+        assert!(
+            tab_detail(&tabs[0], 0).contains(note),
+            "{}",
+            tab_detail(&tabs[0], 0)
+        );
+        assert!(tab_detail(&tabs[0], 0).starts_with("alpha"));
+        assert!(!tab_detail(&tabs[1], 1).contains(note));
+        assert_eq!(doc_tabs(&tabs).len(), 2);
     }
 }
