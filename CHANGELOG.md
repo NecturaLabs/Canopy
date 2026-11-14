@@ -62,11 +62,15 @@ commits since the previous build.
 - What a killed or failed Canopy leaves behind is cleaned up or reported, and nothing of yours is
   deleted. At the next start Canopy removes its own staging files (the saved-token and avatar-cache
   staging files, the patch export's and the update's folders in the temporary folder, an
-  interrupted update's staging in the install folder) once the process that made them is gone, and
-  puts back the old version when an update was killed halfway through the swap. A repository you open
-  with a staging file an interrupted save left in its working tree gets one notification with the
-  path; Canopy never deletes it, nor Git's own lock files. Exporting patches now stages in the
-  temporary folder instead of the folder you chose.
+  interrupted update's staging in the install folder) once the process that made them is gone. An
+  update killed halfway through its swap is undone and the old version is back, with a
+  notification; the lock a killed update or install leaves in the install folder is taken over on
+  Linux, where Canopy can tell its process is gone. Where it cannot (no process id in the lock,
+  another system) it clears nothing and says so in a notification; so does an update it refuses
+  to clear because no Canopy would be left. A repository you open with a staging file an
+  interrupted save left in its working tree gets one notification with the path; Canopy never
+  deletes it, nor Git's own lock files. Exporting patches now stages in the temporary folder
+  instead of the folder you chose.
 - Discard on a submodule in Changes now works: the submodule goes back to the commit this
   repository records and changes to its tracked files are thrown away, while untracked files inside
   it stay (Settings → Git → Discard in a submodule can delete them too). It refuses when that would

@@ -629,6 +629,197 @@ fn a_sweep_at_start_leaves_an_install_somebody_else_holds_alone() {
     assert!(!root.join(".lock").exists(), "the lock is released");
 }
 
+/// Runs a swap of the old `bin`, `share` and `VERSION` for a new version that also has `legal`,
+/// and stops it as a kill would after `moves` moves (a panic that nothing undoes).
+fn killed_swap(moves: usize) -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(
+        &root,
+        &[
+            ("bin/canopy", "old binary"),
+            ("share/old", "old share"),
+            ("VERSION", "412"),
+            ("mine.txt", "not Canopy's"),
+        ],
+    );
+    let new = root.join(".staging.1-1-1/new");
+    folder(
+        &new,
+        &[
+            ("bin/canopy", "new binary"),
+            ("share/new", "new share"),
+            ("VERSION", "413"),
+            ("legal/new", "new legal"),
+        ],
+    );
+    let mut done = 0;
+    let swap = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        swap_in(
+            &root,
+            &new,
+            &root.join(".previous.1-1-0"),
+            &ENTRIES,
+            &mut |a, b| {
+                assert!(done < moves, "killed");
+                done += 1;
+                fs::rename(a, b)
+            },
+        )
+    }));
+    assert!(swap.is_err(), "the swap was stopped");
+    (tmp, root)
+}
+
+/// Killed while moving the new version in, after `legal`, which the old version has none of: it
+/// is the new version's, and goes with the rest of it.
+#[test]
+fn a_kill_in_the_second_phase_removes_every_entry_of_the_new_version_that_moved_in() {
+    // Three old entries aside, then VERSION, bin and legal in; share still waits.
+    let (_tmp, root) = killed_swap(6);
+    assert_eq!(read(&root.join("legal/new")), "new legal", "moved in");
+    assert!(sweep(&root).expect("sweep"));
+    assert_eq!(read(&root.join("bin/canopy")), "old binary");
+    assert_eq!(read(&root.join("share/old")), "old share");
+    assert_eq!(read(&root.join("VERSION")), "412");
+    assert_eq!(read(&root.join("mine.txt")), "not Canopy's");
+    assert_eq!(
+        names(&root),
+        ["VERSION", "bin", "mine.txt", "share"]
+            .map(String::from)
+            .into_iter()
+            .collect(),
+        "the new-only legal folder is gone with the staging and the old copy"
+    );
+}
+
+/// Killed while moving the old version aside: nothing of the new one moved in, so an old entry
+/// that has not moved yet is not the new version's and stays.
+#[test]
+fn a_kill_in_the_first_phase_leaves_the_old_entries_that_did_not_move_alone() {
+    let (_tmp, root) = killed_swap(1);
+    assert!(sweep(&root).expect("sweep"));
+    assert_eq!(read(&root.join("bin/canopy")), "old binary");
+    assert_eq!(read(&root.join("share/old")), "old share");
+    assert_eq!(read(&root.join("VERSION")), "412");
+    assert!(!root.join("legal").exists());
+    assert_eq!(
+        names(&root),
+        ["VERSION", "bin", "mine.txt", "share"]
+            .map(String::from)
+            .into_iter()
+            .collect()
+    );
+}
+
+/// A process id that certainly belongs to no process: a child that has been waited for.
+#[cfg(target_os = "linux")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "starts and waits for a throwaway child to get a process id that is gone"
+)]
+fn dead_pid() -> u32 {
+    let mut child = Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("spawn");
+    let pid = child.id();
+    child.wait().expect("wait");
+    assert!(!Path::new("/proc").join(pid.to_string()).exists());
+    pid
+}
+
+/// A lock folder as a killed update leaves it: `mkdir` made it, `Drop` never ran.
+fn left_lock(root: &Path, pid: Option<&str>) {
+    fs::create_dir_all(root.join(".lock")).expect("lock");
+    if let Some(pid) = pid {
+        write(&root.join(".lock/pid"), pid);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_lock_a_killed_update_left_is_taken_over_and_the_start_sweep_runs() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(&root, &[("bin/canopy", "x"), (".staging.1-1-1/a", "x")]);
+    left_lock(&root, Some(&format!("{}\n", dead_pid())));
+    let swept = sweep_unlocked(&root).expect("sweep");
+    assert_eq!(swept.stuck_lock, None);
+    assert_eq!(
+        names(&root),
+        ["bin"].map(String::from).into_iter().collect(),
+        "the dead update's staging and lock are gone"
+    );
+}
+
+#[test]
+fn a_lock_whose_owner_is_running_is_left_alone() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    folder(&root, &[("bin/canopy", "x"), (".staging.1-1-1/a", "x")]);
+    left_lock(&root, Some(&std::process::id().to_string()));
+    assert_eq!(
+        sweep_unlocked(&root).expect("nothing to do"),
+        UpdateSweep::default(),
+        "a running update is not reported"
+    );
+    assert!(root.join(".staging.1-1-1/a").is_file());
+    assert_eq!(
+        read(&root.join(".lock/pid")),
+        std::process::id().to_string()
+    );
+}
+
+#[test]
+fn a_lock_without_a_process_id_is_left_alone() {
+    for pid in [None, Some(""), Some("not a number"), Some("-5"), Some("0")] {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let root = tmp.path().join("root");
+        folder(&root, &[("bin/canopy", "x"), (".staging.1-1-1/a", "x")]);
+        left_lock(&root, pid);
+        let swept = sweep_unlocked(&root).expect("nothing to do");
+        assert_eq!(
+            swept.stuck_lock,
+            Some(root.join(".lock")),
+            "it is reported: {pid:?}"
+        );
+        assert!(!swept.put_back);
+        assert!(root.join(".staging.1-1-1/a").is_file(), "{pid:?}");
+        assert!(root.join(".lock").is_dir(), "{pid:?}");
+    }
+}
+
+#[test]
+fn the_lock_records_its_owner_and_removes_the_record() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let lock = Lock::take(tmp.path()).expect("take");
+    assert_eq!(
+        read(&tmp.path().join(".lock/pid")).trim(),
+        std::process::id().to_string()
+    );
+    drop(lock);
+    assert!(!tmp.path().join(".lock").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_update_takes_over_the_lock_of_a_dead_one() {
+    let old = installed();
+    left_lock(&old.root, Some(&dead_pid().to_string()));
+    let err = install_managed(
+        &old.root,
+        &plan_for("http://127.0.0.1:1", b"x", None),
+        &mut |_| {},
+    )
+    .expect_err("no server");
+    assert!(
+        !err.contains("another Canopy install or update"),
+        "the dead lock did not stop it: {err}"
+    );
+    assert!(!old.root.join(".lock").exists(), "released afterwards");
+}
+
 #[test]
 fn the_work_folder_guard_removes_the_folder_it_guards() {
     let tmp = tempfile::tempdir().expect("tmp");

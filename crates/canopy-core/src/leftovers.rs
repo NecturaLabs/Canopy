@@ -48,31 +48,39 @@ pub fn staging_file_owner(file_name: &str) -> Option<u32> {
 }
 
 /// The process id after `prefix` in the name of a folder or file Canopy staged
-/// (`<prefix><pid>-…`), and `None` for any other name.
+/// (`<prefix><pid>-<digits and dashes>`), and `None` for any other name.
 #[must_use]
 pub fn owner_after_prefix(file_name: &str, prefix: &str) -> Option<u32> {
     let rest = file_name.strip_prefix(prefix)?;
     let (pid, tail) = rest.split_once('-')?;
-    if tail.is_empty() || pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+    let counted = tail.bytes().next().is_some_and(|b| b.is_ascii_digit())
+        && tail.bytes().all(|b| b.is_ascii_digit() || b == b'-');
+    if !counted || pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
     pid.parse().ok()
 }
 
-/// Whether the process that staged something is certainly gone.
+/// Whether process `pid` is certainly gone.
 ///
-/// It is not this process, and on Linux no `/proc/<pid>` exists; elsewhere, where a process id
-/// cannot be looked up without a system call, the thing has not been touched for an hour.
+/// `Some(true)` when it is not this process and, on Linux, no `/proc/<pid>` exists; `Some(false)`
+/// when it is running; `None` where a process id cannot be looked up without a system call (every
+/// system but Linux).
 #[must_use]
-pub fn owner_is_gone(pid: u32, modified: Option<SystemTime>) -> bool {
+pub fn process_is_gone(pid: u32) -> Option<bool> {
     if pid == std::process::id() {
-        return false;
+        return Some(false);
     }
     let proc = Path::new("/proc");
-    if cfg!(target_os = "linux") && proc.join("self").exists() {
-        return !proc.join(pid.to_string()).exists();
-    }
-    untouched_for_long(modified, SystemTime::now())
+    (cfg!(target_os = "linux") && proc.join("self").exists())
+        .then(|| !proc.join(pid.to_string()).exists())
+}
+
+/// Whether the process that staged something is certainly gone: [`process_is_gone`], else, where
+/// that cannot say, the thing has not been touched for an hour.
+#[must_use]
+pub fn owner_is_gone(pid: u32, modified: Option<SystemTime>) -> bool {
+    process_is_gone(pid).unwrap_or_else(|| untouched_for_long(modified, SystemTime::now()))
 }
 
 fn untouched_for_long(modified: Option<SystemTime>, now: SystemTime) -> bool {
@@ -197,6 +205,10 @@ mod tests {
             "canopy-patches-",
             "canopy-patches-8",
             "canopy-patches-x-1",
+            "canopy-patches-8-",
+            "canopy-patches-8-x",
+            "canopy-patches-8--1",
+            "canopy-patches-8-1.bak",
             "other-8-1",
         ] {
             assert_eq!(
@@ -218,6 +230,18 @@ mod tests {
         // Process 1 always runs; no process has the largest id.
         assert!(!owner_is_gone(1, None));
         assert!(owner_is_gone(u32::MAX, None));
+    }
+
+    #[test]
+    fn a_process_is_gone_only_where_that_can_be_proven() {
+        assert_eq!(process_is_gone(std::process::id()), Some(false));
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(process_is_gone(1), Some(false));
+            assert_eq!(process_is_gone(u32::MAX), Some(true));
+        }
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(process_is_gone(u32::MAX), None);
     }
 
     #[test]

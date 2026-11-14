@@ -385,6 +385,29 @@ impl CanopyApp {
         self.leftover_reads = waiting;
     }
 
+    /// Puts what the start's cleanup found into the notification center, once.
+    pub(super) fn poll_swept(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &self.swept else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(swept) => {
+                for notice in swept.notices() {
+                    self.toasts.push_quiet_once(
+                        ctx,
+                        notice.kind,
+                        notice.topic,
+                        notice.title,
+                        &notice.body,
+                    );
+                }
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => return,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {}
+        }
+        self.swept = None;
+    }
+
     /// Puts what the finished configuration reads found into the notification center.
     pub(super) fn poll_config_reads(&mut self, ctx: &egui::Context) {
         let mut waiting = Vec::new();
@@ -503,6 +526,81 @@ mod tests {
         let mut alone = test_app();
         alone.open_repo(&ctx, PathBuf::from("/home/ada/src/other"));
         assert!(format!("{:?}", alone.toasts).contains("Could not open repository"));
+    }
+
+    /// The scans of opened repositories answer on their own time: a waiting one is kept, a
+    /// finished one with files is one notification (the same files found again are not another),
+    /// one with none or whose thread is gone says nothing.
+    #[test]
+    fn leftover_scans_are_answered_once_each() {
+        use crossbeam_channel::bounded;
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let repo = PathBuf::from("/r/app");
+        let file = PathBuf::from("/r/app/.a.rs.canopy-4000000000-0.tmp");
+
+        let (waiting_tx, waiting_rx) = bounded(1);
+        let (found_tx, found_rx) = bounded(1);
+        let (none_tx, none_rx) = bounded(1);
+        let (gone_tx, gone_rx) = bounded::<Vec<PathBuf>>(1);
+        drop(gone_tx);
+        found_tx.send(vec![file.clone()]).expect("send");
+        none_tx.send(Vec::new()).expect("send");
+        app.leftover_reads = vec![
+            (repo.clone(), waiting_rx),
+            (repo.clone(), found_rx),
+            (repo.clone(), none_rx),
+            (repo.clone(), gone_rx),
+        ];
+        app.poll_leftover_reads(&ctx);
+        assert_eq!(app.leftover_reads.len(), 1, "only the unanswered one waits");
+        assert_eq!(app.toasts.counts(), (0, 1), "one quiet notification");
+        let shown = format!("{:?}", app.toasts);
+        assert!(
+            shown.contains("Files left by an interrupted save"),
+            "{shown}"
+        );
+        assert!(shown.contains(&file.display().to_string()), "{shown}");
+
+        // The same file found when the repository opens again is not a second row.
+        let (again_tx, again_rx) = bounded(1);
+        again_tx.send(vec![file]).expect("send");
+        app.leftover_reads.push((repo, again_rx));
+        app.poll_leftover_reads(&ctx);
+        assert_eq!(app.toasts.counts(), (0, 1));
+
+        waiting_tx.send(Vec::new()).expect("send");
+        app.poll_leftover_reads(&ctx);
+        assert!(app.leftover_reads.is_empty());
+    }
+
+    /// What the start's cleanup found reaches the notification center once, and the app stops
+    /// asking.
+    #[test]
+    fn the_start_cleanups_findings_become_notifications() {
+        use crossbeam_channel::bounded;
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let (tx, rx) = bounded(1);
+        app.swept = Some(rx);
+        app.poll_swept(&ctx);
+        assert!(app.swept.is_some(), "no answer yet");
+        tx.send(crate::housekeeping::Swept {
+            update: crate::selfupdate::UpdateSweep {
+                root: PathBuf::from("/opt/canopy"),
+                put_back: true,
+                stuck_lock: None,
+            },
+            update_refused: Some("/opt/canopy holds the files of an update".to_owned()),
+            ..Default::default()
+        })
+        .expect("send");
+        app.poll_swept(&ctx);
+        assert!(app.swept.is_none());
+        assert_eq!(app.toasts.counts(), (0, 2), "the refusal and the roll-back");
+        let shown = format!("{:?}", app.toasts);
+        assert!(shown.contains("Interrupted update not cleared"), "{shown}");
+        assert!(shown.contains("Interrupted update undone"), "{shown}");
     }
 
     /// #36: a partial clone from Git before 2.24 does not open; Canopy asks before it converts

@@ -562,6 +562,37 @@ impl Toasts {
         self.notify(ctx, kind, topic, title, body, help, offer, source, false);
     }
 
+    /// Like [`Self::push_for`] for what no repository and no action of the user's caused (what a
+    /// start's cleanup found): the center and the bell hold it, and no card interrupts.
+    pub fn push_quiet(
+        &mut self,
+        ctx: &egui::Context,
+        kind: ToastKind,
+        topic: Topic,
+        title: impl Into<String>,
+        body: impl Into<String>,
+    ) {
+        let title = title.into();
+        let body = body.into();
+        let (help, offer) = recovery(kind, &title, &body, None);
+        self.notify(ctx, kind, topic, title, body, help, offer, None, false);
+    }
+
+    /// [`Self::push_quiet`], and only when the center does not already hold the same words: the
+    /// same finding at every start is one notice.
+    pub fn push_quiet_once(
+        &mut self,
+        ctx: &egui::Context,
+        kind: ToastKind,
+        topic: Topic,
+        title: &str,
+        body: &str,
+    ) {
+        if !self.holds(title, body) {
+            self.push_quiet(ctx, kind, topic, title, body);
+        }
+    }
+
     /// Like [`Self::push_quiet_for`] (an Info notice), and only when the center does not already
     /// hold the same words: the same leftover files found on every open are one notice.
     pub fn push_quiet_once_for(
@@ -572,14 +603,16 @@ impl Toasts {
         body: &str,
         repo: &Path,
     ) {
-        if self
-            .history
+        if !self.holds(title, body) {
+            self.push_quiet_for(ctx, ToastKind::Info, topic, title, body, repo);
+        }
+    }
+
+    /// Whether the center holds a notice with exactly these words.
+    fn holds(&self, title: &str, body: &str) -> bool {
+        self.history
             .iter()
             .any(|e| e.title == title && e.body == body)
-        {
-            return;
-        }
-        self.push_quiet_for(ctx, ToastKind::Info, topic, title, body, repo);
     }
 
     /// Notifies with a decision to make: the card shows buttons for it for a decision's time
@@ -1437,6 +1470,33 @@ mod tests {
             2,
             "the notification center retains both results"
         );
+    }
+
+    /// The same leftover files found each time a repository opens are one row in the center,
+    /// quiet (no card), and a different finding is another row.
+    #[test]
+    fn a_quiet_notice_found_again_is_one_row() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        let repo = Path::new("/r/app");
+        toasts.push_quiet_once_for(&ctx, Topic::Attention, "Files left", "/r/.a.tmp", repo);
+        toasts.push_quiet_once_for(&ctx, Topic::Attention, "Files left", "/r/.a.tmp", repo);
+        toasts.push_quiet_once_for(
+            &ctx,
+            Topic::Attention,
+            "Files left",
+            "/r/.a.tmp",
+            Path::new("/r/other"),
+        );
+        assert_eq!(toasts.counts(), (0, 1), "no card, one row");
+        toasts.push_quiet_once_for(&ctx, Topic::Attention, "Files left", "/r/.b.tmp", repo);
+        assert_eq!(toasts.counts(), (0, 2));
+        assert_eq!(toasts.history[0].kind, ToastKind::Info);
+        assert_eq!(toasts.history[0].source.as_deref(), Some("app"));
+        toasts.push_quiet_once(&ctx, ToastKind::Error, Topic::Error, "Update", "refused");
+        toasts.push_quiet_once(&ctx, ToastKind::Error, Topic::Error, "Update", "refused");
+        assert_eq!(toasts.counts(), (0, 3));
+        assert_eq!(toasts.history[0].source, None);
     }
 
     /// REVIEW-KIT-5: a sixth notification pushes out the oldest one that is not an error; an

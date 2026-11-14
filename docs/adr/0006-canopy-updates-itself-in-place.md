@@ -45,8 +45,11 @@ old ones aside into `.previous.*`, then the new ones in; a failed move puts the 
 and bring the receipt, `VERSION`, `uninstall.sh` and the registered desktop entry and icon copies
 up to date. `uninstall.sh` is the release's `install.sh` only when it is listed in the release's
 `SHA256SUMS`, matches, is headed as Canopy's installer and parses; otherwise the old one stays. The
-install folder's `.lock` is taken as the installer takes it, and leftovers of an interrupted run are
-cleaned, except a `.previous.*` folder when no Canopy binary remains beside it.
+install folder's `.lock` is taken as the installer takes it, with its holder's process id in a `pid`
+file inside; on Linux the lock of a holder that no longer exists is taken over, elsewhere (and for a
+lock without a process id) it is left and reported. Leftovers of an interrupted run are cleaned
+(a swap killed halfway is undone), except a `.previous.*` folder when no Canopy binary remains
+beside it.
 
 Every other installation (a source build, macOS, Windows) downloads the feed's installer script,
 checks it is headed as Canopy's installer, and runs it pinned to the new build (`--version N`).

@@ -15,6 +15,8 @@ use std::time::{Duration, SystemTime};
 
 use crossbeam_channel::{Receiver, bounded};
 
+use crate::ui::toast::{ToastKind, Topic};
+
 /// How long a staging file without a process id in its name must have been untouched before it is
 /// abandoned. Writing one takes milliseconds.
 const SETTLE: Duration = Duration::from_mins(1);
@@ -22,10 +24,63 @@ const SETTLE: Duration = Duration::from_mins(1);
 /// How many leftover files a notification lists before "and N more".
 const SHOWN: usize = 5;
 
-/// What a start's sweep removed, for the log.
+/// What a start's sweep removed and found.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Swept {
+    /// The staging files removed, for the log.
     pub files: Vec<PathBuf>,
+    /// What the sweep of an installation's interrupted update did.
+    pub update: crate::selfupdate::UpdateSweep,
+    /// Why an interrupted update could not be cleared: the user has to act.
+    pub update_refused: Option<String>,
+}
+
+/// One notification for the center.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub kind: ToastKind,
+    pub topic: Topic,
+    pub title: &'static str,
+    pub body: String,
+}
+
+impl Swept {
+    /// What the user is told: a refusal, an old version put back, or a lock Canopy could not
+    /// clear. A removed staging file is not told; only the log has it.
+    pub fn notices(&self) -> Vec<Notice> {
+        let mut notices = Vec::new();
+        if let Some(why) = &self.update_refused {
+            notices.push(Notice {
+                kind: ToastKind::Error,
+                topic: Topic::Error,
+                title: "Interrupted update not cleared",
+                body: why.clone(),
+            });
+        }
+        if self.update.put_back {
+            notices.push(Notice {
+                kind: ToastKind::Info,
+                topic: Topic::Update,
+                title: "Interrupted update undone",
+                body: format!(
+                    "Canopy was stopped while updating {}.\nThe previous version is back in place.",
+                    self.update.root.display()
+                ),
+            });
+        }
+        if let Some(lock) = &self.update.stuck_lock {
+            notices.push(Notice {
+                kind: ToastKind::Info,
+                topic: Topic::Attention,
+                title: "Install folder locked",
+                body: format!(
+                    "{} is held by an install or update that may have been stopped.\nCanopy cannot tell whether it is still running.\nRemove it if none is.",
+                    lock.display()
+                ),
+            });
+        }
+        notices
+    }
 }
 
 /// Whether `meta` is a plain file (not a link) nobody has written to for [`SETTLE`].
@@ -89,8 +144,15 @@ pub fn sweep_at_start() -> Swept {
             crate::selfupdate::UPDATE_STAGING_PREFIX,
         ],
     ));
-    if let Err(e) = crate::selfupdate::sweep_interrupted_update() {
-        tracing::warn!(error = %e, "could not clear what an interrupted update left");
+    match crate::selfupdate::sweep_interrupted_update() {
+        Ok(update) => swept.update = update,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not clear what an interrupted update left");
+            swept.update_refused = Some(e);
+        }
+    }
+    if swept.update.put_back {
+        tracing::info!(root = %swept.update.root.display(), "put back the version an interrupted update replaced");
     }
     if !swept.files.is_empty() {
         tracing::info!(
@@ -101,16 +163,20 @@ pub fn sweep_at_start() -> Swept {
     swept
 }
 
-/// Runs [`sweep_at_start`] on its own thread.
-pub fn sweep_at_start_async() {
+/// Runs [`sweep_at_start`] on its own thread and wakes the UI when the answer is in.
+pub fn sweep_at_start_async(ctx: &egui::Context) -> Receiver<Swept> {
+    let (tx, rx) = bounded(1);
+    let ctx = ctx.clone();
     let spawned = std::thread::Builder::new()
         .name("housekeeping".into())
-        .spawn(|| {
-            sweep_at_start();
+        .spawn(move || {
+            let _ = tx.send(sweep_at_start());
+            ctx.request_repaint();
         });
     if let Err(e) = spawned {
         tracing::warn!(error = %e, "could not start the start-up cleanup");
     }
+    rx
 }
 
 /// Looks, on a new thread, for the staging files an interrupted save left in the working tree
@@ -216,6 +282,90 @@ mod tests {
             sweep_data_dir(&data.path().join("none"), SystemTime::now()),
             Vec::<PathBuf>::new()
         );
+    }
+
+    #[test]
+    fn nothing_found_is_nothing_said() {
+        assert_eq!(Swept::default().notices(), Vec::new());
+        let removed = Swept {
+            files: vec![PathBuf::from("/tmp/canopy-patches-1-0")],
+            ..Swept::default()
+        };
+        assert_eq!(
+            removed.notices(),
+            Vec::new(),
+            "removed files are only logged"
+        );
+    }
+
+    #[test]
+    fn a_refusal_a_roll_back_and_a_stuck_lock_are_one_notice_each() {
+        let swept = Swept {
+            files: Vec::new(),
+            update: crate::selfupdate::UpdateSweep {
+                root: PathBuf::from("/opt/canopy"),
+                put_back: true,
+                stuck_lock: Some(PathBuf::from("/opt/canopy/.lock")),
+            },
+            update_refused: Some("/opt/canopy holds the files of an update".to_owned()),
+        };
+        let notices = swept.notices();
+        let titles: Vec<_> = notices.iter().map(|n| n.title).collect();
+        assert_eq!(
+            titles,
+            [
+                "Interrupted update not cleared",
+                "Interrupted update undone",
+                "Install folder locked"
+            ]
+        );
+        assert_eq!(notices[0].kind, ToastKind::Error);
+        assert_eq!(notices[0].body, "/opt/canopy holds the files of an update");
+        assert_eq!(
+            notices[1].body,
+            "Canopy was stopped while updating /opt/canopy.\nThe previous version is back in place."
+        );
+        assert!(
+            notices[2].body.starts_with("/opt/canopy/.lock is held by"),
+            "{}",
+            notices[2].body
+        );
+        assert_eq!(notices[2].body.lines().count(), 3);
+    }
+
+    fn git_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("repo folder");
+        canopy_core::cli::run(dir.path(), &["init", "-q"]).expect("git init");
+        dir
+    }
+
+    /// The scan runs on its own thread and answers through the channel.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_scan_reports_a_dead_process_staging_file_and_leaves_it() {
+        let repo = git_repo();
+        let gone = repo.path().join(format!(".a.rs.canopy-{}-0.tmp", u32::MAX));
+        let mine = repo
+            .path()
+            .join(format!(".b.rs.canopy-{}-0.tmp", std::process::id()));
+        std::fs::write(&gone, "half").expect("write");
+        std::fs::write(&mine, "being written").expect("write");
+        let ctx = egui::Context::default();
+        let found = scan_async(&ctx, repo.path().to_path_buf())
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the scan answers");
+        assert_eq!(found, std::slice::from_ref(&gone));
+        assert!(gone.is_file() && mine.is_file(), "nothing is deleted");
+    }
+
+    #[test]
+    fn a_scan_of_something_that_is_not_a_repository_finds_nothing() {
+        let dir = tempfile::tempdir().expect("folder");
+        let ctx = egui::Context::default();
+        let found = scan_async(&ctx, dir.path().join("missing"))
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the scan answers");
+        assert_eq!(found, Vec::<PathBuf>::new());
     }
 
     #[test]

@@ -245,6 +245,8 @@ pub struct CanopyApp {
     config_reads: Vec<(PathBuf, Receiver<crate::repo_config::GitFacts>)>,
     /// Scans of opened repositories for staging files an interrupted save left, until they answer.
     leftover_reads: Vec<(PathBuf, Receiver<Vec<PathBuf>>)>,
+    /// The start's cleanup of what an earlier run left behind, until it answers.
+    swept: Option<Receiver<crate::housekeeping::Swept>>,
     git_version: String,
     tokens: TokenStore,
     updater: Updater,
@@ -374,6 +376,9 @@ impl CanopyApp {
             pending_opens: 0,
             config_reads: Vec::new(),
             leftover_reads: Vec::new(),
+            // A screenshot or soak run has nothing left behind and must not touch the folders.
+            swept: (!shooting && launch.glass_soak.is_none())
+                .then(|| crate::housekeeping::sweep_at_start_async(&cc.egui_ctx)),
             git_version,
             tokens: if shooting {
                 TokenStore::default()
@@ -495,6 +500,27 @@ impl CanopyApp {
                     "",
                     Offer::ReviewUpdate,
                 );
+                // What the start's cleanup tells, at a fixed illustrative path.
+                let swept = crate::housekeeping::Swept {
+                    update: crate::selfupdate::UpdateSweep {
+                        root: PathBuf::from("/home/ada/.local/share/canopy"),
+                        put_back: true,
+                        stuck_lock: Some(PathBuf::from("/home/ada/.local/share/canopy/.lock")),
+                    },
+                    update_refused: Some(
+                        "/home/ada/.local/share/canopy holds the files of an update that was interrupted and has no Canopy of its own: run the installer again to repair it".to_owned(),
+                    ),
+                    ..Default::default()
+                };
+                for notice in swept.notices() {
+                    app.toasts.push_quiet(
+                        ctx,
+                        notice.kind,
+                        notice.topic,
+                        notice.title,
+                        notice.body,
+                    );
+                }
             }
             Some("toasts") => {
                 // Every type, so the stack shows a finished operation beside the error.
@@ -1615,6 +1641,7 @@ pub(super) fn test_app() -> CanopyApp {
         pending_opens: 0,
         config_reads: Vec::new(),
         leftover_reads: Vec::new(),
+        swept: None,
         git_version: String::new(),
         tokens: TokenStore::default(),
         updater: Updater::default(),
