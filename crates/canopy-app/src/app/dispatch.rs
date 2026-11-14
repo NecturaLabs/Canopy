@@ -176,7 +176,8 @@ impl CanopyApp {
                     if i < self.tabs.len() {
                         let closed = self.tabs.remove(i);
                         open::keep_draft(ctx, &closed);
-                        // The neighbour that takes its place is shown now, so it loads now.
+                        // Whichever tab now sits at the active index (a neighbour, or the last one
+                        // when the closed tab was) is the shown one, so it loads now.
                         self.activate(ctx, self.active);
                     }
                 }
