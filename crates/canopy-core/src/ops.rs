@@ -433,6 +433,7 @@ impl Repo {
         expected: crate::HunkKey,
         context: u32,
     ) -> Result<()> {
+        crate::lfs::refuse_partial(self.git(), path)?;
         let source = match action {
             HunkAction::Stage | HunkAction::Discard => DiffSource::Unstaged,
             HunkAction::Unstage => DiffSource::Staged,

@@ -125,6 +125,7 @@ impl Repo {
         if lines.is_empty() {
             return Err(Error::invalid(NOTHING_SELECTED));
         }
+        crate::lfs::refuse_partial(self.git(), path)?;
         let (source, reverse) = match action {
             HunkAction::Stage => (DiffSource::Unstaged, false),
             HunkAction::Unstage => (DiffSource::Staged, true),

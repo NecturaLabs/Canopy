@@ -60,7 +60,7 @@ pub use ignore::{
     IgnoreDestination, IgnoreMatch, IgnoreOutcome, IgnorePreview, IgnoreRule, IgnoreTarget,
     IgnoreTemplate, IgnoredPaths,
 };
-pub use lfs::{LfsFile, LfsPointer};
+pub use lfs::{LfsDiff, LfsFile, LfsLock, LfsOmitted, LfsPattern, LfsPointer, LfsSide};
 pub use merged::{MergedBranch, MergedReason};
 pub use metrics::{
     AuthorActivity, BranchMetrics, Divergence, MetricCommit, RepositoryMetrics, WeekActivity,
@@ -79,4 +79,4 @@ pub use submodule::{
     SUBMODULE_LOG_LIMIT, SubmoduleChange, SubmoduleCommit, SubmoduleInfo, SubmoduleLog,
     SubmoduleState, submodule_add_problem,
 };
-pub use tools::MissingTool;
+pub use tools::{MissingTool, git_lfs_missing};
