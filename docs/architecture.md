@@ -112,7 +112,7 @@ thread.
 | `app/input.rs` | Keyboard: bare keys, chords and the commands they run. |
 | `app/palette.rs` | The command palette's entries, including the Appearance ones (Style, Density, Translucent surfaces, High contrast, Motion). |
 | `app/dispatch.rs` | Applies the actions a frame collected. |
-| `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch (a tab's first automatic fetch is offset by its position among the tabs, `stagger_offset`), the timed refresh of the open request list. |
+| `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch (each tab has its own due time, `RepoTab::next_fetch`; its first is `first_fetch_delay` after the tab is scheduled, between half the interval and a whole one by a hash of the path, so it does not depend on the tab's position), the timed refresh of the open request list. |
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. Keeps commit, conflict and request-comment drafts per worktree during the run. |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`: waits until the window is final, keeps the pointer out of the picture (`raw_input_hook` drops pointer input), opens the dialog overlays and, for `--overlay menu-*`, a context menu by a synthetic right click on the widget it finds by its AccessKit name. |

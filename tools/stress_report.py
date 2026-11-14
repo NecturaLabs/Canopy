@@ -686,17 +686,25 @@ def main():
             verdict.na("frame times", "no `frame stats` events (log level too low, or no frames)")
         else:
             total = hitches = 0
+            load_frames = load_hitches = 0
+            load_worst = 0.0
             worst = []
             for ts, o in log.frames:
                 n = as_float(o.get("frames")) or 0
                 h33 = as_float(o.get("hitches_33")) or 0
                 mx = as_float(o.get("max_ms")) or 0
-                if log.start and ts - log.start >= FRAME_LOAD_PHASE_S:
+                if log.start and ts - log.start < FRAME_LOAD_PHASE_S:
+                    load_frames += n
+                    load_hitches += h33
+                    load_worst = max(load_worst, mx)
+                elif log.start:
                     total += n
                     hitches += h33
                     worst.append((mx, ts - log.start, o))
             worst.sort(key=lambda w: -w[0])
             share = 100.0 * hitches / total if total else 0.0
+            print(f"  loading (first {FRAME_LOAD_PHASE_S:g} s, left out of the table and the verdicts): "
+                  f"{int(load_frames):,} frames, {int(load_hitches):,} over 33 ms, worst {load_worst:.0f} ms")
             print(f"  {int(total):,} frames after the first {FRAME_LOAD_PHASE_S:g} s; "
                   f"{int(hitches):,} over 33 ms ({share:.2f}%)")
             rowsf = []

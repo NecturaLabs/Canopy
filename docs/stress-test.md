@@ -55,7 +55,9 @@ idle window produces no frames and no event, and the frames left when the window
 written when the next one arrives. The event has no `context` field: a window mixes views, so
 judge scrolling or tab switching by the minutes (`report --from/--until`). `first frame` is
 logged once, when the first frame's UI pass has finished, with the time since the start of `main`.
-The report ranks the slowest windows under "Frame times".
+The report ranks the slowest windows under "Frame times". It leaves the windows that fall in the
+first 30 s after start (loading, not interaction) out of that table and out of the verdicts, and
+prints them on one line of their own: frames, frames over 33 ms and the worst frame.
 
 ### Instrumentation the app does not have yet
 
@@ -343,9 +345,11 @@ Two things at once, for 10 to 15 minutes, with all 100 tabs open:
 
 1. **Fetch in many tabs.** Easiest and most demanding: set Settings -> Git -> **Fetch in the
    background** to the shortest option (every 5 minutes). Every tab's timer starts when it opens;
-   a tab's first automatic fetch waits an extra share of the interval by its position among the
-   tabs (the first tab none, the last nearly a whole interval), so the fetches spread over a
-   second interval instead of one herd. For a burst, press `f` (fetch) in tabs by hand or with
+   a tab's schedule starts when it first sees auto-fetch on (opening the tab, or turning the
+   setting on, or changing the interval, with tabs already open), and its first fetch falls due
+   between half the interval and a whole one later, by a hash of its path, so the 100 tabs'
+   first fetches spread over the second half of the interval instead of one herd. Each tab then
+   waits a whole interval after every fetch, its own or one you ran by hand. For a burst, press `f` (fetch) in tabs by hand or with
    `for i in $(seq 100); do xdotool key --delay 150 ctrl+Tab f; done`. This uses the network:
    failures from GitHub throttling are not Canopy's; use a local mirror (`--base-url`) when you
    need to separate the two.
@@ -448,7 +452,7 @@ fails.
 | Every repository opens (no `cannot open the repository`) | 100 of 100 | a |
 | First frame | at most 2 s | a |
 | All tabs loaded (first snapshot of the last one) | at most 120 s; 95 % of tabs within 60 s | a |
-| UI usable while tabs load (no frozen window) | `frame stats` (no window with `max_ms` over 100) and by eye | a |
+| UI usable while tabs load (no frozen window) | by eye, and the report's loading line (first 30 s): a worst frame of about 1 s or more is a frozen window; not a verdict | a |
 | Frames while tab switching | none over 100 ms; at most 1 % over 33 ms | b |
 | Frames while scrolling history | p95 at most 16.7 ms, p99 at most 33 ms, none over 100 ms (use `--from/--until`) | c |
 | Share of frames over 33 ms over the whole run | at most 1 % | all |
