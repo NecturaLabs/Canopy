@@ -1,7 +1,8 @@
-//! Where Canopy keeps its files, per operating system (ADR 0016).
+//! Where Canopy keeps its files, per operating system (ADR 0018).
 //!
 //! Four folders, each holding the marker file [`MARKER`] once Canopy has claimed it, which is what
-//! the installers' `--purge` looks for in a folder with a generic name:
+//! the installers' `--purge` looks for in a folder with a generic name. A folder that holds a
+//! file of someone else's is used but never marked, and `--purge` leaves it:
 //!
 //! | | config | data | state | cache |
 //! |---|---|---|---|---|
@@ -254,7 +255,7 @@ pub struct Migration {
 #[derive(Debug)]
 pub struct Setup {
     pub migration: Migration,
-    pub prepared: io::Result<()>,
+    pub prepared: io::Result<Vec<PathBuf>>,
 }
 
 static SETUP: OnceLock<Setup> = OnceLock::new();
@@ -292,20 +293,32 @@ pub fn log_setup() {
     for (path, why) in &migration.failed {
         tracing::warn!("could not move {}: {why}", path.display());
     }
-    if let Err(e) = &setup.prepared {
-        tracing::warn!("could not prepare Canopy's folders: {e}");
+    match &setup.prepared {
+        Ok(unmarked) => {
+            for folder in unmarked {
+                tracing::warn!(
+                    "{} holds files that are not Canopy's; it is used but not marked",
+                    folder.display()
+                );
+            }
+        }
+        Err(e) => tracing::warn!("could not prepare Canopy's folders: {e}"),
     }
 }
 
-/// Creates every folder (owner only on Unix) and claims it with [`MARKER`].
-pub fn prepare_folders(layout: &Layout) -> io::Result<()> {
+/// Creates every folder (owner only on Unix) and claims it with [`MARKER`]. Returns the folders
+/// left unmarked because someone else's files are in them.
+pub fn prepare_folders(layout: &Layout) -> io::Result<Vec<PathBuf>> {
     let mut result = Ok(());
+    let mut unmarked = Vec::new();
     for folder in layout.folders() {
-        if let Err(e) = create_private_dir(folder).and_then(|()| claim(folder)) {
-            result = result.and(Err(e));
+        match create_private_dir(folder).and_then(|()| claim(folder)) {
+            Ok(true) => {}
+            Ok(false) => unmarked.push(folder.to_path_buf()),
+            Err(e) => result = result.and(Err(e)),
         }
     }
-    result
+    result.map(|()| unmarked)
 }
 
 /// Creates `dir` and its missing parents, readable by the owner only on Unix.
@@ -321,34 +334,35 @@ pub fn create_private_dir(dir: &Path) -> io::Result<()> {
 }
 
 /// Puts [`MARKER`] in `dir` when the folder is empty or holds only Canopy's own files, and makes
-/// it owner-only on Unix. A folder with someone else's files in it is left unmarked, so `--purge`
-/// leaves it too.
-fn claim(dir: &Path) -> io::Result<()> {
+/// it owner-only on Unix; `false` when it holds someone else's files and is left as it is, so
+/// the installers' `--purge` leaves it too.
+fn claim(dir: &Path) -> io::Result<bool> {
     if dir.join(MARKER).exists() {
-        return Ok(());
+        return Ok(true);
     }
     if !holds_only_canopy_files(dir)? {
-        tracing::warn!(
-            "{} holds files that are not Canopy's; it is used but not marked",
-            dir.display()
-        );
-        return Ok(());
+        return Ok(false);
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
     }
-    crate::hosting::write_private(&dir.join(MARKER), b"")
+    crate::hosting::write_private(&dir.join(MARKER), b"")?;
+    Ok(true)
 }
 
 fn holds_only_canopy_files(dir: &Path) -> io::Result<bool> {
     for entry in fs::read_dir(dir)? {
         let name = entry?.file_name();
         let name = name.to_string_lossy();
+        // The logs sit in the state folder itself on macOS, and a move that was cut short leaves
+        // its temporary copy.
         let own = OWN_FILES.contains(&name.as_ref())
             || name.starts_with("settings.json.")
-            || name.starts_with("app.ron.");
+            || name.starts_with("app.ron.")
+            || (name.starts_with("canopy-") && name.ends_with(".jsonl"))
+            || name.ends_with(".moving");
         if !own {
             return Ok(false);
         }
@@ -437,24 +451,83 @@ fn move_file(from: &Path, to: &Path, report: &mut Migration) {
         report.failed.push((from.to_path_buf(), e.to_string()));
         return;
     }
-    // A rename never leaves a half-written file. Across file systems it fails, and the copy goes
-    // to a temporary name first for the same reason.
-    let moved = fs::rename(from, to).or_else(|_| {
-        let temp = to.with_file_name(format!(
-            "{}.moving",
-            to.file_name()
-                .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
-        ));
-        fs::copy(from, &temp)
-            .and_then(|_| fs::rename(&temp, to))
-            .and_then(|()| fs::remove_file(from))
-            .inspect_err(|_| {
-                let _ = fs::remove_file(&temp);
-            })
-    });
-    match moved {
-        Ok(()) => report.moved += 1,
+    match place(from, to) {
+        Ok(Placed::Moved) => report.moved += 1,
+        Ok(Placed::Exists) => report.kept += 1,
         Err(e) => report.failed.push((from.to_path_buf(), e.to_string())),
+    }
+}
+
+/// What became of a file [`place`] was asked to move.
+#[derive(Debug, PartialEq, Eq)]
+enum Placed {
+    Moved,
+    /// Something sits at the destination, so nothing was changed.
+    Exists,
+}
+
+/// Moves the file `from` to `to` without ever replacing something at `to`, whether it was there
+/// before or appeared while this ran: a hard link fails when its name exists, so it is both the
+/// check and the claim, and the old name goes only afterwards. Where a link cannot be made (another
+/// file system, a share without links) the file is copied instead.
+fn place(from: &Path, to: &Path) -> io::Result<Placed> {
+    let placed = match fs::hard_link(from, to) {
+        Ok(()) => Placed::Moved,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(Placed::Exists),
+        Err(_) => match copy_into_place(from, to)? {
+            Placed::Exists => return Ok(Placed::Exists),
+            Placed::Moved => Placed::Moved,
+        },
+    };
+    fs::remove_file(from).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!(
+                "it arrived at {}, but the old copy could not be removed: {e}",
+                to.display()
+            ),
+        )
+    })?;
+    Ok(placed)
+}
+
+/// Copies `from` to `to` through a temporary name of this process beside it, flushed to disk
+/// before it takes its place, so `to` is either absent or complete. Leaves `from` alone.
+fn copy_into_place(from: &Path, to: &Path) -> io::Result<Placed> {
+    let name = to
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let temp = to.with_file_name(format!("{name}.{}.moving", std::process::id()));
+    let placed = copy_flushed(from, &temp).and_then(|()| publish(&temp, to));
+    // After a link the temporary name is still there; after a rename this finds nothing.
+    let _ = fs::remove_file(&temp);
+    placed
+}
+
+fn copy_flushed(from: &Path, temp: &Path) -> io::Result<()> {
+    let mut source = fs::File::open(from)?;
+    let _ = fs::remove_file(temp);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut copy = options.open(temp)?;
+    io::copy(&mut source, &mut copy)?;
+    copy.sync_all()
+}
+
+/// Gives the finished temporary file its real name unless that name is taken.
+fn publish(temp: &Path, to: &Path) -> io::Result<Placed> {
+    match fs::hard_link(temp, to) {
+        Ok(()) => Ok(Placed::Moved),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(Placed::Exists),
+        // No links here either: look once more, then rename. Only a file created in the instant
+        // between the two can be replaced, and only where the file system has no links at all.
+        Err(_) if fs::symlink_metadata(to).is_ok() => Ok(Placed::Exists),
+        Err(_) => fs::rename(temp, to).map(|()| Placed::Moved),
     }
 }
 
@@ -748,5 +821,80 @@ mod tests {
         );
         assert_eq!(read(&layout.tokens_file()), "{\"tokens\":{}}");
         assert_eq!(read(&layout.logs.join("canopy-1.jsonl")), "log 1");
+    }
+
+    #[test]
+    fn placing_a_file_never_replaces_one_that_appeared_meanwhile() {
+        let root = tempfile::tempdir().expect("tmp");
+        let from = root.path().join("old/tokens.json");
+        let to = root.path().join("new/tokens.json");
+        write(&from, "old");
+        // The pre-check in `move_file` saw nothing; then another process wrote this.
+        write(&to, "newer");
+        assert_eq!(place(&from, &to).expect("place"), Placed::Exists);
+        assert_eq!(read(&to), "newer");
+        assert_eq!(read(&from), "old", "the old copy stays");
+    }
+
+    #[test]
+    fn a_copy_never_replaces_one_that_appeared_meanwhile_and_leaves_no_temporary() {
+        let root = tempfile::tempdir().expect("tmp");
+        let from = root.path().join("old/a.json");
+        let to = root.path().join("new/a.json");
+        write(&from, "old");
+        write(&to, "newer");
+        assert_eq!(copy_into_place(&from, &to).expect("copy"), Placed::Exists);
+        assert_eq!(read(&to), "newer");
+        let names: Vec<_> = fs::read_dir(root.path().join("new"))
+            .expect("dir")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        assert_eq!(names, ["a.json"], "no temporary left");
+        fs::remove_file(&to).expect("remove");
+        assert_eq!(copy_into_place(&from, &to).expect("copy"), Placed::Moved);
+        assert_eq!(read(&to), "old");
+        assert_eq!(read(&from), "old", "the caller removes the source");
+        assert_eq!(
+            fs::read_dir(root.path().join("new")).expect("dir").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn moving_a_file_leaves_it_only_at_the_new_place() {
+        let root = tempfile::tempdir().expect("tmp");
+        let from = root.path().join("old/a.json");
+        let to = root.path().join("new/a.json");
+        write(&from, "data");
+        create_private_dir(to.parent().expect("parent")).expect("dir");
+        assert_eq!(place(&from, &to).expect("place"), Placed::Moved);
+        assert_eq!(read(&to), "data");
+        assert!(!from.exists());
+    }
+
+    #[test]
+    fn macos_logs_folder_is_claimed_after_the_logs_moved_into_it() {
+        let root = tempfile::tempdir().expect("tmp");
+        let e = env(root.path());
+        let legacy = Legacy::resolve(Os::Mac, &e).expect("legacy");
+        let layout = Layout::resolve(Os::Mac, &e).expect("layout");
+        populate(&legacy);
+        let report = migrate(&legacy, &layout);
+        assert_eq!(report.failed, Vec::new());
+        assert!(layout.logs.join("canopy-1.jsonl").is_file());
+        assert!(layout.crashes.join("crash-1.txt").is_file());
+        let unmarked = prepare_folders(&layout).expect("prepare");
+        assert_eq!(unmarked, Vec::<PathBuf>::new());
+        for folder in layout.folders() {
+            assert!(folder.join(MARKER).is_file(), "{}", folder.display());
+        }
+    }
+
+    #[test]
+    fn prepare_reports_the_folders_it_left_unmarked() {
+        let root = tempfile::tempdir().expect("tmp");
+        let layout = Layout::resolve(Os::Linux, &env(root.path())).expect("layout");
+        write(&layout.config.join("their-config.toml"), "x");
+        assert_eq!(prepare_folders(&layout).expect("prepare"), [layout.config]);
     }
 }

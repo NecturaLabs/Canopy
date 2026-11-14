@@ -1,4 +1,4 @@
-//! The settings file: `settings.json` in Canopy's config folder (ADR 0016).
+//! The settings file: `settings.json` in Canopy's config folder (ADR 0018).
 //!
 //! The file is `{"schema": 1, "settings": {…}}`. `schema` is the version of this envelope and the
 //! rules for reading what is in it; `settings` is [`Settings`], whose fields all have defaults, so
