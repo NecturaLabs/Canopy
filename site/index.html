@@ -269,9 +269,9 @@
       <div class="split-list">
         <div class="text" data-reveal>
           <h2 id="h-requests">Pull and merge requests</h2>
-          <p>Review, check out and merge GitHub pull requests and GitLab merge requests, self-hosted GitLab included. With a token, each row shows its checks and reviews.</p>
-          <p>Filter by checks, review, draft or author. When a project has more than 100, the search goes to GitLab, or to GitHub with a token.</p>
-          <p>Signed in with <code translate="no">gh</code> or <code translate="no">glab</code>? Canopy uses that sign-in and keeps its token in memory only.</p>
+          <p>Review, check out and merge GitHub pull requests and GitLab merge requests, self-hosted GitLab included. Signed in with the GitHub or GitLab CLI, each row shows its checks and reviews.</p>
+          <p>Filter by checks, review, draft or author. When a project has more than 100, the search goes to GitLab, or to GitHub when signed in with the GitHub CLI.</p>
+          <p>Canopy stores no token: it uses the <code translate="no">gh</code> or <code translate="no">glab</code> sign-in and keeps it in memory only.</p>
         </div>
         <ul class="keys" aria-label="Request shortcuts" data-reveal>
             <li><span class="caps"><kbd>3</kbd></span><span>Open pull requests</span></li>
@@ -295,7 +295,7 @@
           <img class="shot-light" src="assets/shots/d-request-row.webp" width="540" height="104" loading="lazy" alt="">
         </figure>
       </div>
-      <p class="caption">The requests shown are Canopy's built-in demo data. A token is only ever sent to the host it belongs to.</p>
+      <p class="caption">The requests shown are Canopy's built-in demo data. The CLI's sign-in is only ever sent to the host it belongs to.</p>
     </div>
   </section>
 

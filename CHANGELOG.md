@@ -10,6 +10,13 @@ commits since the previous build.
 
 ### Added
 
+- Settings → Integrations lists the well-known editors, terminals and file managers that are not
+  installed after the installed ones, dimmed and tagged Not installed, so you see what exists; they
+  cannot be picked, and the keyboard passes over them (Linux and macOS; Windows lists the installed
+  programs only). A program you chose that has since been uninstalled shows the same way (also when its
+  saved command is a path to a file that is gone; a path to a file that is there runs as typed),
+  and opening falls back to your system's program and says so. A well-known program found only on `PATH`
+  is now listed as installed (Linux and macOS).
 - Git LFS is visible and usable. Files stored with LFS carry an `LFS` tag in the Changes lists and
   commit details, and a file that holds only its pointer says "not downloaded", with one entry in
   the status bar that downloads the missing files. The diff of an LFS file is a card with each
@@ -35,11 +42,13 @@ commits since the previous build.
   checks and no preview; the choice is remembered and is separate from the whole-app density.
   A request's number, author, age and labels each have their own colour in the list, and the
   request's header adds its comment count in one too, in every theme.
-- Pull and merge requests use the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) as their credential,
-  before the environment, a token saved in Canopy and git's credential helper, so no second token is
-  needed. Canopy reads the CLI's token when the repository opens, keeps it in memory only and says why
-  a CLI that is signed out, short of a scope or failing was not used. The Privacy Policy says that
-  Canopy runs the CLI.
+- Pull and merge requests use the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`) as their only
+  credential. Canopy no longer stores or accepts personal access tokens, and no longer reads
+  `GH_TOKEN`, `GITLAB_TOKEN` or git's credential helper; a `tokens.json` saved by an earlier build
+  is deleted at start. Settings → Accounts shows, for each host, whether the CLI is installed,
+  signed in (the account and its scopes), signed out or short of a scope, with the command that fixes
+  it and a button to copy it, a link to the CLI's install page, and Check again; the requests view
+  and the repository's Hosting block say the same. The Privacy Policy and the Terms say so.
 - File history: right-click a file in Changes or in a commit's file list, or use the command palette,
   to list the commits that changed it, followed back through renames. Choosing one opens that
   commit with the file's diff; the working tree is not touched.
@@ -192,6 +201,11 @@ commits since the previous build.
   no longer look disabled; the commit summary shows its character count only once you type.
 - The Privacy Policy describes automatic submodule downloads and their Git settings controls;
   accepting the updated policy is required on the next launch.
+- Crash reporting sends only crash reports: the session records (when Canopy started, how long it
+  ran and how it ended) are no longer sent. The Privacy Policy, the crash report prompt and
+  Settings say Sentry deletes crash reports 30 days after it receives them (it said 90), and the
+  Terms name the law and courts of the country where NecturaLabs is established; accepting the
+  updated documents is required on the next launch.
 
 ### Added
 

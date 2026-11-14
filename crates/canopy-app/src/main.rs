@@ -55,7 +55,7 @@ OPTIONS:
                               merge, identity, settings-git, settings-git-pull, settings-git-commits, settings-git-config,
                               clear-identity, update-installed, update-running, trust-prompt,
                               trust-banner, trust-safety-off, privacy-trust-off, diff-options,
-                              settings-integrations, settings-accounts, settings-updates, settings-notifications,
+                              settings-integrations, settings-integrations-custom, settings-accounts, settings-updates, settings-notifications,
                               settings-keyboard, settings-backup, settings-repository,
                               settings-repository-pull, settings-repository-diffs,
                               settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, clean-merged, update-from-base, flow-init, flow-start, flow-finish, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
@@ -87,7 +87,7 @@ OPTIONS:
                               repository without a GitHub or GitLab remote: list, list-all,
                               list-closed, list-unchecked, list-overflow, list-more, list-search, filtered, no-match,
                               a request number such as 428, busy, loading, details-loading,
-                              details-error, error, no-token or empty;
+                              details-error, error, signed-out or empty;
                               prefix gitlab: for merge requests. Implies --view requests
     -h, --help                Print help
     -V, --version             Print version
@@ -385,9 +385,6 @@ fn main() -> anyhow::Result<()> {
     logging::init(logging::LogLevel::Normal);
     canopy_hosting::set_build(build_info::NUMBER);
 
-    // The editor, terminal and file manager the open actions use when Settings names none.
-    system_apps::refresh(None);
-
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Canopy")
         .with_app_id("io.necturalabs.Canopy")
@@ -409,7 +406,7 @@ fn main() -> anyhow::Result<()> {
         Box::new(move |cc| Ok(Box::new(CanopyApp::new(cc, launch)))),
     )
     .map_err(|e| anyhow::anyhow!("could not start the window: {e}"));
-    // Ends the crash-report session (if reporting is on) and sends anything queued.
+    // Sends any queued crash report (if reporting is on).
     crash_reports::shutdown();
     selfupdate::run_requested_restart();
     result

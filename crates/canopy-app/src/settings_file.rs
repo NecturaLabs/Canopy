@@ -4,9 +4,9 @@
 //! Only preferences travel. What the user agreed to (the Terms, the Privacy Policy, the crash
 //! report answer), the folders trusted to run a repository's configuration and Canopy's memory
 //! of the session ([`NOT_PREFERENCES`]) never leave the machine and are never taken from a file:
-//! a file must not be able to give consent or trust. Tokens are not settings at all
-//! (`hosting.rs` keeps them), so they are never in the file. The programs Canopy runs, the hosts
-//! trusted with a GitLab token and everything tied to a folder on this computer
+//! a file must not be able to give consent or trust. Credentials are not settings at all
+//! (the GitHub and GitLab CLIs hold them), so they are never in the file. The programs Canopy
+//! runs, the list of self-hosted GitLab hosts and everything tied to a folder on this computer
 //! ([`THIS_COMPUTER`]) are neither written nor read either, and a file may switch a network
 //! feature off but never on ([`NETWORK_SWITCHES`]) nor fetch more often (`AUTO_FETCH`). Git
 //! choices that could delete local tags, override the user's own git configuration or send a push
@@ -56,8 +56,8 @@ pub const NOT_PREFERENCES: &[&str] = &[
 
 /// Preferences that stay on this computer, with the words the import message uses for them. The
 /// editor, terminal and file manager are programs Canopy runs and `gitlab_hosts` is the list of
-/// hosts the GitLab token from the environment is sent to: a file from someone else must not
-/// choose either. The clone folder and the per-repository entries are paths on this computer.
+/// self-hosted hosts Canopy recognises as GitLab and signs in to through `glab`: a file from
+/// someone else must not choose either. The clone folder and the per-repository entries are paths on this computer.
 pub const THIS_COMPUTER: &[(&str, &str)] = &[
     ("editor", "editor"),
     ("terminal", "terminal"),
@@ -473,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_cannot_choose_programs_token_hosts_or_network_features() {
+    fn a_file_cannot_choose_programs_gitlab_hosts_or_network_features() {
         let here = Settings {
             editor: "code --wait %f".to_owned(),
             gitlab_hosts: "gitlab.internal".to_owned(),

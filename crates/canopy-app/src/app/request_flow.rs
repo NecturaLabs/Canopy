@@ -29,7 +29,7 @@ impl CanopyApp {
             .and_then(|u| u.strip_prefix(&prefix))
             .map_or_else(|| source.to_owned(), str::to_owned);
         let head_commit = local.and_then(|b| b.target);
-        let has_token = matches!(t.requests.token, Some(Some(_)));
+        let has_token = t.requests.has_credential() == Some(true);
         if !self.settings.hosting_api || !has_token {
             let url = forge.new_request_url(&source, target.as_deref());
             if let Err(e) = crate::platform::open_url(&url) {

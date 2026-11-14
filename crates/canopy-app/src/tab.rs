@@ -10,9 +10,8 @@ use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, PullConfi
 use canopy_hosting::{MergeMethod, RequestDetails, RequestQuery, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
-use crate::hosting::CliReport;
 use crate::hosting::{
-    HostAction, HostEvent, HostJob, HostWorker, ListKey, TokenSource, rate_limit_pause,
+    CliState, HostAction, HostEvent, HostJob, HostWorker, ListKey, rate_limit_pause,
 };
 use crate::request_view::{RequestDensity, RequestView};
 use crate::settings::{DiffPrefs, PullChoice};
@@ -131,14 +130,14 @@ fn stopped_body(autostashed: bool, stash: bool) -> String {
     body
 }
 
-/// Whether `message`, a hosting error's text, is the host refusing the token
+/// Whether `message`, a hosting error's text, is the host refusing the sign-in
 /// (`canopy_hosting::Error::Unauthorized`).
 fn credential_refused(message: &str) -> bool {
-    message.starts_with("The server refused the request (check the access token")
+    message.starts_with("The server refused the request (check the sign-in")
 }
 
 /// Whether `message`, a hosting error's text, is the server not being reached
-/// (`canopy_hosting::Error::Network`): no token would change that.
+/// (`canopy_hosting::Error::Network`): no sign-in would change that.
 pub(crate) fn host_unreachable(message: &str) -> bool {
     message.starts_with("Could not reach the server: ")
 }
@@ -820,7 +819,7 @@ pub struct Requests {
     /// Failure policy of the current details generation, independent of the list response.
     pub details_quiet_refresh: bool,
     /// Recently loaded details, oldest first, so returning to a request needs no new load.
-    /// Emptied by a reload, an action's result and a token change (`restart_host`).
+    /// Emptied by a reload, an action's result and a restart of the hosting thread (`restart_host`).
     details_cache: Vec<CachedDetails>,
     /// An action in flight ("Merging PR #12").
     pub busy: Option<String>,
@@ -828,16 +827,10 @@ pub struct Requests {
     /// Exact submitted body; a late result must not discard text edited since submission.
     pub pending_comment: Option<(u64, String)>,
     pub merge_method: MergeMethod,
-    /// Where the token came from; `None` while unknown, `Some(None)` without a token.
-    #[expect(
-        clippy::option_option,
-        reason = "not yet known, known to be absent, or known, as the doc comment says"
-    )]
-    pub token: Option<Option<TokenSource>>,
-    /// What the provider's CLI said about its sign-in; `None` while unknown or when the CLI is
-    /// not installed.
-    pub cli: Option<CliReport>,
-    /// The host refused the token on the newest read (a list or a request's details); cleared by
+    /// What the provider's CLI said about its sign-in when the hosting thread started: the account
+    /// it gave a credential for, or why it gave none. `None` while unknown.
+    pub cli: Option<CliState>,
+    /// The host refused the credential on the newest read (a list or a request's details); cleared by
     /// the next read or action it accepted. An action's refusal does not set it: the host also
     /// answers 403 to a locked conversation or an archived repository.
     pub token_rejected: bool,
@@ -891,7 +884,6 @@ impl Default for Requests {
             comment: String::new(),
             pending_comment: None,
             merge_method: MergeMethod::Merge,
-            token: None,
             cli: None,
             token_rejected: false,
             loaded_at: None,
@@ -911,6 +903,11 @@ impl Default for Requests {
 }
 
 impl Requests {
+    /// Whether the CLI gave a credential; `None` until the hosting thread has asked.
+    pub fn has_credential(&self) -> Option<bool> {
+        self.cli.as_ref().map(Result::is_ok)
+    }
+
     /// `head`, the first page, followed by the later pages' rows it does not repeat.
     fn with_tail(&self, mut head: Vec<RequestSummary>) -> Vec<RequestSummary> {
         let tail = self
@@ -1242,8 +1239,7 @@ pub struct RepoTab {
     pub forges: Vec<(String, Forge)>,
     /// The API thread for the main forge remote.
     pub host: Option<HostWorker>,
-    /// Self-hosted GitLab hosts the user listed in settings: environment tokens may go there.
-    pub trusted_gitlab_hosts: Vec<String>,
+    /// Pull/merge request state for the main forge remote.
     pub requests: Requests,
     /// Drafts survive hosting initialization and worktree tab replacement for this run.
     pub request_comments: Vec<RequestCommentDraft>,
@@ -1383,7 +1379,6 @@ impl RepoTab {
             sidebar_pick: None,
             forges: Vec::new(),
             host: None,
-            trusted_gitlab_hosts: Vec::new(),
             requests: Requests::default(),
             request_comments: Vec::new(),
             downloads_refused: None,
@@ -1621,7 +1616,6 @@ impl RepoTab {
 
     /// Recomputes which remotes are GitHub or GitLab.
     pub fn update_forges(&mut self, gitlab_hosts: &[String]) {
-        self.trusted_gitlab_hosts = gitlab_hosts.to_vec();
         self.forges = self
             .snap
             .as_ref()
@@ -1673,7 +1667,7 @@ impl RepoTab {
     }
 
     /// Starts (or restarts, when the forge changed) the API thread.
-    pub fn ensure_host(&mut self, ctx: &egui::Context, saved_token: Option<String>, enabled: bool) {
+    pub fn ensure_host(&mut self, ctx: &egui::Context, enabled: bool) {
         let want = if enabled {
             self.forge().map(|(_, f)| f.clone())
         } else {
@@ -1685,8 +1679,7 @@ impl RepoTab {
         self.request_comments = self.request_comment_drafts();
         self.requests = Requests::default();
         self.avatars = crate::avatars::Avatars::default();
-        let trusted = self.trusted_gitlab_hosts.clone();
-        self.host = want.map(|f| HostWorker::spawn(f, saved_token, trusted, ctx.clone()));
+        self.host = want.map(|f| HostWorker::spawn(f, ctx.clone()));
         self.load_requests();
     }
 
@@ -1700,19 +1693,14 @@ impl RepoTab {
         }
     }
 
-    /// Restarts the API thread, e.g. after the token changed.
-    pub fn restart_host(
-        &mut self,
-        ctx: &egui::Context,
-        saved_token: Option<String>,
-        enabled: bool,
-    ) {
+    /// Restarts the API thread, e.g. after the CLI's sign-in changed.
+    pub fn restart_host(&mut self, ctx: &egui::Context, enabled: bool) {
         self.request_comments = self.request_comment_drafts();
         self.requests.comment.clear();
-        // Details loaded with the old token may differ from what the new one is allowed to see.
+        // Details loaded with the old sign-in may differ from what the new one is allowed to see.
         self.requests.details_cache.clear();
         self.host = None;
-        self.ensure_host(ctx, saved_token, enabled);
+        self.ensure_host(ctx, enabled);
     }
 
     /// Enqueue a fresh details load with an identity that invalidates older responses.
@@ -1740,7 +1728,7 @@ impl RepoTab {
         self.host
             .as_ref()
             .is_some_and(|h| h.forge.kind == ForgeKind::GitLab)
-            || matches!(self.requests.token, Some(Some(_)))
+            || self.requests.has_credential() == Some(true)
     }
 
     /// What the host should be asked for, given the view: nothing while everything the host holds
@@ -1895,7 +1883,7 @@ impl RepoTab {
             view: self.view,
             focused,
             hosting: self.host.is_some(),
-            token: matches!(self.requests.token, Some(Some(_))),
+            token: self.requests.has_credential() == Some(true),
             loaded: matches!(self.requests.list, Some(Ok(_))),
             busy: self.requests.loading || timer.in_flight || syncing,
         };
@@ -3074,11 +3062,10 @@ impl RepoTab {
                 HostEvent::Avatar { oid, email, result } => {
                     self.avatars.finish(&ctx, oid, email, result);
                 }
-                HostEvent::Token(t) => {
-                    self.requests.token = Some(t);
+                HostEvent::Cli(state) => {
+                    self.requests.cli = Some(state);
                     self.request_view_changed();
                 }
-                HostEvent::Cli(report) => self.requests.cli = report,
                 HostEvent::RateLimited { reset } => {
                     let now = chrono::Utc::now().timestamp();
                     self.requests.refresh.held_until =
@@ -6279,7 +6266,7 @@ mod tests {
                 })
                 .collect()
         };
-        tab.requests.token = Some(Some(TokenSource::Saved));
+        tab.requests.cli = Some(Ok(crate::hosting::demo_account()));
         tab.load_requests();
         host_events.send(HostEvent::More {
             key: StateFilter::Open.into(),
@@ -6358,7 +6345,7 @@ mod tests {
         finish(&events, OpKind::Fetch, Ok(String::new()));
         tab.poll(&[]);
         drop(host_jobs);
-        tab.requests.token = Some(None);
+        tab.requests.cli = Some(crate::hosting::signed_out(ForgeKind::GitHub, "github.com"));
         tab.load_requests();
         host_events.send(HostEvent::More {
             key: StateFilter::Open.into(),
@@ -6606,7 +6593,7 @@ mod tests {
                 },
             ),
             (
-                "no token (the anonymous rate limit is shared with Reload and actions)",
+                "no sign-in (the anonymous rate limit is shared with Reload and actions)",
                 RefreshGate {
                     token: false,
                     ..gate()
@@ -6675,7 +6662,7 @@ mod tests {
         let (host, host_events, host_jobs) = HostWorker::detached(host.forge.clone());
         tab.host = Some(host);
         tab.view = View::Requests;
-        tab.requests.token = Some(Some(TokenSource::Saved));
+        tab.requests.cli = Some(Ok(crate::hosting::demo_account()));
         tab.requests.loaded_at = Some(loaded);
         (tab, host_events, host_jobs)
     }
@@ -6766,16 +6753,19 @@ mod tests {
     }
 
     #[test]
-    fn the_timer_never_runs_without_a_token() {
+    fn the_timer_never_runs_without_a_sign_in() {
         let start = Instant::now();
         let every = Duration::from_secs(60);
         let late = start + every * 2;
         let (mut tab, _events, host_jobs) = timed_tab(start);
-        for (why, token) in [
+        for (why, cli) in [
             ("the host has not reported yet", None),
-            ("the host found no token", Some(None)),
+            (
+                "the CLI is signed out",
+                Some(crate::hosting::signed_out(ForgeKind::GitHub, "github.com")),
+            ),
         ] {
-            tab.requests.token = token;
+            tab.requests.cli = cli;
             assert_eq!(
                 tab.refresh_requests_on_timer(late, every, true),
                 None,
@@ -6783,9 +6773,9 @@ mod tests {
             );
             assert_eq!(lists_in(&host_jobs), 0, "{why}");
         }
-        tab.requests.token = Some(Some(TokenSource::GitCredentials));
+        tab.requests.cli = Some(Ok(crate::hosting::demo_account()));
         assert_eq!(tab.refresh_requests_on_timer(late, every, true), None);
-        assert_eq!(lists_in(&host_jobs), 1, "a token turns the timer on");
+        assert_eq!(lists_in(&host_jobs), 1, "a sign-in turns the timer on");
     }
 
     #[test]
@@ -6808,7 +6798,7 @@ mod tests {
     fn a_sync_finishing_during_a_timed_refresh_does_not_refresh_twice() {
         let (mut tab, events, host_jobs) = tab_showing_requests();
         tab.view = View::Requests;
-        tab.requests.token = Some(Some(TokenSource::Saved));
+        tab.requests.cli = Some(Ok(crate::hosting::demo_account()));
         let every = Duration::from_secs(60);
         let due = Instant::now() + every;
         assert_eq!(tab.refresh_requests_on_timer(due, every, true), None);
@@ -7232,7 +7222,7 @@ mod tests {
         let (mut tab, host_events, host_jobs) = tab_on_a_fresh_host();
         open_request(&mut tab, &host_events, &host_jobs, 9);
         assert!(!tab.requests.details_cache.is_empty());
-        tab.restart_host(&egui::Context::default(), None, false);
+        tab.restart_host(&egui::Context::default(), false);
         assert!(tab.requests.details_cache.is_empty());
     }
 
