@@ -132,7 +132,7 @@ fn stopped_body(autostashed: bool, stash: bool) -> String {
 
 /// Whether `message`, a hosting error's text, is the host refusing the sign-in
 /// (`canopy_hosting::Error::Unauthorized`).
-fn credential_refused(message: &str) -> bool {
+pub(crate) fn credential_refused(message: &str) -> bool {
     message.starts_with("The server refused the request (check the sign-in")
 }
 

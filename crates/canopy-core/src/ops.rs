@@ -1534,7 +1534,7 @@ impl Repo {
     /// Where a push without a destination sends `branch`, as `(remote, ref on the remote)`,
     /// worked out as git does: `branch.<name>.pushRemote`, `remote.pushDefault` or the upstream's
     /// remote; then the remote's push refspec for the branch, else `push.default`
-    /// ([`Repo::push_default`]). Refuses where git would.
+    /// ([`Repo::configured_push_default`], else Canopy's own choice). Refuses where git would.
     fn push_destination(&self, branch: &str) -> Result<(String, String)> {
         let upstream_remote = self.config_value(&format!("branch.{branch}.remote"));
         let remote = self
@@ -1554,7 +1554,8 @@ impl Repo {
         }
         let merge = self.config_value(&format!("branch.{branch}.merge"));
         let triangular = upstream_remote.as_deref() != Some(remote.as_str());
-        let mode = self.push_default();
+        let configured = self.configured_push_default();
+        let mode = configured.unwrap_or(self.options().push_default);
         let dest = match mode {
             PushDefault::Current => Some(local),
             PushDefault::Simple if triangular => Some(local),
@@ -1563,10 +1564,16 @@ impl Repo {
             PushDefault::Simple => merge.filter(|m| *m == local),
         };
         let dest = dest.ok_or_else(|| {
+            // A configured `matching` or `nothing` names no one branch, so Canopy's own choice
+            // decided here; the user's configuration did not.
+            let decided_by = if configured.is_some() {
+                format!("push.default={}", mode.value())
+            } else {
+                format!("Canopy's Push to choice ({})", mode.value())
+            };
             Error::invalid(format!(
-                "Git cannot tell where to push {branch} to {remote} with push.default={}: name \
-                 the branch in a terminal, or change Settings → Git → Push to.",
-                mode.value()
+                "Git cannot tell where to push {branch} to {remote} with {decided_by}: name the \
+                 branch in a terminal, or change Settings → Git → Push to.",
             ))
         })?;
         Ok((remote, dest))

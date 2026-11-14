@@ -102,7 +102,7 @@ impl Topic {
 pub enum Offer {
     /// A push was refused because the remote moved on: pull the repository at this path.
     Pull(PathBuf),
-    /// The host refused the credentials: open Settings at Accounts.
+    /// The hosting API refused the CLI's sign-in: open Settings at Accounts.
     Accounts,
     /// Git's own configuration sets a choice against Canopy's recommendation: open Settings at
     /// Git, where each choice names where it is set.
@@ -131,6 +131,11 @@ impl Offer {
     }
 }
 
+/// The help for a git operation the host refused to sign in: the user name and password or token
+/// come from git's credential helper or Canopy's prompt, neither of which Canopy's settings hold.
+const GIT_SIGN_IN_REFUSED: &str = "The host did not accept the user name and password git sent. \
+                                   GitHub and GitLab take an access token as the password.";
+
 fn error_help(
     title: &str,
     body: &str,
@@ -144,12 +149,13 @@ fn error_help(
             "The remote has commits you do not have yet. Pull and resolve any conflicts before pushing again.",
             repo.map(|r| Offer::Pull(r.to_path_buf())),
         ))
-    } else if lower.contains("authentication failed")
-        || lower.contains("http basic: access denied")
-        || lower.contains("bad credentials")
+    } else if lower.contains("authentication failed") || lower.contains("http basic: access denied")
     {
+        Some((GIT_SIGN_IN_REFUSED, None))
+    } else if crate::tab::credential_refused(body) {
+        // The GitHub or GitLab API refusing the sign-in Canopy read from its CLI.
         Some((
-            "The host did not accept your credentials.",
+            "The host did not accept the GitHub or GitLab CLI's sign-in.",
             Some(Offer::Accounts),
         ))
     } else if lower.contains("unable to read askpass response") {
@@ -1383,6 +1389,44 @@ mod tests {
             ("a\n\nb\n\nc".to_owned(), true)
         );
         assert_eq!(first_lines("a\nb\nc", 2), ("a\nb".to_owned(), true));
+    }
+
+    /// #253: git's own refusals come from its credential helper, askpass or ssh, which
+    /// Settings → Accounts does not set up, so they offer nothing; only the hosting API's refusal
+    /// of the CLI sign-in opens Accounts.
+    #[test]
+    fn a_refused_git_sign_in_does_not_offer_accounts() {
+        for raw in [
+            "fatal: Authentication failed for 'https://github.com/o/r.git/'",
+            "remote: Invalid username or token. Password authentication is not supported for Git \
+             operations.\nfatal: Authentication failed for 'https://github.com/o/r.git/'",
+            "remote: HTTP Basic: Access denied. If a password was provided for Git authentication, \
+             the password was incorrect or you're required to use a token instead of a password.",
+        ] {
+            for title in ["Could not push", "Could not fetch", "Could not pull"] {
+                let (help, offer) =
+                    error_help(title, raw, Some(Path::new("/work/mote"))).expect("an explanation");
+                assert_eq!(help, GIT_SIGN_IN_REFUSED, "{title}: {raw}");
+                assert_eq!(offer, None, "{title}: {raw}");
+            }
+        }
+        // The hosting API's refusal as `canopy_hosting::Error::Unauthorized` words it, around
+        // GitHub's and GitLab's own messages and a scope refusal.
+        for server in [
+            "Bad credentials",
+            "401 Unauthorized",
+            "invalid_token: Token was revoked. You have to re-authorize from the user.",
+            "Resource not accessible by personal access token",
+        ] {
+            let api = canopy_hosting::Error::Unauthorized(server.into()).to_string();
+            let (help, offer) = error_help("Could not create the pull request", &api, None)
+                .expect("an explanation");
+            assert_eq!(
+                help, "The host did not accept the GitHub or GitLab CLI's sign-in.",
+                "{api}"
+            );
+            assert_eq!(offer, Some(Offer::Accounts), "{api}");
+        }
     }
 
     #[test]
@@ -2700,7 +2744,7 @@ mod tests {
                 ToastKind::Error,
                 Topic::Error,
                 "Could not push",
-                "remote: Invalid username or password. Authentication failed",
+                " ! [rejected]        main -> main (fetch first)",
                 Some(repo),
             );
         };
@@ -2709,7 +2753,10 @@ mod tests {
         assert_eq!(toasts.items.len(), 1, "an offer does not stop the collapse");
         assert_eq!(toasts.history.len(), 1);
         assert_eq!(toasts.history[0].count, 2);
-        assert_eq!(toasts.history[0].offer, Some(Offer::Accounts));
+        assert_eq!(
+            toasts.history[0].offer,
+            Some(Offer::Pull(repo.to_path_buf()))
+        );
         assert_eq!(toasts.unread, 0, "the card on screen is the notice");
 
         toasts.items.clear();
@@ -2737,11 +2784,26 @@ mod tests {
             Path::new("/work/mote"),
         );
         assert!(toasts.items.is_empty());
-        assert_eq!(toasts.history[0].offer, Some(Offer::Accounts));
-        assert_eq!(
-            toasts.history[0].help,
-            Some("The host did not accept your credentials.")
+        assert_eq!(toasts.history[0].offer, None);
+        assert_eq!(toasts.history[0].help, Some(GIT_SIGN_IN_REFUSED));
+
+        let repo = Path::new("/work/mote");
+        toasts.push_quiet_for(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Could not push",
+            " ! [rejected]        main -> main (fetch first)",
+            repo,
         );
+        assert!(toasts.items.is_empty());
+        let row = toasts
+            .history
+            .iter()
+            .find(|r| r.title == "Could not push")
+            .expect("the push row");
+        assert_eq!(row.offer, Some(Offer::Pull(repo.to_path_buf())));
+        assert!(row.help.is_some());
     }
 
     /// #137: the same notice again straight after itself, from one repository, is one row with
