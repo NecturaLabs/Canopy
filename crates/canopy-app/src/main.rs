@@ -11,6 +11,7 @@ mod build_info;
 mod crash_reports;
 mod highlight;
 mod hosting;
+mod housekeeping;
 mod identity_worker;
 mod keymap;
 mod lfs;
