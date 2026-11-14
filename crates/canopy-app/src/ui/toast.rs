@@ -152,8 +152,8 @@ fn error_help(
     } else if lower.contains("authentication failed") || lower.contains("http basic: access denied")
     {
         Some((GIT_SIGN_IN_REFUSED, None))
-    } else if lower.contains("bad credentials") {
-        // GitHub's API refusing the token Canopy read from the GitHub CLI.
+    } else if crate::tab::credential_refused(body) {
+        // The GitHub or GitLab API refusing the sign-in Canopy read from its CLI.
         Some((
             "The host did not accept the GitHub or GitLab CLI's sign-in.",
             Some(Offer::Accounts),
@@ -1410,15 +1410,23 @@ mod tests {
                 assert_eq!(offer, None, "{title}: {raw}");
             }
         }
-        let api = "The server refused the request (check the sign-in of the GitHub or GitLab CLI \
-                   and its scopes): Bad credentials";
-        let (help, offer) =
-            error_help("Could not load pull requests", api, None).expect("an explanation");
-        assert_eq!(
-            help,
-            "The host did not accept the GitHub or GitLab CLI's sign-in."
-        );
-        assert_eq!(offer, Some(Offer::Accounts));
+        // The hosting API's refusal as `canopy_hosting::Error::Unauthorized` words it, around
+        // GitHub's and GitLab's own messages and a scope refusal.
+        for server in [
+            "Bad credentials",
+            "401 Unauthorized",
+            "invalid_token: Token was revoked. You have to re-authorize from the user.",
+            "Resource not accessible by personal access token",
+        ] {
+            let api = canopy_hosting::Error::Unauthorized(server.into()).to_string();
+            let (help, offer) = error_help("Could not create the pull request", &api, None)
+                .expect("an explanation");
+            assert_eq!(
+                help, "The host did not accept the GitHub or GitLab CLI's sign-in.",
+                "{api}"
+            );
+            assert_eq!(offer, Some(Offer::Accounts), "{api}");
+        }
     }
 
     #[test]
@@ -2778,6 +2786,24 @@ mod tests {
         assert!(toasts.items.is_empty());
         assert_eq!(toasts.history[0].offer, None);
         assert_eq!(toasts.history[0].help, Some(GIT_SIGN_IN_REFUSED));
+
+        let repo = Path::new("/work/mote");
+        toasts.push_quiet_for(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Could not push",
+            " ! [rejected]        main -> main (fetch first)",
+            repo,
+        );
+        assert!(toasts.items.is_empty());
+        let row = toasts
+            .history
+            .iter()
+            .find(|r| r.title == "Could not push")
+            .expect("the push row");
+        assert_eq!(row.offer, Some(Offer::Pull(repo.to_path_buf())));
+        assert!(row.help.is_some());
     }
 
     /// #137: the same notice again straight after itself, from one repository, is one row with
