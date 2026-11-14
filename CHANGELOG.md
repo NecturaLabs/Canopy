@@ -203,6 +203,14 @@ commits since the previous build.
 
 ### Changed
 
+- Background fetching no longer fires in every tab at the same moment. When a tab first has
+  background fetching on (it opens, or you turn the setting on or change the interval with tabs
+  open), its first fetch comes between half the interval and a whole one later, a different time
+  for each repository; after a fetch it waits a whole interval.
+- The log records frame times and the first frame: a `frame stats` event about every 5 seconds
+  while the window is drawing (frames, p50, p95, p99 and worst frame in milliseconds, frames over
+  33 and 100 ms; Detailed log level) and a `first frame` event with the start-up time. They help
+  tell whether the window stutters; the stress-test report reads them.
 - Canopy keeps its files in a folder for each kind of data (settings, logs and crash reports,
   picture cache) following each system's convention, owner-only on Linux and macOS and marked `.canopy-data`
   (unless a folder already holds someone else's files) so the installers' `--purge` finds them, and
