@@ -1679,26 +1679,39 @@ const NAMED_PROGRAMS: usize = 4;
 
 /// Why an action did not run in a repository that is not trusted: every action runs `git`, which
 /// follows the repository's own hooks and configuration. `programs` are the ones its own files
-/// name ([`Repo::programs`]); the message says which.
+/// name ([`Repo::programs`]); the message says which, and says nothing about them when there are
+/// none.
 fn read_only_message(programs: &[String]) -> String {
-    let named = if programs.is_empty() {
-        "its hooks and settings can run programs on this computer".to_owned()
-    } else {
-        let shown = programs
+    let (unreadable, named): (Vec<&String>, Vec<&String>) = programs
+        .iter()
+        .partition(|p| p.as_str() == canopy_core::programs::UNREADABLE);
+    let mut facts = Vec::new();
+    if !named.is_empty() {
+        let shown = named
             .iter()
             .take(NAMED_PROGRAMS)
-            .map(String::as_str)
+            .map(|p| p.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        let more = programs.len().saturating_sub(NAMED_PROGRAMS);
+        let more = named.len().saturating_sub(NAMED_PROGRAMS);
         let more = if more > 0 {
             format!(" and {more} more")
         } else {
             String::new()
         };
-        format!("its own files make git run programs ({shown}{more})")
+        facts.push(format!(
+            "its own files make git run programs ({shown}{more})"
+        ));
+    }
+    if !unreadable.is_empty() {
+        facts.push("its git configuration could not be read".to_owned());
+    }
+    let because = if facts.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", facts.join("; "))
     };
-    format!("{READ_ONLY}: {named}. Choose Trust… in the banner above it to allow changes.")
+    format!("{READ_ONLY}{because}. Choose Trust… in the banner above it to allow changes.")
 }
 
 /// Reports a download that was not run because the repository is not in a trusted folder, and
@@ -2322,10 +2335,44 @@ fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>, ended: Sender<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{Job, Op, OpKind, PullStrategy, watch};
+    use super::{Job, Op, OpKind, PullStrategy, read_only_message, watch};
     use std::path::Path;
     use std::process::Command;
     use std::time::{Duration, Instant};
+
+    /// The refusal says what is true: the program sources it found, that the configuration could
+    /// not be read, or only that the repository is not trusted.
+    #[test]
+    fn the_read_only_refusal_names_only_what_was_found() {
+        let none = read_only_message(&[]);
+        assert_eq!(
+            none,
+            "This repository is not trusted, so it is read-only. \
+             Choose Trust… in the banner above it to allow changes."
+        );
+        let found = read_only_message(&["hook pre-commit".into(), "core.sshcommand".into()]);
+        assert!(
+            found.starts_with(
+                "This repository is not trusted, so it is read-only: its own files make git run \
+                 programs (hook pre-commit, core.sshcommand)."
+            ),
+            "{found}"
+        );
+        let unreadable = read_only_message(&[canopy_core::programs::UNREADABLE.into()]);
+        assert!(
+            unreadable.contains("its git configuration could not be read"),
+            "{unreadable}"
+        );
+        assert!(!unreadable.contains("make git run"), "{unreadable}");
+        let both = read_only_message(&[
+            "hook pre-commit".into(),
+            canopy_core::programs::UNREADABLE.into(),
+        ]);
+        assert!(
+            both.contains("(hook pre-commit); its git configuration"),
+            "{both}"
+        );
+    }
 
     #[expect(
         clippy::disallowed_methods,

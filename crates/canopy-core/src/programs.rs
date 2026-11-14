@@ -10,7 +10,7 @@
 //! Only the repository's own configuration counts (repository and worktree level), never the
 //! user's own: what the user configured globally is theirs to run.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use git2::{ConfigLevel, ErrorCode, Repository};
 
@@ -20,8 +20,37 @@ use crate::cli;
 /// run no program then.
 pub const UNREADABLE: &str = "a configuration that could not be read";
 
-/// The hook files git does not run: the samples `git init` writes.
-const SAMPLE_SUFFIX: &str = ".sample";
+/// The hooks git runs by name (`githooks`): a file with another name there is never run.
+const HOOK_NAMES: &[&str] = &[
+    "applypatch-msg",
+    "pre-applypatch",
+    "post-applypatch",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "pre-rebase",
+    "post-checkout",
+    "post-merge",
+    "pre-push",
+    "pre-receive",
+    "update",
+    "proc-receive",
+    "post-receive",
+    "post-update",
+    "reference-transaction",
+    "push-to-checkout",
+    "pre-auto-gc",
+    "post-rewrite",
+    "sendemail-validate",
+    "fsmonitor-watchman",
+    "p4-changelist",
+    "p4-prepare-changelist",
+    "p4-post-changelist",
+    "p4-pre-submit",
+    "post-index-change",
+];
 
 /// The names of the configuration keys (repository and worktree level) and of the hooks of
 /// `repo` that make git run a program, sorted and without repeats. Empty for a repository whose
@@ -31,6 +60,8 @@ const SAMPLE_SUFFIX: &str = ".sample";
 /// removed); a hook as `hook <file name>`.
 pub fn programs(repo: &Repository) -> Vec<String> {
     let mut found = Vec::new();
+    let mut own_hooks_path = None;
+    let mut user_hooks_path = false;
     match repo.config() {
         Ok(config) => {
             for level in [ConfigLevel::Local, ConfigLevel::Worktree] {
@@ -49,37 +80,76 @@ pub fn programs(repo: &Repository) -> Vec<String> {
                 };
                 // A walk that stops on an entry it cannot read has not seen the rest.
                 let walked = entries.for_each(|entry| {
-                    if let Ok(name) = entry.name()
-                        && runs_a_program(name, &String::from_utf8_lossy(entry.value_bytes()))
-                    {
-                        found.push(cli::redact_url(name));
+                    if let Ok(name) = entry.name() {
+                        let value = String::from_utf8_lossy(entry.value_bytes());
+                        if name.eq_ignore_ascii_case("core.hookspath") {
+                            own_hooks_path = Some(value.to_string());
+                        }
+                        if runs_a_program(name, &value) {
+                            found.push(cli::redact_url(name));
+                        }
                     }
                 });
                 if walked.is_err() {
                     found.push(UNREADABLE.to_owned());
                 }
             }
+            // A hooks directory the user's own configuration names holds the user's hooks.
+            user_hooks_path =
+                own_hooks_path.is_none() && config.get_entry("core.hookspath").is_ok();
+            if let Some(raw) = &own_hooks_path {
+                let expanded = config
+                    .get_path("core.hookspath")
+                    .unwrap_or_else(|_| PathBuf::from(raw));
+                let base = repo.workdir().unwrap_or_else(|| repo.path());
+                found.extend(hooks(&base.join(expanded)));
+            }
         }
         Err(_) => found.push(UNREADABLE.to_owned()),
     }
-    found.extend(hooks(&repo.commondir().join("hooks")));
+    if own_hooks_path.is_none() && !user_hooks_path {
+        found.extend(hooks(&repo.commondir().join("hooks")));
+    }
     found.sort();
     found.dedup();
     found
 }
 
-/// The hooks in `dir`: every file git could run, which is any file there but the samples.
+/// The hooks in `dir` git would run: a file named after a hook that git can execute (git skips
+/// one that is not executable, and the samples `git init` writes carry another name).
 fn hooks(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     entries
         .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_file())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|n| HOOK_NAMES.contains(&n))
+        })
+        .filter(|entry| is_runnable(&entry.path()))
         .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| !name.ends_with(SAMPLE_SUFFIX))
         .map(|name| format!("hook {name}"))
         .collect()
+}
+
+/// Whether `path` is a file git would execute as a hook.
+fn is_runnable(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    // Git for Windows has no execute bit: it runs any file it finds.
+    #[cfg(not(unix))]
+    {
+        meta.is_file()
+    }
 }
 
 /// Whether git treats `value` as a switch rather than a command (`core.fsmonitor=true` is the
@@ -113,7 +183,9 @@ fn runs_a_program(name: &str, value: &str) -> bool {
         | ("gpg", false, "program")
         | ("gpg", true, "program" | "defaultkeycommand")
         | ("remote", true, "uploadpack" | "receivepack" | "vcs")
-        | ("trailer", true, "command" | "cmd") => true,
+        | ("trailer", true, "command" | "cmd")
+        // A hook configured instead of a file (git 2.54 and later).
+        | ("hook", true, "command") => true,
         ("core", false, "fsmonitor" | "pager") | ("pager", _, _) => !is_switch(value),
         // Only the command form of a submodule's update runs a program.
         ("submodule", true, "update") => value.starts_with('!'),
@@ -170,6 +242,7 @@ mod tests {
             ("gpg.program", "touch ran"),
             ("gpg.ssh.program", "touch ran"),
             ("core.hooksPath", "hooks"),
+            ("hook.lint.command", "touch ran"),
         ];
         for (key, value) in keys {
             config.set_str(key, value).expect(key);
@@ -212,12 +285,22 @@ mod tests {
             programs(&repo)
         );
 
+        // A machine whose own configuration redirects every repository's hooks runs none of
+        // these.
+        if repo
+            .config()
+            .expect("config")
+            .get_entry("core.hookspath")
+            .is_ok()
+        {
+            return;
+        }
         let hooks = repo.path().join("hooks");
         std::fs::create_dir_all(&hooks).expect("hooks");
         std::fs::write(hooks.join("pre-commit.sample"), "").expect("sample");
         assert!(!programs(&repo).iter().any(|k| k.contains("pre-commit")));
         for hook in ["pre-commit", "post-index-change", "reference-transaction"] {
-            std::fs::write(hooks.join(hook), "").expect("hook");
+            executable(&hooks.join(hook));
         }
         let listed = programs(&repo);
         for hook in ["pre-commit", "post-index-change", "reference-transaction"] {
@@ -225,6 +308,76 @@ mod tests {
                 listed.iter().any(|k| *k == format!("hook {hook}")),
                 "{hook} in {listed:?}"
             );
+        }
+    }
+
+    /// Only a file git would run is a hook: by git's names, and executable.
+    #[test]
+    #[cfg(unix)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
+    fn only_files_git_runs_as_hooks_are_named() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(root.path()).expect("init");
+        if repo
+            .config()
+            .expect("config")
+            .get_entry("core.hookspath")
+            .is_ok()
+        {
+            return;
+        }
+        let hooks = repo.path().join("hooks");
+        std::fs::create_dir_all(&hooks).expect("hooks");
+        std::fs::write(hooks.join("README"), "notes").expect("readme");
+        executable(&hooks.join("helper.sh"));
+        std::fs::write(hooks.join("pre-push"), "").expect("not executable");
+        std::fs::create_dir(hooks.join("pre-rebase")).expect("directory");
+        assert!(programs(&repo).is_empty(), "{:?}", programs(&repo));
+        executable(&hooks.join("commit-msg"));
+        assert_eq!(programs(&repo), ["hook commit-msg"]);
+    }
+
+    /// `core.hooksPath` moves the hooks: git runs those of the named directory (relative to the
+    /// working tree) and none in `.git/hooks`.
+    #[test]
+    #[cfg(unix)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
+    fn a_hooks_path_replaces_the_hooks_directory() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(root.path()).expect("init");
+        let default = repo.path().join("hooks");
+        std::fs::create_dir_all(&default).expect("hooks");
+        executable(&default.join("pre-commit"));
+        let elsewhere = root.path().join("tools").join("hooks");
+        std::fs::create_dir_all(&elsewhere).expect("dir");
+        executable(&elsewhere.join("post-merge"));
+        repo.config()
+            .expect("config")
+            .set_str("core.hooksPath", "tools/hooks")
+            .expect("path");
+        let listed = programs(&repo);
+        assert!(listed.iter().any(|k| k == "hook post-merge"), "{listed:?}");
+        assert!(
+            listed
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case("core.hookspath"))
+        );
+        assert!(!listed.iter().any(|k| k == "hook pre-commit"), "{listed:?}");
+    }
+
+    /// Marks `path` as a hook git can run.
+    fn executable(path: &Path) {
+        std::fs::write(path, "#!/bin/sh\n").expect("hook");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("mode");
         }
     }
 
