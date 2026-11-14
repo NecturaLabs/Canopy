@@ -263,6 +263,39 @@ impl CanopyApp {
                     e(icon::GIT_MERGE, "Branch: Clean up merged…", "Branch", None),
                     Action::CleanMerged,
                 ));
+                // Removing a linked working folder: each one that is here, not open in this tab
+                // and not locked, and forgetting the ones that are gone.
+                let folder_of = |path: &std::path::Path| {
+                    path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |n| n.to_string_lossy().into_owned(),
+                    )
+                };
+                for w in s.worktrees.iter().filter(|w| {
+                    !w.main
+                        && !w.current
+                        && w.locked.is_none()
+                        && w.state == canopy_core::WorktreeState::Ready
+                }) {
+                    v.push((
+                        e(
+                            icon::TRASH,
+                            &format!("Worktree: Remove {}…", folder_of(&w.path)),
+                            "Worktree",
+                            None,
+                        ),
+                        Action::RemoveWorktree(w.path.clone()),
+                    ));
+                }
+                if s.worktrees
+                    .iter()
+                    .any(|w| w.state == canopy_core::WorktreeState::Missing && w.locked.is_none())
+                {
+                    v.push((
+                        e(icon::TRASH, "Worktree: Forget missing…", "Worktree", None),
+                        Action::ForgetWorktrees,
+                    ));
+                }
                 if let Some(base) = &s.workflow.head_base {
                     v.push((
                         e(
@@ -741,6 +774,62 @@ mod tests {
         assert!(
             matches!(pop, Some(Action::Command(Command::PopStash))),
             "resolved by the latest stash's commit when chosen: {pop:?}"
+        );
+    }
+
+    /// #90: the palette removes a linked folder that is here, free and not the open one, and
+    /// forgets the ones that are gone, only when there is something to forget.
+    #[test]
+    fn the_palette_removes_and_forgets_only_what_can_be_removed_or_forgotten() {
+        use canopy_core::{WorktreeInfo, WorktreeState};
+        let info = |path: &str, state, locked: Option<&str>, current, main| WorktreeInfo {
+            path: path.into(),
+            branch: None,
+            head: None,
+            current,
+            main,
+            state,
+            locked: locked.map(str::to_owned),
+        };
+        let mut app = test_app();
+        app.tabs.push(test_tab(canopy_core::RepoSnapshot {
+            worktrees: vec![
+                info("/work/main", WorktreeState::Ready, None, true, true),
+                info("/work/free", WorktreeState::Ready, None, false, false),
+                info(
+                    "/work/usb",
+                    WorktreeState::Ready,
+                    Some("drive"),
+                    false,
+                    false,
+                ),
+            ],
+            ..Default::default()
+        }));
+        let entries = app.palette_entries();
+        let labels = labels(&entries);
+        assert!(labels.contains(&"Worktree: Remove free…"), "{labels:?}");
+        assert!(
+            !labels
+                .iter()
+                .any(|l| l.contains("usb") || l.contains("main")),
+            "{labels:?}"
+        );
+        assert!(!labels.contains(&"Worktree: Forget missing…"));
+        app.tabs.clear();
+        app.tabs.push(test_tab(canopy_core::RepoSnapshot {
+            worktrees: vec![
+                info("/work/main", WorktreeState::Ready, None, true, true),
+                info("/work/gone", WorktreeState::Missing, None, false, false),
+            ],
+            ..Default::default()
+        }));
+        let entries = app.palette_entries();
+        assert!(
+            entries
+                .iter()
+                .any(|(e, a)| e.label == "Worktree: Forget missing…"
+                    && matches!(a, Action::ForgetWorktrees))
         );
     }
 

@@ -24,10 +24,17 @@ pub(super) struct Screenshot {
     /// `--overlay` of a dialog that reads the repository (flow, merged, update from base): it
     /// opens, as the user would open it, once the first tab has its snapshot.
     pub(super) pending_dialog: Option<&'static str>,
+    /// `--overlay worktrees` and the worktree overlays: the sidebar's Worktrees section, which
+    /// starts closed, is opened once the first tab has its snapshot.
+    pub(super) opens_worktrees: bool,
 }
 
 /// The `--overlay` names of the dialogs that open from the repository's own state.
-const REPOSITORY_DIALOGS: [&str; 5] = [
+const REPOSITORY_DIALOGS: [&str; 9] = [
+    "remove-worktree",
+    "remove-worktree-dirty",
+    "remove-worktree-delete",
+    "forget-worktrees",
     "clean-merged",
     "update-from-base",
     "flow-init",
@@ -51,6 +58,7 @@ impl Screenshot {
             declines_trust: overlay == Some("trust-banner"),
             pending_dialog: overlay
                 .and_then(|name| REPOSITORY_DIALOGS.iter().copied().find(|d| *d == name)),
+            opens_worktrees: matches!(overlay, Some("worktrees" | "menu-worktree")),
         }
     }
 }
@@ -78,6 +86,8 @@ impl MenuShot {
         let secondary = egui::PointerButton::Secondary;
         let (name, view, button) = match overlay {
             "menu-branch" => ("feature/auth", View::History, secondary),
+            // The first linked folder of the fixture the screenshot is taken of, named `wt-…`.
+            "menu-worktree" => ("wt-", View::History, secondary),
             "menu-commit" => ("Commit ", View::History, secondary),
             "menu-file" => ("src/main.rs", View::Changes, secondary),
             "menu-lfs-file" => ("art/hero.psd", View::Changes, secondary),
@@ -237,17 +247,59 @@ impl CanopyApp {
             if let Some(shot) = &mut self.screenshot {
                 shot.pending_dialog = None;
             }
+            // The linked folders the removal can be asked of: the first for `remove-worktree`, the
+            // last for the two that need a folder holding changes.
+            let removable: Vec<PathBuf> = self
+                .tabs
+                .get(self.active)
+                .and_then(|t| t.snap.as_ref())
+                .map(|s| {
+                    s.worktrees
+                        .iter()
+                        .filter(|w| {
+                            !w.main
+                                && !w.current
+                                && w.locked.is_none()
+                                && w.state == canopy_core::WorktreeState::Ready
+                        })
+                        .map(|w| w.path.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
             let action = match name {
                 "clean-merged" => Action::CleanMerged,
                 "update-from-base" => Action::UpdateFromBase,
                 "flow-init" => Action::FlowInit,
                 "flow-start" => Action::FlowStart(None),
+                "forget-worktrees" => Action::ForgetWorktrees,
+                "remove-worktree" => removable.first().map_or(Action::ForgetWorktrees, |p| {
+                    Action::RemoveWorktree(p.clone())
+                }),
+                "remove-worktree-dirty" | "remove-worktree-delete" => {
+                    removable.last().map_or(Action::ForgetWorktrees, |p| {
+                        Action::RemoveWorktree(p.clone())
+                    })
+                }
                 _ => Action::FlowFinish(None),
             };
             self.apply(ctx, vec![action]);
+            if name == "remove-worktree-delete"
+                && let Some(Dialog::RemoveWorktree(form)) = self.dialogs.current_mut()
+            {
+                form.ask_destructive();
+            }
             // A name for the picture, so the preview line shows what it will create.
             if let Some(Dialog::FlowStart(form)) = self.dialogs.current_mut() {
                 "payments".clone_into(&mut form.name);
+            }
+        }
+        if self.screenshot.as_ref().is_some_and(|s| s.opens_worktrees)
+            && let Some(tab) = self.tabs.get_mut(self.active)
+            && tab.snap.is_some()
+        {
+            tab.set_sidebar_open("worktrees", true);
+            if let Some(shot) = &mut self.screenshot {
+                shot.opens_worktrees = false;
             }
         }
         if self.screenshot.as_ref().is_some_and(|s| s.long_message)
@@ -323,7 +375,13 @@ impl CanopyApp {
                 .tabs
                 .get(self.active)
                 .is_some_and(|t| t.base_result.is_some());
-        let ready = insights_ready
+        let worktree_ready = !self.dialogs.any(|d| matches!(d, Dialog::RemoveWorktree(_)))
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|t| t.worktree_removal.is_some());
+        let ready = worktree_ready
+            && insights_ready
             && merged_ready
             && base_ready
             && shot.pending_dialog.is_none()

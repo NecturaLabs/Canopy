@@ -10,6 +10,16 @@ commits since the previous build.
 
 ### Added
 
+- Remove a linked worktree from Canopy: Remove worktree… in the Worktrees section's row menu and in
+  the command palette. The confirmation names the folder, says its branch and commits stay, and
+  lists what would be deleted: modified and untracked files, ignored files, and commits only a
+  detached `HEAD` there reaches. A folder with changes or untracked files asks a second time
+  before git deletes them (`git worktree remove --force`); a clean one is removed without
+  `--force`. The checks run again just before git, and a folder that changed since the
+  confirmation is refused. The main folder, the one open in this tab, a locked one and one open in
+  another tab cannot be removed. The Worktrees section now also lists folders that are missing
+  and locked ones (with git's reason), and Forget missing worktrees… (`git worktree prune`) lists
+  the ones it forgets (#90).
 - Tabs that are open but not shown load only when you first show them. Restoring a session, or
   opening several repositories from the command line, loads the tab you see at once and lists the
   others by name in the tab strip; each one reads its repository, starts watching its files and

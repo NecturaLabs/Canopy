@@ -88,6 +88,12 @@ pub const OVERLAYS: &[&str] = &[
     "lfs-locks",
     "search-changes",
     "clean-stale",
+    "remove-worktree",
+    "remove-worktree-dirty",
+    "remove-worktree-delete",
+    "forget-worktrees",
+    "worktrees",
+    "menu-worktree",
     "clean-merged",
     "update-from-base",
     "flow-init",
@@ -1132,7 +1138,16 @@ impl eframe::App for CanopyApp {
                     &mut actions,
                 );
             });
+        // The sidebar says which tab holds a working folder that cannot be removed from here.
+        let elsewhere: Vec<(PathBuf, String)> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != self.active)
+            .map(|(_, t)| (t.path.clone(), t.name.clone()))
+            .collect();
         if let Some(tab) = self.tabs.get_mut(self.active) {
+            tab.open_elsewhere = elsewhere;
             egui::Panel::top("actions")
                 .exact_size(m.action_bar_height)
                 .frame(egui::Frame::NONE)
@@ -1318,6 +1333,7 @@ impl eframe::App for CanopyApp {
                 Dialog::Ignore(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::Lfs(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 Dialog::CleanStale(form) => self.tabs.iter().find(|t| t.path == form.repo),
+                Dialog::RemoveWorktree(form) => self.tabs.iter().find(|t| t.path == form.repo),
                 _ => self.tabs.get(self.active),
             };
             match dialogs::show(

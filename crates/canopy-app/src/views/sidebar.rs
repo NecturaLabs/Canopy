@@ -20,7 +20,7 @@ use crate::ui::widgets::forge_icon;
 use crate::views::commit_detail::virtual_rows;
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
-use canopy_core::{MergeMode, SubmoduleState};
+use canopy_core::{MergeMode, SubmoduleState, WorktreeState};
 
 /// Gap between a row's label and its badges, and between two badges.
 const BADGE_GAP: f32 = theme::XS;
@@ -484,33 +484,86 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     Some(oid) => format!("detached at {}", canopy_core::short_id(oid)),
                     None => "detached".to_owned(),
                 });
+                let ready = w.state == WorktreeState::Ready;
                 let mut hint = format!("{} · on {on}", w.path.display());
                 if w.main {
                     hint.push_str(" · main working folder");
                 }
                 if w.current {
                     hint.push_str(" · open here");
+                    if !w.main {
+                        hint.push_str("; switch to another folder to remove it");
+                    }
                 }
-                let spoken = format!("{name}, worktree on {on}");
-                let glyph = if w.current { icon::CHECK_CIRCLE } else { icon::FOLDER_SIMPLE };
+                let mut spoken = format!("{name}, worktree on {on}");
+                // What the row says besides the branch.
+                let mut detail = on.clone();
+                match w.state {
+                    WorktreeState::Ready => {}
+                    WorktreeState::Missing => {
+                        hint.push_str(" · folder missing");
+                        spoken.push_str(", folder missing");
+                        detail = format!("missing · {on}");
+                    }
+                    WorktreeState::Unreadable => {
+                        hint.push_str(" · folder cannot be read");
+                        spoken.push_str(", folder cannot be read");
+                        detail = format!("unreadable · {on}");
+                    }
+                }
+                if let Some(reason) = &w.locked {
+                    let why = if reason.is_empty() { String::new() } else { format!(": {reason}") };
+                    hint = format!("{hint} · locked{why}; unlock it with git worktree unlock to remove it");
+                    spoken = format!("{spoken}, locked{why}");
+                    detail = format!("locked · {detail}");
+                }
+                let glyph = if w.current {
+                    icon::CHECK_CIRCLE
+                } else if !ready {
+                    icon::FOLDER_SIMPLE_DASHED
+                } else if w.locked.is_some() {
+                    icon::FOLDER_SIMPLE_LOCK
+                } else {
+                    icon::FOLDER_SIMPLE
+                };
                 let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::Worktree(path) if *path == w.path), w.head);
-                let resp = row(ui, &Row { id: ui.id().with(("worktree", &w.path)), glyph, label: &name, selected, current: w.current, ahead: 0, behind: 0, hint: Some(&hint), detail: Some(&on), spoken: Some(&spoken) }, Some((list, i)));
+                let resp = row(ui, &Row { id: ui.id().with(("worktree", &w.path)), glyph, label: &name, selected, current: w.current, ahead: 0, behind: 0, hint: Some(&hint), detail: Some(&detail), spoken: Some(&spoken) }, Some((list, i)));
                 if resp.clicked()
                     && let Some(head) = w.head {
                         pick = Some(SidebarItem::Worktree(w.path.clone()));
                         actions.push(Action::Reveal(head));
                     }
-                if resp.double_clicked() && !w.current {
+                if resp.double_clicked() && !w.current && ready {
                     actions.push(Action::SwitchWorktree(w.path.clone()));
                 }
                 let path = w.path.clone();
                 let current = w.current;
+                // Removal: a linked folder that is not open here and not locked; one whose folder
+                // is gone is forgotten instead (every missing one, as git does it).
+                let removable = !w.main && !w.current && w.locked.is_none();
+                let open_in = tab.open_elsewhere.iter().find(|(open, _)| *open == w.path).map(|(_, tab_name)| tab_name.clone());
+                let missing = w.state == WorktreeState::Missing;
                 menu::context(&resp, |m| {
-                    if !current && m.item(icon::FOLDER_OPEN, "Open worktree").show(m.ui).clicked() {
+                    if !current && ready && m.item(icon::FOLDER_OPEN, "Open worktree").show(m.ui).clicked() {
                         actions.push(Action::SwitchWorktree(path.clone()));
                     }
                     if m.item(icon::COPY, "Copy path").show(m.ui).clicked() {
                         actions.push(Action::Copy(path.display().to_string()));
+                    }
+                    if removable && ready {
+                        m.separator();
+                        let label = match &open_in {
+                            Some(tab_name) => format!("Remove worktree… (open in tab {tab_name})"),
+                            None => "Remove worktree…".to_owned(),
+                        };
+                        if m.item(icon::TRASH, label).danger().show(m.ui).clicked() {
+                            actions.push(Action::RemoveWorktree(path.clone()));
+                        }
+                    } else if removable && missing {
+                        m.separator();
+                        if m.item(icon::TRASH, "Forget missing worktrees…").danger().show(m.ui).clicked() {
+                            actions.push(Action::ForgetWorktrees);
+                        }
                     }
                 });
             }
@@ -1394,6 +1447,8 @@ mod tests {
                     head: Some(oid(1)),
                     current: true,
                     main: true,
+                    state: WorktreeState::Ready,
+                    locked: None,
                 },
                 canopy_core::WorktreeInfo {
                     path: "/work/canopy-wt".into(),
@@ -1401,6 +1456,8 @@ mod tests {
                     head: Some(oid(3)),
                     current: false,
                     main: false,
+                    state: WorktreeState::Ready,
+                    locked: None,
                 },
             ],
             ..Default::default()
@@ -1526,6 +1583,132 @@ mod tests {
                 |a| matches!(a, Action::SwitchWorktree(p) if p == std::path::Path::new("/work/canopy-wt"))
             ),
             "{actions:?}"
+        );
+    }
+
+    /// #90: a worktree row says when its folder is missing or locked (and why), and its menu
+    /// offers removal only where it can run: not for the main folder, the open one or a locked
+    /// one; a missing one is forgotten instead; one open in another tab says which.
+    #[test]
+    fn worktree_rows_say_missing_and_locked_and_offer_removal_only_where_it_can_run() {
+        let info = |path: &str, branch: &str, state: WorktreeState, locked: Option<&str>| {
+            canopy_core::WorktreeInfo {
+                path: path.into(),
+                branch: Some(branch.into()),
+                head: Some(oid(3)),
+                current: false,
+                main: false,
+                state,
+                locked: locked.map(str::to_owned),
+            }
+        };
+        let rows = vec![
+            canopy_core::WorktreeInfo {
+                current: true,
+                main: true,
+                ..info("/work/canopy", "main", WorktreeState::Ready, None)
+            },
+            info("/work/a-clean", "clean", WorktreeState::Ready, None),
+            info(
+                "/work/b-usb",
+                "usb",
+                WorktreeState::Ready,
+                Some("on a USB drive"),
+            ),
+            info("/work/c-gone", "gone", WorktreeState::Missing, None),
+            info("/work/d-both", "both", WorktreeState::Missing, Some("")),
+            info("/work/e-tab", "tabbed", WorktreeState::Ready, None),
+        ];
+        // The menu of the row spoken as `row`, and what clicking `item` in it asks for.
+        let menu = |row: &str, item: Option<&str>| {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            crate::ui::fonts::install(&ctx);
+            crate::ui::motion::set_reduced(true);
+            let mut tab = branch_tab();
+            if let Some(snap) = tab.snap.as_mut() {
+                std::sync::Arc::make_mut(snap).worktrees = rows.clone();
+            }
+            tab.open_elsewhere = vec![("/work/e-tab".into(), "Review".into())];
+            let mut actions = Vec::new();
+            let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+            let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+            let at = center(named(&nodes, row).unwrap_or_else(|| panic!("{row}")));
+            let right_click = [true, false].map(|pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+            let mut events = vec![egui::Event::PointerMoved(at)];
+            events.extend(right_click);
+            let _ = sidebar_frame(&ctx, &mut tab, events, &mut actions);
+            let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+            let labels: Vec<String> = nodes
+                .iter()
+                .filter(|n| n.role() == Role::MenuItem)
+                .filter_map(|n| n.label().map(str::to_owned))
+                .collect();
+            if let Some(item) = item {
+                let at =
+                    center(named(&nodes, item).unwrap_or_else(|| panic!("{item}: {labels:?}")));
+                let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
+            }
+            crate::ui::motion::set_reduced(false);
+            (labels, actions)
+        };
+        let has = |labels: &[String], text: &str| labels.iter().any(|l| l == text);
+
+        // The main folder, which is also the open one: nothing to remove.
+        let (labels, _) = menu("canopy, worktree on main", None);
+        assert!(
+            has(&labels, "Copy path")
+                && !labels
+                    .iter()
+                    .any(|l| l.contains("emove") || l.contains("orget")),
+            "{labels:?}"
+        );
+        // A plain linked folder.
+        let (labels, actions) = menu("a-clean, worktree on clean", Some("Remove worktree…"));
+        assert!(has(&labels, "Open worktree"), "{labels:?}");
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::RemoveWorktree(p) if p == std::path::Path::new("/work/a-clean"))),
+            "{actions:?}"
+        );
+        // Locked: listed as such, no removal, no forgetting.
+        let (labels, _) = menu("b-usb, worktree on usb, locked: on a USB drive", None);
+        assert!(
+            !labels
+                .iter()
+                .any(|l| l.contains("emove") || l.contains("orget")),
+            "{labels:?}"
+        );
+        // Missing: it cannot be opened, and is forgotten.
+        let (labels, actions) = menu(
+            "c-gone, worktree on gone, folder missing",
+            Some("Forget missing worktrees…"),
+        );
+        assert!(
+            !has(&labels, "Open worktree") && !has(&labels, "Remove worktree…"),
+            "{labels:?}"
+        );
+        assert!(
+            actions.iter().any(|a| matches!(a, Action::ForgetWorktrees)),
+            "{actions:?}"
+        );
+        // Missing and locked: git keeps it.
+        let (labels, _) = menu("d-both, worktree on both, folder missing, locked", None);
+        assert!(
+            !labels
+                .iter()
+                .any(|l| l.contains("emove") || l.contains("orget")),
+            "{labels:?}"
+        );
+        // Open in another tab: the entry names the tab.
+        let (labels, _) = menu("e-tab, worktree on tabbed", None);
+        assert!(
+            has(&labels, "Remove worktree… (open in tab Review)"),
+            "{labels:?}"
         );
     }
 

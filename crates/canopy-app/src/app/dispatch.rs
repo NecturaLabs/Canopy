@@ -36,6 +36,70 @@ impl CanopyApp {
                         self.dialogs.open(Dialog::CleanStale(Box::new(form)));
                     }
                 }
+                Action::RemoveWorktree(path) => {
+                    if let Some(tab) = self.tab() {
+                        let open_in = tab
+                            .open_elsewhere
+                            .iter()
+                            .find(|(open, _)| *open == path)
+                            .map(|(_, name)| name.clone());
+                        let serial = tab.read_worktree_removal(path.clone());
+                        let form = dialogs::RemoveWorktreeForm::new(
+                            tab.path.clone(),
+                            path,
+                            serial,
+                            open_in,
+                        );
+                        self.dialogs.open(Dialog::RemoveWorktree(Box::new(form)));
+                    }
+                }
+                Action::ForgetWorktrees => {
+                    if let Some(tab) = self.tab() {
+                        let repo = tab.path.clone();
+                        let missing: Vec<PathBuf> = tab
+                            .snap
+                            .as_ref()
+                            .map(|s| {
+                                s.worktrees
+                                    .iter()
+                                    .filter(|w| {
+                                        w.state == canopy_core::WorktreeState::Missing
+                                            && w.locked.is_none()
+                                    })
+                                    .map(|w| w.path.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if missing.is_empty() {
+                            self.toasts.push(
+                                ctx,
+                                ToastKind::Info,
+                                Topic::Confirmation,
+                                "Nothing to forget",
+                                "No worktree folder is missing.",
+                            );
+                        } else {
+                            let list = missing
+                                .iter()
+                                .map(|p| p.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let words = if missing.len() == 1 {
+                                "this worktree, whose folder is gone,"
+                            } else {
+                                "these worktrees, whose folders are gone,"
+                            };
+                            self.dialogs.open(Dialog::Confirm {
+                                title: "Forget missing worktrees?".into(),
+                                body: format!("Git forgets {words} and deletes nothing else. The branches stay.\n\n{list}"),
+                                confirm: "Forget".into(),
+                                danger: false,
+                                repo,
+                                op: Op::ForgetWorktrees(missing),
+                            });
+                        }
+                    }
+                }
                 Action::CleanMerged => {
                     if let Some(tab) = self.tab() {
                         let serial = tab.read_merged(true);
@@ -975,6 +1039,102 @@ mod tests {
             .expect("new reply");
         app.tabs[0].poll(&[]);
         assert!(matches!(&app.tabs[0].stale_result, Some(Ok(rows)) if rows.is_empty()));
+    }
+
+    /// #90: removing a worktree asks the repository thread what it would delete (a fresh answer
+    /// for every request, older ones dropped) and carries which other tab has the folder open.
+    #[test]
+    fn removing_a_worktree_reads_what_it_would_delete_and_knows_other_tabs() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let (worker, events, jobs) = crate::worker::Worker::detached();
+        let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+        let path = tab.path.clone();
+        tab.worker = worker;
+        tab.open_elsewhere = vec![(PathBuf::from("/work/wt-b"), "Review".into())];
+        app.tabs.push(tab);
+        let folder = PathBuf::from("/work/wt-a");
+        app.apply(&ctx, vec![Action::RemoveWorktree(folder.clone())]);
+        let Job::WorktreeRemoval {
+            serial: first,
+            path: asked,
+        } = jobs.recv().expect("reading")
+        else {
+            panic!("the reading runs on the repository worker")
+        };
+        assert_eq!(asked, folder);
+        assert!(
+            matches!(app.dialogs.current(), Some(Dialog::RemoveWorktree(form)) if form.repo == path && form.path == folder)
+        );
+        app.apply(
+            &ctx,
+            vec![Action::RemoveWorktree(PathBuf::from("/work/wt-b"))],
+        );
+        let Job::WorktreeRemoval { serial: second, .. } = jobs.recv().expect("fresh reading")
+        else {
+            panic!("fresh reading")
+        };
+        assert_ne!(first, second);
+        events
+            .send(crate::worker::Event::WorktreeRemoval {
+                serial: first,
+                result: Err("old".into()),
+            })
+            .expect("old reply");
+        app.tabs[0].poll(&[]);
+        assert!(app.tabs[0].worktree_removal.is_none());
+        events
+            .send(crate::worker::Event::WorktreeRemoval {
+                serial: second,
+                result: Err("new".into()),
+            })
+            .expect("new reply");
+        app.tabs[0].poll(&[]);
+        assert!(matches!(&app.tabs[0].worktree_removal, Some(Err(e)) if e == "new"));
+    }
+
+    /// #90: forgetting asks about every missing, unlocked worktree and nothing else.
+    #[test]
+    fn forgetting_worktrees_lists_the_missing_unlocked_ones_in_its_confirmation() {
+        use canopy_core::{WorktreeInfo, WorktreeState};
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let info = |path: &str, state, locked: Option<&str>| WorktreeInfo {
+            path: path.into(),
+            branch: None,
+            head: None,
+            current: false,
+            main: false,
+            state,
+            locked: locked.map(str::to_owned),
+        };
+        let tab = test_tab(canopy_core::RepoSnapshot {
+            worktrees: vec![
+                info("/work/ready", WorktreeState::Ready, None),
+                info("/work/gone-1", WorktreeState::Missing, None),
+                info("/work/gone-2", WorktreeState::Missing, None),
+                info("/work/usb", WorktreeState::Missing, Some("drive")),
+                info("/work/odd", WorktreeState::Unreadable, None),
+            ],
+            ..Default::default()
+        });
+        app.tabs.push(tab);
+        app.apply(&ctx, vec![Action::ForgetWorktrees]);
+        let Some(Dialog::Confirm { body, op, .. }) = app.dialogs.current() else {
+            panic!("a confirmation")
+        };
+        assert!(
+            body.contains("/work/gone-1") && body.contains("/work/gone-2"),
+            "{body}"
+        );
+        assert!(
+            !body.contains("usb") && !body.contains("ready") && !body.contains("odd"),
+            "{body}"
+        );
+        assert!(
+            matches!(op, Op::ForgetWorktrees(paths) if paths == &[PathBuf::from("/work/gone-1"), PathBuf::from("/work/gone-2")]),
+            "{op:?}"
+        );
     }
 
     /// The force push question names the branch and where it goes, which the repository thread

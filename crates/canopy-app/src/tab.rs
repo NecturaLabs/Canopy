@@ -1086,6 +1086,13 @@ pub struct RepoTab {
     pub lfs: crate::lfs::LfsState,
     pub stale_serial: u64,
     pub stale_result: Option<Result<Arc<[canopy_core::StaleCandidate]>, String>>,
+    /// The newest [`Self::read_worktree_removal`] request; an older reply is dropped.
+    pub worktree_removal_serial: u64,
+    /// What removing that working folder would delete, `None` while it is on its way.
+    pub worktree_removal: Option<Result<Box<canopy_core::WorktreeRemoval>, String>>,
+    /// The other tabs' working folders and their titles, set each frame by the app: a folder
+    /// open in another tab cannot be removed from here.
+    pub open_elsewhere: Vec<(PathBuf, String)>,
     file_history_serial: u64,
     change_search_serial: u64,
     /// The newest [`Self::search_changes`] answer, `None` while it is on its way or before a search.
@@ -1354,6 +1361,9 @@ impl RepoTab {
             base_result: None,
             stale_serial: 0,
             stale_result: None,
+            worktree_removal_serial: 0,
+            worktree_removal: None,
+            open_elsewhere: Vec::new(),
             ignore_result: None,
             ignore_serial: 0,
             identity: None,
@@ -1643,6 +1653,18 @@ impl RepoTab {
             older_than_days,
         });
         self.stale_serial
+    }
+
+    /// Asks what removing the linked working folder `path` would delete; the answer lands in
+    /// [`Self::worktree_removal`]. Returns the request's serial.
+    pub fn read_worktree_removal(&mut self, path: PathBuf) -> u64 {
+        self.worktree_removal_serial = self.worktree_removal_serial.wrapping_add(1);
+        self.worktree_removal = None;
+        self.worker.send(Job::WorktreeRemoval {
+            serial: self.worktree_removal_serial,
+            path,
+        });
+        self.worktree_removal_serial
     }
 
     /// Requests a full refresh.
@@ -2505,6 +2527,11 @@ impl RepoTab {
                 Event::StaleCandidates { serial, result } => {
                     if serial == self.stale_serial {
                         self.stale_result = Some(result);
+                    }
+                }
+                Event::WorktreeRemoval { serial, result } => {
+                    if serial == self.worktree_removal_serial {
+                        self.worktree_removal = Some(result);
                     }
                 }
                 Event::Ignore { serial, result } => {

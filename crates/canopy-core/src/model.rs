@@ -110,6 +110,72 @@ pub struct WorktreeInfo {
     pub current: bool,
     /// It is the main working folder, the one the others were added from.
     pub main: bool,
+    /// Whether the folder can be opened.
+    pub state: WorktreeState,
+    /// `git worktree lock`ed: the reason, empty when none was given. A locked folder is never
+    /// removed or forgotten by Canopy (it may be on a drive that is not plugged in).
+    pub locked: Option<String>,
+}
+
+/// Whether a registered working folder can be opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeState {
+    /// The folder exists and is readable.
+    Ready,
+    /// Git knows the folder but it, or the `.git` file in it, is gone (deleted or moved by hand,
+    /// or on a drive that is not plugged in). `git worktree prune` forgets it unless it is
+    /// locked.
+    Missing,
+    /// The folder exists but Canopy cannot read it as a working folder (not a Git checkout any
+    /// more, or owned by someone else).
+    Unreadable,
+}
+
+/// A kind of change a worktree removal would lose: how many, and the first few of them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorktreeLoss {
+    /// How many files (ignored: files or folders git reports as one item) there are.
+    pub count: usize,
+    /// The first of them, relative to the working folder, as text for display (a name that is
+    /// not valid UTF-8 is shown with replacement characters).
+    pub first: Vec<String>,
+}
+
+/// What removing a linked working folder would delete, read before asking the user and again
+/// right before git runs ([`crate::Repo::remove_worktree`] refuses when it differs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeRemoval {
+    /// The working folder.
+    pub path: PathBuf,
+    /// The branch checked out there, which stays after the removal; `None` when detached.
+    pub branch: Option<String>,
+    /// The commit its `HEAD` is at.
+    pub head: Option<Oid>,
+    /// Tracked files with changes, staged or not, and conflicted ones.
+    pub modified: WorktreeLoss,
+    /// Files git does not track and does not ignore.
+    pub untracked: WorktreeLoss,
+    /// Ignored files and folders, which git deletes without asking.
+    pub ignored: WorktreeLoss,
+    /// Commits only this folder's detached `HEAD` reaches (none when a branch is checked out
+    /// there): no branch contains them, and the removal deletes the `HEAD` and its reflog.
+    pub unreachable_commits: usize,
+    /// Why Canopy will not remove it, when it will not.
+    pub blocked: Option<String>,
+}
+
+impl WorktreeRemoval {
+    /// Git refuses to remove it without `--force`: it holds changes or untracked files.
+    #[must_use]
+    pub const fn needs_force(&self) -> bool {
+        self.modified.count + self.untracked.count > 0
+    }
+
+    /// How many changed and untracked files `--force` would delete.
+    #[must_use]
+    pub const fn changed_files(&self) -> usize {
+        self.modified.count + self.untracked.count
+    }
 }
 
 /// The kind of repository item offered for stale cleanup.

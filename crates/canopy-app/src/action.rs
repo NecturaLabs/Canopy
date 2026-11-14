@@ -30,6 +30,12 @@ pub enum AppearanceChoice {
 #[derive(Debug, Clone)]
 pub enum Action {
     CleanStale,
+    /// Remove this linked working folder of the active repository, after a confirmation that
+    /// lists what it would delete.
+    RemoveWorktree(PathBuf),
+    /// Forget the working folders that are gone (`git worktree prune`), after a confirmation
+    /// that lists them.
+    ForgetWorktrees,
     /// List the branches merged into the base, to delete.
     CleanMerged,
     /// Bring the base branch's new commits into the checked-out branch.

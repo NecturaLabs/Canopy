@@ -10,7 +10,7 @@ use crate::graph;
 use crate::model::{
     BranchInfo, ChangeKind, CommitDetails, CommitSummary, FileEntry, HeadInfo, RefKind, RefLabel,
     RemoteBranchInfo, RemoteInfo, RepoSnapshot, RepoState, Signature, StashInfo, StatusUnavailable,
-    TagInfo, UntrackedListing, WorkingStatus, WorktreeInfo,
+    TagInfo, UntrackedListing, WorkingStatus, WorktreeInfo, WorktreeState,
 };
 use crate::options::GitOptions;
 use crate::partial::{self, MissingObjects};
@@ -256,7 +256,7 @@ impl Repo {
         let mut elsewhere: HashMap<String, PathBuf> = self
             .worktrees()
             .into_iter()
-            .filter(|w| !w.current)
+            .filter(|w| !w.current && w.state == WorktreeState::Ready)
             .filter_map(|w| Some((w.branch?, w.path)))
             .collect();
         let mut out = Vec::new();
@@ -289,8 +289,9 @@ impl Repo {
     }
 
     /// The repository's working folders: the main one first, then those `git worktree add`
-    /// made, by folder. A folder that cannot be read (moved, deleted, owned by someone else) is
-    /// left out; a bare repository has none.
+    /// made, by folder. A registered folder that is gone or cannot be read is listed too, with
+    /// the state saying so ([`WorktreeState`]) and the branch its administrative `HEAD` names;
+    /// a locked one carries git's reason. A bare repository has no main folder.
     pub fn worktrees(&self) -> Vec<WorktreeInfo> {
         let read = |repo: &Repository, main: bool| {
             let path = repo.workdir()?.to_path_buf();
@@ -307,6 +308,8 @@ impl Repo {
                 head: head.resolve().ok().and_then(|r| r.target()),
                 current: repo.path() == self.git.path(),
                 main,
+                state: WorktreeState::Ready,
+                locked: None,
             })
         };
         let mut out = Vec::new();
@@ -325,14 +328,43 @@ impl Repo {
         }
         let mut linked = Vec::new();
         if let Ok(names) = self.git.worktrees() {
+            let common = Repository::open(self.git.commondir()).ok();
             for name in names.iter().flatten().flatten() {
-                if let Ok(worktree) = self.git.find_worktree(name)
-                    && worktree.validate().is_ok()
-                    && let Ok(repo) = Repository::open_from_worktree(&worktree)
-                    && let Some(w) = read(&repo, false)
-                {
-                    linked.push(w);
-                }
+                let Ok(worktree) = self.git.find_worktree(name) else {
+                    continue;
+                };
+                let locked = crate::worktree::lock_reason(&worktree);
+                let opened = worktree
+                    .validate()
+                    .ok()
+                    .and_then(|()| Repository::open_from_worktree(&worktree).ok())
+                    .and_then(|repo| read(&repo, false));
+                let mut info = opened.unwrap_or_else(|| {
+                    // The folder cannot be opened: what git recorded about it stands in.
+                    let path = worktree.path().to_path_buf();
+                    let head = common
+                        .as_ref()
+                        .and_then(|c| c.find_reference(&format!("worktrees/{name}/HEAD")).ok());
+                    WorktreeInfo {
+                        state: if crate::worktree::folder_gone(&path) {
+                            WorktreeState::Missing
+                        } else {
+                            WorktreeState::Unreadable
+                        },
+                        path,
+                        branch: head
+                            .as_ref()
+                            .and_then(|h| h.symbolic_target().ok().flatten())
+                            .and_then(|t| t.strip_prefix("refs/heads/"))
+                            .map(str::to_owned),
+                        head: head.and_then(|h| h.resolve().ok()).and_then(|r| r.target()),
+                        current: false,
+                        main: false,
+                        locked: None,
+                    }
+                });
+                info.locked = locked;
+                linked.push(info);
             }
         }
         linked.sort_by(|a, b| a.path.cmp(&b.path));
