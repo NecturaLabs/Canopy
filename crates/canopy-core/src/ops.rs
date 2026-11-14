@@ -1398,6 +1398,48 @@ impl Repo {
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
 
+    /// Brings `tip`, the commit [`Repo::compare_base`] showed (so one pushed or fetched since
+    /// cannot slip in unseen), into the checked-out branch with exactly `strategy`:
+    /// `git merge --ff-only`, `--ff` or `--no-ff`, or `git rebase`, autostashing as a pull does.
+    /// The user's `merge.ff` and `rebase.*` settings cannot change the outcome.
+    pub fn update_from_base(
+        &self,
+        strategy: PullStrategy,
+        tip: Oid,
+        progress: impl FnMut(&str),
+    ) -> Result<String> {
+        let conflicts = self.conflict_override();
+        let mut args: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        let tip = tip.to_string();
+        match strategy {
+            PullStrategy::Rebase | PullStrategy::RebaseMerges => {
+                args.push("rebase");
+                args.extend(self.pull_autostash_flag(true)?);
+                args.extend([
+                    "--no-update-refs",
+                    if strategy == PullStrategy::RebaseMerges {
+                        "--rebase-merges"
+                    } else {
+                        "--no-rebase-merges"
+                    },
+                ]);
+            }
+            PullStrategy::Merge
+            | PullStrategy::MergeNoFastForward
+            | PullStrategy::FastForwardOnly => {
+                args.extend(["merge", "--no-edit"]);
+                args.extend(self.pull_autostash_flag(false)?);
+                args.push(match strategy {
+                    PullStrategy::MergeNoFastForward => "--no-ff",
+                    PullStrategy::FastForwardOnly => "--ff-only",
+                    _ => "--ff",
+                });
+            }
+        }
+        args.extend(["--", &tip]);
+        cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
     /// Where the branch left the upstream's earlier tips, found in the upstream's reflog as
     /// `git rebase` does without arguments; `None` where there is none to find.
     fn upstream_fork_point(&self) -> Option<String> {

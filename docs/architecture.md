@@ -51,9 +51,9 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `identity.rs` | The identity Git will put into the next commit: author and committer from `git var`, each value's source (environment variable, configuration scope and file, or Git's guess from the computer) from one `git config --get-regexp`, and `set` / `clear` for `user.name` and `user.email` at the local or global scope. Canopy keeps no identity of its own and never writes `author.*` or `committer.*`. Inputs are validated before git runs; `looks_like_placeholder` only warns. |
 | `ignore.rs` | Ignore rules: add a rule to `.gitignore`, `info/exclude` or the global file, preview what it would ignore, ask git why a path is ignored (`check-ignore -v`), stop tracking a path. Bounded ignored-path reads with collapsed ignored folders and atomic, optional starter templates. |
 | `stale.rs` | Stale linked worktree and local branch candidates, commit-age filtering and protection reasons; fresh identity, tip, working-tree and reachability checks before batch removal through safe branch deletion and non-force worktree removal. |
-| `flow.rs` | git-flow without the `git flow` binary: the AVH config keys, start and finish for feature, bugfix, release and hotfix, with a `merge-tree` pre-flight that refuses on conflicts; a single-commit feature or bugfix fast-forwards when possible, matching AVH. |
+| `flow.rs` | git-flow without the `git flow` binary: the AVH config keys, start and finish for feature, bugfix, release and hotfix, with a `merge-tree` pre-flight that refuses on conflicts; a single-commit feature or bugfix fast-forwards when possible, matching AVH; optional rebase onto develop first; a hotfix merges back into the open release. |
 | `metrics.rs` | Local repository activity across refs and HEAD: 52 UTC weeks, mailmap-aware shortlog authors, last commit and object storage. Local branch comparisons against the cached remote default (then main/master) and upstream, unique commits, age and stale/merged hints. It uses conservative tree-entry containment for squash hints without merge-tree, object writes or repository-defined programs, counts only branches, tags and remotes, and stops its walk a week before the 52-week window; effective configuration is read through Git and CLI reads disable lazy fetching. |
-| `merged.rs` | Which local branches are merged into a base (reachable, upstream gone, squash-merged) and which check proved it. |
+| `merged.rs` | Which local branches are merged into a base (reachable, upstream gone, squash-merged) and which check proved it; the base itself (`branch_base`, `update_base`) and the guarded deletion of merged branches (`remove_merged_branches`). |
 | `blame.rs` | `Repo::blame`: `git blame --porcelain` of one file as of a commit or the working tree, parsed into lines and the commits they come from (renames followed; uncommitted lines carry the all-zero id). Never runs a textconv; reading the working tree runs the file's clean filter, so that is refused for a file with one outside a trusted folder. In a partial clone it downloads only when the caller allows it (`NotDownloaded` otherwise). |
 | `signature.rs` | `Repo::commit_signature`: what `git log --format=%G?` says of a commit's signature (unsigned, verified, untrusted, expired, invalid, cannot be checked). Verifying can start the program `gpg.program`/`gpg.ssh.program` names, which a repository's configuration can set, so the worker runs it (`Job::Signature`, `Event::Signature`) only in a trusted folder. |
 | `file_history.rs` | `Repo::file_history`: the commits that changed one path, newest first, from `HEAD` or a given commit, followed through renames with `git --literal-pathspecs log --follow -M --name-status -z` via `cli.rs`. Each entry carries the path the file had in that commit and the old path when it renamed it, so its diff opens with `DiffSource::Commit`. Read by the worker (`Job::FileHistory`, `Event::FileHistory`; only the last queued one runs), with a one-minute limit and `GIT_NO_LAZY_FETCH=1`, so a partial clone is never downloaded into for it. |
@@ -68,9 +68,15 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 The app calls `delete_merged_branch` and `force_delete_branch` (the old `delete_branch(name,
 force)` wrapper is gone), `stage_all_except_repositories` (its `stage_all` wrapper is gone; it
 returns the folders it left out) and `publish_branch` (the branch menu's Publish). It does not
-yet use `flow.rs`, `merged.rs`, `paths::safe_join` or `untracked_children` (the Changes list shows
+yet use `paths::safe_join` or `untracked_children` (the Changes list shows
 the collapsed folders, not their contents) outside the core's own code and tests; their GitHub
-Issues are the UI work.
+Issues are the UI work. `flow.rs` and `merged.rs` are wired: `Op::FlowInit`, `FlowStart`,
+`FlowFinish` (optionally followed by `flow_push`), `CleanMerged` and `UpdateFromBase`, and the
+read jobs `Job::MergedBranches` and `Job::BaseCompare`. A snapshot carries `workflow`
+(`WorkflowInfo`: the git-flow configuration, the base and protected branches, the checked-out
+branch's update base, and whether Git is too old to finish), so views never ask git. The tab keeps
+the merged readings (`RepoTab::merged`), requested again only when a branch or remote-tracking tip
+moved, and the sidebar's branch tree (`branch_tree.rs`, built once per snapshot).
 
 
 ## canopy-hosting
@@ -143,7 +149,8 @@ thread.
 | `ui/notes.rs` | Release notes ("What's new") and the small Markdown renderer for notes and request text. |
 | `views/welcome.rs` | Welcome screen and recent repositories. |
 | `views/toolbar.rs` | Tab strip and top toolbar: fetch, pull, push, branch, stash, view switch. |
-| `views/sidebar.rs` | Branches, worktrees, remotes, tags, stashes and submodules; expansion changes are persisted per shared Git directory, supplied by the repository worker snapshot. |
+| `branch_tree.rs` | The sidebar's Branches as a tree: names grouped into folders by their `/` prefixes, built once per snapshot (`SnapIndex::branch_tree`), and the rows the open folders show. |
+| `views/sidebar.rs` | Branches (a tree of prefix folders with merged markers), worktrees, remotes, tags, stashes and submodules; expansion changes are persisted per shared Git directory, supplied by the repository worker snapshot. |
 | `views/history.rs` | Virtualised commit-graph table. |
 | `views/commit_detail.rs` | Selected commit: metadata, parents, changed files, diff. Also the views' shared file rows and screen-reader helpers: `without_icons` (keeps icon glyphs out of a label's spoken name) and `say_unavailable` (a disabled button says ", unavailable" and why, which the Linux AT-SPI adapter does not). |
 | `views/changes.rs` | Staging area and commit composer. |
@@ -155,6 +162,9 @@ thread.
 | `views/dialogs/mod.rs` | `Dialog` and `show`: the modal dialogs (clone, new branch, confirmations, consent, ...). |
 | `views/dialogs/stack.rs` | `DialogStack`: credentials in front, the consent never replaced, a closed prompt always answered. |
 | `views/dialogs/stale.rs` | Repository-bound stale cleanup preview, disabled protected rows and destructive confirmation. The repository worker reads candidates and revalidates the selected identities, commits and safety before removal. |
+| `views/dialogs/flow.rs` | git-flow: set up, start and finish dialogs. They check what the core would refuse from the snapshot's `workflow` (the core still decides) and run `Op::FlowInit`, `FlowStart` and `FlowFinish`. |
+| `views/dialogs/merged.rs` | Clean up merged branches from the tab's `merged` reading: proven rows start selected, unproven ones need a confirmation, protected and checked-out branches are never listed. |
+| `views/dialogs/update_base.rs` | Update from base: the comparison the worker made (`Job::BaseCompare`), Rebase (recommended) or Merge when diverged, the files that would conflict, then `Op::UpdateFromBase`. |
 | `views/dialogs/file_history.rs` | File history: the commits of one file from the tab's worker-loaded `file_history`, a row opens that commit in History with the file's diff (`Action::ShowFileVersion`). |
 | `views/dialogs/search_changes.rs` | Search the history for changed text: the text and regular-expression fields, a Search button that keeps the dialog open (`Outcome::RunKeep`) and the tab's worker-loaded `change_search`, a row opens that commit with the file's diff (`Action::ShowFileVersion`) |
 | `views/dialogs/insights.rs` | Repository insights: the weekly activity painter, top authors and branch table, rendering only worker-loaded tab data, with loading/error states and an explicit refresh. |

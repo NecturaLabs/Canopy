@@ -258,6 +258,46 @@ impl CanopyApp {
                     Action::BlameFile,
                 ));
             }
+            if let Some(s) = tab.snap.as_ref() {
+                v.push((
+                    e(icon::GIT_MERGE, "Branch: Clean up merged…", "Branch", None),
+                    Action::CleanMerged,
+                ));
+                if let Some(base) = &s.workflow.head_base {
+                    v.push((
+                        e(
+                            icon::ARROW_FAT_LINES_DOWN,
+                            &format!("Branch: Update from {base}…"),
+                            "Branch",
+                            None,
+                        ),
+                        Action::UpdateFromBase,
+                    ));
+                }
+                match &s.workflow.flow {
+                    None => v.push((
+                        e(
+                            icon::TREE_STRUCTURE,
+                            "Flow: Set up git-flow…",
+                            "Branch",
+                            None,
+                        ),
+                        Action::FlowInit,
+                    )),
+                    Some(flow) => {
+                        v.push((
+                            e(icon::TREE_STRUCTURE, "Flow: Start…", "Branch", None),
+                            Action::FlowStart(None),
+                        ));
+                        if s.branches.iter().any(|b| flow.classify(&b.name).is_some()) {
+                            v.push((
+                                e(icon::FLAG_CHECKERED, "Flow: Finish…", "Branch", None),
+                                Action::FlowFinish(None),
+                            ));
+                        }
+                    }
+                }
+            }
             let local_only = tab.is_local_only();
             match tab.view {
                 View::Changes => v.push((
@@ -701,6 +741,50 @@ mod tests {
         assert!(
             matches!(pop, Some(Action::Command(Command::PopStash))),
             "resolved by the latest stash's commit when chosen: {pop:?}"
+        );
+    }
+
+    /// The branch workflows are in the palette: git-flow set up until it is, then Start and Finish;
+    /// Update from base names the base and only appears for a branch that has one.
+    #[test]
+    fn the_palette_offers_the_branch_workflows_the_repository_allows() {
+        let mut app = test_app();
+        let mut snap = canopy_core::RepoSnapshot::default();
+        app.tabs.push(test_tab(snap.clone()));
+        let entries = app.palette_entries();
+        let has = |entries: &[(Entry, Action)], label: &str| {
+            entries.iter().any(|(e, _)| e.label == label)
+        };
+        assert!(has(&entries, "Branch: Clean up merged…"));
+        assert!(has(&entries, "Flow: Set up git-flow…"));
+        assert!(!has(&entries, "Flow: Start…"));
+        assert!(
+            !entries
+                .iter()
+                .any(|(e, _)| e.label.starts_with("Branch: Update from"))
+        );
+
+        snap.workflow.flow = Some(canopy_core::FlowConfig::default());
+        snap.workflow.head_base = Some("origin/main".into());
+        snap.branches = vec![canopy_core::BranchInfo {
+            name: "feature/x".into(),
+            target: None,
+            is_head: true,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            worktree: None,
+        }];
+        app.tabs[0] = test_tab(snap);
+        let entries = app.palette_entries();
+        assert!(!has(&entries, "Flow: Set up git-flow…"));
+        assert!(has(&entries, "Flow: Start…"));
+        assert!(has(&entries, "Flow: Finish…"));
+        assert!(
+            entries
+                .iter()
+                .any(|(e, a)| e.label == "Branch: Update from origin/main…"
+                    && matches!(a, Action::UpdateFromBase))
         );
     }
 

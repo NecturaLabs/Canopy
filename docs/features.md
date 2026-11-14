@@ -169,7 +169,7 @@ of that preview limit.
 | Delete with `git branch -d`, forcing only after Git refuses and you confirm | Done | ? | ? | ? |
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
-| Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Done | Yes | Yes | Yes |
+| Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check) | Done | Yes | Yes | Yes |
 | Sidebar rows sit indented under their section header; a new tab opens only Branches (Worktrees, Remotes, Tags, Stashes and Submodules start closed) and keeps the sections you open or close, saved per repository (its worktrees share them) and restored when reopened; Add remote… is in the palette and the local-only card | Done | Yes | ? | ? |
 | A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Done | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
@@ -180,12 +180,35 @@ of that preview limit.
 | Built-in 3-way conflict resolver | Done | Yes | Yes | No |
 | Choices and unfinished edits stay with their conflicted file while another one is open in Changes, and come back when it is picked again | Done | Yes | Yes | No |
 | Drag a branch onto another to merge or rebase | Planned | Yes | Yes | ? |
-| git-flow | Planned (backend merged) | Yes | Yes | Yes |
+| git-flow: set up, start and finish feature, bugfix, release and hotfix branches, optionally pushing the result | Done | Yes | Yes | Yes |
+| Branches group into collapsible folders by their `/` prefixes (open by default, remembered per repository, arrow keys like Remotes) | Done | Yes | Yes | Yes |
+| Branches show merged, upstream gone and possibly squash-merged markers, with the deciding check in the tooltip | Done | ? | ? | ? |
+| Clean up merged branches: `git branch -d` for proven ones, `-D` only after a confirmation, never the checked-out branch, the base or `main`/`master`/`develop` | Done | ? | ? | ? |
+| Update from base: fast-forward, or Rebase (recommended) or Merge when diverged | Done | ? | ? | ? |
 | Bisect | Planned | ? | ? | ? |
 
-The git-flow backend finishes a single-commit feature or bugfix by fast-forwarding when possible,
-matching AVH. Diverged branches still merge; branches with multiple commits keep a merge commit.
-The git-flow UI remains planned.
+git-flow works without the `git flow` program, on the AVH configuration keys (`gitflow.*`). Set
+up from the palette ("Flow: Set up git-flow…") or the Branches menu; Start and Finish are in the
+palette ("Flow: Start…", "Flow: Finish…") and the branch menu, with no key of their own. Finish
+checks every merge with `git merge-tree` first and refuses on a conflict with the paths, changing
+nothing, so it needs Git 2.38 or later: with an older Git the dialog says so and Finish stays
+disabled (the squash marker is skipped the same way). A single-commit feature or bugfix
+fast-forwards when possible, matching AVH; a diverged branch still merges, and a larger branch
+keeps a merge commit. "Rebase onto develop first" (feature and bugfix; a rebase that conflicts is
+aborted and the branch left as it was) rewrites the branch, as `git flow feature finish -r` does.
+A hotfix merges into the open release branch instead of develop when there is one, as the nvie
+model says (the dialog says so); AVH's own behaviour there is unverified. Finish can then push
+develop, plus production and the tag for a release or hotfix, and delete the finished branch on
+the remote after a labelled confirmation.
+
+The merged markers and the cleanup measure branches against one base: `develop` in a git-flow
+repository, else the default branch of `origin` (or the first remote with one) as its
+remote-tracking branch, else a local `main` or `master`. A branch counts as merged when its tip is
+reachable from the base (proof: `git branch -d` suffices), as `gone` when its upstream was deleted
+on the remote, and as `squash?` when merging it would change nothing (a heuristic, skipped past 150
+branches and on Git before 2.38). Update from base takes its base from the branch: a git-flow
+branch's kind (hotfix from production, the rest from develop), otherwise the default branch of the
+remote its upstream is on. It compares with the base as last fetched, so fetch first.
 
 ## Remotes
 
