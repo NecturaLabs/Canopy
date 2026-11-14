@@ -211,6 +211,9 @@ commits since the previous build.
 
 ### Changed
 
+- The conflict shortcuts are named like the resolver's buttons: the shortcuts sheet and Settings →
+  Keyboard now say "Accept current version", "Accept incoming version", "Accept both" and "Accept
+  the common ancestor" instead of "Take …".
 - Background work no longer grows with the number of tabs. At most four background fetches run
   at once across all tabs: a tab that falls due while four run waits for one to finish, then
   fetches, so a long session fetches everything within each interval without starting a `git`
