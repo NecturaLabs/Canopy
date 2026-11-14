@@ -617,7 +617,12 @@ the interaction state a component reports.
 
 Select lists stay inside their containing dialog, settings card or main panel. They open above
 the field when that side has more room, limit their width to the host and scroll when the options
-cannot fit. Pointer presses focus the field, so arrows, Home/End, typing and Enter work after
+cannot fit. The list lines up with its field: it starts at the field's left edge (at its right
+edge when it is wider than the field and would not fit to the right), is at least as wide as the
+field and grows to its longest row (label, badge, check), never past the host. It has no minimum
+width of its own: it used to be at least 200 points wide (at most the field plus 120) and to start
+2 points left of the field, which made it stick out past the field's right edge, so a short list
+under a narrow field is now exactly as wide as the field. Pointer presses focus the field, so arrows, Home/End, typing and Enter work after
 opening with the mouse as well as from the keyboard, and the highlighted option scrolls into
 view. A list that ends up under a modal layer (egui keeps each layer's rank between uses, so a
 press and release in one frame can leave it there) is raised above it at once.
@@ -628,12 +633,17 @@ option is the value the closed select says "(Recommended)" after it, quieter tha
 speaks it that way too, however the value came about (chosen, written by a button, read from a
 file); a fitted select is as wide for it as for its longest label. An unavailable option shows its
 note instead. The list reserves room for the
-badge and check, truncating only the painted label while keeping its full accessible name. A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
+badge and check. A select never trims a label (owner decision, 2026-10-13, which replaces the
+earlier "truncate the painted label"): the closed control widens to the value it shows, up to the
+width its host has, and beyond that wraps it onto more lines and grows taller; the list is as wide
+as its longest row, up to the host, and beyond that wraps the long rows, every row as tall as the
+tallest so the scroll stays uniform. The accessible name is the full label throughout. A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
 
-An option can be unavailable (`unavailable(value, "Not installed")`): its label is dimmed (`disabled_text`) and a neutral badge with the note ends the row where the Recommended badge would; the arrow keys, Home, End and typing pass over it, a click or Enter does nothing, and it is spoken as disabled with the note as its description. It can still be the current value (a saved choice that has gone): the closed control shows the label dimmed with the same badge before the caret, widens to hold it (an explicit width is otherwise kept), and carries the note as its accessible description. The kit gallery shows both states.
+An option can be unavailable (`unavailable(value, "Not installed")`): its label is dimmed (`disabled_text`) and a neutral badge with the note ends the row where the Recommended badge would; the arrow keys, Home, End and typing pass over it, a click or Enter does nothing, and it is spoken as disabled with the note as its description. It can still be the current value (a saved choice that has gone): the closed control shows the label dimmed with the same badge before the caret, widens to hold it, with its tag, and carries the note as its accessible description. The kit gallery shows both states.
 
 Settings selects fit their longest option (`fit_to_options`, at least 120 pixels), the same width
-open and closed; app-launcher selects stop at the 280-pixel text-field width. Number fields are
+open and closed, the launcher selects too (they do not stop at the 280-pixel text-field width, so a
+long program name shows whole). Number fields are
 120 pixels and the first-branch field 160, so a control is never much wider than what it holds.
 Repository selects show the effective value once. Explicit selection pins even the current value;
 only the Overridden badge and a reset distinguish a pinned value from an inherited one. Reset

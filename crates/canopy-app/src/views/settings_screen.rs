@@ -5038,7 +5038,7 @@ fn launcher_row(
     row_more(ui, title, help, "", |ui| {
         let mut select = Select::new(&mut chosen, &options)
             .described(LaunchChoice::System, "Default")
-            .width(select_width(ui, options.iter().map(|(_, l)| *l)).min(FIELD_WIDTH))
+            .width(select_width(ui, options.iter().map(|(_, l)| *l)))
             .name(title)
             .id_salt(("launcher", title));
         for i in 0..missing.len() {
