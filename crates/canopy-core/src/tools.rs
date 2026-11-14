@@ -224,7 +224,7 @@ impl Repo {
     }
 
     /// Whether `.gitattributes` in the working folder or `info/attributes` names `filter=lfs`.
-    fn uses_lfs(&self) -> bool {
+    pub fn uses_lfs(&self) -> bool {
         let attributes = [
             self.workdir().join(".gitattributes"),
             self.git().commondir().join("info").join("attributes"),
@@ -261,6 +261,15 @@ impl Repo {
             .filter_map(|name| self.git().find_remote(name).ok())
             .any(|remote| remote.url().is_ok_and(is_ssh_url))
     }
+}
+
+/// What to install when `git lfs` does not work, whether or not this repository uses LFS.
+pub fn git_lfs_missing(workdir: &Path) -> Option<MissingTool> {
+    (!git_lfs_available(workdir)).then(|| MissingTool {
+        program: "git-lfs".to_owned(),
+        needed_for: "Git LFS files, their downloads and locks",
+        install: Package::GitLfs.steps(),
+    })
 }
 
 /// Whether `git lfs` works: the `git-lfs` program is a git subcommand, found on the `PATH` or in

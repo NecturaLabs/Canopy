@@ -826,6 +826,7 @@ version = "0.0.0"
 dependencies = [
  "git2",
  "same-file",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
  "tracing",

@@ -10,6 +10,17 @@ commits since the previous build.
 
 ### Added
 
+- Git LFS is visible and usable. Files stored with LFS carry an `LFS` tag in the Changes lists and
+  commit details, and a file that holds only its pointer says "not downloaded", with one entry in
+  the status bar that downloads the missing files. The diff of an LFS file is a card with each
+  side's size and object id, old to new (and the pointer text on request) instead of a diff of the
+  file; the content is compared only when it is local, small and text, and is never staged by hunk
+  or line. The palette has LFS: Pull and Fetch objects, and a Git LFS dialog lists the files not
+  downloaded, the tracked patterns (track and untrack) and the locks on the LFS server (lock,
+  unlock, confirmed force unlock); a file's menu can track it, lock it or unlock it. These run
+  only when asked, show git-lfs's own message when they fail, and are disabled with the install
+  steps when `git-lfs` is missing. An LFS file whose content is exactly its pointer is no longer
+  listed as modified because its timestamp changed.
 - Canopy asks before it acts on a repository it does not trust: opening one outside every trusted
   folder shows a prompt that says a repository can run programs on this computer through its hooks
   and settings, with Trust and Don't trust. Don't trust opens it read-only: history and diffs show,

@@ -590,6 +590,7 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
         | OpKind::Stash
         | OpKind::Pop
         | OpKind::Branch
+        | OpKind::Lfs
         | OpKind::Publish => {
             if let Some(told) = changes.describe() {
                 told
@@ -1013,6 +1014,8 @@ pub fn folder_name(path: &std::path::Path) -> String {
 /// a frame clones the pointer, never the data, so its cost does not grow with the repository.
 #[derive(Debug)]
 pub struct RepoTab {
+    /// Git LFS: the files stored with it, whether it works here, and the dialog's lists.
+    pub lfs: crate::lfs::LfsState,
     pub stale_serial: u64,
     pub stale_result: Option<Result<Arc<[canopy_core::StaleCandidate]>, String>>,
     file_history_serial: u64,
@@ -1214,6 +1217,7 @@ impl RepoTab {
         let name = folder_name(&path);
         Self {
             path,
+            lfs: crate::lfs::LfsState::default(),
             file_history_serial: 0,
             change_search_serial: 0,
             change_search: None,
@@ -1343,6 +1347,16 @@ impl RepoTab {
     /// Queues a mutation.
     pub fn op(&self, op: Op) {
         self.worker.send(Job::Op(op));
+    }
+
+    /// Asks for the Git LFS dialog's lists: the tracked patterns (needs git-lfs) and the locks
+    /// (the LFS server).
+    pub fn read_lfs_lists(&mut self) {
+        self.lfs.dialog_seen = true;
+        let patterns = self.lfs.next_patterns_serial();
+        self.worker.send(Job::LfsPatterns(patterns));
+        let locks = self.lfs.next_locks_serial();
+        self.worker.send(Job::LfsLocks(locks));
     }
 
     /// Asks for the history of `path` (relative to the repository root), through renames, from
@@ -2334,6 +2348,15 @@ impl RepoTab {
                         self.tools_asked = true;
                         self.worker.send(Job::Tools);
                     }
+                    let lfs_seen = s
+                        .status
+                        .staged
+                        .iter()
+                        .chain(&s.status.unstaged)
+                        .any(|f| f.lfs);
+                    self.worker.send(Job::Lfs {
+                        known: self.lfs.in_use() || lfs_seen,
+                    });
                     if !self.template_asked {
                         self.template_asked = true;
                         self.worker.send(Job::CommitTemplate);
@@ -2642,6 +2665,9 @@ impl RepoTab {
                         });
                     }
                 }
+                Event::Lfs(info) => self.lfs.set(info),
+                Event::LfsLocks { serial, result } => self.lfs.accept_locks(serial, result),
+                Event::LfsPatterns { serial, result } => self.lfs.accept_patterns(serial, result),
                 Event::PushTarget(result) => match result {
                     Ok(target) => self.force_push_offer = Some(target),
                     Err(e) => notices.push(Notice {
@@ -2737,6 +2763,9 @@ impl RepoTab {
                             }
                             if kind == OpKind::Worktree {
                                 self.worktree_result = Some(Ok(()));
+                            }
+                            if kind == OpKind::Lfs && self.lfs.dialog_seen {
+                                self.read_lfs_lists();
                             }
                             if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
@@ -3490,6 +3519,10 @@ mod tests {
             tab.poll(&[]);
             assert_eq!(tab.file.as_ref(), Some(&selection));
             assert!(Arc::ptr_eq(tab.diff.as_ref().expect("retained diff"), &old));
+            if full {
+                // A snapshot also asks for the repository's LFS files (`Job::Lfs`).
+                assert!(matches!(jobs.try_recv(), Ok(Job::Lfs { known: false })));
+            }
             assert!(
                 matches!(jobs.try_recv(), Ok(Job::Diff(refreshed)) if refreshed == key),
                 "historical gitlink availability can change on refresh, full={full}"
@@ -5371,6 +5404,67 @@ mod tests {
         assert!(matches!(tab.file_history, Some(Err(_))));
         tab.read_file_history(None, "b.txt".into());
         assert!(tab.file_history.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn the_lfs_state_follows_the_workers_answers_and_lists_are_read_again_after_a_command()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        assert!(!tab.lfs.in_use());
+        events.send(Event::Lfs(Arc::new(crate::worker::LfsInfo {
+            in_use: true,
+            files: vec![canopy_core::LfsFile {
+                path: "big.bin".into(),
+                pointer: canopy_core::LfsPointer {
+                    oid: "a".repeat(64),
+                    size: 9,
+                    extensions: false,
+                },
+                downloaded: false,
+            }],
+            missing: None,
+        })))?;
+        tab.poll(&[]);
+        assert!(tab.lfs.is_pointer_only("big.bin"));
+
+        // Opening the dialog reads both lists; a stale answer is dropped.
+        tab.read_lfs_lists();
+        let Job::LfsPatterns(patterns) = jobs.recv()? else {
+            panic!("patterns job");
+        };
+        let Job::LfsLocks(locks) = jobs.recv()? else {
+            panic!("locks job");
+        };
+        events.send(Event::LfsLocks {
+            serial: locks.wrapping_sub(1),
+            result: Err("old".into()),
+        })?;
+        events.send(Event::LfsLocks {
+            serial: locks,
+            result: Ok(Vec::new()),
+        })?;
+        events.send(Event::LfsPatterns {
+            serial: patterns,
+            result: Err("git-lfs said no".into()),
+        })?;
+        tab.poll(&[]);
+        assert!(matches!(tab.lfs.locks, Some(Ok(_))));
+        assert!(matches!(&tab.lfs.patterns, Some(Err(e)) if e == "git-lfs said no"));
+
+        // An LFS command that finished changes what the lists say.
+        events.send(Event::OpFinished {
+            label: "Locking big.bin".into(),
+            kind: OpKind::Lfs,
+            announce: true,
+            result: Ok("Locked big.bin".into()),
+        })?;
+        tab.poll(&[]);
+        assert!(matches!(jobs.recv()?, Job::LfsPatterns(_)));
+        assert!(matches!(jobs.recv()?, Job::LfsLocks(_)));
+        assert!(tab.lfs.locks.is_none(), "the lists are on their way again");
         Ok(())
     }
 

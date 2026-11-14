@@ -98,6 +98,19 @@ impl CanopyApp {
                         self.dialogs.open(Dialog::FileHistory { repo, path, from });
                     }
                 }
+                Action::Lfs(page) => {
+                    if let Some(tab) = self.tab() {
+                        tab.read_lfs_lists();
+                        let repo = tab.path.clone();
+                        self.dialogs
+                            .open(Dialog::Lfs(Box::new(dialogs::LfsForm::new(repo, page))));
+                    }
+                }
+                Action::LfsLists => {
+                    if let Some(tab) = self.tab() {
+                        tab.read_lfs_lists();
+                    }
+                }
                 Action::SearchChanges { query, regex } => {
                     if let Some(tab) = self.tab() {
                         tab.search_changes(query, regex);

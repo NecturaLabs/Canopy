@@ -810,7 +810,13 @@ fn list(
             tip,
             labelled: conflicted,
         };
-        let missing = tab.not_downloaded.contains(&(source, f.path.clone()));
+        let missing = if tab.not_downloaded.contains(&(source, f.path.clone())) {
+            commit_detail::Missing::PartialClone
+        } else if f.lfs && tab.lfs.is_pointer_only(&f.path) {
+            commit_detail::Missing::LfsObject
+        } else {
+            commit_detail::Missing::No
+        };
         let (resp, acted) = flip.item(ui, row_key(which, &f.path), Some(path_key(&f.path)), |ui| {
             file_row(
                 ui,
@@ -932,6 +938,10 @@ fn list(
                     ),
                 )));
             }
+            if !conflicted {
+                m.separator();
+                lfs_items(m, tab, &entry, actions);
+            }
             if entry.kind != canopy_core::ChangeKind::Untracked
                 && !conflicted
                 && m.item(icon::MINUS_CIRCLE, "Stop tracking…")
@@ -959,6 +969,77 @@ fn list(
             }
         });
     });
+}
+
+/// The Git LFS entries of a file's context menu: track what is not stored with LFS yet; lock,
+/// unlock and the patterns of what is. They are disabled, with the reason, while git-lfs is
+/// missing or another operation runs.
+fn lfs_items(m: &mut menu::Menu<'_>, tab: &RepoTab, entry: &FileEntry, actions: &mut Vec<Action>) {
+    let why = tab.lfs.unavailable().or_else(|| {
+        tab.running
+            .is_some()
+            .then(|| "Another operation is still running".to_owned())
+    });
+    let can = why.is_none();
+    let why = why.unwrap_or_default();
+    let mut run = |m: &mut menu::Menu<'_>, glyph: &str, label: String, op: Op| {
+        if m.item(glyph, label)
+            .enabled(can)
+            .disabled_reason(&why)
+            .show(m.ui)
+            .clicked()
+        {
+            actions.push(Action::Op(op));
+        }
+    };
+    if entry.lfs {
+        run(
+            m,
+            icon::LOCK_SIMPLE,
+            "Lock with Git LFS".into(),
+            Op::LfsLock(entry.path.clone()),
+        );
+        run(
+            m,
+            icon::LOCK_SIMPLE_OPEN,
+            "Unlock with Git LFS".into(),
+            Op::LfsUnlock {
+                path: entry.path.clone(),
+                force: false,
+            },
+        );
+        if m.item(icon::HARD_DRIVES, "Git LFS patterns…")
+            .show(m.ui)
+            .clicked()
+        {
+            actions.push(Action::Lfs(crate::views::dialogs::LfsPage::Patterns));
+        }
+        return;
+    }
+    let name = entry.path.rsplit('/').next().unwrap_or(&entry.path);
+    if let Some((stem, extension)) = name.rsplit_once('.')
+        && !stem.is_empty()
+        && extension.chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        run(
+            m,
+            icon::HARD_DRIVES,
+            format!("Track *.{extension} with Git LFS"),
+            Op::LfsTrack {
+                pattern: format!("*.{extension}"),
+                literal: false,
+            },
+        );
+    }
+    run(
+        m,
+        icon::HARD_DRIVES,
+        "Track this file with Git LFS".into(),
+        Op::LfsTrack {
+            pattern: entry.path.clone(),
+            literal: true,
+        },
+    );
 }
 
 /// Ctrl-click or Shift-click on the unstaged file `index`: marks or unmarks it, or marks the
@@ -1004,7 +1085,7 @@ fn file_row(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
-    not_downloaded: bool,
+    not_downloaded: commit_detail::Missing,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     action: RowAction,
 ) -> (Response, bool) {

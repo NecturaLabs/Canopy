@@ -13,6 +13,7 @@ mod hosting;
 mod housekeeping;
 mod identity_worker;
 mod keymap;
+mod lfs;
 mod logging;
 mod platform;
 mod repo_config;
@@ -54,9 +55,9 @@ OPTIONS:
                               settings-integrations, settings-accounts, settings-updates, settings-notifications,
                               settings-keyboard, settings-backup, settings-repository,
                               settings-repository-pull, settings-repository-diffs,
-                              settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, search-changes, clean-stale, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
+                              settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
                               long-message,
-                              gallery, menu-branch, menu-commit, menu-file, blame, open,
+                              gallery, menu-branch, menu-commit, menu-file, menu-lfs-file, blame, open,
                               open-error, clone,
                               clone-running, clone-error, init, new-branch, new-worktree,
                               new-worktree-error, rename, add-submodule,

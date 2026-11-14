@@ -26,6 +26,24 @@ pub enum Op {
         target: canopy_core::IgnoreTarget,
     },
     StopTracking(String),
+    /// `git lfs pull`: downloads the LFS objects of the current checkout and writes them into the
+    /// working tree.
+    LfsPull,
+    /// `git lfs fetch`: downloads the LFS objects of the current branch into the local store.
+    LfsFetch,
+    /// `git lfs track`; `literal` names one file, not a glob.
+    LfsTrack {
+        pattern: String,
+        literal: bool,
+    },
+    /// `git lfs untrack`, with the pattern as `.gitattributes` spells it.
+    LfsUntrack(String),
+    LfsLock(String),
+    /// `git lfs unlock`; `force` also releases a lock another user holds.
+    LfsUnlock {
+        path: String,
+        force: bool,
+    },
     /// `git submodule update` for one submodule or, with `None`, all of them; `init` also clones
     /// those never initialised.
     SubmoduleUpdate {
@@ -228,6 +246,12 @@ impl Op {
             Self::CreateBranch { .. } => OpKind::Branch,
             Self::AddWorktree { .. } => OpKind::Worktree,
             Self::AddRemote { .. } => OpKind::Publish,
+            Self::LfsPull
+            | Self::LfsFetch
+            | Self::LfsTrack { .. }
+            | Self::LfsUntrack(_)
+            | Self::LfsLock(_)
+            | Self::LfsUnlock { .. } => OpKind::Lfs,
             _ => OpKind::Other,
         }
     }
@@ -239,6 +263,13 @@ impl Op {
             Self::Stage(_) | Self::StageAll => "Staging".into(),
             Self::AddIgnore { .. } => "Adding ignore rule".into(),
             Self::StopTracking(path) => format!("Untracking {path}"),
+            Self::LfsPull => "Downloading LFS files".into(),
+            Self::LfsFetch => "Fetching LFS objects".into(),
+            Self::LfsTrack { pattern, .. } => format!("Tracking {pattern} with Git LFS"),
+            Self::LfsUntrack(pattern) => format!("Untracking {pattern} from Git LFS"),
+            Self::LfsLock(path) => format!("Locking {path}"),
+            Self::LfsUnlock { path, force: true } => format!("Force-unlocking {path}"),
+            Self::LfsUnlock { path, .. } => format!("Unlocking {path}"),
             Self::SubmoduleUpdate { path: Some(p), .. } => format!("Updating submodule {p}"),
             Self::SubmoduleUpdate { path: None, .. } => "Updating submodules".into(),
             Self::SubmoduleSync(Some(p)) => format!("Syncing submodule {p}"),
@@ -406,6 +437,18 @@ pub enum Job {
     PullConfig,
     /// The programs the repository needs that the system lacks (`Repo::missing_tools`).
     Tools,
+    /// The files stored with Git LFS and whether git-lfs is there. `known`: the tab has seen an
+    /// LFS file, so the repository is read for them even where `.gitattributes` at the top does
+    /// not say so.
+    Lfs {
+        known: bool,
+    },
+    /// The locks on the LFS server (a network read, only when the user asks); the serial ties the
+    /// reply to the newest request.
+    LfsLocks(u64),
+    /// The patterns stored with LFS (`git lfs track`); the serial ties the reply to the newest
+    /// request.
+    LfsPatterns(u64),
     /// Where a force push of the current branch would go ([`Repo::force_push_target`]), for the
     /// question that asks before it.
     PushTarget,
@@ -534,6 +577,18 @@ pub enum Event {
     PullConfig(Result<canopy_core::PullConfig, String>),
     /// The answer to [`Job::Tools`].
     ToolsMissing(Vec<canopy_core::MissingTool>),
+    /// The answer to [`Job::Lfs`].
+    Lfs(Arc<LfsInfo>),
+    /// The answer to [`Job::LfsLocks`]: git-lfs's own message when it cannot list them.
+    LfsLocks {
+        serial: u64,
+        result: Result<Vec<canopy_core::LfsLock>, String>,
+    },
+    /// The answer to [`Job::LfsPatterns`].
+    LfsPatterns {
+        serial: u64,
+        result: Result<Vec<canopy_core::LfsPattern>, String>,
+    },
     /// The answer to [`Job::PushTarget`]: git's own message when it cannot tell.
     PushTarget(Result<canopy_core::PushTarget, String>),
     MergeMessage(String),
@@ -573,6 +628,17 @@ pub enum Event {
         autostashed: bool,
         stash: bool,
     },
+}
+
+/// What the repository stores with Git LFS ([`Job::Lfs`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LfsInfo {
+    /// The repository stores files with LFS.
+    pub in_use: bool,
+    /// Every LFS file in the index, with whether its object is downloaded.
+    pub files: Vec<canopy_core::LfsFile>,
+    /// Set when `git lfs` does not work here: what to install.
+    pub missing: Option<canopy_core::MissingTool>,
 }
 
 /// What a pull asks before it runs ([`Op::Pull`]).
@@ -697,6 +763,8 @@ pub enum OpKind {
     Publish,
     /// `git worktree add`: its result goes back to the New worktree dialog that asked for it.
     Worktree,
+    /// A Git LFS command: its lists (patterns, locks, files) are read again.
+    Lfs,
     Other,
 }
 
@@ -837,6 +905,9 @@ impl Job {
             Self::FileHistory { .. } => "file-history",
             Self::SearchChanges { .. } => "search-changes",
             Self::Tools => "tools",
+            Self::Lfs { .. } => "lfs",
+            Self::LfsLocks(_) => "lfs-locks",
+            Self::LfsPatterns(_) => "lfs-patterns",
             Self::PushTarget => "push-target",
             Self::Options(_) => "options",
             Self::Op(_) => "operation",
@@ -868,6 +939,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     // Why the last download of the working tree status failed: later refreshes show it instead
     // of trying the network again, until the user retries.
     let mut status_failure: Option<canopy_core::StatusUnavailable> = None;
+    // Whether `git lfs` works, asked once: installing it needs a restart of Canopy anyway.
+    let mut lfs_missing: Option<Option<canopy_core::MissingTool>> = None;
     let mut trust_folders = Vec::new();
     // The last (trusted, version of the list) this thread told the tab.
     let mut told_trust: Option<(bool, u64)> = None;
@@ -1160,6 +1233,45 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     });
                 }
                 Job::Tools => emit(Event::ToolsMissing(repo.missing_tools())),
+                Job::Lfs { known } => {
+                    let in_use = known || repo.uses_lfs();
+                    let mut info = LfsInfo {
+                        in_use,
+                        ..LfsInfo::default()
+                    };
+                    if in_use {
+                        info.missing.clone_from(
+                            lfs_missing.get_or_insert_with(|| {
+                                canopy_core::git_lfs_missing(repo.workdir())
+                            }),
+                        );
+                        match repo.lfs_files() {
+                            Ok(files) => info.files = files,
+                            Err(error) => {
+                                tracing::warn!(error = %redacted(&error), "LFS files not read");
+                                continue;
+                            }
+                        }
+                    }
+                    emit(Event::Lfs(Arc::new(info)));
+                }
+                Job::LfsLocks(serial) => {
+                    // git-lfs is a program the repository's own configuration can steer.
+                    let result = if allowed() {
+                        repo.lfs_locks().map_err(|e| e.to_string())
+                    } else {
+                        Err(READ_ONLY.to_owned())
+                    };
+                    emit(Event::LfsLocks { serial, result });
+                }
+                Job::LfsPatterns(serial) => {
+                    let result = if allowed() {
+                        repo.lfs_patterns().map_err(|e| e.to_string())
+                    } else {
+                        Err(READ_ONLY.to_owned())
+                    };
+                    emit(Event::LfsPatterns { serial, result });
+                }
                 Job::PushTarget => {
                     emit(Event::PushTarget(
                         repo.force_push_target().map_err(|e| e.to_string()),
@@ -1381,6 +1493,9 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
     let mut file_history_seen = false;
     let mut change_search_seen = false;
     let mut blame_seen = false;
+    let mut lfs_seen = false;
+    let mut lfs_locks_seen = false;
+    let mut lfs_patterns_seen = false;
     let mut diff_sources = Vec::new();
     for (i, job) in jobs.iter().enumerate().rev() {
         match job {
@@ -1394,6 +1509,9 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
             Job::Details(_) => keep[i] = !std::mem::replace(&mut details_seen, true),
             Job::Signature(_) => keep[i] = !std::mem::replace(&mut signature_seen, true),
             Job::Blame { .. } => keep[i] = !std::mem::replace(&mut blame_seen, true),
+            Job::Lfs { .. } => keep[i] = !std::mem::replace(&mut lfs_seen, true),
+            Job::LfsLocks(_) => keep[i] = !std::mem::replace(&mut lfs_locks_seen, true),
+            Job::LfsPatterns(_) => keep[i] = !std::mem::replace(&mut lfs_patterns_seen, true),
             Job::Diff(key) => {
                 let source = std::mem::discriminant(&key.source);
                 if diff_sources.contains(&source) {
@@ -1655,6 +1773,16 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
         Op::SubmoduleRemove(path) => repo
             .submodule_remove(&path)
             .map(|()| format!("Removed {path}; the removal is staged.")),
+        Op::LfsPull => repo
+            .lfs_pull(progress)
+            .map(|_| "Downloaded the LFS files of this checkout.".to_owned()),
+        Op::LfsFetch => repo
+            .lfs_fetch(progress)
+            .map(|_| "Downloaded the LFS objects of this branch.".to_owned()),
+        Op::LfsTrack { pattern, literal } => repo.lfs_track(&pattern, literal),
+        Op::LfsUntrack(pattern) => repo.lfs_untrack(&pattern),
+        Op::LfsLock(path) => repo.lfs_lock(&path),
+        Op::LfsUnlock { path, force } => repo.lfs_unlock(&path, force),
         Op::StopTracking(path) => repo
             .stop_tracking(&path)
             .map(|()| format!("Kept {path} locally and staged its removal from Git.")),
@@ -3468,6 +3596,14 @@ mod read_tests {
                 start: None,
                 checkout: true,
             },
+            // git-lfs is a program the repository's own configuration steers.
+            Op::LfsPull,
+            Op::LfsFetch,
+            Op::LfsLock("a.txt".into()),
+            Op::LfsTrack {
+                pattern: "*.bin".into(),
+                literal: false,
+            },
         ] {
             let label = op.label();
             assert_eq!(
@@ -3495,6 +3631,41 @@ mod read_tests {
         assert_eq!(refusal_of(&worker, commit), None);
         assert!(hook.exists(), "the hook is the user's once they trust it");
         assert!(!fsmonitor.exists(), "core.fsmonitor is never run");
+    }
+
+    /// Git LFS reads that run git-lfs (the patterns, the locks) are refused in a repository that
+    /// is not trusted, like its commands; the files it stores are read without the program and
+    /// are not.
+    #[cfg(unix)]
+    #[test]
+    fn git_lfs_programs_do_not_run_for_an_untrusted_repository() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (repo, _hook, _fsmonitor) = hostile_repository(root.path());
+        let worker = Worker::spawn(repo, &egui::Context::default());
+        worker.send(Job::Refresh(100));
+        events_until(&worker, |e| matches!(e, Event::Trust { .. }));
+        worker.send(Job::LfsLocks(7));
+        worker.send(Job::LfsPatterns(8));
+        worker.send(Job::Lfs { known: false });
+        let events = events_until(&worker, |e| matches!(e, Event::Lfs(_)));
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::LfsLocks { serial: 7, result: Err(m) } if m == READ_ONLY
+            )),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::LfsPatterns { serial: 8, result: Err(m) } if m == READ_ONLY
+            )),
+            "{events:?}"
+        );
+        assert!(
+            matches!(events.last(), Some(Event::Lfs(info)) if !info.in_use && info.files.is_empty()),
+            "a repository without LFS attributes has nothing to read: {events:?}"
+        );
     }
 
     /// #228: with trust safety off nothing is refused or told to be read-only, the trusted list
