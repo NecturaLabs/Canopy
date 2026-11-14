@@ -272,13 +272,17 @@ repository and update the submodule pointer here.
 - Background work is bounded, so it does not grow with the number of tabs either (issue #62).
   Automatic fetching (`app/background.rs`, `auto_fetch_at`) runs at most
   `MAX_BACKGROUND_FETCHES` (4) fetches at once across all tabs: a tab counts from the moment its
-  fetch is sent (`RepoTab::auto_fetch_pending`) until the fetch ends or the worker reports a
-  failure; a tab that falls due while all four run keeps its due time, and the next pass starts
+  fetch is sent (`RepoTab::auto_fetch`, which sets `RepoTab::auto_fetch_pending`) until the
+  worker's answer to that fetch (`OpFinished`; the tab tells it from other quiet fetches by
+  their order, since a tab's operations are answered in order, and a batch the thread cannot run
+  because the repository will not open answers each of its operations with an error); a tab whose
+  thread has ended (`Worker::is_alive`) is not counted. A tab that falls due while all four run keeps its due time, and the next pass starts
   it, longest-waiting first, once an event from a finished fetch has repainted the frame (the
   30 second poll at the latest; an overdue tab sets no wake time, so the loop never spins). A
   fetch the user starts is neither counted nor held back. The refresh a file change or a timer
   asks of a tab that is not shown (`Job::Refresh`, `Job::RefreshStatus`, when no operation ran in
-  the batch) takes a permit from the process-wide `read_limit::Limiter` first: as many as the
+  the batch) takes a permit from the process-wide `read_limit::Limiter` first (these reads run in the
+  process, through libgit2, so they are threads, not child processes): as many as the
   machine has cores, from 2 to 4. The worker holds a `read_limit::Lane`;
   `CanopyApp::load_active_tab` (every frame, and from `activate`) gives the shown tab's lane
   priority, which never waits, and takes it from the tab that was left. A waiting thread holds no

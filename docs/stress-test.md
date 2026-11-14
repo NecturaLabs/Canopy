@@ -491,7 +491,7 @@ fails.
 | Peak RSS over the whole run | at most 4 GiB | all |
 | Heap growth during the soak | last five idle minutes at most 10 % and 50 MiB above the first five | e |
 | Threads | peak at most 450 (about 1 per loaded tab, plus the UI and the shared watcher); back within 20 of baseline after churn | e |
-| Child processes (git) | peak at most 12 when nothing is started by hand: at most 4 automatic fetches at once, 4 limited background reads, the shown tab's work (`--limit children_peak=N` for a run that includes the burst of fetches by hand in (d), which are never limited) | a, b, c, d (timer only), e |
+| Child processes | peak at most 8 direct children of the process, sampled each second, when nothing is started by hand: at most 4 automatic fetches at once, plus the shown tab's own git work and a few short helpers (`--limit children_peak=N` for a run that includes the burst of fetches by hand in (d), which are never limited). All zero means the kernel has no `/proc/<pid>/task/<tid>/children` (`CONFIG_PROC_CHILDREN`) or nothing ran, and the report says n/a. This catches a herd, not a regression of the fetch limit alone: the staggered schedule keeps few fetches overlapping even without it | a, b, c, d (timer only), e |
 | Open descriptors | peak at most 70 % of `ulimit -n`; back within 50 of baseline | e |
 | Log not truncated | the 20 MiB cap not reached | all |
 
