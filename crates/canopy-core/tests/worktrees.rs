@@ -705,3 +705,69 @@ fn a_worktree_with_an_uninitialized_submodule_is_removed() {
     f.repo.remove_worktree(&removal).expect("remove");
     assert!(!exists(&wt));
 }
+
+/// A repository inside the folder, or another worktree registered under it, looks like an
+/// untracked file; `--force` would delete it (and leave the inner worktree registered).
+#[test]
+fn a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it() {
+    let f = fixture();
+
+    // An unrelated repository with a commit, in an untracked folder.
+    let outer = f.linked("outer");
+    let inner = outer.join("vendor/inner");
+    fs::create_dir_all(&inner).expect("folder");
+    git(&inner, &["init", "-q", "-b", "main"]);
+    fs::write(inner.join("work.txt"), "unpublished\n").expect("file");
+    git(&inner, &["add", "."]);
+    git(
+        &inner,
+        &["commit", "-q", "-m", "only in the nested repository"],
+    );
+    let removal = f.repo.worktree_removal(&outer).expect("inspect");
+    let reason = removal.blocked.clone().unwrap_or_default();
+    assert!(
+        reason.contains("another repository") && reason.contains("vendor/inner"),
+        "{reason}"
+    );
+    f.repo.remove_worktree(&removal).expect_err("refused");
+    assert!(
+        exists(&inner.join("work.txt")),
+        "the nested repository is kept"
+    );
+
+    // Another worktree of this repository, created inside it.
+    let host = f.linked("host");
+    let guest = host.join("guest");
+    git(
+        &f.main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "guest",
+            &guest.to_string_lossy(),
+        ],
+    );
+    let removal = f.repo.worktree_removal(&host).expect("inspect");
+    let reason = removal.blocked.clone().unwrap_or_default();
+    assert!(
+        reason.contains("another worktree") && reason.contains("guest"),
+        "{reason}"
+    );
+    f.repo.remove_worktree(&removal).expect_err("refused");
+    assert!(exists(&guest), "the inner worktree is kept");
+    assert!(f.registered().contains(&*guest.to_string_lossy()));
+
+    // The inner one is removable by itself, and then the outer one is too.
+    let inner_removal = f.repo.worktree_removal(&guest).expect("inspect");
+    assert_eq!(inner_removal.blocked, None);
+    f.repo
+        .remove_worktree(&inner_removal)
+        .expect("remove the inner one");
+    let removal = f.repo.worktree_removal(&host).expect("inspect");
+    assert_eq!(removal.blocked, None);
+    f.repo
+        .remove_worktree(&removal)
+        .expect("remove the outer one");
+}

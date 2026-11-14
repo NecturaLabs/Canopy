@@ -1,7 +1,7 @@
 //! Removing a linked working folder and forgetting those that are gone: what the removal would
 //! delete, read before the user is asked and again right before git runs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use git2::{Repository, Status, StatusOptions, Worktree, WorktreeLockStatus};
 
@@ -153,6 +153,14 @@ impl Repo {
             removal.blocked = Some(reason);
             return Ok(removal);
         }
+        let inside = self.worktrees_inside(&folder);
+        if !inside.is_empty() {
+            removal.blocked = Some(format!(
+                "It contains another worktree of this repository ({}). Removing the folder would delete it and leave it registered; remove that one first.",
+                inside.join(", ")
+            ));
+            return Ok(removal);
+        }
         let mut options = StatusOptions::new();
         // Untracked folders are listed file by file, ignored ones as the single item git
         // reports (a `target/` is one entry, not a hundred thousand).
@@ -172,9 +180,18 @@ impl Repo {
             | Status::INDEX_DELETED
             | Status::INDEX_RENAMED
             | Status::INDEX_TYPECHANGE;
+        let mut nested = Vec::new();
         for entry in statuses.iter() {
             let status = entry.status();
             if status.is_empty() {
+                continue;
+            }
+            // A folder git lists whole, untracked or ignored, that is a repository of its own.
+            if entry.path_bytes().ends_with(b"/")
+                && let Ok(path) = std::str::from_utf8(entry.path_bytes())
+                && folder.join(path).join(".git").symlink_metadata().is_ok()
+            {
+                nested.push(path.to_owned());
                 continue;
             }
             if status.contains(Status::IGNORED) {
@@ -185,6 +202,13 @@ impl Repo {
                 removal.modified.add(entry.path_bytes());
             }
         }
+        if !nested.is_empty() {
+            removal.blocked = Some(format!(
+                "It contains another repository ({}). Removing the folder, which git does only with --force, would delete it with any work that is not pushed.",
+                nested.join(", ")
+            ));
+            return Ok(removal);
+        }
         // A detached `HEAD` is kept alive only by this folder's administrative files, which the
         // removal deletes; a branch, remote branch or tag containing a commit keeps it.
         if removal.branch.is_none()
@@ -193,6 +217,36 @@ impl Repo {
             removal.unreachable_commits = self.commits_only_reached_by(head)?;
         }
         Ok(removal)
+    }
+
+    /// The folders of the other working folders of this repository (the main one and the linked
+    /// ones) that lie inside `folder`, relative to it.
+    fn worktrees_inside(&self, folder: &Path) -> Vec<String> {
+        let mut others: Vec<PathBuf> = Vec::new();
+        if let Ok(main) = Repository::open(self.git().commondir())
+            && let Some(workdir) = main.workdir()
+        {
+            others.push(workdir.to_path_buf());
+        }
+        if let Ok(names) = self.git().worktrees() {
+            for name in names.iter().flatten().flatten() {
+                if let Ok(worktree) = self.git().find_worktree(name) {
+                    others.push(worktree.path().to_path_buf());
+                }
+            }
+        }
+        let home = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+        others
+            .into_iter()
+            .filter(|other| !same_folder(other, folder))
+            .filter_map(|other| {
+                let real = std::fs::canonicalize(&other).unwrap_or_else(|_| other.clone());
+                let inside = real
+                    .strip_prefix(&home)
+                    .or_else(|_| other.strip_prefix(folder));
+                inside.ok().map(|rel| rel.display().to_string())
+            })
+            .collect()
     }
 
     /// Removes the linked working folder `expected` describes with `git worktree remove`, after
