@@ -482,34 +482,42 @@ impl Repo {
     }
 }
 
-/// Why a worktree whose index holds initialized submodules is not removed, or `None` when it has
-/// none. A submodule's repository lives under `.git/worktrees/<id>/modules`, which the removal
-/// deletes with every commit in it that was never pushed. Git refuses such a worktree unless
-/// forced, and `--force` is exactly what loses that work, so Canopy does not run it.
+/// Why a worktree with submodule repositories is not removed, or `None` when it has none. A
+/// submodule's repository lives under `.git/worktrees/<id>/modules`, which the removal deletes
+/// with every commit in it that was never pushed. Git refuses such a worktree unless forced, and
+/// `--force` is exactly what loses that work, so Canopy does not run it. The folder is not what
+/// decides: `git submodule deinit` empties it and keeps the repository, so the `modules` folder
+/// is checked as git does, and so are the gitlinks whose names are not UTF-8.
 fn initialized_submodules(repo: &Repository, folder: &Path) -> Option<String> {
     /// The file mode of a submodule entry in the index.
     const GITLINK: u32 = 0o160_000;
+    let kept = repo.path().join("modules").is_dir();
     let index = repo.index().ok()?;
     let names: Vec<String> = index
         .iter()
         .filter(|entry| entry.mode == GITLINK)
         .filter_map(|entry| {
-            let path = std::str::from_utf8(&entry.path).ok()?;
-            folder
-                .join(path)
-                .join(".git")
-                .symlink_metadata()
-                .ok()
-                .map(|_| path.to_owned())
+            let path = crate::paths::os_path(&entry.path);
+            let checked_out = folder.join(&path).join(".git").symlink_metadata().is_ok();
+            (kept || checked_out).then(|| path.to_string_lossy().into_owned())
         })
         .collect();
-    (!names.is_empty()).then(|| {
-        format!(
-            "It has initialized {} ({}). Git refuses to remove such a worktree without --force, and --force deletes the submodule repositories with any commits that were never pushed. Deinitialize them with git submodule deinit, or remove the folder yourself.",
-            if names.len() == 1 { "submodule" } else { "submodules" },
-            names.join(", ")
-        )
-    })
+    if names.is_empty() && !kept {
+        return None;
+    }
+    let what = if names.len() == 1 {
+        "submodule"
+    } else {
+        "submodules"
+    };
+    let listed = if names.is_empty() {
+        "Git keeps submodule repositories for it".to_owned()
+    } else {
+        format!("It has {what} ({})", names.join(", "))
+    };
+    Some(format!(
+        "{listed}. Git refuses to remove such a worktree without --force, and --force deletes the submodule repositories with any commits that were never pushed, also after git submodule deinit. Remove the repositories yourself first, or remove the folder yourself."
+    ))
 }
 
 /// The operation in progress in the administrative folder `admin` of a linked worktree, which

@@ -708,6 +708,37 @@ fn a_worktree_with_an_initialized_submodule_is_never_removed() {
     assert!(log.contains("never pushed"), "{log}");
 }
 
+/// `git submodule deinit` empties the submodule's folder but keeps its repository under the
+/// worktree's administrative folder, so git still refuses the removal and `--force` still loses
+/// the commits in it.
+#[test]
+fn a_deinitialized_submodule_whose_repository_is_kept_blocks_removal() {
+    let f = fixture();
+    let wt = f.with_submodule("deinit", true);
+    fs::write(wt.join("deps/sub/new.txt"), "work\n").expect("file");
+    git(&wt.join("deps/sub"), &["add", "new.txt"]);
+    git(
+        &wt.join("deps/sub"),
+        &["commit", "-q", "-m", "never pushed"],
+    );
+    git(&wt, &["submodule", "deinit", "-q", "-f", "deps/sub"]);
+    assert!(
+        !wt.join("deps/sub/.git").exists(),
+        "the folder is empty after deinit"
+    );
+    fs::write(wt.join("dirty.txt"), "x\n").expect("file");
+    let modules = f.main.join(".git/worktrees/deinit/modules");
+    assert!(modules.is_dir(), "git keeps the repository");
+
+    let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
+    let reason = removal.blocked.clone().unwrap_or_default();
+    assert!(reason.contains("submodule"), "{reason}");
+    let error = f.repo.remove_worktree(&removal, &[]).expect_err("refused");
+    assert!(error.to_string().contains("submodule"), "{error}");
+    assert!(exists(&wt), "folder kept");
+    assert!(modules.is_dir(), "the repository is kept");
+}
+
 /// A submodule that was never initialized is an empty folder: git removes the worktree, and so
 /// does Canopy.
 #[test]
