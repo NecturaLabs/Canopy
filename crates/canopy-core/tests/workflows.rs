@@ -13,7 +13,8 @@ use std::process::Command;
 
 use canopy_core::{
     ChangeKind, DiffSource, FlowConfig, FlowFinish, FlowKind, GitOptions, MergedReason,
-    MissingObjects, Repo, SubmoduleState, Whitespace, submodule_add_problem,
+    MissingObjects, PullStrategy, Repo, SubmoduleState, Whitespace, flow_finish_requirement,
+    submodule_add_problem,
 };
 
 #[expect(
@@ -546,6 +547,496 @@ fn merged_branches_keep_the_cause_of_a_base_that_is_no_commit() {
     assert!(
         error.contains("can not be successfully peeled into a commit"),
         "libgit2's reason is preserved: {error}"
+    );
+}
+
+#[test]
+fn a_finish_with_rebase_matches_the_git_commands() {
+    let (dir, repo, cli) = flow_twins();
+    let (p, c) = (dir.path(), cli.path());
+    let branch = repo
+        .flow_start(FlowKind::Feature, "wide", None)
+        .expect("start");
+    git(c, &["switch", "-q", "-c", &branch, "develop"]);
+    for d in [p, c] {
+        commit_file(d, "one.txt", "1\n", "feat: one");
+        commit_file(d, "two.txt", "2\n", "feat: two");
+        git(d, &["switch", "-q", "develop"]);
+        commit_file(d, "other.txt", "x\n", "feat: develop moved");
+    }
+
+    let options = FlowFinish {
+        rebase: true,
+        ..FlowFinish::default()
+    };
+    repo.flow_finish(FlowKind::Feature, "wide", &options)
+        .expect("finish");
+    git(c, &["switch", "-q", &branch]);
+    git(c, &["rebase", "-q", "develop"]);
+    git(c, &["switch", "-q", "develop"]);
+    git(c, &["merge", "--no-ff", "--no-edit", "-q", &branch]);
+    git(c, &["branch", "-d", &branch]);
+
+    assert_eq!(shape(p), shape(c));
+    // The rebase made the history linear under the merge commit.
+    assert_eq!(
+        git(p, &["rev-list", "--merges", "--count", "develop"]).trim(),
+        "1"
+    );
+}
+
+#[test]
+fn a_rebase_that_conflicts_refuses_and_changes_nothing() {
+    let (dir, repo, _cli) = flow_twins();
+    let p = dir.path();
+    let branch = repo
+        .flow_start(FlowKind::Feature, "clash", None)
+        .expect("start");
+    commit_file(p, "dev.txt", "feature\n", "feat: feature edit");
+    commit_file(p, "extra.txt", "e\n", "feat: more");
+    git(p, &["switch", "-q", "develop"]);
+    commit_file(p, "dev.txt", "develop\n", "feat: develop edit");
+    let before = shape(p);
+
+    let options = FlowFinish {
+        rebase: true,
+        ..FlowFinish::default()
+    };
+    let error = repo
+        .flow_finish(FlowKind::Feature, "clash", &options)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("would conflict in dev.txt") && error.contains("Nothing was changed"),
+        "{error}"
+    );
+    assert_eq!(shape(p), before);
+    assert_eq!(git(p, &["status", "--porcelain"]).trim(), "");
+    assert_eq!(
+        git(p, &["rev-parse", "--verify", "-q", &branch])
+            .trim()
+            .len(),
+        40,
+        "the branch is still there"
+    );
+}
+
+#[test]
+fn a_rebase_is_refused_for_a_release() {
+    let (_dir, repo, _cli) = flow_twins();
+    repo.flow_start(FlowKind::Release, "1.0", None)
+        .expect("start");
+    let options = FlowFinish {
+        rebase: true,
+        ..FlowFinish::default()
+    };
+    let error = repo
+        .flow_finish(FlowKind::Release, "1.0", &options)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("feature or bugfix"), "{error}");
+}
+
+#[test]
+fn a_hotfix_finishes_into_the_open_release_instead_of_develop() {
+    let (dir, repo, cli) = flow_twins();
+    let (p, c) = (dir.path(), cli.path());
+    repo.flow_start(FlowKind::Release, "1.1", None)
+        .expect("start");
+    git(c, &["switch", "-q", "-c", "release/1.1", "develop"]);
+    for d in [p, c] {
+        commit_file(d, "VERSION", "1.1\n", "chore: bump version");
+        git(d, &["switch", "-q", "main"]);
+    }
+    repo.flow_start(FlowKind::Hotfix, "1.0.1", None)
+        .expect("start");
+    git(c, &["switch", "-q", "-c", "hotfix/1.0.1", "main"]);
+    for d in [p, c] {
+        commit_file(d, "a.txt", "one\ntwo\nthree\nfixed\n", "fix: urgent");
+    }
+    let config = repo.flow_config().expect("config").expect("initialised");
+    assert_eq!(
+        repo.flow_back_merge_target(&config, FlowKind::Hotfix)
+            .expect("target"),
+        "release/1.1"
+    );
+    assert_eq!(
+        repo.flow_back_merge_target(&config, FlowKind::Release)
+            .expect("target"),
+        "develop"
+    );
+
+    let options = FlowFinish {
+        tag: false,
+        ..FlowFinish::default()
+    };
+    let message = repo
+        .flow_finish(FlowKind::Hotfix, "1.0.1", &options)
+        .expect("finish");
+    git(c, &["switch", "-q", "main"]);
+    git(c, &["merge", "--no-ff", "--no-edit", "-q", "hotfix/1.0.1"]);
+    git(c, &["switch", "-q", "release/1.1"]);
+    git(c, &["merge", "--no-ff", "--no-edit", "-q", "main"]);
+    git(c, &["branch", "-d", "hotfix/1.0.1"]);
+    git(c, &["switch", "-q", "develop"]);
+
+    assert!(message.contains("release/1.1"), "{message}");
+    assert_eq!(shape(p), shape(c));
+    // develop did not get the fix; the release did.
+    assert_eq!(
+        git(p, &["rev-list", "--count", "develop..release/1.1"]).trim(),
+        "4"
+    );
+    assert_eq!(
+        git(p, &["rev-list", "--count", "release/1.1..develop"]).trim(),
+        "0"
+    );
+}
+
+#[test]
+fn a_back_merge_conflict_with_the_open_release_refuses_before_merging() {
+    let (dir, repo, _cli) = flow_twins();
+    let p = dir.path();
+    repo.flow_start(FlowKind::Release, "1.1", None)
+        .expect("start");
+    commit_file(p, "a.txt", "release\n", "chore: release edit");
+    git(p, &["switch", "-q", "main"]);
+    repo.flow_start(FlowKind::Hotfix, "1.0.1", None)
+        .expect("start");
+    commit_file(p, "a.txt", "hotfix\n", "fix: urgent");
+    let before = shape(p);
+    let error = repo
+        .flow_finish(FlowKind::Hotfix, "1.0.1", &FlowFinish::default())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("back into release/1.1 would conflict in a.txt"),
+        "{error}"
+    );
+    assert_eq!(shape(p), before);
+}
+
+#[test]
+fn finishing_needs_git_2_38() {
+    assert!(flow_finish_requirement(Some((2, 37))).is_some_and(|r| r.contains("Git 2.38")));
+    assert!(flow_finish_requirement(None).is_some());
+    assert_eq!(flow_finish_requirement(Some((2, 38))), None);
+    assert_eq!(flow_finish_requirement(Some((3, 0))), None);
+}
+
+/// The bases the cleanup fixture's branches are compared with.
+fn bases() -> Vec<String> {
+    vec!["main".to_owned(), "origin/main".to_owned()]
+}
+
+/// `main` with merged, squash-merged, unmerged and checked-out branches, and an `origin` whose
+/// default branch is `main`.
+fn cleanup_fixture() -> (tempfile::TempDir, Repo, tempfile::TempDir) {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let remote = tempfile::tempdir().expect("tempdir");
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+    git(
+        p,
+        &["remote", "add", "origin", &remote.path().to_string_lossy()],
+    );
+    git(p, &["push", "-q", "-u", "origin", "main"]);
+    git(p, &["remote", "set-head", "origin", "main"]);
+    git(p, &["switch", "-q", "-c", "feature/merged"]);
+    commit_file(p, "m.txt", "m\n", "feat: m");
+    git(p, &["switch", "-q", "main"]);
+    git(
+        p,
+        &["merge", "-q", "--no-ff", "--no-edit", "feature/merged"],
+    );
+    git(p, &["switch", "-q", "-c", "feature/squashed"]);
+    commit_file(p, "s.txt", "s\n", "feat: s1");
+    commit_file(p, "s.txt", "s\ns\n", "feat: s2");
+    git(p, &["switch", "-q", "main"]);
+    git(p, &["merge", "-q", "--squash", "feature/squashed"]);
+    git(p, &["commit", "-q", "-m", "feat: s"]);
+    git(p, &["switch", "-q", "-c", "feature/open", "main"]);
+    commit_file(p, "o.txt", "o\n", "feat: o");
+    git(p, &["push", "-q", "origin", "main"]);
+    git(p, &["switch", "-q", "main"]);
+    (dir, repo, remote)
+}
+
+#[test]
+fn the_base_is_the_remote_default_branch_and_long_lived_branches_are_protected() {
+    let (_dir, repo, _remote) = cleanup_fixture();
+    let base = repo.branch_base().expect("base").expect("some");
+    assert_eq!(base.references, ["main", "origin/main"]);
+    assert!(base.protected.contains(&"main".to_owned()));
+    assert!(!base.protected.contains(&"feature/merged".to_owned()));
+}
+
+#[test]
+fn the_base_is_develop_in_a_git_flow_repository() {
+    let (_dir, repo, _cli) = flow_twins();
+    let base = repo.branch_base().expect("base").expect("some");
+    assert_eq!(base.references, ["develop"]);
+    assert!(base.protected.contains(&"main".to_owned()));
+    assert!(base.protected.contains(&"develop".to_owned()));
+}
+
+#[test]
+fn a_repository_without_a_default_branch_has_no_base() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    git(dir.path(), &["init", "-q", "-b", "trunk"]);
+    let repo = Repo::open(dir.path()).expect("open");
+    assert_eq!(repo.branch_base().expect("base"), None);
+}
+
+#[test]
+fn removal_deletes_proven_branches_with_d_and_heuristic_ones_only_when_allowed() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+
+    // A heuristic match without the user's confirmation is refused before anything is deleted.
+    let error = repo
+        .remove_merged_branches(
+            &bases(),
+            &names(&["feature/merged", "feature/squashed"]),
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("feature/squashed") && error.contains("confirmation"),
+        "{error}"
+    );
+    assert!(git(p, &["branch", "--list", "feature/merged"]).contains("feature/merged"));
+
+    // Not merged, the base itself, a name that is no branch and the checked-out branch are
+    // refused.
+    git(p, &["branch", "develop", "main"]);
+    for (name, why) in [
+        ("feature/open", "no longer merged"),
+        ("main", "not a local branch"),
+        ("nope", "not a local branch"),
+        ("develop", "long-lived"),
+    ] {
+        let error = repo
+            .remove_merged_branches(&bases(), &names(&[name]), true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(why), "{name}: {error}");
+    }
+    git(p, &["switch", "-q", "feature/merged"]);
+    let error = repo
+        .remove_merged_branches(&bases(), &names(&["feature/merged"]), true)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("checked out"), "{error}");
+    git(p, &["switch", "-q", "feature/open"]);
+
+    let done = repo
+        .remove_merged_branches(
+            &bases(),
+            &names(&["feature/merged", "feature/squashed"]),
+            true,
+        )
+        .expect("remove");
+    assert_eq!(done.removed, ["feature/merged", "feature/squashed"]);
+    assert_eq!(done.failed, Vec::<(String, String)>::new());
+    let left = git(p, &["branch", "--format=%(refname:short)"]);
+    assert_eq!(
+        left.lines().collect::<Vec<_>>(),
+        ["develop", "feature/open", "main"]
+    );
+}
+
+#[test]
+fn a_merge_made_on_the_server_counts_though_the_local_base_is_behind() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    git(p, &["switch", "-q", "-c", "on-server", "main"]);
+    commit_file(p, "srv.txt", "s\n", "feat: merged on the server");
+    git(p, &["push", "-q", "origin", "on-server:main"]);
+    git(p, &["switch", "-q", "main"]);
+    let only_local = repo.merged_branches("main", false).expect("merged");
+    let reason = |rows: &[canopy_core::MergedBranch]| {
+        rows.iter()
+            .find(|b| b.name == "on-server")
+            .map(|b| b.reason)
+    };
+    assert_eq!(reason(&only_local), Some(None));
+    let both = repo.merged_branches_among(&bases(), false).expect("merged");
+    assert_eq!(reason(&both), Some(Some(MergedReason::Reachable)));
+    repo.merged_branches_among(&[], false).unwrap_err();
+}
+
+#[test]
+fn git_refusing_one_branch_is_reported_and_the_others_still_go() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    // `branch -d` compares with HEAD when a branch has no upstream: from a branch that lacks the
+    // merged work it refuses, though the work is in the base. `feature/squashed` has no upstream
+    // either and only looks merged, so `-D` removes it regardless.
+    let root = git(p, &["rev-list", "--max-parents=0", "main"]);
+    git(p, &["switch", "-q", "-c", "side", root.trim()]);
+    let done = repo
+        .remove_merged_branches(
+            &bases(),
+            &["feature/merged".to_owned(), "feature/squashed".to_owned()],
+            true,
+        )
+        .expect("remove");
+    assert_eq!(done.removed, ["feature/squashed"]);
+    assert_eq!(done.failed.len(), 1);
+    assert_eq!(done.failed[0].0, "feature/merged");
+    assert!(
+        done.failed[0].1.contains("not fully merged"),
+        "{:?}",
+        done.failed
+    );
+    let summary = done.summary();
+    assert!(
+        summary.starts_with("Deleted 1 branch\nCould not delete feature/merged: "),
+        "{summary}"
+    );
+}
+
+#[test]
+fn a_branch_updates_from_the_base_its_kind_or_remote_names() {
+    let (_dir, repo, _remote) = cleanup_fixture();
+    assert_eq!(
+        repo.update_base("feature/open").expect("base"),
+        Some("origin/main".to_owned())
+    );
+    // The base itself is a pull's business.
+    assert_eq!(repo.update_base("main").expect("base"), None);
+
+    let (_dir, flow, _cli) = flow_twins();
+    flow.flow_start(FlowKind::Feature, "x", None)
+        .expect("start");
+    assert_eq!(
+        flow.update_base("feature/x").expect("base"),
+        Some("develop".to_owned())
+    );
+    assert_eq!(
+        flow.update_base("hotfix/y").expect("base"),
+        Some("main".to_owned())
+    );
+}
+
+#[test]
+fn updating_from_the_base_merges_or_rebases_what_the_base_gained() {
+    for strategy in [PullStrategy::Merge, PullStrategy::Rebase] {
+        let (dir, repo, _remote) = cleanup_fixture();
+        let p = dir.path();
+        git(p, &["switch", "-q", "feature/open"]);
+        commit_file(p, "mine.txt", "mine\n", "feat: mine");
+        git(p, &["switch", "-q", "main"]);
+        commit_file(p, "base.txt", "base\n", "feat: base moved");
+        git(p, &["push", "-q", "origin", "main"]);
+        git(p, &["switch", "-q", "feature/open"]);
+
+        let preview = repo.compare_base("origin/main").expect("preview");
+        assert_eq!((preview.ahead, preview.behind), (2, 1), "{preview:?}");
+        assert_eq!(preview.conflicts, Some(Vec::new()));
+        repo.update_from_base(strategy, preview.tip.expect("tip"), |_| {})
+            .expect("update");
+
+        assert_eq!(
+            git(p, &["rev-list", "--count", "HEAD..origin/main"]).trim(),
+            "0"
+        );
+        assert_eq!(
+            git(p, &["rev-list", "--count", "origin/main..HEAD"]).trim(),
+            if strategy == PullStrategy::Merge {
+                "3"
+            } else {
+                "2"
+            }
+        );
+        let merges = git(p, &["rev-list", "--merges", "--count", "origin/main..HEAD"]);
+        assert_eq!(
+            merges.trim(),
+            if strategy == PullStrategy::Merge {
+                "1"
+            } else {
+                "0"
+            }
+        );
+        assert!(p.join("base.txt").exists() && p.join("mine.txt").exists());
+    }
+}
+
+#[test]
+fn updating_from_the_base_fast_forwards_a_branch_that_only_fell_behind() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    git(p, &["switch", "-q", "-c", "behind", "main~1"]);
+    git(p, &["reset", "-q", "--hard", "main"]);
+    git(p, &["switch", "-q", "main"]);
+    commit_file(p, "base.txt", "base\n", "feat: base moved");
+    git(p, &["push", "-q", "origin", "main"]);
+    git(p, &["switch", "-q", "behind"]);
+    let preview = repo.compare_base("origin/main").expect("preview");
+    assert_eq!((preview.ahead, preview.behind), (0, 1));
+    repo.update_from_base(
+        PullStrategy::FastForwardOnly,
+        preview.tip.expect("tip"),
+        |_| {},
+    )
+    .expect("update");
+    assert_eq!(
+        git(p, &["rev-parse", "HEAD"]),
+        git(p, &["rev-parse", "origin/main"])
+    );
+}
+
+#[test]
+fn a_fast_forward_only_update_refuses_diverged_branches() {
+    let (dir, repo, _remote) = cleanup_fixture();
+    let p = dir.path();
+    git(p, &["switch", "-q", "main"]);
+    commit_file(p, "base.txt", "base\n", "feat: base moved");
+    git(p, &["push", "-q", "origin", "main"]);
+    git(p, &["switch", "-q", "feature/open"]);
+    let preview = repo.compare_base("origin/main").expect("preview");
+    assert!(preview.diverged());
+    let before = git(p, &["rev-parse", "HEAD"]);
+    repo.update_from_base(
+        PullStrategy::FastForwardOnly,
+        preview.tip.expect("tip"),
+        |_| {},
+    )
+    .unwrap_err();
+    assert_eq!(git(p, &["rev-parse", "HEAD"]), before);
+}
+
+#[test]
+fn comparing_with_an_unknown_base_names_it() {
+    let (_dir, repo, _remote) = cleanup_fixture();
+    let error = repo.compare_base("origin/nope").unwrap_err().to_string();
+    assert!(
+        error.contains("Could not resolve the base 'origin/nope'"),
+        "{error}"
+    );
+    repo.compare_base("--force").unwrap_err();
+}
+
+#[test]
+fn a_snapshot_carries_the_feature_branch_facts() {
+    let (_dir, flow, _cli) = flow_twins();
+    flow.flow_start(FlowKind::Feature, "x", None)
+        .expect("start");
+    let snap = flow.snapshot(10).expect("snapshot");
+    assert_eq!(
+        snap.workflow.flow.as_ref().map(|f| f.develop.as_str()),
+        Some("develop")
+    );
+    assert_eq!(snap.workflow.head_base.as_deref(), Some("develop"));
+    assert_eq!(
+        snap.workflow
+            .base
+            .as_ref()
+            .map(canopy_core::BranchBase::shown),
+        Some("develop")
     );
 }
 

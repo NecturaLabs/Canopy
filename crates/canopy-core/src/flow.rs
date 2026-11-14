@@ -56,7 +56,7 @@ impl FlowKind {
     }
 
     /// Release and hotfix finishes merge into production, tag and merge back.
-    fn is_release_like(self) -> bool {
+    pub fn is_release_like(self) -> bool {
         matches!(self, Self::Release | Self::Hotfix)
     }
 }
@@ -99,6 +99,17 @@ impl Default for FlowConfig {
 }
 
 impl FlowConfig {
+    /// The configuration an init dialog offers when git-flow is not initialised: the AVH
+    /// defaults with the production branch set to whichever of `main` and `master` exists
+    /// (`main` when both do, or neither).
+    pub fn suggested(has_main: bool, has_master: bool) -> Self {
+        let mut config = Self::default();
+        if has_main || !has_master {
+            "main".clone_into(&mut config.master);
+        }
+        config
+    }
+
     /// The prefix for branches of `kind`.
     pub fn prefix(&self, kind: FlowKind) -> &str {
         match kind {
@@ -164,6 +175,9 @@ pub struct FlowFinish {
     /// Feature and bugfix only: squash the branch into one commit on the development branch
     /// (`git merge --squash`) instead of a merge commit.
     pub squash: bool,
+    /// Feature and bugfix only: rebase the branch onto the development branch first, as
+    /// `git flow feature finish -r` does. It rewrites the branch's commits.
+    pub rebase: bool,
     /// Release and hotfix only: tag the merge into production. Without a tag, the production
     /// branch is merged back instead of the tag.
     pub tag: bool,
@@ -176,10 +190,26 @@ impl Default for FlowFinish {
         Self {
             delete_branch: true,
             squash: false,
+            rebase: false,
             tag: true,
             tag_message: None,
         }
     }
+}
+
+/// Why finishing needs a newer Git than `version`, or `None` when it is new enough. Finishing
+/// checks its merges with `git merge-tree --write-tree` before it changes anything.
+pub fn flow_finish_requirement(version: Option<(u32, u32)>) -> Option<&'static str> {
+    if version.is_some_and(|v| v >= cli::MERGE_TREE_WRITE_TREE_SINCE) {
+        None
+    } else {
+        Some("Finishing a git-flow branch needs Git 2.38 or later.")
+    }
+}
+
+/// [`flow_finish_requirement`] for the installed Git.
+pub fn flow_finish_unavailable() -> Option<&'static str> {
+    flow_finish_requirement(cli::version_number())
 }
 
 /// The outcome of `git merge-tree --write-tree`.
@@ -262,11 +292,10 @@ impl Repo {
         if let Some(config) = self.flow_config()? {
             return Ok(config);
         }
-        let mut config = FlowConfig::default();
-        if self.local_branch_tip("main").is_some() || self.local_branch_tip("master").is_none() {
-            "main".clone_into(&mut config.master);
-        }
-        Ok(config)
+        Ok(FlowConfig::suggested(
+            self.local_branch_tip("main").is_some(),
+            self.local_branch_tip("master").is_some(),
+        ))
     }
 
     /// Initialises git-flow: checks `config`, writes every key to the repository's own
@@ -375,19 +404,22 @@ impl Repo {
     /// commit beyond develop, otherwise `--no-ff` (or `--squash` and a commit with git's prepared
     /// message), then `git branch -d` (`-D` after a squash).
     ///
+    /// With [`FlowFinish::rebase`], a feature or bugfix is first rebased onto develop
+    /// (`git rebase <develop>` on the branch); a rebase that stops on conflicts is aborted, so
+    /// the finish refuses with the paths and the branch is as it was.
+    ///
     /// Release and hotfix: `git switch <master>`, `git merge --no-ff <branch>`,
     /// `git tag -a <versiontag><name>`, `git switch <develop>`, `git merge --no-ff <tag>` (or
-    /// `<master>` without a tag), then `git branch -d`.
+    /// `<master>` without a tag), then `git branch -d`. A hotfix merges back into the open
+    /// release branch instead of develop ([`Repo::flow_back_merge_target`]), then ends on develop.
     ///
     /// Before changing anything it requires a clean working tree and no operation in progress,
     /// and checks every merge with `git merge-tree`; a merge that would conflict refuses the
     /// finish with the paths, so the user can merge the target into the branch first. Needs Git
     /// 2.38 or later. Returns a summary for a notification.
     pub fn flow_finish(&self, kind: FlowKind, name: &str, options: &FlowFinish) -> Result<String> {
-        if !cli::has_merge_tree_write_tree() {
-            return Err(Error::invalid(
-                "Finishing a git-flow branch needs Git 2.38 or later.",
-            ));
+        if let Some(reason) = flow_finish_unavailable() {
+            return Err(Error::invalid(reason));
         }
         let config = self.require_flow()?;
         let branch = config.branch(kind, name);
@@ -401,7 +433,17 @@ impl Repo {
         }
         self.require_clean_tree()?;
 
+        if options.rebase && kind.is_release_like() {
+            return Err(Error::invalid(
+                "Only a feature or bugfix branch can be rebased before it is finished.",
+            ));
+        }
         if !kind.is_release_like() {
+            let tip = if options.rebase {
+                self.rebase_before_finish(&branch, &config.develop)?
+            } else {
+                tip
+            };
             self.preflight(&config.develop, &branch)?;
             let fast_forward = if options.squash {
                 false
@@ -435,6 +477,7 @@ impl Repo {
                 return Err(Error::invalid(format!("Tag '{tag}' already exists.")));
             }
         }
+        let back_target = self.flow_back_merge_target(&config, kind)?;
         let master_tip = self.local_branch_tip(&config.master).unwrap_or(tip);
         let into_master = self.preflight(&config.master, &branch)?;
         // The back-merge takes the commit the first merge will create. Build a stand-in with the
@@ -454,14 +497,13 @@ impl Repo {
             &master_tree,
         ])?;
         if let MergeTree::Conflicts(paths) =
-            merge_tree(self, &heads(&config.develop), stand_in.trim())?
+            merge_tree(self, &heads(&back_target), stand_in.trim())?
         {
             return Err(Error::invalid(format!(
-                "Merging the finished {branch} back into {} would conflict in {}. Nothing was \
-                 changed; resolve the difference between {} and {branch} first.",
-                config.develop,
-                paths.join(", "),
-                config.develop
+                "Merging the finished {branch} back into {back_target} would conflict in {}. \
+                 Nothing was changed; resolve the difference between {back_target} and {branch} \
+                 first.",
+                paths.join(", ")
             )));
         }
 
@@ -478,21 +520,23 @@ impl Repo {
         } else {
             config.master.clone()
         };
-        self.switch_cmd(&["-q", &config.develop])?;
+        self.switch_cmd(&["-q", &back_target])?;
         self.git_cmd(&["merge", "--no-ff", "--no-edit", "-q", &back])?;
+        // `branch -d` compares with the checked-out branch, so it goes before the switch to
+        // develop that a hotfix into a release needs.
         if options.delete_branch {
             self.git_cmd(&["branch", "-d", &branch])?;
         }
+        if back_target != config.develop {
+            self.switch_cmd(&["-q", &config.develop])?;
+        }
         Ok(if options.tag {
             format!(
-                "Merged {branch} into {} and {}, tagged {tag}",
-                config.master, config.develop
+                "Merged {branch} into {} and {back_target}, tagged {tag}",
+                config.master
             )
         } else {
-            format!(
-                "Merged {branch} into {} and {}",
-                config.master, config.develop
-            )
+            format!("Merged {branch} into {} and {back_target}", config.master)
         })
     }
 
@@ -541,6 +585,68 @@ impl Repo {
         }
         out.sort();
         Ok(out)
+    }
+
+    /// The branch a finished release or hotfix merges back into: develop, except for a hotfix
+    /// while a release branch is open, which goes into that release (the release will carry it
+    /// to develop), as in the nvie model.
+    pub fn flow_back_merge_target(&self, config: &FlowConfig, kind: FlowKind) -> Result<String> {
+        if kind == FlowKind::Hotfix
+            && let Some(release) = self
+                .flow_branches(config, FlowKind::Release)?
+                .into_iter()
+                .next()
+        {
+            return Ok(release);
+        }
+        Ok(config.develop.clone())
+    }
+
+    /// Rebases `branch` onto `onto` and leaves `branch` checked out; returns its new tip. A
+    /// rebase that stops is aborted and the previous branch checked out again, so a refusal
+    /// changes nothing.
+    fn rebase_before_finish(&self, branch: &str, onto: &str) -> Result<Oid> {
+        let original = self.git().head().ok().and_then(|h| {
+            h.is_branch()
+                .then(|| h.shorthand().ok().map(str::to_owned))
+                .flatten()
+        });
+        self.switch_cmd(&["-q", branch])?;
+        let args = [
+            "rebase",
+            "-q",
+            "--no-update-refs",
+            "--no-rebase-merges",
+            "--",
+            onto,
+        ];
+        if let Err(error) = self.git_cmd(&args) {
+            let unmerged = ["diff", "--name-only", "--diff-filter=U", "-z"];
+            let paths: Vec<String> = cli::run_unchecked(self.workdir(), &unmerged)
+                .map(|out| {
+                    out.stdout
+                        .split(|b| *b == 0)
+                        .filter(|p| !p.is_empty())
+                        .map(|p| String::from_utf8_lossy(p).into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let _ = self.git_cmd(&["rebase", "--abort"]);
+            if let Some(original) = original.as_deref().filter(|o| *o != branch) {
+                let _ = self.switch_cmd(&["-q", original]);
+            }
+            return Err(if paths.is_empty() {
+                error
+            } else {
+                Error::invalid(format!(
+                    "Rebasing {branch} onto {onto} would conflict in {}. Nothing was changed; \
+                     rebase it by hand first, or finish without the rebase.",
+                    paths.join(", ")
+                ))
+            });
+        }
+        self.local_branch_tip(branch)
+            .ok_or_else(|| Error::invalid(format!("Branch '{branch}' does not exist.")))
     }
 
     fn require_flow(&self) -> Result<FlowConfig> {
