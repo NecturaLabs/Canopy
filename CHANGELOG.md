@@ -71,6 +71,10 @@ commits since the previous build.
   interrupted save left in its working tree gets one notification with the path; Canopy never
   deletes it, nor Git's own lock files. Exporting patches now stages in the temporary folder
   instead of the folder you chose.
+- A Git setting that holds the recommended value says "(Recommended)" after it in its closed select,
+  whether it was chosen by hand, written by Use recommended or read from your config, not only while
+  it is unset; one that does not shows the bare value. The first branch field says "(Recommended)"
+  under it while it holds `main`.
 - Discard on a submodule in Changes now works: the submodule goes back to the commit this
   repository records and changes to its tracked files are thrown away, while untracked files inside
   it stay (Settings → Git → Discard in a submodule can delete them too). It refuses when that would
