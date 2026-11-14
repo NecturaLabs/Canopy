@@ -167,7 +167,7 @@ marker_in_main_group() {
         END { exit !(g && mk > g && ac > mk) }' "$1"
 }
 is_empty_dir() { [ -d "$1" ] && [ -z "$(ls -A "$1")" ]; }
-no_leftovers() { [ -z "$(find "$1" -maxdepth 1 \( -name '.staging.*' -o -name '.previous.*' -o -name .lock -o -name '.canopy-install.new' \))" ]; }
+no_leftovers() { [ -z "$(find "$1" -maxdepth 1 \( -name '.staging.*' -o -name '.previous.*' -o -name .lock -o -name '.lock.stale.*' -o -name '.canopy-install.new' \))" ]; }
 
 # A PATH holding every command of the usual system folders except those named in $2..., in
 # folder $1.
@@ -397,6 +397,17 @@ edited" ]
         run_status
         check "the install runs" [ "$status" = 0 ]
         check "the lock is released" no_leftovers "$opt"
+
+        echo "== what a killed takeover left aside is swept once its process is gone"
+        mkdir -p "$opt/.lock.stale.dead" "$opt/.lock.stale.live" "$opt/.lock.stale.unknown"
+        echo "$dead" >"$opt/.lock.stale.dead/pid"
+        echo "$$" >"$opt/.lock.stale.live/pid"
+        run_status
+        check "the install runs" [ "$status" = 0 ]
+        check "the dead holder's lock is gone" [ ! -e "$opt/.lock.stale.dead" ]
+        check "a running holder's is kept" [ -d "$opt/.lock.stale.live" ]
+        check "one without a process id is kept" [ -d "$opt/.lock.stale.unknown" ]
+        rm -rf "$opt/.lock.stale.live" "$opt/.lock.stale.unknown"
     fi
 
     echo "== checksum mismatch is refused"
@@ -643,6 +654,11 @@ edited" ]
     printf 'icon=%s|%s\n' "$svg" "$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg" >>"$opt/.canopy-install"
     mkdir -p "$home/.local/share/canopy" "$home/.config/canopy"
     echo '{"canopy-settings-v1":"(theme:Dark)"}' >"$home/.local/share/canopy/app.ron"
+    if [ -d /proc/self ]; then
+        # A killed takeover's leftover must not keep the folder from being removed.
+        mkdir "$opt/.lock.stale.dead"
+        echo "$dead" >"$opt/.lock.stale.dead/pid"
+    fi
     run_raw "$SH" "$opt/uninstall.sh"
     check "uninstall exits 0" [ "$status" = 0 ]
     show

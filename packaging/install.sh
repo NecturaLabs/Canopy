@@ -410,7 +410,8 @@ lock_is_stale() {
 }
 
 # Takes the install lock, folder $1, shared by install and uninstall, and records this process in
-# it. The lock of a killed run is taken over (see lock_is_stale).
+# it. The lock of a killed run is taken over (see lock_is_stale), and the leftovers of a takeover
+# that was killed are removed.
 take_lock() {
     if ! mkdir "$1" 2>/dev/null; then
         lock_is_stale "$1" || die "another Canopy install or uninstall is running, or was killed (remove $1 if it is not running)"
@@ -427,6 +428,12 @@ take_lock() {
     fi
     LOCK=$1
     printf '%s\n' "$$" >"$LOCK/pid" || die "could not write $LOCK/pid"
+    # What a killed takeover left aside (above): a dead holder's lock that nothing needs, and that
+    # would keep rmdir from removing the install folder. One that names no process, or a running
+    # one, is left (another run may be in the middle of its takeover).
+    for aside in "$1".stale.*; do
+        if [ -d "$aside" ] && lock_is_stale "$aside"; then rm -rf -- "$aside"; fi
+    done
 }
 
 # Releases the lock taken by take_lock.
