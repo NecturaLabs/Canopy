@@ -3110,16 +3110,17 @@ fn git_config_editor(
                         .filter(|draft: &BranchDraft| draft.saved == saved);
                     let mut text = draft.map_or_else(|| saved.clone(), |draft| draft.text);
                     let problem = initial_branch_problem(&text);
-                    TextField::new(&mut text)
+                    // A select says it after its value; a field's text is the user's own, so
+                    // the mark goes under it, where a field's messages go.
+                    let marked = text.trim() == recommended;
+                    let mut field = TextField::new(&mut text)
                         .width(BRANCH_FIELD_WIDTH)
                         .name(setting.label())
-                        .placeholder(format!(
-                            "{} (Recommended)",
-                            setting.recommendation_for(facts.and_then(|facts| facts.git))
-                        ))
-                        .error(problem)
-                        .id_salt("git-first-branch")
-                        .show(ui);
+                        .placeholder(format!("{recommended} (Recommended)"));
+                    if marked {
+                        field = field.helper("(Recommended)");
+                    }
+                    field.error(problem).id_salt("git-first-branch").show(ui);
                     if Button::new("Save")
                         .enabled(!text.trim().is_empty() && problem.is_none())
                         .id_salt("save-git-first-branch")
@@ -8430,7 +8431,15 @@ mod tests {
             PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").expect("private global config"));
         for (setting, global, local) in CASES {
             let key = setting.key();
-            let label = |value: &str| git_value_label(setting, value);
+            // A closed select says Recommended after the value that is the recommendation (#232).
+            let label = |value: &str| {
+                let label = git_value_label(setting, value);
+                if value == setting.recommendation() {
+                    format!("{label} (Recommended)")
+                } else {
+                    label
+                }
+            };
             config::set(repo, Scope::Global, setting, Some(global)).expect("global write");
             let global_bytes = std::fs::read(&global_file).expect("global file");
 
@@ -9459,5 +9468,121 @@ mod tests {
         assert!(!pressed.get(), "reaching it does not press it");
         draw(crate::ui::kit::testkit::key(egui::Key::Enter));
         assert!(pressed.get(), "Enter presses the focused button");
+    }
+
+    /// Facts whose editable values are `value_of(setting)` for every setting that has one.
+    fn facts_with(value_of: impl Fn(Setting) -> Option<String>) -> GitFacts {
+        GitFacts {
+            git: Some((2, 55)),
+            values: Setting::ALL
+                .into_iter()
+                .filter_map(|setting| Some(fact(setting.key(), &value_of(setting)?)))
+                .collect(),
+            ..GitFacts::default()
+        }
+    }
+
+    /// What every select of the editor says closed, by the row's name (#232).
+    fn shown(facts: GitFacts) -> Vec<(Setting, String)> {
+        let nodes = git_page(facts, true);
+        Setting::ALL
+            .into_iter()
+            .filter(|setting| *setting != Setting::InitialBranch)
+            .map(|setting| {
+                let node = crate::ui::kit::testkit::find(&nodes, setting.label())
+                    .unwrap_or_else(|| panic!("{} is on the page", setting.label()));
+                (
+                    setting,
+                    node.value.clone().expect("a select speaks its value"),
+                )
+            })
+            .collect()
+    }
+
+    /// After Use recommended, and after choosing the value by hand, the value is the
+    /// recommended one and the closed select says so, as it does for an unset one.
+    #[test]
+    fn a_selected_recommended_value_says_recommended() {
+        let facts =
+            facts_with(|setting| Some(setting.recommendation_for(Some((2, 55))).to_owned()));
+        for (setting, said) in shown(facts) {
+            let value = git_value_label(setting, setting.recommendation_for(Some((2, 55))));
+            assert_eq!(
+                said,
+                format!("{value} (Recommended)"),
+                "{}",
+                setting.label()
+            );
+        }
+    }
+
+    /// Any other value shows bare, and the list still marks the recommended entry.
+    #[test]
+    fn a_selected_value_that_is_not_recommended_says_nothing_more() {
+        let recommended = |setting: Setting| setting.recommendation_for(Some((2, 55)));
+        let facts = facts_with(|setting| {
+            setting
+                .values()
+                .iter()
+                .find(|value| **value != recommended(setting))
+                .map(|value| (*value).to_owned())
+        });
+        for (setting, said) in shown(facts) {
+            let other = setting
+                .values()
+                .iter()
+                .find(|value| **value != recommended(setting))
+                .expect("a second value");
+            assert_eq!(said, git_value_label(setting, other), "{}", setting.label());
+        }
+    }
+
+    /// The first branch is a text field: "(Recommended)" sits under it while it holds `main`.
+    #[test]
+    fn the_first_branch_is_marked_while_it_holds_the_recommendation() {
+        for (branch, marked) in [("main", true), ("trunk", false)] {
+            let facts = facts_with(|setting| {
+                (setting == Setting::InitialBranch).then(|| branch.to_owned())
+            });
+            let nodes = git_page(facts, true);
+            assert_eq!(
+                nodes
+                    .iter()
+                    .any(|node| node.description.as_deref() == Some("(Recommended)")),
+                marked,
+                "{branch}: {nodes:?}"
+            );
+        }
+    }
+
+    /// What the selects show, what the global file holds and what Git uses agree after Use
+    /// recommended (temporary global configuration).
+    #[test]
+    fn the_selects_show_what_git_uses_after_the_recommendations_are_written() {
+        if !crate::repo_config::in_isolated_git_env(
+            "views::settings_screen::tests::the_selects_show_what_git_uses_after_the_recommendations_are_written",
+        ) {
+            return;
+        }
+        let home = crate::settings::home_dir();
+        config::apply_recommended(&home).expect("written");
+        let facts = crate::repo_config::read(None);
+        assert_eq!(facts.error, None);
+        for (setting, said) in shown(facts) {
+            let effective = cli::run(&home, &["config", "--get", setting.key()]);
+            match setting.recommended_write() {
+                Some(value) => {
+                    assert_eq!(effective.expect("set").trim(), value, "{}", setting.key());
+                    assert_eq!(
+                        said,
+                        format!("{} (Recommended)", git_value_label(setting, value)),
+                        "{}",
+                        setting.label()
+                    );
+                }
+                // Left to Git: unset, and the row says the value Git uses.
+                None => assert!(effective.is_err(), "{} stays unset", setting.key()),
+            }
+        }
     }
 }
