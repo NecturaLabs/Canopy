@@ -306,11 +306,12 @@ impl CanopyApp {
                     strategy,
                     seen,
                 } => {
-                    if let Some(t) = self.tabs.iter().find(|t| t.path == repo) {
+                    if let Some(t) = self.tabs.iter_mut().find(|t| t.path == repo) {
+                        let prune = self.settings.prune_for(&t.path);
                         t.op(Op::Pull {
                             strategy,
                             follow_config: false,
-                            prune: self.settings.prune_for(&t.path),
+                            prune,
                             checked: seen,
                         });
                     }

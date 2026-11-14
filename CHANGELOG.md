@@ -211,6 +211,13 @@ commits since the previous build.
 
 ### Changed
 
+- Background work no longer grows with the number of tabs. At most four background fetches run
+  at once across all tabs: a tab that falls due while four run waits for one to finish, then
+  fetches, so a long session fetches everything within each interval without starting a `git`
+  and `ssh` process per tab at the same time. A fetch you start yourself never waits. The
+  refreshes that file changes cause in tabs you are not looking at share a limit of two to four
+  at a time (by the number of cores) instead of every tab reading its repository at once when a
+  build or another tool touches many; the tab you are looking at always refreshes at once.
 - One file watcher serves every open repository instead of one per tab, so many open tabs no
   longer run into the system's limit on watcher instances (128 per user by default on Linux). A
   tab whose files cannot be watched says so once in the notification center: changes on disk then

@@ -112,7 +112,7 @@ thread.
 | `app/input.rs` | Keyboard: bare keys, chords and the commands they run. |
 | `app/palette.rs` | The command palette's entries, including the Appearance ones (Style, Density, Translucent surfaces, High contrast, Motion). |
 | `app/dispatch.rs` | Applies the actions a frame collected. |
-| `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch (each tab has its own due time, `RepoTab::next_fetch`; its first is `first_fetch_delay` after the tab is scheduled, between half the interval and a whole one by a hash of the path, so it does not depend on the tab's position), the timed refresh of the open request list. |
+| `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch (each tab has its own due time, `RepoTab::next_fetch`; its first is `first_fetch_delay` after the tab is scheduled, between half the interval and a whole one by a hash of the path, so it does not depend on the tab's position), at most `MAX_BACKGROUND_FETCHES` of those fetches running at once, the timed refresh of the open request list. |
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. Keeps commit, conflict and request-comment drafts per worktree during the run. New tabs are `RepoTab::unloaded`; every change of the active tab goes through `CanopyApp::activate`, which loads it the first time it is shown, and the per-frame `load_active_tab` is the backstop (issue #62). |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`: waits until the window is final, keeps the pointer out of the picture (`raw_input_hook` drops pointer input), opens the dialog overlays and, for `--overlay menu-*`, a context menu by a synthetic right click on the widget it finds by its AccessKit name. |
@@ -120,6 +120,7 @@ thread.
 | `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
 | `worker.rs` | Reads Git's pending merge message off the UI thread, applied only to an empty composer still in a merge. One background thread per repository whose tab has been shown (a `Worker::lazy` of a tab never shown has none, starts with `start`, and drops, with a WARN, any job sent to it before); `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; its file watching is `watcher.rs`'s. `Job::PushTarget` answers with `Event::PushTarget` (where a force push would go, for its confirmation). Dropping a `Worker` (closing its tab) ends its thread and its watch on the shared watcher thread without waiting; the app's exit waits for them all at once (`wait_for_threads`), so no thread is still inside libgit2 or OpenSSL when the process tears them down. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it, but only in a trusted folder; elsewhere it sends `Event::DownloadsRefused` and fails the read with a message that says why. Every batch tells the tab whether the repository is trusted (`Event::Trust`, with the version of the trusted list that said so), and every `Job::Op` asks the list again when it starts: in a repository that is not trusted it ends in `OpFinished` with `READ_ONLY` and runs nothing (ADR 0014). |
 | `watcher.rs` | One `notify` watcher on one thread for every open repository: watches only the outermost wanted folders, routes each change to the tabs it belongs to, debounces per tab and sends `Job::Refresh` or `Job::RefreshStatus`; a folder it cannot watch is reported once (`Job::WatchFailed`). See "File watching and refresh". |
+| `read_limit.rs` | The process-wide limit on the background refreshes repository threads run: a counting `Limiter` (permits from the core count, 2 to 4) and one `Lane` per worker (`set_priority` for the shown tab, which never waits; `close` when the worker is dropped, which ends a wait). `Lane::acquire` returns a `Permit` or `None` once closed. Used by `run` in `worker.rs` before a refresh or status read that no operation caused. |
 | `identity_worker.rs` | Serial background jobs for identity and supported Git configuration writes, including global recommendations; events refresh identity, Settings facts and affected tabs, with Git errors surfaced as toasts. |
 | `avatars.rs` | Twelve-hour persistent thumbnail and no-picture cache that classifies misses (about the author: cached; repository refused: the tab stops asking; unknown commit: another of the author's is tried, at most 1024 remembered; unreachable: a 10-minute pause), the off switch and budget checked before every provider request, `explain` (why pictures are missing, for the views), serialized across the per-host picture threads (which pull request jobs never wait for), an hourly lookup budget that leaves GitHub's anonymous quota to pull requests, files unused for 30 days deleted at start-up, with bounded PNG/JPEG decoding off the UI thread and a per-tab texture cache that drops the least recently shown picture past 256. |
 | `hosting.rs` | A background thread per repository tab for pull and merge requests through `canopy-hosting` (`HostJob`). `resolve_token` asks the CLI once per thread (ADR 0017) and `HostEvent::Cli` carries what it said (`CliState`: the account and scopes, or why no credential); nothing else supplies a token and nothing is saved. `check_cli` runs the same question on its own thread for Settings → Accounts (at most four at once; the page shows up to four hosts of open repositories), which has no tab for a host such as gitlab.com. `remove_saved_tokens` deletes the `tokens.json` of earlier builds at start. With a CLI sign-in, a list refresh also fetches the rows' checks and reviews (`add_rollup`, one query after the jobs queued behind the list, on a lane of its own so later jobs never wait for it, paused until a rate limit resets, an hour at most) and sends the list twice, first without them, dropping the checks of a list a newer one replaced. Dropping the `HostWorker` turns off its switch, which the thread's client and its author-picture thread's client both carry, so a job under way sends nothing more. |
@@ -268,6 +269,29 @@ repository and update the submodule pointer here.
   a worker with nothing to wait for. Threads therefore grow with the tabs shown, not with the tabs
   open: a restore of 100 tabs starts one repository thread and one watcher until the user visits
   another. (The opener thread, `git-identity` and the highlighters stay shared.)
+- Background work is bounded, so it does not grow with the number of tabs either (issue #62).
+  Automatic fetching (`app/background.rs`, `auto_fetch_at`) runs at most
+  `MAX_BACKGROUND_FETCHES` (4) fetches at once across all tabs: a tab counts from the moment its
+  fetch is sent (`RepoTab::auto_fetch`, which sets `RepoTab::auto_fetch_pending`) until the
+  worker's answer to that fetch. A quiet fetch always ends in exactly one `OpFinished` (unlike a
+  pull or a merge, which can end in `PullDecision` or `Conflicted`; a batch the thread cannot run
+  because the repository will not open answers each of its operations with an error), and a tab's
+  operations run in the order sent, so the tab tells the automatic fetch's answer from other quiet
+  fetches' by their order. A tab whose
+  thread has ended (`Worker::is_alive`) is not counted. A tab that falls due while all four run keeps its due time, and the next pass starts
+  it, longest-waiting first, once an event from a finished fetch has repainted the frame (the
+  30 second poll at the latest; an overdue tab sets no wake time, so the loop never spins). A
+  fetch the user starts is neither counted nor held back. The refresh a file change or a timer
+  asks of a tab that is not shown (`Job::Refresh`, `Job::RefreshStatus`, when no operation ran in
+  the batch) takes a permit from the process-wide `read_limit::Limiter` first (these reads run in the
+  process, through libgit2, so they are threads, not child processes): as many as the
+  machine has cores, from 2 to 4. The worker holds a `read_limit::Lane`;
+  `CanopyApp::load_active_tab` (every frame, and from `activate`) gives the shown tab's lane
+  priority, which never waits, and takes it from the tab that was left. A waiting thread holds no
+  lock (it sleeps on a condition variable), keeps the order of its tab's jobs (it simply has not
+  reached the next one), and stops waiting, and ends, when its `Worker` is dropped
+  (`Lane::close`). Operations (`Job::Op`) and reads somebody waits for (details, diff, blame and
+  the like) are never limited, nor is the snapshot that follows an operation.
 - `Job` and `Event` travel over `crossbeam-channel` channels. After sending a result the worker
   calls `request_repaint` on the egui context so an idle UI wakes up.
 - Long-running CLI jobs (clone, fetch, push, ...) stream progress lines back as intermediate

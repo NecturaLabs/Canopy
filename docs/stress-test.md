@@ -360,7 +360,12 @@ Two things at once, for 10 to 15 minutes, with all 100 tabs open:
    tabs already open), and its first fetch falls due between half the interval and a whole one
    later, by a hash of its path, so the 100 tabs' first fetches spread over the second half of
    the interval instead of one herd. Each tab then waits a whole interval after every fetch, its
-   own or one you ran by hand. For a burst, press `f` (fetch) in tabs by hand or with
+   own or one you ran by hand. At most 4 of these automatic fetches run at once across all tabs
+   (`MAX_BACKGROUND_FETCHES`): a tab that falls due while 4 run waits, keeping its due time, and
+   starts when one finishes. So with 100 tabs the number of `git fetch` children in
+   `samples.csv` stays at 4 or fewer (plus fetches you start by hand, which are never limited),
+   and every tab still fetches once per interval; if some do not, the `operation started` events
+   for `Fetching` show it. For a burst, press `f` (fetch) in tabs by hand or with
    `for i in $(seq 100); do xdotool key --delay 150 ctrl+Tab f; done`. This uses the network:
    failures from GitHub throttling are not Canopy's; use a local mirror (`--base-url`) when you
    need to separate the two.
@@ -376,6 +381,12 @@ Two things at once, for 10 to 15 minutes, with all 100 tabs open:
    appends lines to tracked files. `--deep` also checks out commits far back (full clones only).
    The action log goes into the run folder; `report` uses it to measure how long after each change
    the app showed it (refresh lag).
+
+   The refreshes this causes in tabs that are not shown share a limit of 2 to 4 at a time (the
+   number of cores, `read_limit.rs`), so with 40 tabs touched together the last one waits for the
+   queue; the shown tab never waits. A refresh-lag failure that comes from this shows as
+   `background refresh waited for its turn` events (DEBUG, with `ms`) in the log: read them
+   before blaming git, and raise `MAX_PERMITS` only with a run that shows it helps.
 
 During this, work in the app in a few tabs: stage, commit, switch branches, open diffs. Watch for
 toast errors, `index.lock` messages (the churn log counts the ones its own git hit: they mean the
@@ -480,13 +491,16 @@ fails.
 | Peak RSS over the whole run | at most 4 GiB | all |
 | Heap growth during the soak | last five idle minutes at most 10 % and 50 MiB above the first five | e |
 | Threads | peak at most 450 (about 1 per loaded tab, plus the UI and the shared watcher); back within 20 of baseline after churn | e |
+| Child processes | peak at most 8 direct children of the process, sampled each second, when nothing is started by hand: at most 4 automatic fetches at once, plus the shown tab's own git work and a few short helpers (`--limit children_peak=N` for a run that includes the burst of fetches by hand in (d), which are never limited). All zero means the kernel has no `/proc/<pid>/task/<tid>/children` (`CONFIG_PROC_CHILDREN`) or nothing ran, and the report says n/a. This catches a herd, not a regression of the fetch limit alone: the staggered schedule keeps few fetches overlapping even without it | a, b, c, d (timer only), e |
 | Open descriptors | peak at most 70 % of `ulimit -n`; back within 50 of baseline | e |
 | Log not truncated | the 20 MiB cap not reached | all |
 
 The memory and thread figures are first estimates from reading the code (one worker thread per
 tab that has been shown, and one watcher thread and one inotify backend thread in all; a tab that
-has not been shown has none, see "Tabs load when first shown" under (a)): the first real run should set them
-properly. Tighten them to what the first clean run shows, with headroom, and write the values here.
+has not been shown has none, see "Tabs load when first shown" under (a)). The thread figure counts
+threads that exist, which the limits on background work do not change: they bound how many of them
+run git at once, so the child-process figure, not the thread one, shows them. The first real run
+should set all of these properly. Tighten them to what the first clean run shows, with headroom, and write the values here.
 
 ## Reporting results
 

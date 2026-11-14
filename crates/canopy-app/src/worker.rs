@@ -2,7 +2,7 @@
 //! never calls git itself, so a slow disk, a large repository or the network cannot freeze it.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -13,6 +13,8 @@ use canopy_core::{
     CommitDetails, DiffSource, FileDiff, FileEntry, MissingObjects, Oid, Repo, RepoSnapshot,
     RepoState, Whitespace, WorkingStatus,
 };
+
+use crate::read_limit::Lane;
 
 /// Where a finished git-flow branch is pushed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -818,6 +820,15 @@ fn next_step(
     }
 }
 
+/// Held by a repository thread: tells its worker the thread ended, however it ended.
+struct ThreadEnd(Arc<AtomicBool>);
+
+impl Drop for ThreadEnd {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 /// What a finished operation means for the tab, independent of its label's wording.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpKind {
@@ -870,6 +881,10 @@ pub struct Worker {
     ended: Receiver<()>,
     /// What [`Worker::start`] needs; `None` once the worker is running.
     unstarted: Option<Unstarted>,
+    /// The thread's way to the limit on background reads.
+    lane: Arc<Lane>,
+    /// Set when the repository thread has ended, however it ended ([`Worker::is_alive`]).
+    thread_ended: Arc<AtomicBool>,
 }
 
 /// What a worker that has not started yet remembers.
@@ -887,19 +902,36 @@ struct Running {
     events: Receiver<Event>,
     stop_watcher: Sender<()>,
     ended: Receiver<()>,
+    thread_ended: Arc<AtomicBool>,
 }
 
 impl Worker {
-    /// Starts the thread (and a file watcher) for the repository at `path`.
+    /// Starts the thread (and a file watcher) for the repository at `path`. A test's worker
+    /// stands for the tab being shown: its reads skip the limit on background reads.
     #[cfg(test)]
     pub fn spawn(path: PathBuf, ctx: &egui::Context) -> Self {
-        let running = Self::spawn_threads(path, ctx);
+        let worker = Self::spawn_limited(path, ctx, crate::read_limit::shared());
+        worker.set_priority(true);
+        worker
+    }
+
+    /// [`Worker::spawn`] with its own limit on background reads, and not shown.
+    #[cfg(test)]
+    pub fn spawn_limited(
+        path: PathBuf,
+        ctx: &egui::Context,
+        limiter: Arc<crate::read_limit::Limiter>,
+    ) -> Self {
+        let lane = Arc::new(Lane::new(limiter));
+        let running = Self::spawn_threads(path, ctx, Arc::clone(&lane));
         Self {
             jobs: running.jobs,
             events: running.events,
             stop_watcher: running.stop_watcher,
             ended: running.ended,
             unstarted: None,
+            lane,
+            thread_ended: running.thread_ended,
         }
     }
 
@@ -922,7 +954,33 @@ impl Worker {
             stop_watcher,
             ended,
             unstarted: Some(unstarted),
+            lane: Arc::new(Lane::new(crate::read_limit::shared())),
+            thread_ended: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Whether this tab is the one being shown. Its background reads (a refresh after a file
+    /// changed) never wait for the process-wide limit; every other tab's do. Takes effect at
+    /// once, also for a refresh already waiting.
+    pub fn set_priority(&self, shown: bool) {
+        self.lane.set_priority(shown);
+    }
+
+    /// Whether the repository thread still runs (a worker that has not started counts as alive).
+    pub fn is_alive(&self) -> bool {
+        !self.thread_ended.load(Ordering::Acquire)
+    }
+
+    /// Marks the thread as ended, as a thread that died would.
+    #[cfg(test)]
+    pub fn end_thread_for_test(&self) {
+        self.thread_ended.store(true, Ordering::Release);
+    }
+
+    /// Whether [`Worker::set_priority`] last said this is the shown tab.
+    #[cfg(test)]
+    pub fn is_shown(&self) -> bool {
+        self.lane.has_priority()
     }
 
     /// Whether the thread and the watcher run (a worker from [`Worker::spawn`] always does).
@@ -937,16 +995,18 @@ impl Worker {
             return false;
         };
         if unstarted.threads {
-            let running = Self::spawn_threads(unstarted.path, &unstarted.ctx);
+            let running =
+                Self::spawn_threads(unstarted.path, &unstarted.ctx, Arc::clone(&self.lane));
             self.jobs = running.jobs;
             self.events = running.events;
             self.stop_watcher = running.stop_watcher;
             self.ended = running.ended;
+            self.thread_ended = running.thread_ended;
         }
         true
     }
 
-    fn spawn_threads(path: PathBuf, ctx: &egui::Context) -> Running {
+    fn spawn_threads(path: PathBuf, ctx: &egui::Context, lane: Arc<Lane>) -> Running {
         let (jobs, job_rx) = unbounded::<Job>();
         let (ev_tx, events) = unbounded::<Event>();
         let thread_ctx = ctx.clone();
@@ -954,11 +1014,14 @@ impl Worker {
         let failed = ev_tx.clone();
         let (ended_tx, ended) = crossbeam_channel::bounded(0);
         let run_ended = ended_tx.clone();
+        let thread_ended = Arc::new(AtomicBool::new(false));
+        let end = ThreadEnd(Arc::clone(&thread_ended));
         let spawned = std::thread::Builder::new()
             .name(format!("repo:{}", path.display()))
             .spawn(move || {
+                let _end = end;
                 let _ended = run_ended;
-                run(thread_path, job_rx, ev_tx, thread_ctx);
+                run(thread_path, job_rx, ev_tx, thread_ctx, &lane);
             });
         if let Err(e) = spawned {
             // Without a thread the tab would wait for its first snapshot forever: show why.
@@ -975,6 +1038,7 @@ impl Worker {
             events,
             stop_watcher,
             ended,
+            thread_ended,
         }
     }
 
@@ -991,6 +1055,8 @@ impl Worker {
             stop_watcher,
             ended,
             unstarted: None,
+            lane: Arc::new(Lane::new(crate::read_limit::shared())),
+            thread_ended: Arc::new(AtomicBool::new(false)),
         };
         (worker, ev_tx, job_rx)
     }
@@ -1046,6 +1112,8 @@ impl Drop for Worker {
     /// the UI); the process waits for them before it exits ([`wait_for_threads`]). A test binary,
     /// which has no such moment, waits here.
     fn drop(&mut self) {
+        // A thread waiting for its turn to refresh stops waiting; the senders below then end it.
+        self.lane.close();
         // Dropping the senders ends the watch (the shared watcher drops its copy of the jobs
         // sender), then the repository thread once that copy has gone too.
         drop(std::mem::replace(
@@ -1120,7 +1188,7 @@ impl Job {
     clippy::needless_pass_by_value,
     reason = "the thread owns its channels and context; dropping them on exit tells the other side"
 )]
-fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context) {
+fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context, lane: &Lane) {
     // Every event this thread logs carries the repository.
     let _repo = tracing::info_span!("repo", path = %path.display()).entered();
     // Before this thread can start a download: core asks the trust list at every fetch.
@@ -1169,7 +1237,37 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "cannot open the repository");
-                emit(Event::Failed(e.to_string()));
+                // An operation in the batch will not run: say so, so that whoever waits for its
+                // end (the tab, the limit on background fetches) is not left waiting.
+                for job in &rest {
+                    if let Job::Op(op) = job {
+                        emit(Event::OpFinished {
+                            label: op.label(),
+                            kind: op.kind(),
+                            announce: op.announce(),
+                            result: Err(e.to_string()),
+                        });
+                    }
+                }
+                // The failure reaches the user once. An operation's answer is its own error (a
+                // card, or a quiet note for the timer's fetch), so the batch's `Failed` (a "Git
+                // error" card; it also sets the tab's load error and clears the refusals it
+                // holds) is sent unless the answers cover it: an announced operation was
+                // answered, or only operations that announce nothing were and no read was asked
+                // for. Skipping it there loses no load error: the timer's fetch is only sent to
+                // a tab that has loaded, and a tab loads with a read.
+                let asked_a_read = want_full.is_some() || want_status;
+                let answered_announced = rest
+                    .iter()
+                    .any(|job| matches!(job, Job::Op(op) if op.announce()));
+                let only_quiet_ops = !rest.is_empty()
+                    && !asked_a_read
+                    && rest
+                        .iter()
+                        .all(|job| matches!(job, Job::Op(op) if !op.announce()));
+                if !answered_announced && !only_quiet_ops {
+                    emit(Event::Failed(e.to_string()));
+                }
                 continue;
             }
         };
@@ -1685,6 +1783,24 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         if let Some(n) = want_full.filter(|n| *n > 0) {
             limit = n;
         }
+        // The read a file change or a timer asked for waits its turn among the tabs that are not
+        // shown (the shown tab's lane never waits); what follows an operation does not, nor do the
+        // reads above, which someone is waiting for. Nothing is locked while it waits, and a
+        // closed tab stops the wait and the thread.
+        let background = !mutated && (want_full.is_some() || want_status);
+        let _permit = if background {
+            let waited = Instant::now();
+            let Some(permit) = lane.acquire() else {
+                return;
+            };
+            let ms = u64::try_from(waited.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if ms > 0 {
+                tracing::debug!(ms, "background refresh waited for its turn");
+            }
+            Some(permit)
+        } else {
+            None
+        };
         if want_full.is_some() || mutated {
             let started = Instant::now();
             match snapshot_completing(&repo, limit, &emit, &allowed, &mut status_failure) {
@@ -2359,6 +2475,7 @@ mod tests {
     use crate::watcher::watch;
     use std::path::Path;
     use std::process::Command;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     /// The refusal says what is true: the program sources it found, that the configuration could
@@ -2469,6 +2586,220 @@ mod tests {
         let started = Instant::now();
         drop(worker);
         assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    /// A repository with one commit.
+    fn committed_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        git(dir.path(), &["config", "user.name", "Ada"]);
+        git(dir.path(), &["config", "user.email", "ada@example.com"]);
+        git(
+            dir.path(),
+            &["commit", "-q", "--allow-empty", "-m", "first"],
+        );
+        dir
+    }
+
+    /// Whether a read (a snapshot or a status) arrives within `within`.
+    fn reads_arrive(worker: &super::Worker, within: Duration) -> bool {
+        let end = Instant::now() + within;
+        while let Some(left) = end.checked_duration_since(Instant::now()) {
+            match worker.events.recv_timeout(left) {
+                Ok(super::Event::Snapshot(_) | super::Event::Status(_)) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+
+    /// #62: the refresh a tab nobody is looking at runs when the process-wide limit has room, and
+    /// the tab being shown never waits for it.
+    #[test]
+    fn a_background_refresh_waits_for_the_limit_and_a_shown_tab_does_not() {
+        let repo = committed_repo();
+        // No permit is ever free: only the priority bypass can let a read through.
+        let limiter = Arc::new(crate::read_limit::Limiter::new(0));
+        let worker = super::Worker::spawn_limited(
+            repo.path().to_path_buf(),
+            &egui::Context::default(),
+            Arc::clone(&limiter),
+        );
+        worker.send(Job::RefreshStatus);
+        worker.send(Job::Refresh(10));
+        assert!(
+            !reads_arrive(&worker, Duration::from_millis(500)),
+            "a background tab read without a permit"
+        );
+        assert_eq!(limiter.waiting(), 1, "its thread waits, once");
+
+        // The user switches to it: the read that waits starts now.
+        worker.set_priority(true);
+        assert!(
+            reads_arrive(&worker, Duration::from_secs(60)),
+            "the tab now shown did not read"
+        );
+        // And what it asks for next does not wait either.
+        worker.send(Job::RefreshStatus);
+        assert!(reads_arrive(&worker, Duration::from_secs(60)));
+
+        // Leaving the tab puts it back behind the limit. Reads still on their way are counted
+        // first, so only the one asked for now is judged.
+        worker.set_priority(false);
+        while reads_arrive(&worker, Duration::from_millis(300)) {}
+        worker.send(Job::RefreshStatus);
+        assert!(!reads_arrive(&worker, Duration::from_millis(500)));
+    }
+
+    /// #62: what the user asked for is never held back by the limit: an operation answers, with
+    /// every permit taken, on a tab that is not shown.
+    #[test]
+    fn an_operation_and_an_on_demand_read_are_not_limited() {
+        let repo = committed_repo();
+        let limiter = Arc::new(crate::read_limit::Limiter::new(0));
+        let worker = super::Worker::spawn_limited(
+            repo.path().to_path_buf(),
+            &egui::Context::default(),
+            limiter,
+        );
+        worker.send(Job::Op(Op::StageAll));
+        worker.send(Job::HeadMessage);
+        let mut seen = Vec::new();
+        let end = Instant::now() + Duration::from_secs(60);
+        while seen.len() < 2 {
+            let Some(left) = end.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            match worker.events.recv_timeout(left) {
+                Ok(super::Event::OpFinished { .. }) => seen.push("operation"),
+                Ok(super::Event::HeadMessage(_)) => seen.push("head message"),
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        seen.sort_unstable();
+        assert_eq!(seen, ["head message", "operation"]);
+    }
+
+    /// #62: closing the tab of a thread that waits for a permit ends the thread, however long the
+    /// wait would have been.
+    #[test]
+    fn a_dropped_worker_waiting_for_a_permit_ends() {
+        let repo = committed_repo();
+        let limiter = Arc::new(crate::read_limit::Limiter::new(0));
+        let worker = super::Worker::spawn_limited(
+            repo.path().to_path_buf(),
+            &egui::Context::default(),
+            Arc::clone(&limiter),
+        );
+        worker.send(Job::Refresh(10));
+        let end = Instant::now() + Duration::from_secs(60);
+        while limiter.waiting() == 0 {
+            assert!(Instant::now() < end, "the thread never waited");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let ended = worker.ended.clone();
+        drop(worker);
+        assert_eq!(
+            ended.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected),
+            "the repository thread was still running after its worker was dropped"
+        );
+        assert_eq!(limiter.waiting(), 0);
+    }
+
+    /// What a worker on a folder that is not a repository sends for `jobs` (queued together, one
+    /// batch when the thread is slow to start): each answer to an operation as (kind, announce,
+    /// is an error), and how many `Failed` events came, once it has gone quiet.
+    fn answers_for_an_unopenable_repository(jobs: Vec<Job>) -> (Vec<(OpKind, bool, bool)>, usize) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let worker = super::Worker::spawn(dir.path().to_path_buf(), &egui::Context::default());
+        for job in jobs {
+            worker.send(job);
+        }
+        let (mut finished, mut failed) = (Vec::new(), 0);
+        let mut wait = Duration::from_secs(60);
+        loop {
+            match worker.events.recv_timeout(wait) {
+                Ok(super::Event::OpFinished {
+                    kind,
+                    announce,
+                    result,
+                    ..
+                }) => finished.push((kind, announce, result.is_err())),
+                Ok(super::Event::Failed(_)) => failed += 1,
+                Ok(_) => {}
+                Err(_) => return (finished, failed),
+            }
+            // Everything of one batch is sent together: a quiet second means it is over.
+            wait = Duration::from_millis(600);
+        }
+    }
+
+    /// #62: a batch the thread cannot run because the repository will not open answers every
+    /// operation in it, so whoever waits for the end of one (the limit on background fetches
+    /// counts it) hears of it; and the user sees one error for it, not two.
+    #[test]
+    fn a_batch_that_cannot_run_reports_each_of_its_operations_once() {
+        let fetch = |quiet| {
+            Job::Op(Op::Fetch {
+                prune: false,
+                quiet,
+            })
+        };
+        // An operation the user started: its own failure card, and no second one.
+        let (finished, failed) = answers_for_an_unopenable_repository(vec![fetch(false)]);
+        assert_eq!(finished, [(OpKind::Fetch, true, true)]);
+        assert_eq!(failed, 0, "one error for one failure");
+
+        // The timer's fetch alone: answered quietly, no "Git error" card besides.
+        let (finished, failed) = answers_for_an_unopenable_repository(vec![fetch(true)]);
+        assert_eq!(finished, [(OpKind::Fetch, false, true)]);
+        assert_eq!(failed, 0, "the quiet answer covers it");
+
+        // A refresh asked for, with nothing to answer: the tab still hears of the failure (its
+        // load error, and the refusals it clears).
+        let (finished, failed) = answers_for_an_unopenable_repository(vec![Job::RefreshStatus]);
+        assert_eq!(finished, []);
+        assert_eq!(failed, 1);
+    }
+
+    /// #62: a worker whose repository thread has ended says so; one that never started, or runs,
+    /// does not.
+    #[test]
+    fn a_worker_knows_whether_its_thread_runs() {
+        let repo = committed_repo();
+        let worker = super::Worker::spawn(repo.path().to_path_buf(), &egui::Context::default());
+        assert!(worker.is_alive());
+        let (lazy, _events, _jobs) = super::Worker::lazy_detached(std::path::PathBuf::from("/x"));
+        assert!(lazy.is_alive(), "nothing started, nothing ended");
+        let (detached, _events, _jobs) = super::Worker::detached();
+        assert!(detached.is_alive());
+        detached.end_thread_for_test();
+        assert!(!detached.is_alive());
+    }
+
+    /// The guard a repository thread holds tells its worker when the thread ends, however it ends.
+    #[test]
+    fn the_thread_guard_reports_the_end_of_its_thread() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let flag = Arc::new(AtomicBool::new(false));
+        let guard = super::ThreadEnd(Arc::clone(&flag));
+        let thread = std::thread::spawn(move || {
+            let _guard = guard;
+        });
+        thread.join().expect("the thread ran");
+        assert!(flag.load(Ordering::Acquire), "a thread that returned");
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let guard = super::ThreadEnd(Arc::clone(&flag));
+        let panicking = std::thread::spawn(move || {
+            let _guard = guard;
+            std::panic::resume_unwind(Box::new("the repository thread died"));
+        });
+        assert!(panicking.join().is_err());
+        assert!(flag.load(Ordering::Acquire), "a thread that panicked");
     }
 
     /// Standard output of `git` in `dir`, without its final newline.
@@ -3397,6 +3728,64 @@ mod read_tests {
                 "configured {configured}, follow {follow}"
             );
         }
+    }
+
+    /// #62: the tab counts a quiet fetch's end by order, which holds because each one ends in
+    /// exactly one `OpFinished`, even with a pull between them that ends in a question.
+    #[test]
+    fn a_quiet_fetch_ends_in_one_op_finished_around_a_pull_that_asks() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_quiet_fetch_ends_in_one_op_finished_around_a_pull_that_asks",
+        ) {
+            return;
+        }
+        let root = tempfile::tempdir().expect("tempdir");
+        let worker = worker_with_canopys_choices(trusted(diverged_clone(root.path())));
+        let quiet_fetch = || {
+            Job::Op(Op::Fetch {
+                prune: false,
+                quiet: true,
+            })
+        };
+        worker.send(quiet_fetch());
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::FastForwardOnly,
+            follow_config: false,
+            prune: false,
+            checked: None,
+        }));
+        worker.send(quiet_fetch());
+        let mut seen = Vec::new();
+        let mut wait = Duration::from_secs(60);
+        // The answers, then a quiet second to show there are no more.
+        while let Ok(event) = worker.events.recv_timeout(wait) {
+            match event {
+                Event::OpFinished {
+                    kind,
+                    announce,
+                    result,
+                    ..
+                } => seen.push(format!(
+                    "finished {kind:?} announce={announce} ok={}",
+                    result.is_ok()
+                )),
+                Event::PullDecision(_) => seen.push("decision".to_owned()),
+                Event::Conflicted { .. } => seen.push("conflicted".to_owned()),
+                _ => {}
+            }
+            if seen.len() >= 3 {
+                wait = Duration::from_millis(800);
+            }
+        }
+        assert_eq!(
+            seen,
+            [
+                "finished Fetch announce=false ok=true",
+                "decision",
+                "finished Fetch announce=false ok=true"
+            ],
+            "the pull asked, and each quiet fetch ended in one answer"
+        );
     }
 
     /// Dropping a worker ends its repository thread and its file watcher's: nothing of it is

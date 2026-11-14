@@ -271,6 +271,9 @@ pub struct CanopyApp {
     /// Writes the settings file off the UI thread; `None` in a screenshot run and where the
     /// platform has no folder for it (eframe's storage keeps the settings then).
     settings_writer: Option<crate::settings_store::Writer>,
+    /// How many tabs the limit on background fetches held back at the last look, to log only when
+    /// that changes.
+    fetch_waiting: usize,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -454,6 +457,7 @@ impl CanopyApp {
                 .glass_soak
                 .map(|n| crate::ui::kit::glass::Soak::new(n, crate::ui::kit::glass::Soak::CYCLE)),
             frame_stats: crate::frame_stats::FrameStats::default(),
+            fetch_waiting: 0,
             settings_writer: crate::storage::layout()
                 .filter(|_| !shooting && launch.glass_soak.is_none())
                 .map(|layout| crate::settings_store::Writer::spawn(layout.settings_file())),
@@ -1741,6 +1745,7 @@ pub(super) fn test_app() -> CanopyApp {
         gallery: None,
         glass_soak: None,
         frame_stats: crate::frame_stats::FrameStats::default(),
+        fetch_waiting: 0,
         settings_writer: None,
     }
 }
