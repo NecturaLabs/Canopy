@@ -188,6 +188,11 @@ pub fn set(dir: &Path, scope: Scope, setting: Setting, value: Option<&str>) -> R
     if let Some(value) = value {
         if setting == Setting::InitialBranch {
             validate_branch(dir, value)?;
+        } else if setting.shown_only().contains(&value) {
+            return Err(Error::invalid(format!(
+                "Canopy does not write {} = {value}, though git accepts it.",
+                setting.key()
+            )));
         } else if !setting.values().contains(&value) {
             return Err(Error::invalid(format!(
                 "Invalid value for {}.",

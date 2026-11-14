@@ -523,6 +523,19 @@ fn recommendations_report_later_include_overrides_without_rewriting_the_include(
 
 #[test]
 fn values_shown_but_not_offered_are_no_choices() {
+    if !isolated("values_shown_but_not_offered_are_no_choices") {
+        return;
+    }
+    let dir = fixture();
+    for value in Setting::PushDefault.shown_only() {
+        let error = config::set(dir.path(), Scope::Local, Setting::PushDefault, Some(value))
+            .expect_err("never written")
+            .to_string();
+        assert_eq!(
+            error,
+            format!("Canopy does not write push.default = {value}, though git accepts it.")
+        );
+    }
     for setting in Setting::ALL {
         for shown in setting.shown_only() {
             assert!(!setting.values().contains(shown), "{}", setting.key());
