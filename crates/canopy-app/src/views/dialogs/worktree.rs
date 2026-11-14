@@ -238,7 +238,7 @@ fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
         note(
             ui,
             format!(
-                "    {} that no branch or tag contains: nothing points to {} once its HEAD is deleted",
+                "    {} that no branch, remote branch or tag contains: nothing points to {} once its HEAD is deleted",
                 plural(entry.unreachable_commits, "commit", "commits"),
                 if entry.unreachable_commits == 1 {
                     "it"
@@ -496,7 +496,9 @@ mod tests {
             "{nodes:?}"
         );
         assert!(said("HEAD and reflog, its index"));
-        assert!(said("2 commits that no branch or tag contains"));
+        assert!(said(
+            "2 commits that no branch, remote branch or tag contains"
+        ));
         assert!(said("a rebase in progress is lost"));
         assert!(said("submodule repositories are deleted"));
         assert!(!said("deletes nothing"), "no claim that nothing is deleted");

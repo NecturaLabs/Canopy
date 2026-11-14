@@ -25,8 +25,9 @@ commits since the previous build.
   missing worktrees... (`git worktree prune`) asks git which ones it would forget (in English, so
   the answer parses in any language), lists each with git's reason, says what forgetting deletes in
   the repository (`HEAD` and reflog, index, `config.worktree`, `refs/worktree/*`, submodule
-  repositories, rebase or bisect state) and names the ones holding commits no branch or tag has. It
-  refuses when git would forget more than was shown or a `HEAD` cannot be read (#90).
+  repositories, rebase or bisect state) and names the ones holding commits no branch, remote branch
+  or tag has. It refuses when git would forget more than was shown, a `HEAD` cannot be read, or a
+  folder's name in the repository cannot be told apart from another's (#90).
 - Tabs that are open but not shown load only when you first show them. Restoring a session, or
   opening several repositories from the command line, loads the tab you see at once and lists the
   others by name in the tab strip; each one reads its repository, starts watching its files and
