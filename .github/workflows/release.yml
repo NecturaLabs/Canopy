@@ -119,6 +119,9 @@ jobs:
           name: release-notes
           path: notes.md
           if-no-files-found: error
+          # Only this run's later jobs read it; 3 days covers rerunning a failed job, and storage
+          # beyond that counts against the organisation's monthly Actions quota.
+          retention-days: 3
 
   test:
     name: Test before publishing
@@ -349,6 +352,9 @@ jobs:
           name: ${{ matrix.experimental && 'experimental' || 'canopy' }}-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+          # Only this run's later jobs read it; 3 days covers rerunning a failed job, and storage
+          # beyond that counts against the organisation's monthly Actions quota.
+          retention-days: 3
 
       # The container runs as root on the runner's own work folder and home;
       # remove the job-local Rust homes and hand the rest back so the runner's
