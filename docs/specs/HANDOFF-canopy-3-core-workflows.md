@@ -1,7 +1,7 @@
 # Handoff: canopy-3/core-workflows
 
 **Status: merged, kept as the reference for wiring the app.** The branch was merged into `main` as
-`4556dfb`; the session, its local branch, its worktree and its remote branch are gone. As of
+`4556dfb`; its local and remote branches are gone. As of
 8 October 2026 on PR #8, the app wires submodule management, pointer diffs and configurable
 updates; remaining acceptance is tracked in GitHub issue #60. The git-flow and merged-branch
 UI is wired (#58; its live check with `tools/usersim.sh` is still open there); LFS UI remains in
@@ -12,8 +12,8 @@ failures on a desktop host are fixed: the unbuffered start
 in `7d79afc`, and `install.sh` runs `update-desktop-database` only when a `mimeinfo.cache`
 already exists. Delete this file when the UI work has landed.
 
-Branch `canopy-3/core-workflows`: the canopy-core half of `lfs-flow-spec.md` parts A, B1 and D1
-(brief: `parallel-sessions.md`, "canopy-3"). Only `crates/canopy-core/` and this file changed. The
+Branch `canopy-3/core-workflows`: the canopy-core half of `lfs-flow-spec.md` parts A, B1 and D1.
+Only `crates/canopy-core/` and this file changed. The
 file is named with `-` for the branch's `/`.
 
 ## Added
@@ -131,7 +131,7 @@ failures stay `Error::Cli` with git's stderr.
   All five are fixed, each with a test.
 - `cargo test -p canopy-core --test workflows` passes, as does clippy with `-D warnings`.
 
-## Not done, or for canopy-1
+## Not done, or for the app wiring
 
 1. **LFS hash step not implemented (needs a crate).** No SHA-256 crate is in `Cargo.lock`, and
    `Cargo.toml` is out of scope. Stat-dirty but unchanged LFS files therefore still show as

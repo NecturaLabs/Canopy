@@ -1,7 +1,7 @@
 ---
 name: add-keybinding
 description: Recipe for adding, changing or removing a keyboard shortcut in Canopy through the single table in crates/canopy-app/src/keymap.rs. Covers choosing a chord by the Omarchy, lazygit, vim and Fork conventions, the Command, Binding and Section types, the rules (never Super, bare keys never fire while typing, one owner per chord), handling the command in app/input.rs, the tests that guard the table, the cheatsheet and docs/keybindings.md. Use whenever a request adds or rebinds a key, or when a command should be reachable from the keyboard.
-license: Proprietary (NecturaLabs); see LICENSE
+license: MIT OR Apache-2.0 (Canopy); see LICENSE-MIT and LICENSE-APACHE
 ---
 
 # Add a keybinding

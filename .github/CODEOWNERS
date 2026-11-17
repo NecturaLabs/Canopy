@@ -1,0 +1,11 @@
+# Review requests go to the maintainers. The security-sensitive areas (AGENTS.md) are listed so a
+# change to them always asks for a review.
+*                 @Nectura
+/.github/         @Nectura
+/.gitmodules      @Nectura
+/Cargo.toml       @Nectura
+/Cargo.lock       @Nectura
+/deny.toml        @Nectura
+/vendor/          @Nectura
+/docs/legal/      @Nectura
+/packaging/       @Nectura

@@ -1,7 +1,21 @@
 # Contributing
 
-Canopy is a private NecturaLabs repository. These notes apply to everyone working in it, human or
-agent; [AGENTS.md](AGENTS.md) has the full conventions.
+Canopy is an open-source NecturaLabs project, and contributions are welcome. These notes apply to
+everyone working on it, human or agent; [AGENTS.md](AGENTS.md) has the full conventions. Report
+security problems privately, as [SECURITY.md](SECURITY.md) says, never in a public issue.
+
+## Licence of contributions
+
+Canopy is licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the
+[MIT License](LICENSE-MIT), at your option. Unless you explicitly state otherwise, any contribution
+you intentionally submit for inclusion in Canopy, as defined in the Apache-2.0 licence, is dual
+licensed as above, without any additional terms or conditions. Please sign off each commit
+(`git commit -s`) to certify the [Developer Certificate of Origin](https://developercertificate.org/):
+that you wrote the change or otherwise have the right to submit it under these licences. No check
+enforces it.
+
+A pull request from a fork runs CI with a read-only token and no secrets, once a maintainer has
+approved the run.
 
 ## Setup
 
@@ -10,12 +24,10 @@ agent; [AGENTS.md](AGENTS.md) has the full conventions.
    fix it in its own commit. The minimum supported Rust version is 1.91.
 2. Install `git` 2.32 or newer (required by the fixture scripts) and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
-3. Fetch the component library: `crates/nectura-ui` is a submodule of the private repository
-   `NecturaLabs/nectura-ui` (`git clone --recurse-submodules`, or `git submodule update --init` in
-   an existing clone). Change it in its own repository, then commit the new submodule pointer
-   here. CI fetches it over SSH with a read-only deploy key on that repository
-   (the `SUBMODULE_DEPLOY_KEY` secret, in the Actions and Dependabot stores; `.github/actions/fetch-ui`),
-   since a workflow's own token reads only Canopy.
+3. Fetch the component library: `crates/nectura-ui` is a submodule of the public repository
+   [`NecturaLabs/nectura-ui`](https://github.com/NecturaLabs/nectura-ui)
+   (`git clone --recurse-submodules`, or `git submodule update --init` in an existing clone).
+   Change it in its own repository, then commit the new submodule pointer here.
 4. Optional: `cargo install cargo-deny` to run the licence and advisory checks locally, and
    `xvfb` to take headless screenshots.
 
@@ -68,7 +80,9 @@ status text. Keep evidence links and unresolved requirements. Progress notes sho
 commit/build, checks actually run and remaining gaps. Close compound issues only when every
 criterion is verified; put independent follow-ups in linked issues. For an exact duplicate, link
 the canonical issue, add `duplicate`, and close it as a duplicate. Closed duplicates may use
-only `duplicate`; schedule work on the canonical issue. Related or parent/child scope is not a duplicate.
+only `duplicate`; schedule work on the canonical issue. Related or parent/child scope is not a duplicate. Issues labelled `archived` are closed
+placeholders that keep the numbers of issues and pull requests from before the source was
+published; they take no other label.
 
 ### Labels and triage
 

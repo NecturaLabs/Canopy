@@ -38,10 +38,8 @@ and CI (the "Format, docs, tooling and dependencies" job) run it, so a Dependabo
 Dependabot groups with the egui crates, fails CI until the patch is regenerated.
 `tools/stall-check.py` is the behaviour test: it hides Canopy's window on a stand-in compositor and
 fails when the app stops answering pings, and it refuses to run unless the build uses
-`vendor/eframe`. `tools/check.sh` runs it, and so does the "Test (Linux)" job in CI. On a
-GitHub-hosted runner (pull requests, including Dependabot's eframe bumps) that job installs what the
-check needs and the check must pass. A self-hosted runner has only what its owner installed, so
-there a failure shows in the log without failing the job.
+`vendor/eframe`. `tools/check.sh` runs it, and so does the "Test (Linux)" job in CI, which installs
+what the check needs on its GitHub-hosted runner; there the check must pass.
 
 **Advisories.** `cargo deny check` skips the advisory and yanked-version checks for a package that
 has no registry source, which `vendor/eframe` is (cargo-deny 0.20.2; its licence is still checked

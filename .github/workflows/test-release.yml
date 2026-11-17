@@ -8,10 +8,6 @@ on:
         description: Full commit SHA to test
         required: true
         type: string
-    secrets:
-      SUBMODULE_DEPLOY_KEY:
-        description: The read-only deploy key of NecturaLabs/nectura-ui, which the build fetches as a submodule
-        required: true
 
 permissions: {}
 
@@ -27,9 +23,7 @@ jobs:
         with:
           ref: ${{ inputs.commit }}
           persist-credentials: false
-      - uses: ./.github/actions/fetch-ui
-        with:
-          key: ${{ secrets.SUBMODULE_DEPLOY_KEY }}
+          submodules: true
       - uses: ./.github/actions/setup-rust
       - name: Configure git for tests
         run: |

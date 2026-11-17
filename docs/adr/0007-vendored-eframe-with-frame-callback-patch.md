@@ -7,7 +7,7 @@
 
 The owner saw Hyprland's "Application Not Responding" dialog for Canopy while the window sat
 unfocused, and at other random times, with no crash. Hyprland pings the client of every window and
-raises the dialog after `misc:anr_missed_pings` unanswered pings (three on the maintainer's machine); a
+raises the dialog after `misc:anr_missed_pings` unanswered pings (three in the tested setup); a
 client answers only from its event loop.
 
 Evidence, reproduced without touching the owner's session on a stand-in compositor that withholds
@@ -59,8 +59,7 @@ copy equals the published crate (SHA-256 pinned) plus the patch and that the wor
 copy, so an eframe bump that leaves the `[patch]` entry unused fails CI. `tools/stall-check.py`,
 run by `tools/check.sh` and by CI's Linux test job, hides the window on the stand-in compositor and
 fails when three pings in a row go unanswered, so a patch that stops working, or a renderer change,
-fails the check. On a GitHub-hosted runner, where pull requests and Dependabot run, the job installs
-the tools and the check is required; on the self-hosted runner a failure is only logged.
+fails the check. The job installs the tools on its GitHub-hosted runner and the check is required.
 
 ### Consequences
 

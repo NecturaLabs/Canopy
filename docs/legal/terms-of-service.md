@@ -1,28 +1,25 @@
 # Terms of Service
 
-Last updated: 14 November 2026
+Last updated: 18 November 2026
 
 These terms are an agreement between you and NecturaLabs about Canopy (the "software"). You accept them by choosing I agree in Canopy. If you do not accept them, choose Quit and do not use the software.
 
-These terms are the written agreement referred to in the LICENSE file that comes with the software.
+## Open source
 
-## Your licence
+Canopy is open source. Its source code is published at https://github.com/NecturaLabs/Canopy under the Apache License, Version 2.0 and the MIT License, at your option. Those licences, not these terms, decide what you may do with the code: use, copy, modify and share it, including in paid work and in other products. Nothing in these terms limits a right those licences give you.
 
-We give you a free, non-exclusive and non-transferable licence to install and use the software on computers you own or are allowed to use. You may use it for any lawful purpose, including paid work for yourself, your employer or your clients.
+These terms cover your use of the builds NecturaLabs publishes and the services they reach:
 
-An organisation may install the software on its own computers and let its staff use it under these terms.
+- the update check and the download of a new version
+- crash reports, only if you agree to send them
 
-## What you may not do
+## Your use
 
-You may not:
+You may install and use the software on any computer you own or are allowed to use, for any lawful purpose, including paid work for yourself, your employer or your clients. Do not use the software to break the law.
 
-- sell, rent, lend or sublicense the software, or give copies of it to anyone outside your organisation. You may always share a link to where we publish it.
-- reverse engineer, decompile, disassemble or modify the software
-- remove or change any copyright, licence or credit notice in the software
-- use the software's code, art or text to train artificial intelligence or machine-learning models
-- use the software to break the law
+## Name and icon
 
-These limits do not apply where the law gives you a right that a contract cannot remove, such as the right to decompile the software to make it work with other programs.
+The Canopy name and icon identify the builds NecturaLabs publishes. The open-source licences cover the code and files, not the Canopy name or icon as marks, so they do not give you the right to use them to identify a version you change and distribute: give it a name and icon of its own, and do not suggest that NecturaLabs made or supports it. You may always name Canopy to say where your version comes from.
 
 ## Your repositories and accounts
 
@@ -34,9 +31,9 @@ GitHub, GitLab and the other Git servers you use have their own terms, which app
 
 ## Ownership
 
-The software, including its code, design, art and text, belongs to us or to those who licensed their work to us, and is protected by copyright and other laws. These terms give you a licence, not ownership.
+The copyright in the software belongs to NecturaLabs and to those who contributed their work to it. The open-source licences above say what you may do with it.
 
-The software includes open-source components and fonts. Their own licences apply to them and take precedence over these terms for those components. Their licence texts come with the software.
+The software also includes third-party open-source components and fonts. Their own licences apply to them. Their licence texts come with the software.
 
 ## Updates and support
 
@@ -66,7 +63,7 @@ If you use the software as a consumer, you keep every right that the mandatory c
 
 ## Ending this agreement
 
-You can end this agreement at any time by uninstalling the software and deleting your copies. We can end your licence if you seriously break these terms. When the agreement ends, you must stop using the software and delete your copies. The sections on your repositories, ownership, no warranty, limitation of liability and governing law continue to apply.
+You can end this agreement at any time by uninstalling the software. Ending it does not affect the open-source licences, which apply to the code whether or not you accept these terms. The sections on your repositories, ownership, no warranty, limitation of liability and governing law continue to apply.
 
 ## Governing law
 

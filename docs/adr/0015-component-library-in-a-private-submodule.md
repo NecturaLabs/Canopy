@@ -1,6 +1,7 @@
 # ADR 0015: The component library lives in a private submodule
 
-**Status:** accepted
+**Status:** superseded in part by [ADR 0019](0019-open-source-under-mit-or-apache.md): the library
+is now public, so CI fetches it with `actions/checkout` and no deploy key
 **Date:** 2026-10-17
 
 ## Context

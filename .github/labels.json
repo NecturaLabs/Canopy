@@ -173,5 +173,10 @@
     "name": "duplicate",
     "color": "cfd3d7",
     "description": "Same deliverable as a linked canonical issue; close and track work there."
+  },
+  {
+    "name": "archived",
+    "color": "ededed",
+    "description": "Placeholder for an issue or pull request from before the source was published."
   }
 ]

@@ -46,8 +46,7 @@ in a document no longer exists.
   [specs/git-identity.md](specs/git-identity.md) (findings and design of the shipped identity
   settings). Where one disagrees with the code, the code is right: fix or delete the sentence.
 - **Temporary, delete when the status line says so** (check `git log` before trusting any state in
-  them): [specs/parallel-sessions.md](specs/parallel-sessions.md) (briefs for parallel sessions, kept
-  as a template), [specs/HANDOFF-canopy-2-core-safety.md](specs/HANDOFF-canopy-2-core-safety.md) and
+  them): [specs/HANDOFF-canopy-2-core-safety.md](specs/HANDOFF-canopy-2-core-safety.md) and
   [specs/HANDOFF-canopy-3-core-workflows.md](specs/HANDOFF-canopy-3-core-workflows.md) (what two
   merged branches added and the app still has to wire up). The `memory-hygiene` skill tends them. A
   session never leaves a standing handoff at the repository root: each item goes where it lives.

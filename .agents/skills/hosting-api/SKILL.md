@@ -1,7 +1,7 @@
 ---
 name: hosting-api
 description: Recipe for adding or changing a GitHub or GitLab API call in Canopy (crates/canopy-hosting and the hosting thread in crates/canopy-app/src/hosting.rs), such as a new pull or merge request action or field. Covers what the product rules allow, the provider functions and Client method, tokens and the consent and settings gates, rate limits, timeouts, redaction, running off the UI thread, tests against a fake local server, and the privacy policy update. Use whenever a change makes Canopy send an HTTP request to a hosting provider or reads a new part of an API response.
-license: Proprietary (NecturaLabs); see LICENSE
+license: MIT OR Apache-2.0 (Canopy); see LICENSE-MIT and LICENSE-APACHE
 ---
 
 # Add a hosting API call

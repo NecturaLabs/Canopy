@@ -6,12 +6,12 @@ exclude = ["vendor"]
 
 [workspace.package]
 # Cargo package metadata is not a Canopy release number. Published builds use build-N tags
-# and git rev-list --count on main; the three private crates are never published to crates.io.
+# and git rev-list --count on main; the crates are never published to crates.io.
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["NecturaLabs"]
-license = "LicenseRef-NecturaLabs-Proprietary"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/NecturaLabs/Canopy"
 publish = false
 

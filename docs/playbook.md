@@ -138,7 +138,8 @@ or how flows feel end to end.
   GitHub-hosted job. Create release waits for them before tagging; Release runs them again before
   publishing, including a direct dispatch or rebuild of an existing tag. Failed or cancelled tests
   prevent the tag or publication. Dry runs do not run these tests and cannot tag.
-- Push CI's platform test job remains opt-in with repository variable `CI_TESTS=1`
+- Push CI's platform test job remains opt-in with repository variable `CI_TESTS=1` (a pull request
+  from a fork always runs it)
   (`gh variable set CI_TESTS --body 1`); unset or `0` skips it. Its per-platform toggles still
   apply. This toggle never disables release tests. The local pre-commit hook is an early check,
   while the mandatory release job is the enforced publication gate.

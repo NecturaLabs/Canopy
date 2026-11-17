@@ -186,7 +186,7 @@ thread.
 
 ## nectura-ui
 
-The component library, a private repository (`NecturaLabs/nectura-ui`) that Canopy and other projects
+The component library, a public repository (`NecturaLabs/nectura-ui`) that Canopy and other projects
 use as a Git submodule at `crates/nectura-ui`. It is a workspace member here, so it builds with the
 workspace's `Cargo.lock` and `[patch]` entries. It knows nothing about Git or Canopy: what it needs
 from the application comes through `host::Host` (the system's reduce-motion and reduce-transparency

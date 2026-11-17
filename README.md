@@ -163,8 +163,9 @@ sudo dnf install gcc pkgconf-pkg-config libxkbcommon libxkbcommon-x11 mesa-libGL
 sudo pacman -S --needed base-devel libxkbcommon libxkbcommon-x11 libglvnd mesa git
 ```
 
-Build and run (the component library, `crates/nectura-ui`, is a private submodule: you need access to
-`NecturaLabs/nectura-ui`, and `git submodule update --init` fetches it in an existing clone):
+Build and run (the component library, `crates/nectura-ui`, is a submodule of
+[`NecturaLabs/nectura-ui`](https://github.com/NecturaLabs/nectura-ui); `git submodule update --init`
+fetches it in an existing clone):
 
 ```sh
 git clone --recurse-submodules https://github.com/NecturaLabs/Canopy.git
@@ -296,5 +297,17 @@ The repository is set up for coding agents. [AGENTS.md](AGENTS.md) (loaded by Cl
 
 ## Licence
 
-Proprietary. Copyright (c) 2026 NecturaLabs. All rights reserved. See [LICENSE](LICENSE). Bundled
-fonts are under the SIL Open Font License 1.1; third-party crates are under their own licences.
+Canopy is licensed under either of
+
+- the [Apache License, Version 2.0](LICENSE-APACHE), or
+- the [MIT License](LICENSE-MIT),
+
+at your option. Copyright (c) 2026 NecturaLabs.
+
+Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion in
+Canopy, as defined in the Apache-2.0 licence, is dual licensed as above, without any additional
+terms or conditions.
+
+Bundled fonts are under the SIL Open Font License 1.1 (`crates/nectura-ui/assets/fonts/`);
+third-party crates are under their own licences (`docs/legal/third-party-notices.txt`). The
+Canopy name and icon identify NecturaLabs' builds; a fork you distribute should use its own.

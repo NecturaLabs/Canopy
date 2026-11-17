@@ -30,7 +30,6 @@ allow = [
   "OFL-1.1",
   "CC0-1.0",
   "BSL-1.0",
-  "LicenseRef-NecturaLabs-Proprietary",
 ]
 
 # egui's default fonts bundle the Ubuntu font family.
@@ -48,7 +47,7 @@ allow = ["CDLA-Permissive-2.0"]
 crate = "webpki-root-certs"
 allow = ["CDLA-Permissive-2.0"]
 
-# Workspace crates are unpublished (`publish = false`) and proprietary.
+# Workspace crates are unpublished (`publish = false`); their own licence is MIT OR Apache-2.0.
 [licenses.private]
 ignore = true
 
