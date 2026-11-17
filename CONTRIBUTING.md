@@ -76,7 +76,9 @@ status text. Keep evidence links and unresolved requirements. Progress notes sho
 commit/build, checks actually run and remaining gaps. Close compound issues only when every
 criterion is verified; put independent follow-ups in linked issues. For an exact duplicate, link
 the canonical issue, add `duplicate`, and close it as a duplicate. Closed duplicates may use
-only `duplicate`; schedule work on the canonical issue. Related or parent/child scope is not a duplicate.
+only `duplicate`; schedule work on the canonical issue. Related or parent/child scope is not a duplicate. Issues labelled `archived` are closed
+placeholders that keep the numbers of issues and pull requests from before the source was
+published; they take no other label.
 
 ### Labels and triage
 
