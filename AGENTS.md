@@ -5,7 +5,7 @@ A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written 
 `git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
 `crates/canopy-hosting`, the GitHub/GitLab API client (REST, plus one GraphQL query for the
 request list; `ureq`, rustls); `crates/canopy-app`, the GUI (`eframe`/`egui` 0.36, glow), binary
-`canopy`; `crates/nectura-ui`, a submodule of the private repository `NecturaLabs/nectura-ui`: the
+`canopy`; `crates/nectura-ui`, a submodule of the public repository `NecturaLabs/nectura-ui`: the
 component library (theme tokens, fonts, motion, the component kit) that other NecturaLabs
 applications use too, with no Git or Canopy knowledge (`git submodule update --init` after a clone;
 change it in its own repository, then bump the pointer here; `ui::kit`, `ui::theme`, `ui::motion`
@@ -79,8 +79,8 @@ a file never sets consent, trust, the programs Canopy runs or the GitLab hosts C
 installed-app discovery (`system_apps.rs`); git configuration reading (`repo_config.rs`); log
 redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; `nectura-ui/src/kit/glass/gl.rs` (the only
 `unsafe` code); the update feed; `Cargo.toml`, `Cargo.lock`, `deny.toml`; `.gitmodules` and the `crates/nectura-ui`
-pointer; `.github/` (self-hosted runners run code; `.github/actions/fetch-ui` handles the library's
-deploy key). A change there gets a security pass (`/security-review`) before the general review. A
+pointer; `.github/` (workflows run code with the repository's token and secrets; the repository is
+public, so every job stays on GitHub-hosted runners). A change there gets a security pass (`/security-review`) before the general review. A
 pointer bump shows only a hash, so review it as the library's own diff (`git -C crates/nectura-ui
 diff <old>..<new>`), and a change to the library's `gl.rs` gets the security pass too. Ask the
 owner before storing a credential anywhere, contacting a new host or
@@ -111,8 +111,7 @@ adding a dependency.
   embeds) or the landing site (`site/`), or when CI already passed on a commit with the same tree
   (a merge of an up-to-date branch), and runs whenever that cannot be established. `site.yml`
   checks `site/` and, on `main`, deploys it to Netlify (https://canopy.necturalabs.com).
-  `stall-check.py` runs in CI's Linux test job (required on GitHub-hosted runners, advisory on the
-  self-hosted one). Run `cargo deny check`
+  `stall-check.py` runs in CI's Linux test job and must pass. Run `cargo deny check`
   yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) adds
   tests per platform only when `CI_TESTS` is `1` (off: the pre-commit hook runs `cargo test`),
   then one repository variable each: Linux runs unless `CI_LINUX`
@@ -200,4 +199,7 @@ adding a dependency.
   against the user's real repositories, in tests or by hand. Use temporary directories and
   `tools/mkfixture.sh`.
 - Do not weaken or delete tests to make a change pass.
-- This repository is proprietary (NecturaLabs). Do not copy code from GPL-licensed Git clients.
+- The repository is open source under MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`; ADR 0019)
+  and public: nothing personal, machine-specific or private goes into files, commits, issues or
+  pull requests. Do not copy code from GPL-licensed Git clients, nor from any source whose licence
+  is not compatible with MIT OR Apache-2.0.

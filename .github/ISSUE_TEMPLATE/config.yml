@@ -6,3 +6,6 @@ contact_links:
 - name: Contributor and triage guide
   url: https://github.com/NecturaLabs/Canopy/blob/main/CONTRIBUTING.md#issues-and-pull-requests
   about: Read issue types, labels, acceptance criteria and verification conventions.
+- name: Report a security vulnerability
+  url: https://github.com/NecturaLabs/Canopy/security/advisories/new
+  about: Report security problems privately, never in a public issue (see SECURITY.md).

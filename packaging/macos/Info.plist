@@ -31,6 +31,6 @@
   <key>NSSupportsAutomaticGraphicsSwitching</key>
   <true/>
   <key>NSHumanReadableCopyright</key>
-  <string>Copyright © NecturaLabs. All rights reserved.</string>
+  <string>Copyright © NecturaLabs. MIT OR Apache-2.0.</string>
 </dict>
 </plist>

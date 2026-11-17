@@ -260,7 +260,17 @@ jobs:
           mkdir -p "dist/$name/legal"
           bin="target/$TARGET/release/canopy"
           [[ -f "$bin.exe" ]] && bin="$bin.exe"
-          cp README.md LICENSE "dist/$name/"
+          cp README.md "dist/$name/"
+          # One LICENSE file in the archive (the installers and the updater expect that name),
+          # holding both licences the source is offered under.
+          {
+            printf 'Canopy is licensed under either of the Apache License, Version 2.0 or the MIT\n'
+            printf 'License, at your option. The source is at https://github.com/NecturaLabs/Canopy.\n\n'
+            printf -- '--- MIT License ---\n\n'
+            cat LICENSE-MIT
+            printf -- '\n--- Apache License, Version 2.0 ---\n\n'
+            cat LICENSE-APACHE
+          } > "dist/$name/LICENSE"
           cp docs/legal/*.md docs/legal/third-party-notices.txt "dist/$name/legal/"
           if [[ "$TARGET" == *apple-darwin ]]; then
             # A minimal, ad-hoc signed Canopy.app (bundle id io.necturalabs.Canopy) with the
@@ -282,7 +292,7 @@ jobs:
               fi
             done
             iconutil -c icns "$iconset" -o "$app/Contents/Resources/Canopy.icns"
-            cp LICENSE "$app/Contents/Resources/"
+            cp "dist/$name/LICENSE" "$app/Contents/Resources/"
             cp docs/legal/*.md docs/legal/third-party-notices.txt "$app/Contents/Resources/legal/"
             codesign --force --sign - "$app"
             codesign --verify --strict "$app"

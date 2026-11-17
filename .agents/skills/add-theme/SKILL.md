@@ -1,7 +1,7 @@
 ---
 name: add-theme
 description: Recipe for adding a colour theme to Canopy, or changing a theme's colours or adding a design token. Covers the Palette constant and ThemeId variant in crates/nectura-ui/src/theme.rs, every token, the WCAG contrast test, dark and light screenshots of each view, and the docs/design.md section. Use whenever a request adds, renames, retunes or removes a theme, or adds a field to Palette.
-license: Proprietary (NecturaLabs); see LICENSE
+license: MIT OR Apache-2.0 (Canopy); see LICENSE-MIT and LICENSE-APACHE
 ---
 
 # Add a theme

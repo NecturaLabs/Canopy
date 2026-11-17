@@ -95,7 +95,7 @@ make_release() {
     printf '#!/bin/sh\necho "canopy %s (fake)"\n' "$v" >"$d/canopy"
     chmod 755 "$d/canopy"
     echo "Canopy" >"$d/README.md"
-    echo "Proprietary" >"$d/LICENSE"
+    echo "MIT OR Apache-2.0" >"$d/LICENSE"
     echo "notices" >"$d/legal/third-party-notices.txt"
     cp "$root/packaging/linux/io.necturalabs.Canopy.desktop" "$root/packaging/linux/io.necturalabs.Canopy.metainfo.xml" "$d/"
     # A second group with its own Exec=, which the installer must leave alone.
@@ -118,7 +118,7 @@ make_mac_release() {
     printf '#!/bin/sh\necho "canopy %s (fake mac)"\n' "$v" >"$app/MacOS/canopy"
     chmod 755 "$app/MacOS/canopy"
     sed -e "s/@BUILD@/$v/g" "$root/packaging/macos/Info.plist" >"$app/Info.plist"
-    echo "Proprietary" >"$d/LICENSE"
+    echo "MIT OR Apache-2.0" >"$d/LICENSE"
     rel=$srv/releases/download/canopy-build-$v
     mkdir -p "$rel"
     tar -czf "$rel/$name.tar.gz" -C "$tmp/build" "$name"

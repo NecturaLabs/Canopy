@@ -2,7 +2,7 @@ This skill is adapted from skills/project-docs in NecturaLabs/AgentSkills (versi
 commit ea8679ae566fb32133dfd50fdcc5c3079101f053), which is distributed under the MIT License
 below. SKILL.md carries Canopy-specific changes; files under references/, templates/ and
 examples/ are unchanged from upstream unless the file itself says otherwise. The rest of the
-Canopy repository is proprietary and is not covered by this licence.
+Canopy repository is licensed under MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
 
 ----------------------------------------------------------------------------------------------
 
