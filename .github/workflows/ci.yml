@@ -148,8 +148,7 @@ jobs:
       # maintainers' pre-commit hook runs the tests before every commit; set CI_TESTS=1 to run them
       # here again). A pull request from a fork always runs them.
       # Then one toggle per platform, as repository variables: Linux runs unless CI_LINUX is '0';
-      # macOS and Windows run only when CI_MACOS or CI_WINDOWS is '1' (both off for now, the
-      # owner's call).
+      # macOS and Windows run only when CI_MACOS or CI_WINDOWS is '1' (both off for now).
       matrix:
         include: ${{ fromJSON(format('[{0}{1}{2}]', format('{0}', vars.CI_LINUX) != '0' && '{"os":"Linux","hosted":"ubuntu-latest"}' || '', vars.CI_MACOS == '1' && format('{0}{1}', format('{0}', vars.CI_LINUX) != '0' && ',' || '', '{"os":"macOS","hosted":"macos-latest"}') || '', vars.CI_WINDOWS == '1' && format('{0}{1}', (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1') && ',' || '', '{"os":"Windows","hosted":"windows-latest"}') || '')) }}
     steps:

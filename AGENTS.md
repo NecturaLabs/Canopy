@@ -113,7 +113,8 @@ adding a dependency.
   checks `site/` and, on `main`, deploys it to Netlify (https://canopy.necturalabs.com).
   `stall-check.py` runs in CI's Linux test job and must pass. Run `cargo deny check`
   yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) adds
-  tests per platform only when `CI_TESTS` is `1` (off: the pre-commit hook runs `cargo test`),
+  tests per platform only when `CI_TESTS` is `1` (off: the pre-commit hook runs `cargo test`; a
+  pull request from a fork always runs them),
   then one repository variable each: Linux runs unless `CI_LINUX`
   is `0`; macOS and Windows run only when `CI_MACOS` / `CI_WINDOWS` is `1` (off for now).
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
@@ -122,7 +123,7 @@ adding a dependency.
 
 ## Workflow
 
-- **GitHub Issues is the sole backlog.** Read [open issues](https://github.com/NecturaLabs/Canopy/issues?q=is%3Aissue+is%3Aopen) before starting work. Take P0 critical first, then P1 high, P2 normal and P3 low (`priority:p0-critical` through `priority:p3-low`), in issue-number order within a priority; `needs-verification` means the work still needs real application or owner checks. `owner-action` is reserved for the owner's decisions and external-account tasks.
+- **GitHub Issues is the sole backlog.** Read [open issues](https://github.com/NecturaLabs/Canopy/issues?q=is%3Aissue+is%3Aopen) before starting work. Take P0 critical first, then P1 high, P2 normal and P3 low (`priority:p0-critical` through `priority:p3-low`), in issue-number order within a priority; `needs-verification` means the work still needs real application or owner checks. `owner-action` is reserved for the owner's decisions and external-account tasks. `archived` marks the closed placeholders that keep pre-publication issue and pull request numbers; it takes no other label.
 - **Issue content:** use specific, action-oriented titles without type/priority prefixes. State the problem or deliverable, relevant files, constraints and checkable acceptance criteria. Bugs need observed/expected behaviour, reproduction steps and environment details when known. Include a "Where to see it" route when it makes verification concrete: a safe fixture, workflow and exact command where useful. Record an owner decision with its date, answer and alternatives, preserving unresolved requirements. Write concise, direct text; remove vague praise, canned summaries and repetition. Preserve unresolved requirements and evidence; never invent test results.
 - **Issue labels:** every triaged issue has one type (`bug`, `enhancement`, `maintenance`, `documentation`, `verification`, `owner-action`) and one `area:*`, except closed duplicates, which may use only `duplicate` and a canonical link. Open issues have one priority, P0 critical through P3 low, and one size (`size:small`, `size:medium`, `size:large`, `size:needs-estimate`) for remaining work; explain an unavailable estimate. Use `needs-verification` for remaining live/platform/owner checks and `security` for credential, trust, privacy or execution risks.
 - **Forms and triage:** use the matching form. Forms apply type, P2 priority, `size:needs-estimate` and `needs-triage`. Maintainers confirm scope, apply one area, review priority and estimate size before removing `needs-triage`; dropdown answers do not apply labels automatically. Keep `.github/labels.json` and live labels in sync. `CONTRIBUTING.md` defines the catalogue and triage rules.

@@ -9,9 +9,13 @@ security problems privately, as [SECURITY.md](SECURITY.md) says, never in a publ
 Canopy is licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the
 [MIT License](LICENSE-MIT), at your option. Unless you explicitly state otherwise, any contribution
 you intentionally submit for inclusion in Canopy, as defined in the Apache-2.0 licence, is dual
-licensed as above, without any additional terms or conditions. Sign off each commit
+licensed as above, without any additional terms or conditions. Please sign off each commit
 (`git commit -s`) to certify the [Developer Certificate of Origin](https://developercertificate.org/):
-that you wrote the change or otherwise have the right to submit it under these licences.
+that you wrote the change or otherwise have the right to submit it under these licences. No check
+enforces it.
+
+A pull request from a fork runs CI with a read-only token and no secrets, once a maintainer has
+approved the run.
 
 ## Setup
 

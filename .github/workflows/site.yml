@@ -30,8 +30,7 @@ concurrency:
 jobs:
   site:
     name: Check and deploy
-    # GitHub-hosted: the deploy token never reaches the shared self-hosted machine, and the job
-    # builds nothing.
+    # GitHub-hosted, like every job; it builds nothing.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

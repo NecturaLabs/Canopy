@@ -1,8 +1,7 @@
 # Handoff: canopy-2/core-safety
 
 **Status: merged, kept as the reference for wiring the app.** The branch was merged into `main` as
-`d0782bf` (commits `51c58a7`, `329293c`, `76b160d`); the session, its local branch and its
-worktree are gone, and so is its remote branch. As of 8 October 2026 on PR #8, branch deletion
+`d0782bf` (commits `51c58a7`, `329293c`, `76b160d`); its local and remote branches are gone. As of 8 October 2026 on PR #8, branch deletion
 asks `git branch -d` first, safe paths and mode/type-change diffs are live, Stage all reports
 skipped nested repositories, and ignore management is wired with acceptance checks remaining.
 GitHub Issues is the active tracker: #59 covers ignore management, #44 symbolic links and type
@@ -12,8 +11,7 @@ remaining app wiring; branch deletion still uses its compatibility wrapper.
 Delete this file when the last of those lands and the wrappers are gone. Sections below describe
 the branch as it was handed over; "Left out, and known issues" says what became of each item.
 
-Core only (`crates/canopy-core`). One test fixture in the app also changed, with the owner's
-approval: `tab.rs` `entry()` gains `old_mode: None, new_mode: None`. Rebased on `main` after the
+Core only (`crates/canopy-core`). One test fixture in the app also changed: `tab.rs` `entry()` gains `old_mode: None, new_mode: None`. Rebased on `main` after the
 canopy-3 merge.
 Spec: `docs/specs/lfs-flow-spec.md` B2, C and D2.
 (The file name flattens the branch's `/` so it does not create a folder.)

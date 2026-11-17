@@ -19,7 +19,7 @@ You may install and use the software on any computer you own or are allowed to u
 
 ## Name and icon
 
-The Canopy name and icon identify the builds NecturaLabs publishes. The open-source licences do not give you the right to use them for a version you change and distribute: give it a name and icon of its own, and do not suggest that NecturaLabs made or supports it. You may always name Canopy to say where your version comes from.
+The Canopy name and icon identify the builds NecturaLabs publishes. The open-source licences cover the code and files, not the Canopy name or icon as marks, so they do not give you the right to use them to identify a version you change and distribute: give it a name and icon of its own, and do not suggest that NecturaLabs made or supports it. You may always name Canopy to say where your version comes from.
 
 ## Your repositories and accounts
 

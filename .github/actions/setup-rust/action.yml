@@ -1,14 +1,9 @@
 name: Setup Rust
 description: >-
-  Installs the latest stable Rust toolchain and, when asked,
-  restores the build cache. On the organisation's self-hosted runners, which
-  share one home directory, each runner keeps its own rustup and cargo homes in
-  its tool cache, so jobs on different runners never install or update a
-  toolchain under each other. With `isolated`, the job instead gets fresh rustup
-  and cargo homes of its own under RUNNER_TEMP and no cache, so nothing an
-  earlier job left on the machine reaches the build. On Windows it also puts Git
-  Bash ahead of the System32 WSL launcher, so `shell: bash` steps get the same
-  bash as on GitHub-hosted runners.
+  Installs the latest stable Rust toolchain and, when asked, restores the build
+  cache (Swatinem/rust-cache). With `isolated`, the job instead gets fresh rustup
+  and cargo homes of its own under RUNNER_TEMP and no cache, so a release build
+  takes nothing from a cache an earlier run wrote.
 
 inputs:
   components:
@@ -20,9 +15,7 @@ inputs:
     required: false
     default: ""
   cache:
-    description: >-
-      Keep a build cache (ignored when isolated): a per-job target folder on
-      self-hosted runners, Swatinem/rust-cache on GitHub-hosted ones
+    description: Keep a build cache with Swatinem/rust-cache (ignored when isolated)
     required: false
     default: "true"
   cache-key:
@@ -33,37 +26,24 @@ inputs:
     description: >-
       Install rustup, the toolchain and the crate registry from scratch into
       job-local homes ($RUNNER_TEMP/canopy-rust) and restore no cache. For
-      release builds; the caller removes that directory when a container job
-      ran as root.
+      release builds.
     required: false
     default: "false"
 
 runs:
   using: composite
   steps:
-    # rustup is installed here with --no-modify-path rather than left to
-    # dtolnay/rust-toolchain, whose installer would add a line for every runner
-    # to the shared ~/.profile and ~/.bashrc. Container jobs run as root in a
-    # fresh home, and the runner mounts its tool cache into the container; a
-    # root-owned toolchain there would lock the runner's own user out of it, so
-    # a container job uses the per-job home unless it is isolated.
-    - name: Use this runner's Rust homes, or job-local ones
-      if: runner.os != 'Windows' && (inputs.isolated == 'true' || runner.environment == 'self-hosted')
+    # rustup is installed with --no-modify-path into the job-local homes, so the
+    # runner's own toolchain and profile are left alone.
+    - name: Use job-local Rust homes
+      if: runner.os != 'Windows' && inputs.isolated == 'true'
       shell: bash
       env:
-        ISOLATED: ${{ inputs.isolated }}
-        CACHE: ${{ inputs.cache }}
-        TARGET_NAME: ${{ github.job }}${{ inputs.cache-key != '' && format('-{0}', inputs.cache-key) || '' }}
         RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
       run: |
         set -euo pipefail
-        if [[ $ISOLATED == true ]]; then
-          root="$RUNNER_TEMP/canopy-rust"
-          rm -rf "$root"
-        else
-          [[ -f /.dockerenv ]] && exit 0
-          root="$RUNNER_TOOL_CACHE/rust"
-        fi
+        root="$RUNNER_TEMP/canopy-rust"
+        rm -rf "$root"
         export CARGO_HOME="$root/cargo" RUSTUP_HOME="$root/rustup"
         # The installer script downloads rustup-init with no time limit, and one such download
         # stalled for an hour (#144): each try gets five minutes where `timeout` exists.
@@ -78,67 +58,26 @@ runs:
         echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
         echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
         echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
-        # A self-hosted runner keeps its disk between jobs, so the build cache is a target
-        # folder of its own per job in its tool cache, outside the workspace that checkout
-        # cleans, instead of an archive sent to GitHub's cache and back after every job. One
-        # runner runs one job at a time; a folder past 15 GB is started afresh.
-        if [[ $ISOLATED != true && $CACHE == true ]]; then
-          target="$RUNNER_TOOL_CACHE/canopy-target/$TARGET_NAME"
-          if [[ -d $target ]] && (( $(du -sm "$target" | cut -f1) > 15360 )); then
-            rm -rf "$target"
-          fi
-          mkdir -p "$target"
-          echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
-        fi
 
-    # The machine-wide rustup in the service account's profile is already on
-    # PATH, so this runner's own one is installed here too: dtolnay/rust-toolchain
-    # would find the shared one and skip it.
-    - name: Use this runner's Rust homes, or job-local ones, and Git Bash
-      if: runner.os == 'Windows' && (inputs.isolated == 'true' || runner.environment == 'self-hosted')
+    - name: Use job-local Rust homes
+      if: runner.os == 'Windows' && inputs.isolated == 'true'
       shell: pwsh
       env:
-        ISOLATED: ${{ inputs.isolated }}
-        SELF_HOSTED: ${{ runner.environment == 'self-hosted' }}
-        CACHE: ${{ inputs.cache }}
-        TARGET_NAME: ${{ github.job }}${{ inputs.cache-key != '' && format('-{0}', inputs.cache-key) || '' }}
         RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
       run: |
         $ErrorActionPreference = 'Stop'
-        if ($env:ISOLATED -eq 'true') {
-          $root = Join-Path $env:RUNNER_TEMP 'canopy-rust'
-          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
-        } else {
-          $root = Join-Path $env:RUNNER_TOOL_CACHE 'rust'
-        }
+        $root = Join-Path $env:RUNNER_TEMP 'canopy-rust'
+        if (Test-Path $root) { Remove-Item -Recurse -Force $root }
         $env:CARGO_HOME = Join-Path $root 'cargo'
         $env:RUSTUP_HOME = Join-Path $root 'rustup'
         $bin = Join-Path $env:CARGO_HOME 'bin'
-        if (-not (Test-Path (Join-Path $bin 'rustup.exe'))) {
-          $init = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
-          Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $init
-          & $init --default-toolchain none --no-modify-path -y
-          if ($LASTEXITCODE -ne 0) { throw "rustup-init exited with $LASTEXITCODE" }
-        }
+        $init = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
+        Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $init
+        & $init --default-toolchain none --no-modify-path -y
+        if ($LASTEXITCODE -ne 0) { throw "rustup-init exited with $LASTEXITCODE" }
         "CARGO_HOME=$env:CARGO_HOME" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "RUSTUP_HOME=$env:RUSTUP_HOME" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-        if ($env:SELF_HOSTED -eq 'true') {
-          $git = 'C:\Program Files\Git\bin'
-          if (-not (Test-Path (Join-Path $git 'bash.exe'))) { throw "Git Bash not found in $git" }
-          # Each line is prepended, so the last one comes first.
-          $git | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-        }
         $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-        # The same per-job target folder as on Linux (see there).
-        if ($env:ISOLATED -ne 'true' -and $env:CACHE -eq 'true' -and $env:SELF_HOSTED -eq 'true') {
-          $target = Join-Path (Join-Path $env:RUNNER_TOOL_CACHE 'canopy-target') $env:TARGET_NAME
-          if (Test-Path $target) {
-            $bytes = (Get-ChildItem -Recurse -File -Force $target | Measure-Object -Sum Length).Sum
-            if ($bytes -gt 15GB) { Remove-Item -Recurse -Force $target }
-          }
-          New-Item -ItemType Directory -Force $target | Out-Null
-          "CARGO_TARGET_DIR=$target" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-        }
 
     # CI and releases build with the latest stable Rust, as local builds do.
     - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
@@ -148,7 +87,6 @@ runs:
         targets: ${{ inputs.targets }}
 
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # GitHub-hosted runners only; self-hosted ones keep a target folder (above).
-      if: inputs.cache == 'true' && inputs.isolated != 'true' && runner.environment != 'self-hosted'
+      if: inputs.cache == 'true' && inputs.isolated != 'true'
       with:
         key: ${{ inputs.cache-key }}
