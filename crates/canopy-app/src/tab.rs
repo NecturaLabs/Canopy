@@ -5683,7 +5683,7 @@ mod tests {
         assert!(!held.contains("\n\n"), "one paragraph: {held}");
     }
 
-    /// #265: a stash that stopped on conflicts has nothing to continue or abort, and says the
+    /// #183: a stash that stopped on conflicts has nothing to continue or abort, and says the
     /// stash is kept; changes git holds aside do not come into it.
     #[test]
     fn a_stash_that_stopped_on_conflicts_is_not_asked_to_continue_or_abort() {

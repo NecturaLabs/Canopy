@@ -1764,7 +1764,7 @@ fn submodule_row(repo: &Repo) -> Vec<canopy_core::FileEntry> {
         .collect()
 }
 
-/// #285: Discard on a submodule row brings the submodule back to what the superproject records:
+/// #185: Discard on a submodule row brings the submodule back to what the superproject records:
 /// tracked edits inside it go, the recorded commit is checked out, and untracked files stay.
 /// `git checkout -- <submodule>` alone did nothing, whatever the row showed.
 #[test]

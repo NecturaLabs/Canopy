@@ -4280,7 +4280,7 @@ mod read_tests {
         .expect("an ending event")
     }
 
-    /// #265: a cherry-pick or a revert that stops on conflicts is the user's to resolve, like a
+    /// #183: a cherry-pick or a revert that stops on conflicts is the user's to resolve, like a
     /// merge that does, and not a failed operation.
     #[test]
     fn a_cherry_pick_or_revert_that_stops_on_conflicts_is_reported_as_stopped() {
@@ -4312,7 +4312,7 @@ mod read_tests {
         }
     }
 
-    /// #265: a stash applied or popped onto changes it conflicts with is the user's to resolve; the
+    /// #183: a stash applied or popped onto changes it conflicts with is the user's to resolve; the
     /// stash is kept and the event says it was a stash, which has nothing to continue or abort.
     #[test]
     fn a_stash_apply_that_stops_on_conflicts_is_reported_as_stopped() {

@@ -1422,7 +1422,7 @@ mod tests {
         );
     }
 
-    /// #285: discarding a submodule says what goes (tracked changes inside, the commit it moved
+    /// #185: discarding a submodule says what goes (tracked changes inside, the commit it moved
     /// to) and what stays (untracked files inside), alone or among other files.
     #[test]
     fn discarding_a_submodule_says_its_untracked_files_stay() {

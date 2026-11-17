@@ -30,8 +30,11 @@ personal, private or exploitable.
   history: every author and committer is the organisation's account, AI attribution trailers and
   session links are removed from messages, deleted session handoffs and early screenshots are
   purged. The commit count is unchanged, so build numbers (`git rev-list --count` on `main`) and
-  the `build-*` tags still line up. Issue and pull request numbers are preserved: open issues are
-  recreated with their text, closed ones as closed placeholders.
+  the `build-*` tags still line up. Numbers 1 to 175 are kept: open issues were recreated with
+  their text and closed issues and pull requests as closed `archived` placeholders. The twelve
+  issues still open above that were renumbered #176 to #187 (old #205, #223, #231, #235, #236,
+  #240, #247, #265, #278, #285, #286 and #323, in that order); closed ones above #175 were not
+  recreated.
 - **Every workflow runs on GitHub-hosted runners.** A public repository's pull requests can change
   workflow files, so a self-hosted runner would run a stranger's code on a persistent machine. A
   pull request from a fork runs CI through `pull_request` with a read-only token and no secrets, and
@@ -46,3 +49,6 @@ personal, private or exploitable.
   (`AGENTS.md`).
 - Old commit hashes, and links to them from before 2026-11-18, do not resolve in the public
   repository.
+- In commit messages, comments and documents written before 2026-11-18, an issue or pull request
+  number above #175 means the item of that number in the private archive, except the twelve
+  renumbered issues, whose references in the current tree were updated.
