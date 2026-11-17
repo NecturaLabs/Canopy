@@ -15,7 +15,7 @@ the branch as it was handed over; "Left out, and known issues" says what became 
 Core only (`crates/canopy-core`). One test fixture in the app also changed, with the owner's
 approval: `tab.rs` `entry()` gains `old_mode: None, new_mode: None`. Rebased on `main` after the
 canopy-3 merge.
-Spec: `docs/specs/lfs-flow-spec.md` B2, C and D2; brief: `docs/specs/parallel-sessions.md`.
+Spec: `docs/specs/lfs-flow-spec.md` B2, C and D2.
 (The file name flattens the branch's `/` so it does not create a folder.)
 
 ## Added, and what the worker/UI must do

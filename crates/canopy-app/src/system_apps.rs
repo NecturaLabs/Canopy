@@ -1876,7 +1876,7 @@ mod tests {
     const FOOT_CLIENT: &str = "[Desktop Entry]\nType=Application\nName=Foot Client\nExec=footclient\nCategories=System;TerminalEmulator;\n";
     const GHOSTTY: &str = "[Desktop Entry]\nType=Application\nName=Ghostty\nExec=ghostty\nCategories=System;TerminalEmulator;\n";
 
-    // The maintainer's machine: TERMINAL=xdg-terminal-exec, which resolves to kitty through
+    // A typical Omarchy setup: TERMINAL=xdg-terminal-exec, which resolves to kitty through
     // xdg-terminals.list, with kitty, foot, footclient and Ghostty installed.
     #[cfg(unix)]
     #[test]

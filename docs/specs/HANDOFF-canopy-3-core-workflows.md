@@ -12,8 +12,8 @@ failures on a desktop host are fixed: the unbuffered start
 in `7d79afc`, and `install.sh` runs `update-desktop-database` only when a `mimeinfo.cache`
 already exists. Delete this file when the UI work has landed.
 
-Branch `canopy-3/core-workflows`: the canopy-core half of `lfs-flow-spec.md` parts A, B1 and D1
-(brief: `parallel-sessions.md`, "canopy-3"). Only `crates/canopy-core/` and this file changed. The
+Branch `canopy-3/core-workflows`: the canopy-core half of `lfs-flow-spec.md` parts A, B1 and D1.
+Only `crates/canopy-core/` and this file changed. The
 file is named with `-` for the branch's `/`.
 
 ## Added
