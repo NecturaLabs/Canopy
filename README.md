@@ -6,6 +6,12 @@
 
 <p align="center">A fast, beautiful, Linux-first Git client.</p>
 
+<p align="center">
+  <a href="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml"><img src="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="#licence"><img src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue" alt="Licence: MIT OR Apache-2.0"></a>
+  <a href="https://canopy.necturalabs.com">Website</a>
+</p>
+
 Canopy is a native desktop Git client for Linux, macOS and Windows, written in Rust. It reads
 repositories directly through libgit2, so the commit graph, status and diffs appear immediately
 and stay responsive on large histories. Every change it makes runs through your own `git`
