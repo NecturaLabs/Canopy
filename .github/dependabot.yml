@@ -1,6 +1,4 @@
-# Dependabot's pull requests run CI on GitHub-hosted runners only (see ci.yml): a new crate's
-# build script is unreviewed code and must not run on the self-hosted machine that builds
-# releases.
+# Dependabot's pull requests run CI on GitHub-hosted runners, like every job (see ci.yml).
 version: 2
 updates:
   - package-ecosystem: cargo

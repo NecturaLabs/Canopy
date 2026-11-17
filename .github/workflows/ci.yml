@@ -1,13 +1,14 @@
 name: CI
 
 # Every push to one of this repository's branches runs CI, whether or not it has a pull request,
-# so the owner's working branches are tested on their own and a pull request shows the run of its
-# head commit. Dependabot's branches are pushes too. There is no pull_request trigger: it would
-# only add a second, skipped run per push (the repository is private and takes no pull requests
-# from forks).
+# so working branches are tested on their own and a pull request shows the run of its head commit.
+# Dependabot's branches are pushes too. A pull request from a fork runs CI through the
+# pull_request trigger (no secrets, a read-only token); a pull request from a branch of this
+# repository is already covered by that branch's push run, so its pull_request run does nothing.
 on:
   push:
     branches: ["**"]
+  pull_request:
 
 permissions: {}
 
@@ -23,15 +24,8 @@ env:
   # smaller target folder.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# Linux and Windows jobs run on the organisation's self-hosted runners; the
-# organisation variable USE_SELF_HOSTED set to '0' moves them to GitHub-hosted
-# ones. There is no self-hosted macOS runner.
-#
-# The self-hosted machine also builds releases, so it only runs code that people
-# with write access pushed to this repository's branches. Everything else runs on
-# GitHub-hosted runners: any run not started by a push, and anything Dependabot
-# started or that sits on a dependabot/ branch, whose new crates' build scripts
-# are unreviewed code. Keep the same condition in every job's runs-on.
+# Every job runs on GitHub-hosted runners. The repository is public, so a pull request can
+# change this file: a self-hosted runner would run a stranger's code on a persistent machine.
 
 jobs:
   # A push that changes only documentation (docs/ other than docs/legal/, and Markdown other than
@@ -42,7 +36,10 @@ jobs:
   # runs.
   changes:
     name: What changed
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "x64"]') }}
+    # Every other job needs this one, so a pull request from a branch of this repository skips
+    # the whole run.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -118,7 +115,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "x64"]') }}
+    runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.code == 'true'
     timeout-minutes: 30
@@ -128,9 +125,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/fetch-ui
-        with:
-          key: ${{ secrets.SUBMODULE_DEPLOY_KEY }}
+          submodules: true
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy
@@ -141,31 +136,29 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/') || !matrix.self-hosted) && matrix.hosted || fromJSON(matrix.self-hosted) }}
+    runs-on: ${{ matrix.hosted }}
     needs: changes
-    if: needs.changes.outputs.code == 'true' && vars.CI_TESTS == '1' && (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1' || vars.CI_WINDOWS == '1')
+    if: needs.changes.outputs.code == 'true' && (vars.CI_TESTS == '1' || github.event_name == 'pull_request') && (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1' || vars.CI_WINDOWS == '1')
     timeout-minutes: 45
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      # The whole job is off unless the repository variable CI_TESTS is '1' (the owner's call: the
-      # pre-commit hook runs the tests before every commit; set CI_TESTS=1 to run them here again).
+      # On a push the whole job is off unless the repository variable CI_TESTS is '1' (the
+      # maintainers' pre-commit hook runs the tests before every commit; set CI_TESTS=1 to run them
+      # here again). A pull request from a fork always runs them.
       # Then one toggle per platform, as repository variables: Linux runs unless CI_LINUX is '0';
       # macOS and Windows run only when CI_MACOS or CI_WINDOWS is '1' (both off for now, the
       # owner's call).
       matrix:
-        include: ${{ fromJSON(format('[{0}{1}{2}]', format('{0}', vars.CI_LINUX) != '0' && '{"os":"Linux","hosted":"ubuntu-latest","self-hosted":"[\"self-hosted\", \"linux\", \"x64\"]"}' || '', vars.CI_MACOS == '1' && format('{0}{1}', format('{0}', vars.CI_LINUX) != '0' && ',' || '', '{"os":"macOS","hosted":"macos-latest"}') || '', vars.CI_WINDOWS == '1' && format('{0}{1}', (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1') && ',' || '', '{"os":"Windows","hosted":"windows-latest","self-hosted":""}') || '')) }}
+        include: ${{ fromJSON(format('[{0}{1}{2}]', format('{0}', vars.CI_LINUX) != '0' && '{"os":"Linux","hosted":"ubuntu-latest"}' || '', vars.CI_MACOS == '1' && format('{0}{1}', format('{0}', vars.CI_LINUX) != '0' && ',' || '', '{"os":"macOS","hosted":"macos-latest"}') || '', vars.CI_WINDOWS == '1' && format('{0}{1}', (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1') && ',' || '', '{"os":"Windows","hosted":"windows-latest"}') || '')) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/fetch-ui
-        with:
-          key: ${{ secrets.SUBMODULE_DEPLOY_KEY }}
+          submodules: true
       - uses: ./.github/actions/setup-rust
-      # A job-local global config: self-hosted runners share one home, whose
-      # ~/.gitconfig is the machine's own.
+      # A job-local global config, so the tests never read the runner's own ~/.gitconfig.
       - name: Configure git for tests
         shell: bash
         run: |
@@ -177,29 +170,22 @@ jobs:
       # Every test binary runs even after one fails, so a run reports every failure at once.
       - run: cargo test --workspace --locked --no-fail-fast
       # A window the compositor is not drawing must keep answering its pings (ADR 0007). The check
-      # runs the app on a stand-in compositor with software OpenGL. A GitHub-hosted runner
-      # (Dependabot's eframe bumps, or USE_SELF_HOSTED=0) gets the tools installed and must pass.
-      # A self-hosted runner has whatever its owner installed: the check runs there when it can,
-      # and a failure shows in the log without failing the job.
+      # runs the app on a stand-in compositor with software OpenGL, and must pass.
       - name: Install the tools for the hidden-window check
-        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        if: runner.os == 'Linux'
         run: >
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
           pkg-config libwayland-dev wayland-protocols libwayland-bin
           libxkbcommon0 libegl1 libegl-mesa0 libgl1-mesa-dri
       - name: Hidden-window check
         if: runner.os == 'Linux'
-        continue-on-error: ${{ runner.environment != 'github-hosted' }}
-        env:
-          REQUIRE: ${{ runner.environment == 'github-hosted' && '--require' || '' }}
-        run: python3 tools/stall-check.py ${REQUIRE:+"$REQUIRE"}
+        run: python3 tools/stall-check.py --require
 
-  # The quick checks share one job, so a run starts fewer jobs than there are self-hosted runners
-  # and none waits for another to finish. Every check runs even when an earlier one failed, so one
+  # The quick checks share one job, so a run starts fewer jobs. Every check runs even when an earlier one failed, so one
   # run reports them all. A documentation-only change runs only the documentation check.
   checks:
     name: Format, docs, tooling and dependencies
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "x64"]') }}
+    runs-on: ubuntu-latest
     needs: changes
     timeout-minutes: 15
     permissions:
@@ -209,9 +195,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/fetch-ui
-        with:
-          key: ${{ secrets.SUBMODULE_DEPLOY_KEY }}
+          submodules: true
       # Only the cargo steps need Rust, and a documentation-only change runs none of them.
       - id: rust
         if: needs.changes.outputs.code == 'true'
@@ -250,8 +234,7 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
         run: python3 tools/release.py selftest
       # A pinned, checksum-verified ShellCheck, so every runner reports the same findings.
-      # packaging/ is held to every rule; tools/ to warnings and errors. A self-hosted runner keeps
-      # the archive in its tool cache and checks it again before every use.
+      # packaging/ is held to every rule; tools/ to warnings and errors.
       - name: ShellCheck
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
         env:
@@ -294,8 +277,7 @@ jobs:
       - name: Licence notices check
         if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
         run: python3 tools/notices.py --check
-      # A prebuilt binary: the cargo-deny action is a container action, which on
-      # the self-hosted runners would leave root-owned files in their work folders.
+      # A prebuilt binary rather than the cargo-deny container action.
       - id: deny
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3

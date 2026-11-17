@@ -64,7 +64,7 @@ same feed release) unless beta already offers a newer build.
    skipped with a warning and running copies are not offered the update); `RELEASE_TOKEN` only if
    tags are protected against creation by the workflow's own token; variable `CANOPY_SENTRY_DSN` overrides the built-in
    crash-report DSN (`off` builds without crash reporting; unset keeps the built-in one);
-   variable `USE_SELF_HOSTED=0` moves the builds to GitHub-hosted runners; and the CI platform
+   and the CI platform
    variables `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` decide which platforms Release builds
    (`CI_MACOS` and `CI_WINDOWS` are off unless `1`). Read them with `gh variable list` and tell
    the user which platforms the release will ship before dispatching.
@@ -90,12 +90,12 @@ same feed release) unless beta already offers a newer build.
    - builds `canopy-app` with `--locked` for the platforms its `platforms` job turns on from the
      CI variables, like CI's test job: Linux unless `CI_LINUX` is `0`, macOS only when `CI_MACOS`
      is `1`, Windows only when `CI_WINDOWS` is `1` (it fails if all three are off). Linux is
-     `x86_64-unknown-linux-gnu` (in an Ubuntu 22.04 container on the self-hosted runner, with a
-     check that it needs no newer than glibc 2.35) and `aarch64-unknown-linux-gnu` (cross-compiled
-     in the same container with Ubuntu's aarch64 GCC, same glibc check); macOS is
+     `x86_64-unknown-linux-gnu` (on an Ubuntu 22.04 runner, with a check that it needs no newer
+     than glibc 2.35) and `aarch64-unknown-linux-gnu` (cross-compiled on the same runner with
+     Ubuntu's aarch64 GCC, same glibc check); macOS is
      `aarch64-apple-darwin` and `x86_64-apple-darwin` (cross-compiled on the Apple silicon
-     runner); Windows is `x86_64-pc-windows-msvc`. The Linux and Windows builds use the
-     self-hosted runners from an empty workspace and job-local toolchain, macOS runs hosted. The
+     runner); Windows is `x86_64-pc-windows-msvc`. Every build runs on a GitHub-hosted runner
+     with a job-local toolchain. The
      two cross-compiled targets are `experimental`: they build in a job of their own (20 minute
      limit) that publishing does not wait for, so their failure or a hang never holds back the
      release. Once the release and the feed are out, "Add the experimental builds" adds the
