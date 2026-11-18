@@ -393,6 +393,16 @@ mod tests {
     use crate::settings::{CloneProtocol, PullMode, PushMode};
     use crate::ui::theme::ThemeId;
 
+    /// A folder trusted on this machine. Settings keep only absolute folders, and `/srv/trusted`
+    /// is not one on Windows.
+    fn trusted_folder() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(r"C:\srv\trusted")
+        } else {
+            PathBuf::from("/srv/trusted")
+        }
+    }
+
     fn customised() -> Settings {
         Settings {
             theme: ThemeId::Daylight,
@@ -404,7 +414,7 @@ mod tests {
             accepted_terms: "2026-10-03".to_owned(),
             accepted_privacy: "2026-10-03".to_owned(),
             crash_reports: Some(false),
-            trusted_folders: vec![PathBuf::from("/srv/trusted")],
+            trusted_folders: vec![trusted_folder()],
             trust_safety: false,
             recent: vec![PathBuf::from("/srv/repo")],
             ..Settings::default()
@@ -465,7 +475,7 @@ mod tests {
     fn a_file_cannot_turn_trust_safety_on_either() {
         let off = Settings {
             trust_safety: false,
-            trusted_folders: vec![PathBuf::from("/srv/trusted")],
+            trusted_folders: vec![trusted_folder()],
             ..Settings::default()
         };
         let text = r#"{"format": "canopy-settings", "version": 1, "settings": {

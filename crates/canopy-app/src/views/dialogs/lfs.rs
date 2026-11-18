@@ -388,7 +388,7 @@ mod tests {
     use canopy_core::{LfsFile, LfsLock, LfsPattern, LfsPointer, MissingTool};
 
     use super::*;
-    use crate::ui::kit::testkit::spoken;
+    use crate::ui::kit::testkit::{Spoken, spoken};
     use crate::worker::LfsInfo;
 
     fn tab() -> RepoTab {
@@ -402,6 +402,13 @@ mod tests {
     }
 
     fn draw(form: &mut LfsForm, tab: &RepoTab) -> Vec<String> {
+        draw_nodes(form, tab)
+            .into_iter()
+            .filter_map(|s| s.label)
+            .collect()
+    }
+
+    fn draw_nodes(form: &mut LfsForm, tab: &RepoTab) -> Vec<Spoken> {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
@@ -412,7 +419,7 @@ mod tests {
                 show(&ctx, salt, form, Some(tab));
             });
         }
-        said.into_iter().filter_map(|s| s.label).collect()
+        said
     }
 
     fn file(path: &str, downloaded: bool) -> LfsFile {
@@ -476,14 +483,31 @@ mod tests {
                 install: vec!["Install git-lfs with your package manager.".into()],
             }),
         }));
-        let said = draw(
+        let said = draw_nodes(
             &mut LfsForm::new(PathBuf::from("fixture"), LfsPage::Files),
             &tab,
         );
         // The reason is in the dialog's text (see `LfsState::unavailable`); what a screen reader
-        // hears of the actions is that they cannot run.
-        for action in ["Download, unavailable", "Fetch objects only, unavailable"] {
-            assert!(said.iter().any(|s| s == action), "{said:?}");
+        // hears of the actions is that they cannot run, and why. Linux's adapter does not say a
+        // button is disabled, so there the name says it.
+        let suffix = if cfg!(all(unix, not(target_os = "macos"))) {
+            ", unavailable"
+        } else {
+            ""
+        };
+        for action in ["Download", "Fetch objects only"] {
+            let name = format!("{action}{suffix}");
+            let node = said
+                .iter()
+                .find(|s| s.label.as_deref() == Some(name.as_str()))
+                .unwrap_or_else(|| panic!("{name} in {said:?}"));
+            assert!(node.disabled, "{node:?}");
+            assert!(
+                node.description
+                    .as_deref()
+                    .is_some_and(|d| d.contains("git-lfs is not installed")),
+                "{node:?}"
+            );
         }
     }
 }

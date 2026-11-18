@@ -373,7 +373,19 @@ fn init_follows_conditional_global_config_for_its_destination() {
     let target = dir.path().join("conditional");
     let file = global().with_file_name("conditional");
     fs::write(&file, "[init]\ndefaultBranch = destination\n").expect("conditional config");
-    let condition = format!("includeIf.gitdir:{}.path", target.join(".git").display());
+    // Git matches `gitdir:` against the real path of the repository it creates (`/var` is
+    // `/private/var` on macOS; Windows' short 8.3 names are expanded), as a pattern in which `\\`
+    // escapes: so the folder is resolved and written with `/`, as git writes it on Windows too.
+    let real = fs::canonicalize(dir.path())
+        .expect("real path")
+        .display()
+        .to_string();
+    let real = real
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&real)
+        .replace('\\', "/");
+    let gitdir = format!("{real}/conditional/.git");
+    let condition = format!("includeIf.gitdir:{gitdir}.path");
     cli::run(
         dir.path(),
         &["config", "--global", &condition, "conditional"],
