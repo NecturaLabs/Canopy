@@ -199,8 +199,9 @@ Keep independently reviewable work in atomic commits. Contribute to the existing
 - Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`.
 - Scopes: a crate (`core`, `app`) or a module (`graph`, `worker`, `diff`, `history`, `theme`, ...).
 - Breaking changes: `!` after the scope and a `BREAKING CHANGE:` footer.
-- Security fixes: the `security` scope or a `Security:` footer naming the advisory
-  (`Security: GHSA-...`), so the release notes list them under Security.
+- Security fixes: a releasable type (`fix`, `feat`, `perf`, `revert`, `build(deps)`) with the
+  `security` scope or a `Security:` footer naming the advisory (`Security: GHSA-...`), so the
+  release notes list them under Security. Other types never reach the notes.
 
 Example: `feat(changes): stage individual lines from the diff viewer`.
 

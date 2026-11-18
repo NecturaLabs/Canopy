@@ -26,6 +26,7 @@ jobs:
           submodules: true
       # Like the release builds, the tests of a release commit take nothing from a shared cache.
       - uses: ./.github/actions/setup-rust
+        timeout-minutes: 10
         with:
           isolated: "true"
       - name: Configure git for tests
