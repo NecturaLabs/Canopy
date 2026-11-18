@@ -1,0 +1,45 @@
+name: Visual evidence
+
+# Asks a pull request that can change what Canopy or its site shows to show it: an image or a
+# recording in the body, or a "No visible change: <why>" line, taken at the author's word. A
+# nudge for faster reviews, not a gate: it is not a required check (a required check must not
+# be path-filtered, or a pull request that skips it waits forever), so the paths are broad. It
+# reads only the event payload and needs no token, so a fork's pull request runs it the same way,
+# and editing the body runs it again.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    paths:
+      - "crates/canopy-app/src/**"
+      - "crates/nectura-ui"
+      - "assets/**"
+      - "site/**"
+
+permissions: {}
+
+concurrency:
+  group: visual-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  visual-evidence:
+    name: Screenshots or no visible change
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.user.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Look for an image, a recording or a no-visible-change line in the body
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # HTML comments (the template's hints) do not count.
+          body=$(perl -0pe 's/<!--.*?-->//gs' <<<"$BODY")
+          if grep -qiE '!\[[^]]*\]\([^)]+\)|<img[[:space:]]|<video[[:space:]]|https://github\.com/user-attachments/' <<<"$body"; then
+            echo "The body shows the change."
+          elif grep -qiE '^[[:space:]>*_-]*No visible change[*_]*:[*_]*[[:space:]]*[^[:space:]<*_]' <<<"$body"; then
+            echo "The body says nothing on screen changes."
+          else
+            echo "::error::This pull request touches the UI or the site. Edit the description (re-running this check reuses the old one): add before and after screenshots (tools/screenshot.sh, dark and light where colours change) to the Screenshots section, or a line 'No visible change: <why>'."
+            exit 1
+          fi
