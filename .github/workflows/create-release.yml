@@ -15,8 +15,8 @@
 #
 # Secrets: RELEASE_TOKEN only if tags are protected against creation by the workflow's own token:
 # a token allowed to push the tag (best: a GitHub App on the ruleset's bypass list; a
-# fine-grained token works too). Otherwise the workflow's own token is used. APP_UPDATES_TOKEN is
-# passed on to the Release workflow.
+# fine-grained token works too). Otherwise the workflow's own token is used. The Release workflow's
+# feed jobs read APP_UPDATES_TOKEN from the `release` environment themselves, so nothing is passed.
 name: Create release
 
 on:
@@ -149,6 +149,5 @@ jobs:
     with:
       tag: ${{ needs.prepare.outputs.tag }}
       channel: ${{ inputs.channel }}
-    # Only the feed token: RELEASE_TOKEN, which can push tags, stays in this workflow.
-    secrets:
-      APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
+    # No secrets: RELEASE_TOKEN, which can push tags, stays in this workflow, and the feed token is
+    # the `release` environment's.

@@ -221,7 +221,8 @@ yet in `install.ps1` ([#39](https://github.com/NecturaLabs/Canopy/issues/39)).
 - Windows (`x86_64-pc-windows-msvc`): `canopy.exe`.
 
 An experimental build may fail without holding back the release; the installer then reports
-that the platform has no build. The release also attaches `install.sh`, `install.ps1` and
+that the platform has no build. Releases are immutable: every file is attached before a release
+is published, and none can be changed afterwards. The release also attaches `install.sh`, `install.ps1` and
 `SHA256SUMS`, and a stable release commits the two scripts to `canopy/` in app-updates next to
 `latest.json`. Beta builds never replace them.
 

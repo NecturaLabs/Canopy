@@ -62,8 +62,9 @@ same feed release) unless beta already offers a newer build.
    documents match what the build sends (`docs/legal/`).
 5. The user simulation review ran after the release's last planned change and every finding is
    fixed (`tools/usersim.sh`, `docs/playbook.md`).
-6. Settings the workflows need: secret `APP_UPDATES_TOKEN` (Contents read/write on
-   `NecturaLabs/app-updates` only; without it the release is published but the feed step is
+6. Settings the workflows need: secret `APP_UPDATES_TOKEN` in the `release` environment (Contents
+   read/write on `NecturaLabs/app-updates` only; the environment admits only `main`, and only the
+   feed jobs declare it; without it the release is published but the feed step is
    skipped with a warning and running copies are not offered the update); `RELEASE_TOKEN` only if
    tags are protected against creation by the workflow's own token; variable `CANOPY_SENTRY_DSN` overrides the built-in
    crash-report DSN (`off` builds without crash reporting; unset keeps the built-in one);
@@ -100,11 +101,13 @@ same feed release) unless beta already offers a newer build.
      runner); Windows is `x86_64-pc-windows-msvc`. Every build runs on a GitHub-hosted runner
      with a job-local toolchain. The
      two cross-compiled targets are `experimental`: they build in a job of their own (20 minute
-     limit) that publishing does not wait for, so their failure or a hang never holds back the
-     release. Once the release and the feed are out, "Add the experimental builds" adds the
-     archives that built to both releases (with a new `SHA256SUMS`) and to every feed manifest
-     that still names the build, and warns about each target that did not build; until then, or
-     without it, the installer reports that platform as having no build;
+     limit once a runner starts it) that may fail, so a failure or a hang never holds back the
+     release beyond that limit; a job still queued for a runner holds it until it runs (there is
+     no switch for the experimental targets alone). Publishing waits for it and ships the archives that built, warning about each target
+     that did not; the installer reports that platform as having no build;
+   - publishes both releases (here and the feed's in app-updates) as drafts, attaches every file,
+     then publishes them: both repositories have immutable releases on, so a published release's
+     files and tag can never change;
    - builds with the number, the commit's short hash and the notes embedded
      (`crates/canopy-app/build.rs`), so `canopy --version` prints `canopy build <n> (<hash>)`;
    - packages `canopy-build-<number>-<target>.tar.gz` (Linux, macOS) or `.zip` (Windows):
@@ -134,12 +137,12 @@ same feed release) unless beta already offers a newer build.
 - The Create release run succeeded (`gh run view <id>`). Release runs inside it as a reusable
   workflow, so its jobs appear there as "Build and publish / …", not under
   `gh run list --workflow release.yml` (that lists only manual reruns). Every job is green except
-  possibly an experimental build and "Add the experimental builds" (both are allowed to fail),
+  possibly an experimental build (allowed to fail),
   and `Publish to the update feed` did not warn that the token is missing.
 - `git fetch --tags` locally; the tag `build-<number>` is on the commit you meant to release.
 - `gh release view build-<number>` lists one archive per target built (two for Linux, two for macOS,
   one for Windows, for the platforms that were on; one fewer for each experimental build that
-  failed: check why; an experimental archive arrives after the others), `install.sh`,
+  failed: check why), `install.sh`,
   `install.ps1` and `SHA256SUMS`; the notes match
   `tools/release.py notes build-<number>`; `gh release view build-<number> --json isPrerelease`
   is `true` for a beta and `false` for a stable release.
@@ -166,9 +169,14 @@ same feed release) unless beta already offers a newer build.
   channel=stable|beta`). Do not run Create release again: it would stop, since HEAD is a tagged
   build. Release refuses a tag whose number is not the commit count of its commit, or whose
   commit is not on `main`.
-- An experimental build failed or ran out of time: the release is out without it. Re-running that
-  run's failed jobs (`gh run rerun <id> --failed`) builds it again and, through "Add the
-  experimental builds", adds it; or leave it for the next build.
+- An experimental build failed or ran out of time: the release is out without it, and an
+  immutable release cannot take it later. It ships with the next build.
+- A publish job failed: rerun the failed jobs (`gh run rerun <id> --failed`). A release still a
+  draft is completed; one already published is left exactly as it is (immutable) and the job goes
+  on to the steps after it, such as the feed manifest. Rerun within 3 days: the run's artifacts
+  expire after that. Running Release by hand for a published tag ships the files that release
+  published, never a rebuild, and refuses a published feed release whose files differ. Files
+  missing from a published release can only ship with the next build.
 - The code is wrong after a release was published: never move or delete a published tag. Merge the
   fix and cut a new build.
 - A tag that never produced a published release may be deleted
