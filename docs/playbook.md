@@ -149,10 +149,10 @@ or how flows feel end to end.
   channel=beta -f dry-run=false`): no dry run first. Nothing is committed to `main`; the tag is `build-<n>`. It can
   be dispatched right after a merge: it waits for main's CI run (under a minute when the merged
   branch was up to date with `main`, since that run reuses the branch's).
-- The experimental builds (aarch64 Linux, Intel macOS) never hold back a release: it is published
-  from the other builds, and "Add the experimental builds" adds their archives to the releases
-  and the feed when they finish. Build 1116 was stuck for an hour on a hung aarch64 job before
-  that (#144).
+- The experimental builds (aarch64 Linux, Intel macOS) may fail without failing the release: it
+  waits for them (20 minute limit; build 1116 was once stuck for an hour on a hung aarch64 job,
+  #144) and ships the archives that built. Releases are immutable in Canopy and app-updates: each
+  is a draft until every file is attached, and nothing can be added after it is published.
 - `NecturaLabs/app-updates` (public) holds `canopy/latest.json`, `beta.json`, `install.sh`,
   `install.ps1` and the releases `canopy-build-<n>`. The build each channel serves is the `version`
   in its manifest: `gh api -H 'Accept: application/vnd.github.raw'
@@ -166,7 +166,10 @@ or how flows feel end to end.
   build 119 failed there (git's "dubious ownership"), so its tag was deleted and the fix released
   as build 120. A release job's composite actions come from the tag's own commit, so a workflow fix
   needs a new build, not a rerun of the old tag.
-- `APP_UPDATES_TOKEN` must exist in the Canopy repository's secrets or the feed step is skipped.
+- `APP_UPDATES_TOKEN` must exist in the Canopy repository's `release` environment (main and
+  `build-*` tags only) or the feed step is skipped. `NETLIFY_AUTH_TOKEN` is the `site`
+  environment's (main only). A secret added as a repository or organisation secret would reach
+  any branch's workflow: keep them in the environments.
 
 For the expanded commit-details layout, render with `--overlay commit-expanded`; it activates
 the header’s Expand button by its accessible name. Use `--size 960x640` for compact details.

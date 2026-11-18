@@ -52,6 +52,11 @@ in its place.
 
 `SHA256SUMS` in the release lists each file's checksum.
 
+Releases published after build 1683 are immutable, in this repository and in
+`NecturaLabs/app-updates`: their files and tags cannot change once published, and GitHub signs a
+release attestation. `gh release verify-asset build-<number> <file> --repo NecturaLabs/Canopy`
+checks that a file is the one that release published.
+
 ## Scope
 
 Canopy runs `git` on your computer and talks only to the hosts its Privacy Policy lists
