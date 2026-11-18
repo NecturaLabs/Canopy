@@ -11,7 +11,7 @@
 //! application registers an [`Askpass`] program with [`set_askpass`], git and OpenSSH ask it for
 //! credentials instead; git consults `GIT_ASKPASS` before it checks `GIT_TERMINAL_PROMPT`.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -134,6 +134,11 @@ pub(crate) fn apply_env(cmd: &mut Command) {
         // program: only this variable outranks it.
         .env("GIT_SEQUENCE_EDITOR", "true")
         .env("GIT_MERGE_AUTOEDIT", "no");
+    // Git for Windows runs parts of git (the `git submodule` wrapper, hooks) in its MSYS shell,
+    // whose runtime expands wildcards in the arguments it starts with: `deps/lib[1]` would name
+    // an existing `deps/lib1`. `noglob` keeps every argument as Canopy passed it.
+    #[cfg(windows)]
+    cmd.env("MSYS", msys_without_glob(std::env::var_os("MSYS")));
     let slot = askpass_slot()
         .read()
         .unwrap_or_else(PoisonError::into_inner);
@@ -151,6 +156,22 @@ pub(crate) fn apply_env(cmd: &mut Command) {
     }
     for (key, value) in &askpass.env {
         cmd.env(key, value);
+    }
+}
+
+/// The MSYS runtime options `current` asks for, with argument wildcards left unexpanded: the
+/// options are words, and the last word about a setting wins.
+#[cfg_attr(
+    not(any(windows, test)),
+    expect(dead_code, reason = "only Windows runs git through MSYS")
+)]
+fn msys_without_glob(current: Option<OsString>) -> OsString {
+    match current {
+        Some(mut options) if !options.is_empty() => {
+            options.push(" noglob");
+            options
+        }
+        _ => OsString::from("noglob"),
     }
 }
 
@@ -710,6 +731,30 @@ pub(crate) fn has_merge_tree_write_tree() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn msys_never_expands_wildcards_and_keeps_the_users_options() {
+        assert_eq!(msys_without_glob(None), "noglob");
+        assert_eq!(msys_without_glob(Some(OsString::new())), "noglob");
+        assert_eq!(
+            msys_without_glob(Some(OsString::from("winsymlinks:nativestrict glob"))),
+            "winsymlinks:nativestrict glob noglob"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_runs_with_msys_wildcards_off() {
+        let cmd = command(None);
+        let msys = cmd
+            .get_envs()
+            .find(|(k, _)| k.eq_ignore_ascii_case("MSYS"))
+            .and_then(|(_, v)| v);
+        assert!(
+            msys.is_some_and(|v| v.to_string_lossy().ends_with("noglob")),
+            "{msys:?}"
+        );
+    }
+
     use super::*;
 
     /// Output that is parsed is asked for in the C locale, whatever the user's language is.
