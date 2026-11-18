@@ -47,20 +47,20 @@ Never open a Canopy window on your own desktop session. A launch that still has
 `WAYLAND_DISPLAY` set opens there. A window on a hidden workspace gets no frame callbacks; Canopy
 used to block in its buffer swap then and Hyprland raised "Application Not Responding" for it
 (ADR 0007). `tools/stall-check.py` tests that safely, on a stand-in compositor. Run the app on its own
-X display instead: it needs Xvfb and xauth (`xorg-server-xvfb` and `xorg-xauth` on Arch), `xdotool` and
-ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `xvfb-run`.
+X display instead: Xvfb (Arch `xorg-server-xvfb` and `xorg-xauth`, Debian/Ubuntu `xvfb`), `xdotool`
+and ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `xvfb-run`.
 
 1. Isolate it. The session exports `XDG_*` and the real `~/.gitconfig` is read by git, so a wrapper
    script must export `HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
-   `XDG_STATE_HOME` and `TMPDIR` pointing into a scratch folder on a disk with free space,
-   `GIT_CONFIG_GLOBAL` pointing at an empty file there,
+   `XDG_STATE_HOME` and `TMPDIR` pointing into a scratch folder (a
+   `mktemp -d` directory), `GIT_CONFIG_GLOBAL` pointing at an empty file there,
    `GIT_CONFIG_NOSYSTEM=1`, unset `GIT_AUTHOR_*`, `GIT_COMMITTER_*` and `EMAIL`, and then
    `exec target/release/canopy "$@"`. Run it only on a fixture (`tools/mkfixture.sh`).
 2. Start the display and launch, with Wayland unset:
    `Xvfb :77 -screen 0 1440x900x24 -nolisten tcp &` then
    `env -u WAYLAND_DISPLAY DISPLAY=:77 LIBGL_ALWAYS_SOFTWARE=1 wrapper.sh FIXTURE &`. Add
-   `CANOPY_LOG=canopy=debug,canopy_core=debug` to check what is logged. Check with your
-   compositor's window list that no Canopy window exists on the real session.
+   `CANOPY_LOG=canopy=debug,canopy_core=debug` to check what is logged. Check on the
+   real session (on Hyprland, `hyprctl clients -j`) that no Canopy window exists there.
 3. Drive it. There is no window manager, so keyboard focus must be given explicitly:
    `xdotool windowfocus $(xdotool search --name Canopy | tail -1)` before typing. Then
    `xdotool mousemove X Y click 1`, `xdotool type --delay 40 -- TEXT` and `xdotool key ctrl+a`
@@ -143,7 +143,8 @@ or how flows feel end to end.
   (`gh variable set CI_TESTS --body 1`); unset or `0` skips it. Its per-platform toggles still
   apply. This toggle never disables release tests. The local pre-commit hook is an early check,
   while the mandatory release job is the enforced publication gate.
-- Read the `release` skill first. A release publishes to users: confirm the build and channel with
+- Read the `release` skill first. Work lands in `dev`; merge a pull request from `dev` into `main`
+  first (ADR 0020). A release publishes to users: confirm the build and channel with
   the owner, then dispatch it once for real (`gh workflow run create-release.yml --ref main -f
   channel=beta -f dry-run=false`): no dry run first. Nothing is committed to `main`; the tag is `build-<n>`. It can
   be dispatched right after a merge: it waits for main's CI run (under a minute when the merged

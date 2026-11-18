@@ -43,6 +43,8 @@ same feed release) unless beta already offers a newer build.
 
 ## Before dispatching
 
+0. Bring the work to `main`: open a pull request from `dev` into `main` (the only source the
+   required "Source branch" check accepts), let its checks pass and merge it.
 1. Confirm the build and channel with the user: run `python3 tools/release.py plan` and
    `python3 tools/release.py notes` on an up-to-date `main` (full history, not a shallow clone) and
    show the result. A release is public and cannot be unpublished cleanly.
@@ -141,7 +143,8 @@ same feed release) unless beta already offers a newer build.
   `install.ps1` and `SHA256SUMS`; the notes match
   `tools/release.py notes build-<number>`; `gh release view build-<number> --json isPrerelease`
   is `true` for a beta and `false` for a stable release.
-- If Linux was built, download its archive: `sha256sum -c` against `SHA256SUMS`,
+- If Linux was built, download its archive: `gh attestation verify <archive> --repo NecturaLabs/Canopy`
+  passes, `sha256sum -c` against `SHA256SUMS`,
   `./canopy --version` prints `canopy build <number> (<hash>)`, and the archive holds the desktop
   entry, metainfo, `io.necturalabs.Canopy.png` and `legal/`.
 - The manifest on the channel names `<number>` as its `version` and the platform URLs resolve

@@ -29,7 +29,5 @@ Thumbs.db
 .claude/settings.local.json
 .claude/worktrees/
 
-# Local design-tool and Netlify CLI state; only the design detector's shared config is tracked
-.impeccable/*
-!.impeccable/config.json
+# Netlify CLI state
 site/.netlify/

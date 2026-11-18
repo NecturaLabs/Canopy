@@ -1,7 +1,8 @@
-This skill is adapted from the NecturaLabs testing skill, which is distributed under the MIT License
-below. SKILL.md carries Canopy-specific changes; files under references/, templates/ and
-examples/ are unchanged from upstream unless the file itself says otherwise. The rest of the
-Canopy repository is licensed under MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
+This skill is adapted from NecturaLabs' testing agent skill (version 5.1.1), which is
+distributed under the MIT License below. SKILL.md carries Canopy-specific changes; files under
+references/, templates/ and examples/ are unchanged from upstream unless the file itself says
+otherwise. The rest of the Canopy repository is licensed under MIT OR Apache-2.0 (LICENSE-MIT,
+LICENSE-APACHE).
 
 ----------------------------------------------------------------------------------------------
 

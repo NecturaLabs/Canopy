@@ -9,13 +9,16 @@ security problems privately, as [SECURITY.md](SECURITY.md) says, never in a publ
 1. Find an issue: [`good first issue`](https://github.com/NecturaLabs/Canopy/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
    and [`help wanted`](https://github.com/NecturaLabs/Canopy/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
    mark ones that are ready to pick up. Say in the issue that you are working on it.
-2. For a new feature or a large change, open an issue (or a
-   [discussion](https://github.com/NecturaLabs/Canopy/discussions)) first and agree the approach
-   before writing code; a pull request that arrives unannounced may not fit.
+2. Issues are the maintainer's backlog, so only collaborators can open them. To report a bug,
+   propose a feature or agree the approach for a large change, start a
+   [discussion](https://github.com/NecturaLabs/Canopy/discussions) first; a pull request that
+   arrives unannounced may not fit.
 3. Fork the repository, clone it with `--recurse-submodules`, and make a branch.
 4. Make the change with its tests, run `tools/check.sh` (see [Checks](#checks)), and commit with
    [Conventional Commits](#commit-messages) and a sign-off (`git commit -s`).
-5. Open a pull request against `main`, fill in the template and link the issue.
+5. Open a pull request against `dev`, fill in the template and link the issue. `dev` is the default
+   branch and takes all work; `main` only takes `dev` when a build is released. A pull request
+   opened against `main` is moved to `dev`. Only the maintainer merges.
 
 Questions about using Canopy go to [Discussions](https://github.com/NecturaLabs/Canopy/discussions)
 ([SUPPORT.md](SUPPORT.md)).
