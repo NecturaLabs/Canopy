@@ -428,7 +428,8 @@ pub enum Delivery {
     /// Something waits on the user (conflicts to resolve, a program to install), so it is an
     /// attention notice and not an error.
     Attention,
-    /// Work the user did not start failed: the center and the bell hold it, no card.
+    /// Work the user did not start failed, or changed something: the center and the bell hold
+    /// it, no card.
     Quiet,
 }
 
@@ -3140,6 +3141,21 @@ impl RepoTab {
                         body: "Canopy set your uncommitted changes aside for this, and putting them back conflicts with the new commits. Resolve the conflicted files in Changes. Your changes also stay in the stash list until you drop that stash.".into(),
                     });
                 }
+                Event::GoneBranchesRemoved {
+                    title,
+                    names,
+                    quiet,
+                } => notices.push(Notice {
+                    ok: true,
+                    // After a fetch nobody asked for, the center and the bell hold it.
+                    delivery: if quiet {
+                        Delivery::Quiet
+                    } else {
+                        Delivery::Card
+                    },
+                    title,
+                    body: names,
+                }),
                 Event::WatchFailed(e) => notices.push(Notice {
                     ok: false,
                     delivery: Delivery::Quiet,

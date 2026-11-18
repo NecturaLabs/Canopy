@@ -60,14 +60,20 @@ impl Repo {
         prune: bool,
         progress: impl FnMut(&str),
     ) -> Result<Option<PullPreview>> {
-        let Some(upstream) = self.head_upstream() else {
+        if self.head_upstream().is_none() {
             return Ok(None);
-        };
+        }
         // An upstream in this repository (remote ".") has nothing to fetch.
-        if let Some(remote) = upstream.remote.filter(|r| r != ".") {
+        if let Some(remote) = self.preview_remote() {
             self.fetch(Some(&remote), prune, progress)?;
         }
         self.compare_upstream()
+    }
+
+    /// The remote [`Repo::pull_preview`] fetches: the one the checked-out branch's upstream is
+    /// on. `None` without an upstream, or for one in this repository (remote `.`).
+    pub fn preview_remote(&self) -> Option<String> {
+        self.head_upstream()?.remote.filter(|r| r != ".")
     }
 
     /// [`Repo::pull_preview`] against the upstream as last fetched, without fetching.
