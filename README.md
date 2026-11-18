@@ -254,8 +254,8 @@ the visual design system.
 
 ```sh
 cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 cargo run -p canopy-app -- <repo>
 tools/check.sh                       # fmt, clippy, tests, release, notices, docs and stall checks, installer test
 tools/mkfixture.sh /tmp/demo         # deterministic demo repository
@@ -274,9 +274,10 @@ convention and pull request checklist, and [GitHub Issues](https://github.com/Ne
 │   ├── canopy-core/        Git backend: snapshots, graph layout, diffs, status, operations,
 │   │                       git-flow, ignore rules, LFS, submodules, forge URLs, conflicts
 │   ├── canopy-hosting/     GitHub and GitLab API client and the update-manifest fetch
-│   └── canopy-app/         GUI binary `canopy`
-│       ├── assets/         bundled fonts (OFL) and window icon
-│       └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/
+│   ├── canopy-app/         GUI binary `canopy`
+│   │   ├── assets/         window icon
+│   │   └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/
+│   └── nectura-ui/         component library (submodule): theme, fonts, motion, components
 ├── assets/                 application icon (PNG)
 ├── docs/                   architecture, design system, feature matrix, keybindings,
 │                           ADRs, specs, legal texts, screenshots
