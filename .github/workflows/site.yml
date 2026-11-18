@@ -4,8 +4,10 @@ name: Site
 # checked and deployed to Netlify as it is, with no build step. Pull requests and other branches
 # are only checked. "Run workflow" on main deploys again by hand.
 #
-# NETLIFY_AUTH_TOKEN is the organisation's secret; NETLIFY_SITE_ID is this repository's variable.
-# Cloudflare serves the domain: a proxied CNAME to canopy-necturalabs.netlify.app.
+# NETLIFY_AUTH_TOKEN is a secret of the `site` environment, which only main can use; NETLIFY_SITE_ID
+# is this repository's variable. The deploy is one zip upload to Netlify's REST API with curl: no
+# npm package runs while the token is in the job. Cloudflare serves the domain: a proxied CNAME to
+# canopy-necturalabs.netlify.app.
 on:
   push:
     branches: [main]
@@ -29,7 +31,7 @@ concurrency:
 
 jobs:
   site:
-    name: Check and deploy
+    name: Check
     # GitHub-hosted, like every job; it builds nothing.
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -46,11 +48,55 @@ jobs:
       # scripts parse.
       - name: Site check
         run: python3 tools/check-site.py
+
+  deploy:
+    name: Deploy
+    needs: [site]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The token is a secret of this environment, which only main can use.
+    environment: site
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Deploy to Netlify
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         working-directory: site
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ vars.NETLIFY_SITE_ID }}
           MESSAGE: Deploy from ${{ github.ref_name }} @ ${{ github.sha }}
-        run: npx --yes netlify-cli@27.11.2 deploy --dir=. --prod --no-build --message="$MESSAGE"
+        run: |
+          set -euo pipefail
+          if [[ -z $NETLIFY_AUTH_TOKEN || -z $NETLIFY_SITE_ID ]]; then
+            echo "::error::NETLIFY_AUTH_TOKEN (environment site) or NETLIFY_SITE_ID is not set."
+            exit 1
+          fi
+          zip -qr -X "$RUNNER_TEMP/site.zip" .
+          # The token goes in a header file, never on a command line.
+          header="$RUNNER_TEMP/netlify-auth"
+          trap 'rm -f "$header"' EXIT
+          printf 'Authorization: Bearer %s\n' "$NETLIFY_AUTH_TOKEN" > "$header"
+          api=https://api.netlify.com/api/v1
+          title=$(jq -rn --arg m "$MESSAGE" '$m | @uri')
+          # A zip deploy that is not a draft goes to production once Netlify has processed it.
+          id=$(curl -sS --fail-with-body --retry 3 -H @"$header" -H 'Content-Type: application/zip' \
+            --data-binary @"$RUNNER_TEMP/site.zip" "$api/sites/$NETLIFY_SITE_ID/deploys?title=$title" | jq -r .id)
+          if [[ ! $id =~ ^[0-9a-f]+$ ]]; then
+            echo "::error::Netlify returned no deploy id."
+            exit 1
+          fi
+          state=new
+          for _ in $(seq 60); do
+            state=$(curl -sS --fail-with-body --retry 3 -H @"$header" "$api/deploys/$id" | jq -r .state)
+            case $state in
+              ready) echo "Deploy $id is live."; exit 0 ;;
+              error | rejected) echo "::error::Netlify deploy $id ended in state $state."; exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "::error::Netlify deploy $id was not ready after five minutes (state $state)."
+          exit 1

@@ -52,14 +52,17 @@ The site is live at <https://canopy.necturalabs.com>. CI deploys it: the Site wo
 (`.github/workflows/site.yml`) runs on every push to `main` that touches `site/`, first
 `python3 tools/check-site.py` (every file the page, styles and scripts name exists, every
 address outside the site is allowed by the content security policy, the scripts parse), then
-`netlify-cli deploy --dir=. --prod --no-build` from this folder. It needs the organisation secret
-`NETLIFY_AUTH_TOKEN` and the repository variable `NETLIFY_SITE_ID`; nothing is set by hand in
-Netlify. To redeploy without a change, choose Run workflow on the Site workflow.
+a separate deploy job uploads this folder as one zip to Netlify's REST API with curl (no npm
+package runs while the token is present) and waits until Netlify reports it live. It needs
+`NETLIFY_AUTH_TOKEN`, a secret of the `site` environment that only `main` can use, and the
+repository variable `NETLIFY_SITE_ID`; nothing is set by hand in Netlify. To redeploy without a change, choose Run workflow on the Site workflow.
 
 The whole folder is published as it is, this README included (Netlify reads `netlify.toml` and does not serve it). `netlify.toml`
 sets the headers: a content security policy that allows only the site's own files plus
 `raw.githubusercontent.com` for the build list, no referrer, no framing, and long caching for the
-fonts. The page has no inline scripts, styles or event handlers, so the policy needs no
+fonts. Every response carries `Cache-Control: no-transform`, so Cloudflare, which proxies the
+domain, injects nothing (its JavaScript detections and email obfuscation would add inline scripts
+the policy refuses). The page has no inline scripts, styles or event handlers, so the policy needs no
 exceptions. It also holds the two installer addresses: `/install` and `/install.ps1` are 302
 redirects to `canopy/install.sh` and `canopy/install.ps1` in NecturaLabs/app-updates, so the
 script that runs is always the published one and this site never serves a copy. The canonical
