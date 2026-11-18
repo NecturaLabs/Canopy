@@ -374,11 +374,19 @@ jobs:
         run: cp packaging/install.sh packaging/install.ps1 dist/
       - name: Checksums
         run: cd dist && sha256sum -- * > SHA256SUMS
+      # Earlier releases are removed once this one is out (the prune job): their notes live on in
+      # the feed's changelog, which the release page links to.
+      - name: Release page text
+        run: |
+          {
+            cat notes/notes.md
+            printf '\n\nEarlier builds: [release notes](https://github.com/NecturaLabs/app-updates/blob/main/canopy/CHANGELOG.md)\n'
+          } > notes/release.md
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ inputs.tag }}
           name: Canopy build ${{ needs.identity.outputs.build }}
-          body_path: notes/notes.md
+          body_path: notes/release.md
           prerelease: ${{ inputs.channel == 'beta' }}
           files: dist/*
           fail_on_unmatched_files: true
@@ -613,6 +621,47 @@ jobs:
           git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$work" commit -m "canopy: add the experimental builds to build $BUILD (${channels# })"
           git -C "$work" push origin main
+      - name: Clean up
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/app-updates"
+
+  # Once the build is out with its experimental archives, writes every Canopy feed release's notes
+  # into app-updates' canopy/CHANGELOG.md and then deletes the releases no channel offers, in
+  # app-updates (with their tags) and here (keeping the build-* tags, which tools/release.py
+  # reads). Never the build just released or one a manifest offers (tools/prune-releases.py).
+  prune:
+    name: Remove the previous releases
+    needs: [identity, publish-update, attach-experimental]
+    if: ${{ !cancelled() && needs.publish-update.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.identity.outputs.commit }}
+          persist-credentials: false
+      - name: Keep the notes and remove the previous releases
+        env:
+          APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
+          CANOPY_TOKEN: ${{ github.token }}
+          BUILD: ${{ needs.identity.outputs.build }}
+        run: |
+          if [[ -z $APP_UPDATES_TOKEN ]]; then
+            echo "::warning::APP_UPDATES_TOKEN is not set: the previous releases stay."
+            exit 0
+          fi
+          work="$RUNNER_TEMP/app-updates"
+          rm -rf "$work"
+          # The token travels as in publish-update: in a header set through the environment.
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_UPDATES_TOKEN" | base64 -w0)"
+          echo "::add-mask::${auth#AUTHORIZATION: basic }"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="$auth"
+          git clone --depth 1 https://github.com/NecturaLabs/app-updates.git "$work"
+          git -C "$work" config user.name "github-actions[bot]"
+          git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          FEED_TOKEN=$APP_UPDATES_TOKEN python3 tools/prune-releases.py run --feed-dir "$work" --keep "$BUILD"
       - name: Clean up
         if: always()
         run: rm -rf "$RUNNER_TEMP/app-updates"

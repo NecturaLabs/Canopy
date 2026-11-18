@@ -2,8 +2,9 @@
 
 Notable changes to Canopy, in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 A release is a build named by its number. This file holds the notes of the first public build;
-from then on each build's notes are generated from its commits and published on the
-[Releases page](https://github.com/NecturaLabs/Canopy/releases).
+from then on each build's notes are generated from its commits and published with its release;
+only the current build keeps a release, and the notes of every build stay in
+[the release notes](https://github.com/NecturaLabs/app-updates/blob/main/canopy/CHANGELOG.md).
 
 ## [Unreleased]
 
