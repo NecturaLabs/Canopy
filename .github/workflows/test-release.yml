@@ -24,7 +24,10 @@ jobs:
           ref: ${{ inputs.commit }}
           persist-credentials: false
           submodules: true
+      # Like the release builds, the tests of a release commit take nothing from a shared cache.
       - uses: ./.github/actions/setup-rust
+        with:
+          isolated: "true"
       - name: Configure git for tests
         run: |
           export GIT_CONFIG_GLOBAL="$RUNNER_TEMP/gitconfig"
