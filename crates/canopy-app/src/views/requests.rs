@@ -3458,7 +3458,7 @@ mod tests {
         assert_eq!(checks_summary(0, 0, 4).2, "All 4 checks passed");
     }
 
-    /// polish F1: the request list is resized by the kit's split handle, like every other pane
+    /// The request list is resized by the kit's split handle, like every other pane
     /// split: it sits on the list's edge (where Deeper's cards meet), keeps a saved width, and
     /// moves with the arrow keys.
     #[test]
