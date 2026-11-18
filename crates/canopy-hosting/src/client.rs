@@ -47,7 +47,7 @@ pub(crate) fn search_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// RFC 3339 → unix seconds; 0 when missing or malformed.
+/// An RFC 3339 (or other ISO 8601 instant jiff accepts) → unix seconds; 0 when missing or malformed.
 pub(crate) fn unix(ts: Option<&str>) -> i64 {
     let Some(ts) = ts.filter(|t| !t.is_empty()) else {
         return 0;

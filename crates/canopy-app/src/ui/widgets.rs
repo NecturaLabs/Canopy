@@ -71,6 +71,10 @@ fn date_in_zone(seconds: i64, iso: bool, zone: jiff::tz::TimeZone) -> String {
 
 /// A full timestamp in the author's offset, for tooltips and the details pane.
 pub fn full_date(seconds: i64, offset_minutes: i32) -> String {
+    // Git allows offsets up to 99:59; past a day, show the local date, as before.
+    if offset_minutes.unsigned_abs() >= 24 * 60 {
+        return absolute_date(seconds);
+    }
     let Ok(offset) = jiff::tz::Offset::from_seconds(offset_minutes.saturating_mul(60)) else {
         return absolute_date(seconds);
     };
@@ -93,6 +97,8 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn dates_keep_their_formats() {
         // 2024-01-02T03:04:05Z.
@@ -107,10 +113,9 @@ mod tests {
         );
         assert_eq!(full_date(at, 330), "2024-01-02 08:34 (+05:30)");
         assert_eq!(full_date(at, -480), "2024-01-01 19:04 (-08:00)");
+        assert_eq!(full_date(at, 1500), absolute_date(at));
         assert_eq!(date_in_zone(i64::MAX, true, jiff::tz::TimeZone::UTC), "");
     }
-
-    use super::*;
 
     #[test]
     fn paths() {

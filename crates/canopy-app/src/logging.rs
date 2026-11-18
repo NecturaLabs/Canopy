@@ -167,7 +167,7 @@ impl Write for Capped {
             self.full = true;
             let note = format!(
                 "{{\"timestamp\":\"{}\",\"level\":\"WARN\",\"target\":\"canopy::logging\",\"message\":\"log size limit reached; later events are not written\"}}\n",
-                jiff::Timestamp::now()
+                utc_seconds(jiff::Timestamp::now())
             );
             self.file.write_all(note.as_bytes())?;
             return Ok(buf.len());
@@ -184,7 +184,7 @@ impl Write for Capped {
 fn open_run_log(dir: &Path) -> Option<(PathBuf, Capped)> {
     fs::create_dir_all(dir).ok()?;
     prune(dir, KEEP_RUNS);
-    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ");
+    let stamp = file_stamp(jiff::Timestamp::now());
     let path = dir.join(format!("canopy-{stamp}-{}.jsonl", std::process::id()));
     let file = OpenOptions::new()
         .create(true)
@@ -379,13 +379,13 @@ fn render_report(message: &str, location: &str, thread: &str, backtrace: &str) -
         version = crate::build_info::label(),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
-        time = jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        time = utc_seconds(jiff::Timestamp::now()),
     )
 }
 
 fn write_report(dir: &Path, report: &str) -> std::io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
-    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ");
+    let stamp = file_stamp(jiff::Timestamp::now());
     let mut path = dir.join(format!("crash-{stamp}.txt"));
     let mut n = 1;
     while path.exists() {
@@ -458,9 +458,26 @@ fn unseen_in(dir: &Path, last_seen: &str) -> Option<CrashReport> {
     })
 }
 
+/// A UTC time for file names, such as `20261118T001530Z`.
+fn file_stamp(at: jiff::Timestamp) -> String {
+    at.strftime("%Y%m%dT%H%M%SZ").to_string()
+}
+
+/// An RFC 3339 UTC time to the second, such as `2026-11-18T00:15:30Z`.
+pub(crate) fn utc_seconds(at: jiff::Timestamp) -> String {
+    at.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stamps_keep_their_formats() {
+        let at = jiff::Timestamp::from_second(1_704_164_645).unwrap();
+        assert_eq!(file_stamp(at), "20240102T030405Z");
+        assert_eq!(utc_seconds(at), "2024-01-02T03:04:05Z");
+    }
 
     #[test]
     fn missing_accessibility_registry_does_not_create_a_local_crash_report() {
