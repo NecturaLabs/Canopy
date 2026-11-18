@@ -10,9 +10,9 @@ than questions.
 
 What this example is demonstrating: a project file is a map, not a manual. It carries what an
 agent cannot recover by reading the repo, and nothing else. Generic engineering doctrine belongs
-in the global file; procedure belongs in skills. Compare its size to examples/global-agents.md —
-a project file should be a fraction of it, because the project chain is capped and truncated
-silently, and because almost everything true of good engineering is already stated once globally.
+in a user-scope file; procedure belongs in skills. Keep a project file small: the project chain
+is capped and truncated silently, and almost everything true of good engineering is already
+stated once at user scope.
 -->
 
 # Meridian — Agent Guidelines

@@ -62,7 +62,8 @@ way at 1440x900.
 
 - `git` 2.32 or newer for `mkfixture.sh` (it relies on `GIT_CONFIG_GLOBAL`).
 - `xvfb-run` and Mesa (llvmpipe) for headless `screenshot.sh`, or a running Hyprland session
-  for native capture. Set `CANOPY_WORKSPACE=1` to choose the native workspace (default 3). Native
+  for native capture (the fallback when `xvfb-run` is missing). Set `CANOPY_WORKSPACE=1` to
+  choose the Hyprland workspace the window opens on (default 3). Native
   capture preserves Wayland when available; temporary runner files stay beside the output PNG.
   `CANOPY_BIN=target/debug/canopy` reuses a build; `--zoom 1.6` checks the largest interface scale.
   Software rendering says nothing about real frame times; use it for layout and visuals only.

@@ -5,12 +5,12 @@
 
 ## Context and problem statement
 
-The owner saw Hyprland's "Application Not Responding" dialog for Canopy while the window sat
+A Hyprland user saw Hyprland's "Application Not Responding" dialog for Canopy while the window sat
 unfocused, and at other random times, with no crash. Hyprland pings the client of every window and
 raises the dialog after `misc:anr_missed_pings` unanswered pings (three in the tested setup); a
 client answers only from its event loop.
 
-Evidence, reproduced without touching the owner's session on a stand-in compositor that withholds
+Evidence, reproduced without touching a real desktop session on a stand-in compositor that withholds
 frame callbacks from a hidden window and pings like Hyprland (`tools/stall-check.py`):
 
 - With a hidden window, one repaint (a resize, or a change to a file in the open repository) is
@@ -50,7 +50,7 @@ the whole rendering stack (new dependencies, Vulkan on Linux, a different softwa
 the headless screenshots) for a one-call difference. Option 3 removes the only frame pacing the
 glow path has, so every animation, spinner and scroll repaints as fast as the GPU allows, and
 winit would still not hold repaints back. Option 4 needs `unsafe` or a re-exec and has the same
-pacing cost. Option 5 leaves the owner's dialog in place for an unknown time.
+pacing cost. Option 5 leaves the dialog in place for an unknown time.
 
 `vendor/eframe` is the published crate plus `vendor/eframe.patch`; `Cargo.toml` points
 `[patch.crates-io]` at it and excludes `vendor/` from the workspace so it is not linted, formatted
@@ -78,5 +78,5 @@ fails the check. The job installs the tools on its GitHub-hosted runner and the 
 - **Not covered:** immediate viewports, which Canopy does not open. `pre_present_notify` does
   nothing under X11 (XWayland included), macOS or Windows, so this changes nothing there. The check
   runs Mesa's software path, which needs no GPU; the hardware path waits on the same frame callback
-  and matches the owner's dialog, but it was not run.
-- The patch is a candidate to offer upstream to egui; that is the owner's call.
+  and matches the reported dialog, but it was not run.
+- The patch is a candidate to offer upstream to egui; that is the maintainer's call.

@@ -8,8 +8,8 @@ description: See the running Canopy app as an image. Use whenever a change affec
 Canopy can render itself once and save a PNG: `canopy --screenshot <file.png>` waits until the
 repository has loaded, captures the window and exits. `tools/screenshot.sh` wraps this with a
 release build, a virtual X server and software rendering. Install Xvfb rather than use the
-fallback that opens a real window inside the owner's Hyprland session (it disturbs them, and a
-window on a hidden workspace hangs). To click and type in the app, see `docs/playbook.md`.
+fallback that opens a real window on a running Hyprland session (it disturbs whoever is using
+it, and a window on a hidden workspace hangs). To click and type in the app, see `docs/playbook.md`.
 
 ## Procedure
 

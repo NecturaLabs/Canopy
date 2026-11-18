@@ -1,10 +1,10 @@
 ---
 name: agent-orchestration
 description: Decide whether to delegate Canopy work to subagents (including the canopy-git, canopy-review, canopy-visual-qa and canopy-ux-research agents) or a scripted workflow, and run the delegation well — topology from real data dependencies, fan-out width, minimal context packets, disjoint write ownership, model and effort per node, monitoring, failure handling and handoff validation. Use when a task is about to be split across subagents, parallel workers or a workflow graph, or when a running delegation needs steering. Not for work done directly in one session, and not for reviewing a finished change (independent-review).
-license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
+license: MIT (NecturaLabs); see LICENSE.txt
 ---
 
-Adapted from NecturaLabs/AgentSkills (skills/agent-orchestration).
+Adapted from a NecturaLabs agent skill (MIT; see LICENSE.txt).
 
 # Agent orchestration
 
@@ -61,7 +61,7 @@ These hold for every delegation, whichever reference is loaded.
 
 Prefer a project specialist when one fits; each knows which files to read first, so its brief
 carries only the task-specific packet. At most 3 subagents at a time (`AGENTS.md`). This
-repository sets no model or effort; they come from the global agent instructions.
+repository sets no model or effort; they come from your harness's own settings.
 
 | Node | Agent | Writes | Typical place in a graph |
 |---|---|---|---|

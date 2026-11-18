@@ -8,8 +8,8 @@
 Canopy is a Linux-first desktop Git client for Linux, macOS and Windows, written in Rust. Its
 interface is dominated by things a stock widget set does not provide: a virtualised commit-graph
 table with custom-painted lanes and curves, diff views painting only visible lines, a command
-palette, toasts and several themes built from one token set. The owner asked for a "modern,
-sleek, visually stunning" result and briefly considered a React front end before deciding against
+palette, toasts and several themes built from one token set. The goal was a modern,
+polished, striking result and briefly considered a React front end before deciding against
 it. The toolkit determines the language mix, the build and packaging story, how rendering cost
 scales with repository size, and how hard theming and custom drawing are; changing it later means
 rewriting every view.

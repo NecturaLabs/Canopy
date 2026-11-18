@@ -681,10 +681,19 @@ struct Page<'a, 'd> {
 }
 
 impl Page<'_, '_> {
-    /// What stays at the top of every page while trust safety is off.
+    /// What stays at the top of every page while trust safety is off, until it is dismissed.
     fn trust_notice(&mut self, ui: &mut Ui) {
-        if !self.settings.trust_safety && trust_off_notice(ui) {
-            self.actions.push(Action::SetTrustSafety(true));
+        if self.settings.trust_safety {
+            self.settings.trust_off_dismissed = false;
+            return;
+        }
+        if self.settings.trust_off_dismissed {
+            return;
+        }
+        match trust_off_notice(ui) {
+            Some(TrustNotice::TurnOn) => self.actions.push(Action::SetTrustSafety(true)),
+            Some(TrustNotice::Dismiss) => self.settings.trust_off_dismissed = true,
+            None => {}
         }
     }
 
@@ -5624,11 +5633,18 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
     }
 }
 
-/// The notice shown while trust safety is off; whether Turn on was pressed. A bordered button, not
-/// the callout's ghost action, which shows no edge until hovered: this notice must be answerable
-/// at a glance, with the kit button's focus ring and keys.
-fn trust_off_notice(ui: &mut Ui) -> bool {
-    let mut turn_on = false;
+/// What the user did with the trust-off notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrustNotice {
+    TurnOn,
+    Dismiss,
+}
+
+/// The notice shown while trust safety is off, and which of its buttons was pressed. Bordered
+/// buttons, not the callout's ghost actions, which show no edge until hovered: this notice must be
+/// answerable at a glance, with the kit button's focus ring and keys.
+fn trust_off_notice(ui: &mut Ui) -> Option<TrustNotice> {
+    let mut pressed = None;
     Callout::new(
         Tone::Danger,
         "Canopy no longer asks before it changes or runs anything in a repository. Any repository can run programs on this computer through its hooks and settings.",
@@ -5637,15 +5653,29 @@ fn trust_off_notice(ui: &mut Ui) -> bool {
     .icon(icon::SHIELD_WARNING)
     .id_salt("trust-safety-off")
     .show_with(ui, |ui| {
-        turn_on = Button::new("Turn on")
-            .size(Size::Sm)
-            .icon(icon::SHIELD_CHECK)
-            .id_salt("trust-safety-on")
-            .show(ui)
-            .clicked();
+        ui.horizontal(|ui| {
+            if Button::new("Turn on")
+                .size(Size::Sm)
+                .icon(icon::SHIELD_CHECK)
+                .id_salt("trust-safety-on")
+                .show(ui)
+                .clicked()
+            {
+                pressed = Some(TrustNotice::TurnOn);
+            }
+            if Button::new("Dismiss")
+                .size(Size::Sm)
+                .icon(icon::X)
+                .id_salt("trust-safety-dismiss")
+                .show(ui)
+                .clicked()
+            {
+                pressed = Some(TrustNotice::Dismiss);
+            }
+        });
     });
     ui.add_space(theme::MD);
-    turn_on
+    pressed
 }
 
 /// Returns true when "Open Accounts" was clicked.
@@ -8608,8 +8638,7 @@ mod tests {
     fn a_long_path_is_cut_in_the_middle_to_the_width() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        let path =
-            "From global: /run/media/nectura/Programming SSD/tmp/canopy-polish/tmpdir/gitconfig";
+        let path = "From global: /home/ada/projects/scratch/canopy-polish/tmpdir/gitconfig";
         let font = FontId::proportional(theme::metrics().small_size);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -10505,18 +10534,79 @@ mod tests {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
-        let pressed = std::cell::Cell::new(false);
+        let pressed = std::cell::Cell::new(None);
         let draw = |events| {
             crate::ui::kit::testkit::frame(&ctx, events, |ui| {
-                pressed.set(pressed.get() | trust_off_notice(ui));
+                if let Some(p) = trust_off_notice(ui) {
+                    pressed.set(Some(p));
+                }
             });
         };
         draw(Vec::new());
         draw(crate::ui::kit::testkit::key(egui::Key::Tab));
         draw(Vec::new());
-        assert!(!pressed.get(), "reaching it does not press it");
+        assert_eq!(pressed.get(), None, "reaching it does not press it");
         draw(crate::ui::kit::testkit::key(egui::Key::Enter));
-        assert!(pressed.get(), "Enter presses the focused button");
+        assert_eq!(
+            pressed.get(),
+            Some(TrustNotice::TurnOn),
+            "Enter presses the focused button"
+        );
+        draw(crate::ui::kit::testkit::key(egui::Key::Tab));
+        draw(Vec::new());
+        draw(crate::ui::kit::testkit::key(egui::Key::Enter));
+        assert_eq!(
+            pressed.get(),
+            Some(TrustNotice::Dismiss),
+            "the next button dismisses it"
+        );
+    }
+
+    /// Dismissing the trust-off notice hides it until trust safety is turned on again (owner: no
+    /// notice that cannot be dismissed).
+    #[test]
+    fn the_trust_off_notice_can_be_dismissed_until_trust_comes_back() {
+        let mut s = Settings {
+            trust_safety: false,
+            trust_off_dismissed: true,
+            ..Settings::default()
+        };
+        let shown = |s: &mut Settings| {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+            let nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                let mut screen = SettingsScreen::default();
+                let data = SettingsData {
+                    tabs: &[],
+                    update: &UpdateState::Idle,
+                    identity: IdentityView {
+                        repo: None,
+                        identity: None,
+                        error: None,
+                    },
+                };
+                let mut actions = Vec::new();
+                let mut page = Page {
+                    screen: &mut screen,
+                    settings: s,
+                    data: &data,
+                    actions: &mut actions,
+                    sign_in_changed: Vec::new(),
+                };
+                page.trust_notice(ui);
+            });
+            crate::ui::kit::testkit::find(&nodes, "Turn on").is_some()
+        };
+        assert!(!shown(&mut s), "a dismissed notice stays hidden");
+        s.trust_safety = true;
+        assert!(!shown(&mut s));
+        assert!(
+            !s.trust_off_dismissed,
+            "turning trust safety on clears the dismissal"
+        );
+        s.trust_safety = false;
+        assert!(shown(&mut s), "turning it off again shows the notice again");
     }
 
     /// Facts whose editable values are `value_of(setting)` for every setting that has one.

@@ -1,10 +1,10 @@
 ---
 name: testing
 description: Write, repair, debug, audit or delete Canopy's automated tests (cargo tests in canopy-core, canopy-hosting and canopy-app). Use when adding coverage for new behavior, writing a regression test for a defect, fixing a failing or flaky test, choosing the right test level, or auditing a suite's quality. Not for explaining what an existing test does, not for running a suite as a routine verification step, and not for checking how the UI looks (the screenshot skill).
-license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
+license: MIT (NecturaLabs); see LICENSE.txt
 ---
 
-Adapted from NecturaLabs/AgentSkills (skills/testing).
+Adapted from a NecturaLabs agent skill (MIT; see LICENSE.txt).
 
 # Testing
 

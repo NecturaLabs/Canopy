@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Canopy must stay fast and stable with a lot open. The owner's requirement: **30 different
+Canopy must stay fast and stable with a lot open. The requirement: **30 different
 projects open at the same time, one per tab, 2 large, 20 medium and the rest small, with concurrent
 operations running without issues or performance hiccups** (lowered from 100 repositories,
 including monstrous ones, on 2026-11-18). This document is the procedure for

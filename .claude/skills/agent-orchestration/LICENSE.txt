@@ -1,8 +1,8 @@
-This skill is adapted from skills/agent-orchestration in NecturaLabs/AgentSkills (version 5.1.1,
-commit ea8679ae566fb32133dfd50fdcc5c3079101f053), which is distributed under the MIT License
-below. SKILL.md carries Canopy-specific changes; files under references/, templates/ and
-examples/ are unchanged from upstream unless the file itself says otherwise. The rest of the
-Canopy repository is licensed under MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
+This skill is adapted from NecturaLabs' agent-orchestration agent skill (version 5.1.1), which is
+distributed under the MIT License below. SKILL.md carries Canopy-specific changes; files under
+references/, templates/ and examples/ are unchanged from upstream unless the file itself says
+otherwise. The rest of the Canopy repository is licensed under MIT OR Apache-2.0 (LICENSE-MIT,
+LICENSE-APACHE).
 
 ----------------------------------------------------------------------------------------------
 

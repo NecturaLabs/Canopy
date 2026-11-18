@@ -44,8 +44,8 @@
 # Renders Canopy headlessly on a virtual X server (Xvfb, software OpenGL via Mesa llvmpipe) with
 # <repo> open, saves one frame to <out.png> once the repository has loaded, and prints the output
 # path. Builds the release binary first (a no-op when it is up to date); set CANOPY_BIN to use a
-# different binary and skip the build. Uses Xvfb when available, else a native Hyprland window
-# on CANOPY_WORKSPACE (default 3). DISPLAY_BASE=N keeps Xvfb to displays :N to :N+9. Output and native-run temporary files stay beside <out.png>.
+# different binary and skip the build. Uses Xvfb when available, else a native window on a
+# running Hyprland session, on the workspace CANOPY_WORKSPACE names (default 3). DISPLAY_BASE=N keeps Xvfb to displays :N to :N+9. Output and native-run temporary files stay beside <out.png>.
 # On Xvfb the app gets private home, data, config and cache folders, a fixed Git identity and no
 # TERMINAL, EDITOR or VISUAL, so the image never depends on your own Canopy state, Git
 # configuration or programs; a screenshot also ignores the pointer (no hover, no tooltip).
