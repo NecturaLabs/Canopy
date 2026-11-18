@@ -150,7 +150,7 @@ macOS on Apple silicon and Windows x64; Linux arm64 and Intel Macs are being add
 
 Requirements:
 
-- A stable Rust toolchain (1.91 or newer) from [rustup](https://rustup.rs), with rustfmt and
+- A stable Rust toolchain (1.95 or newer) from [rustup](https://rustup.rs), with rustfmt and
   clippy. Canopy builds with the latest stable release; no exact release is pinned.
 - `git` 2.30 or newer on `PATH` at runtime.
 - A C compiler (libgit2 is built from source by the `git2` crate). No OpenSSL or libssh2 is needed.

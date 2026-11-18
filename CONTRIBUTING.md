@@ -53,7 +53,7 @@ approved the run.
 
 1. Install stable Rust with [rustup](https://rustup.rs), with rustfmt and clippy. Canopy
    builds with the latest stable release and pins none; when a new clippy reports something,
-   fix it in its own commit. The minimum supported Rust version is 1.91.
+   fix it in its own commit. The minimum supported Rust version is 1.95 (egui 0.36.2 needs it).
 2. Install `git` 2.32 or newer (required by the fixture scripts) and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
 3. Fetch the component library: `crates/nectura-ui` is a submodule of the public repository

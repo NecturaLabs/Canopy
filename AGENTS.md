@@ -1,7 +1,7 @@
 # Canopy
 
 A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written in Rust (edition
-2024, MSRV 1.91). Three crates and the component library, a submodule that is also a workspace member: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
+2024, MSRV 1.95). Three crates and the component library, a submodule that is also a workspace member: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
 `git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
 `crates/canopy-hosting`, the GitHub/GitLab API client (REST, plus one GraphQL query for the
 request list; `ureq`, rustls); `crates/canopy-app`, the GUI (`eframe`/`egui` 0.36, glow), binary
