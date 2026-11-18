@@ -144,11 +144,12 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      # On a push the whole job is off unless the repository variable CI_TESTS is '1' (the
-      # maintainers' pre-commit hook runs the tests before every commit; set CI_TESTS=1 to run them
-      # here again). A pull request from a fork always runs them.
-      # Then one toggle per platform, as repository variables: Linux runs unless CI_LINUX is '0';
-      # macOS and Windows run only when CI_MACOS or CI_WINDOWS is '1' (both off for now).
+      # On a push the whole job runs only when the repository variable CI_TESTS is '1' (off until
+      # #214; the maintainers' pre-commit hook runs the tests before every commit). A pull request
+      # from a fork always runs them. Then one toggle per platform, as repository variables:
+      # Linux runs unless CI_LINUX is '0'; macOS and Windows run when CI_MACOS or CI_WINDOWS is
+      # '1'.
+      # The Tests job below is the one check a ruleset requires.
       matrix:
         include: ${{ fromJSON(format('[{0}{1}{2}]', format('{0}', vars.CI_LINUX) != '0' && '{"os":"Linux","hosted":"ubuntu-latest"}' || '', vars.CI_MACOS == '1' && format('{0}{1}', format('{0}', vars.CI_LINUX) != '0' && ',' || '', '{"os":"macOS","hosted":"macos-latest"}') || '', vars.CI_WINDOWS == '1' && format('{0}{1}', (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1') && ',' || '', '{"os":"Windows","hosted":"windows-latest"}') || '')) }}
     steps:
@@ -179,6 +180,31 @@ jobs:
       - name: Hidden-window check
         if: runner.os == 'Linux'
         run: python3 tools/stall-check.py --require
+
+  # One check named for the whole test matrix, so a ruleset can require it: the matrix jobs are
+  # named per platform, and a skipped matrix job reports no per-platform name, so requiring
+  # "Test (Linux)" would leave a documentation-only push waiting forever. It always runs, so a
+  # cancelled run fails it rather than skipping it (a skipped job satisfies a required check).
+  # Skipped jobs pass (documentation only, CI_TESTS off, or a pull request from a branch of this
+  # repository, which its push run covers); a failed or cancelled one fails. Not required yet:
+  # a fork's pull request always runs the tests, and they fail on Windows until #214 is fixed.
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    needs: [changes, test]
+    if: always()
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every test job passed or was skipped
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RESULT: ${{ needs.test.result }}
+        run: |
+          echo "What changed: $CHANGES; test jobs: $RESULT"
+          for r in "$CHANGES" "$RESULT"; do
+            [[ $r == success || $r == skipped ]] || exit 1
+          done
 
   # The quick checks share one job, so a run starts fewer jobs. Every check runs even when an earlier one failed, so one
   # run reports them all. A documentation-only change runs only the documentation check.
