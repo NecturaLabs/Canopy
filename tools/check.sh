@@ -57,6 +57,9 @@ python3 tools/test-hooks.py
 
 step "tools/notices.py --check"
 python3 tools/notices.py --check
+# LICENSES/ (REUSE layout, which licence scanners look for) holds the root licence texts unchanged.
+cmp LICENSE-MIT LICENSES/MIT.txt
+cmp LICENSE-APACHE LICENSES/Apache-2.0.txt
 
 step "tools/check-docs.py"
 python3 tools/check-docs.py

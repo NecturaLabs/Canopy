@@ -277,7 +277,11 @@ jobs:
       # Every release ships docs/legal/third-party-notices.txt; a dependency change must update it.
       - name: Licence notices check
         if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
-        run: python3 tools/notices.py --check
+        run: |
+          python3 tools/notices.py --check
+          # LICENSES/ holds the root licence texts unchanged (REUSE layout for licence scanners).
+          cmp LICENSE-MIT LICENSES/MIT.txt
+          cmp LICENSE-APACHE LICENSES/Apache-2.0.txt
       # A prebuilt binary rather than the cargo-deny container action.
       - id: deny
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
