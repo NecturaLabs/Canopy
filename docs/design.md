@@ -689,7 +689,7 @@ The rest of the kit, each with the states `--overlay gallery` shows:
   The sidebar's Branches are a tree of these: folders for the `/` prefixes (branches first, then
   folders, each by name; a folder row has its chevron and no icon, the chevron in the accent when
   the checked-out branch is inside, and shows the number of branches in it), leaf rows with the
-  last segment of the name, a merge icon (success when merged, warning when squash-merged) or a
+  last segment of the name, a merge icon in the success tone (merged), merging arrows in the warning tone (squash-merged) or a
   crossed-out cloud (upstream gone) for a merged branch, with the deciding check in its tooltip,
   and the ahead and behind counts as mono text. Screen readers hear the whole name, "current
   branch" and the marker. Each level is one `tree_indent` (14).

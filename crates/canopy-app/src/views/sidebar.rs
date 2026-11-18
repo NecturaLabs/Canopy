@@ -341,7 +341,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 } else {
                     match reason {
                         Some(canopy_core::MergedReason::Reachable) => (icon::GIT_MERGE, Tone::Success),
-                        Some(canopy_core::MergedReason::SquashMerged) => (icon::GIT_MERGE, Tone::Warning),
+                        Some(canopy_core::MergedReason::SquashMerged) => (icon::ARROWS_MERGE, Tone::Warning),
                         Some(canopy_core::MergedReason::UpstreamGone) => (icon::CLOUD_SLASH, Tone::Warning),
                         None => (icon::GIT_BRANCH, Tone::Neutral),
                     }
@@ -1187,6 +1187,89 @@ mod tests {
             }
             egui::Shape::Vec(v) => v.iter().for_each(|s| painted_text(s, out)),
             _ => {}
+        }
+    }
+
+    /// #215: a folder row is its chevron and name, no folder glyph; a merged, gone or
+    /// squash-merged branch is marked by its glyph alone (each its own shape), with no word after
+    /// it, and its spoken name still carries the marker.
+    #[test]
+    fn folders_and_merged_branches_carry_one_mark_each() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        ctx.enable_accesskit();
+        let mut tab = branch_tab();
+        tab.collapsed.clear();
+        let names = ["fix/typo", "fix/old", "fix/squashed"];
+        if let Some(snap) = tab.snap.as_mut() {
+            let snap = std::sync::Arc::make_mut(snap);
+            for (n, name) in (10u8..).zip(names) {
+                snap.branches.push(canopy_core::BranchInfo {
+                    name: name.into(),
+                    target: Some(oid(n)),
+                    is_head: false,
+                    upstream: None,
+                    ahead: 0,
+                    behind: 0,
+                    worktree: None,
+                });
+            }
+        }
+        tab.snap_index = crate::tab::SnapIndex::new(tab.snap.as_ref().expect("snapshot"));
+        let reasons = [
+            canopy_core::MergedReason::Reachable,
+            canopy_core::MergedReason::UpstreamGone,
+            canopy_core::MergedReason::SquashMerged,
+        ];
+        let rows: std::sync::Arc<[canopy_core::MergedBranch]> = names
+            .iter()
+            .zip(reasons)
+            .map(|(name, reason)| canopy_core::MergedBranch {
+                name: (*name).into(),
+                is_head: false,
+                reason: Some(reason),
+            })
+            .collect();
+        tab.merged = Some(Ok(crate::tab::MergedMarks::new(vec!["main".into()], rows)));
+        let mut actions = Vec::new();
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let shapes = crate::ui::kit::testkit::frame(&ctx, Vec::new(), |ui| {
+                ui.set_max_size(egui::vec2(260.0, 700.0));
+                show(ui, &mut tab, &mut actions);
+            });
+            texts.clear();
+            for c in &shapes {
+                painted_text(&c.shape, &mut texts);
+            }
+        }
+        let painted = |glyph: &str| texts.iter().any(|(t, _)| t == glyph);
+        let folder = texts
+            .iter()
+            .find(|(t, _)| t == "fix")
+            .map_or_else(|| panic!("the folder row: {texts:?}"), |(_, r)| r.y_range());
+        // The worktree rows keep their folder glyph; the folder row has none.
+        let on_folder_row = texts
+            .iter()
+            .filter(|(_, r)| r.y_range().intersects(folder))
+            .map(|(t, _)| t.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            !on_folder_row.contains(&icon::FOLDER_OPEN)
+                && !on_folder_row.contains(&icon::FOLDER_SIMPLE),
+            "no folder glyph: {on_folder_row:?}"
+        );
+        for word in ["merged", "gone", "squash?"] {
+            assert!(!painted(word), "no {word} word after the name: {texts:?}");
+        }
+        assert!(painted(icon::GIT_MERGE), "merged glyph");
+        assert!(painted(icon::CLOUD_SLASH), "gone glyph");
+        assert!(painted(icon::ARROWS_MERGE), "squash-merged glyph");
+        let spoken: Vec<String> = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions)
+            .iter()
+            .filter_map(|n| n.label().map(str::to_owned))
+            .collect();
+        for heard in ["fix/typo, merged", "fix/old, gone", "fix/squashed, squash?"] {
+            assert!(spoken.iter().any(|l| l == heard), "{heard} in {spoken:?}");
         }
     }
 

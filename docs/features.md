@@ -210,9 +210,11 @@ the remote after a labelled confirmation.
 The merged markers and the cleanup measure branches against one base: `develop` in a git-flow
 repository, else the default branch of `origin` (or the first remote with one) as its
 remote-tracking branch, else a local `main` or `master`. A branch counts as merged when its tip is
-reachable from the base (proof: `git branch -d` suffices), as `gone` when its upstream was deleted
-on the remote, and as `squash?` when merging it would change nothing (a heuristic, skipped past 150
-branches and on Git before 2.38). Update from base takes its base from the branch: a git-flow
+reachable from the base (proof: `git branch -d` suffices; a merge glyph in the success tone), as
+gone when its upstream was deleted on the remote (a crossed-out cloud), and as possibly
+squash-merged when merging it would change nothing (merging arrows in the warning tone; a
+heuristic, skipped past 150 branches and on Git before 2.38). The tooltip names the check and
+screen readers hear it with the name. Update from base takes its base from the branch: a git-flow
 branch's kind (hotfix from production, the rest from develop), otherwise the default branch of the
 remote its upstream is on. It compares with the base as last fetched, so fetch first.
 
