@@ -267,6 +267,7 @@ const sectionLinks = $$("a", list).map((a) => ({ href: a.getAttribute("href"), l
 const staticList = list.innerHTML;
 const go = (href) => () => {
   const target = $(href);
+  history.replaceState(null, "", href);
   target.scrollIntoView();
   target.setAttribute("tabindex", "-1");
   target.focus({ preventScroll: true });

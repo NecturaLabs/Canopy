@@ -69,11 +69,12 @@ LEGAL_PAGE = """<!doctype html>
   <div class="wrap foot-inner">
     <div class="foot-brand">
       <a class="brand" href="./"><img src="assets/icon-64.png" width="22" height="22" alt=""><span translate="no">Canopy</span></a>
-      <p>Canopy is made by NecturaLabs.</p>
+      <p>Canopy is open source under the MIT or Apache-2.0 licence and made by NecturaLabs.</p>
     </div>
     <nav class="foot-nav" aria-label="Footer">
       <a href="./">Home</a>
       <a href="./#download">Download</a>
+      <a href="https://github.com/NecturaLabs/Canopy">Source code</a>
       <a href="privacy.html">Privacy Policy</a>
       <a href="terms.html">Terms of Service</a>
     </nav>
