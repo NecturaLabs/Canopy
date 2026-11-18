@@ -126,10 +126,7 @@ mod tests {
     }
 
     fn timeout() -> NextTimeout {
-        NextTimeout {
-            after: ureq::unversioned::transport::time::Duration::NotHappening,
-            reason: ureq::Timeout::Global,
-        }
+        NextTimeout::default()
     }
 
     #[test]

@@ -1775,16 +1775,16 @@ fn rollup_bodies_are_bounded() {
         let tail = r#""}"#;
         format!("{head}{}{tail}", " ".repeat(len - head.len() - tail.len()))
     };
-    server.route("POST", "/graphql", 200, &padded(LIMIT - 1));
+    server.route("POST", "/graphql", 200, &padded(LIMIT));
     assert_eq!(
         client.rollup(&[1]),
         Ok(Vec::new()),
-        "a body under the limit is read"
+        "a body of exactly the limit is read"
     );
-    server.route("POST", "/graphql", 200, &padded(LIMIT));
+    server.route("POST", "/graphql", 200, &padded(LIMIT + 1));
     assert!(
         matches!(client.rollup(&[1]), Err(Error::Network(_))),
-        "a body of the limit or more is refused"
+        "a body over the limit is refused"
     );
 }
 
