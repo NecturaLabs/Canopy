@@ -10,10 +10,11 @@
   <a href="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml"><img src="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml/badge.svg?branch=dev" alt="CI"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/NecturaLabs/Canopy"><img src="https://api.scorecard.dev/projects/github.com/NecturaLabs/Canopy/badge" alt="OpenSSF Scorecard"></a>
   <a href="#licence"><img src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue" alt="Licence: MIT OR Apache-2.0"></a>
-  <a href="https://canopy.necturalabs.com">Website</a>
 </p>
 
-Canopy is a native desktop Git client for Linux, macOS and Windows, written in Rust. It reads
+<p align="center"><a href="#install">Install</a> · <a href="#features">Features</a> · <a href="https://canopy.necturalabs.com">Website</a> · <a href="docs/README.md">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="#licence">Licence</a></p>
+
+Canopy is a native desktop Git client for Linux and Windows (macOS builds are coming), written in Rust. It reads
 repositories directly through libgit2, so the commit graph, status and diffs appear immediately
 and stay responsive on large histories. Every change it makes runs through your own `git`
 executable, so credential helpers, SSH keys and config, hooks, commit signing, Git LFS and proxies
@@ -22,18 +23,7 @@ work exactly as they do in the terminal.
 It borrows from the clients people already like: the speed and layout of Fork, the visual commit
 graph and command palette of GitKraken, and the breadth of operations of Sourcetree.
 
-## Screenshots
-
 ![History view: commit graph with branch lanes, ref labels and commit details](docs/screenshots/history.png)
-
-![Changes view: staged and unstaged files, hunk staging and the commit composer](docs/screenshots/changes.png)
-
-![Welcome screen with Open, Clone and Init actions](docs/screenshots/welcome.png)
-
-![History view in the light "Daylight" theme](docs/screenshots/history-light.png)
-
-Screenshots are rendered by Canopy itself from the deterministic fixture repository
-(`tools/mkfixture.sh` and `tools/screenshot.sh`), at 1440×900 and 100% interface zoom.
 
 ## Features
 
@@ -84,12 +74,24 @@ Screenshots are rendered by Canopy itself from the deterministic fixture reposit
   reduced motion, and a settings screen (Ctrl+,) for appearance, Git, integrations, accounts,
   updates and privacy.
 - **Diagnostics and privacy**: structured per-run logs and local crash reports in Canopy's data
-  folder; opt-in, scrubbed crash reports to NecturaLabs after you accept the Terms and Privacy
-  Policy and answer the question. The update check can be turned off.
+  folder; opt-in, scrubbed crash reports to NecturaLabs after you accept the
+  [Terms](docs/legal/terms-of-service.md) and [Privacy Policy](docs/legal/privacy-policy.md) and
+  answer the question. The update check can be turned off.
 
 Destructive operations (discard, hard reset, deleting a branch or tag, dropping a stash, force
 push) always ask for confirmation. The full matrix, including what is planned, is in
 [docs/features.md](docs/features.md).
+
+## Screenshots
+
+![Changes view: staged and unstaged files, hunk staging and the commit composer](docs/screenshots/changes.png)
+
+![Welcome screen with Open, Clone and Init actions](docs/screenshots/welcome.png)
+
+![History view in the light "Daylight" theme](docs/screenshots/history-light.png)
+
+Screenshots are rendered by Canopy itself from the deterministic fixture repository
+(`tools/mkfixture.sh` and `tools/screenshot.sh`), at 1440×900 and 100% interface zoom.
 
 ## Install
 
@@ -108,12 +110,9 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex
 ```
 
-There is no stable release yet, so these stop with an error saying the release has no build for
-your system. Until the first one, install the beta build, which ships Linux builds only for now:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.sh | sh -s -- --beta
-```
+Builds exist for Linux x86_64, Linux arm64 (experimental) and Windows x86_64. There is no macOS
+build yet; until there is, the installer stops on a Mac with a message that the release has no
+build for it.
 
 The installer reads Canopy's update manifest, downloads the build for your system over HTTPS,
 checks its SHA-256 against the manifest and refuses anything that does not match. It never asks
@@ -144,7 +143,7 @@ curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy
 Uninstalling removes exactly what the installer created (files of your own in its folder stay);
 your settings and logs stay unless you add `--purge`. Re-running never replaces a newer installed
 version with an older one unless you ask with `--version`. Builds exist for Linux x86_64 (glibc 2.35 or newer, e.g. Ubuntu 22.04),
-macOS on Apple silicon and Windows x64; Linux arm64 and Intel Macs are being added. Details:
+Linux arm64 (experimental) and Windows x86_64. Details:
 [packaging/README.md](packaging/README.md).
 
 ## Install from source

@@ -2208,7 +2208,7 @@ mod tests {
             .collect()
     }
 
-    /// O1 (owner): new commits arriving at the top (a fetch, a commit) push the rows below down
+    /// New commits arriving at the top (a fetch, a commit) push the rows below down
     /// by sliding them from where they were, and the new row fades in where it lands; with
     /// reduced motion they land at once.
     #[test]

@@ -2754,7 +2754,7 @@ mod tests {
         texts.iter().find(|(t, _)| t == text).map(|(_, y)| *y)
     }
 
-    /// O1 (owner): staging a file moves its row from Unstaged to Staged by sliding it there, the
+    /// Staging a file moves its row from Unstaged to Staged by sliding it there, the
     /// rows below close up smoothly and the composer at the bottom of the column stays put;
     /// with reduced motion everything lands at once.
     #[test]

@@ -26,8 +26,8 @@
   --edge-strong: rgb(255 255 255 / 0.18);
   --hover: rgb(255 255 255 / 0.05);
   --text: #F4F4F6;
-  --dim: #A3A5AE;
-  --faint: #8C8E98;
+  --dim: #BCBEC6;
+  --faint: #A3A5AE;
   --accent: #7C86FF;
   --ink: #9AA2FF;
   --leaf-ink: #4CC38A;
@@ -93,7 +93,7 @@
   --hover: rgb(12 14 22 / 0.04);
   --text: #0B0C10;
   --dim: #4D505B;
-  --faint: #5D606B;
+  --faint: #51545F;
   --accent: #5E6AD2;
   --ink: #4651C0;
   --leaf-ink: #006A4B;
@@ -145,7 +145,7 @@
     --hover: rgb(12 14 22 / 0.04);
     --text: #0B0C10;
     --dim: #4D505B;
-    --faint: #5D606B;
+    --faint: #51545F;
     --accent: #5E6AD2;
     --ink: #4651C0;
     --leaf-ink: #006A4B;
@@ -494,7 +494,7 @@ kbd + kbd { margin-left: 3px; }
 
 /* Download: the closing call to action, set apart on its own band */
 .sec.download { background: var(--ground-2); border-block: 1px solid var(--seam); }
-.dl-main { max-width: 820px; margin-top: clamp(32px, 4vw, 48px); display: grid; gap: 16px; }
+.dl-main { max-width: 820px; margin-top: clamp(32px, 4vw, 48px); display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .dl-main .device-note { margin-top: 0; max-width: none; }
 .install-card {
   padding: clamp(20px, 3vw, 32px); border: 1px solid var(--edge); border-radius: var(--r-lg);
@@ -530,7 +530,7 @@ kbd + kbd { margin-left: 3px; }
 
 /* Footer */
 .foot { border-top: 1px solid var(--seam); color: var(--faint); font-size: 13.5px; }
-.foot-inner { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px 40px; padding-block: 40px max(32px, env(safe-area-inset-bottom)); }
+.foot-inner { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px 40px; padding-block: 40px max(32px, env(safe-area-inset-bottom)); }
 .foot-brand { display: flex; flex-direction: column; gap: 10px; }
 .foot-brand .brand { font-size: 15px; }
 .foot-nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 20px; align-content: start; }
@@ -580,6 +580,15 @@ kbd + kbd { margin-left: 3px; }
 
 /* ---- Narrower screens ---- */
 
+@media (min-width: 961px) and (max-width: 1240px) {
+  .hero .cmd { flex-wrap: wrap; padding: 8px; border-radius: var(--r-lg); }
+  .hero .cmd .prompt { display: none; }
+  .hero .cmd code { flex-basis: 100%; padding: 4px 8px 2px; white-space: nowrap; }
+  .hero .copy-btn { width: 100%; }
+}
+@media (max-width: 339px) {
+  .top .brand > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
 @media (max-width: 1100px) {
   .hero-grid { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
   .builds { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 820px; }

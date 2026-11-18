@@ -234,7 +234,7 @@ fn scroll_keys(ui: &Ui, view: f32) {
 mod tests {
     use super::*;
 
-    /// polish F2: a reader opened afresh starts at the top of its document wherever it was left
+    /// A reader opened afresh starts at the top of its document wherever it was left
     /// (egui keeps a scroll position, across restarts too), as the first-start consent must.
     #[test]
     fn a_reader_opened_afresh_starts_at_the_top() {

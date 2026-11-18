@@ -56,7 +56,7 @@ address outside the site is allowed by the content security policy, the scripts 
 `NETLIFY_AUTH_TOKEN` and the repository variable `NETLIFY_SITE_ID`; nothing is set by hand in
 Netlify. To redeploy without a change, choose Run workflow on the Site workflow.
 
-The whole folder is published as it is, this README and `netlify.toml` included. `netlify.toml`
+The whole folder is published as it is, this README included (Netlify reads `netlify.toml` and does not serve it). `netlify.toml`
 sets the headers: a content security policy that allows only the site's own files plus
 `raw.githubusercontent.com` for the build list, no referrer, no framing, and long caching for the
 fonts. The page has no inline scripts, styles or event handlers, so the policy needs no
