@@ -22,9 +22,14 @@ maintainer merges.
   (`pull_request_target`, which changes the base through the API and never checks out or runs the
   pull request's code). Releases stay on `main` (`create-release.yml`), so build numbers are
   unchanged.
-- **Rulesets on both branches**: a pull request is required; CI must pass; no deletion or force
-  push; updates are restricted, so only an organisation admin can merge (bypass only through a
-  pull request: nobody pushes to either branch directly). No other account has write access.
+- **Three rulesets on each branch**. "Protect": no deletion or force push, with no bypass.
+  "CI for": the required CI checks must pass, with no bypass, so nothing reaches either branch
+  with failing CI. "Pull request for": a pull request with one approval, and updates restricted;
+  an organisation admin bypasses it, so the maintainer merges without a second reviewer and may
+  fast-forward `main` to `dev` directly (that skips only "Source branch", which runs on pull
+  requests). No other account has write access. Release tags (`build-*`, and `v*` in
+  `nectura-ui`) cannot be moved or deleted by anyone (amended 2026-11-18 after a configuration
+  audit: CI used to share the bypassable ruleset).
 - **Issues: collaborators only** (GitHub's issue creation policy). Everyone else reports bugs and
   proposes features in Discussions; a maintainer files the issue. Pull requests stay open to
   everyone, as in other open-source projects, and outside contributors' workflow runs need the

@@ -504,7 +504,8 @@ kbd + kbd { margin-left: 3px; }
 .install-facts li { padding: 11px 0; border-top: 1px solid var(--seam); font-size: 14.5px; color: var(--dim); }
 .install-facts code { color: var(--text); }
 .archives-head { margin-top: clamp(48px, 6vw, 72px); font-size: 15px; font-weight: 500; color: var(--dim); }
-.builds { max-width: 1040px; margin-top: 18px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.builds { margin-top: 18px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.builds + .cta-meta { margin-top: 18px; max-width: 72ch; }
 .builds li {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 20px;
   border: 1px solid var(--edge); border-radius: var(--r-lg); background: linear-gradient(var(--pane-2), var(--pane)); box-shadow: var(--sh-pane);
@@ -530,10 +531,13 @@ kbd + kbd { margin-left: 3px; }
 
 /* Footer */
 .foot { border-top: 1px solid var(--seam); color: var(--faint); font-size: 13.5px; }
-.foot-inner { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px 40px; padding-block: 40px max(32px, env(safe-area-inset-bottom)); }
-.foot-brand { display: flex; flex-direction: column; gap: 10px; }
+.foot-inner { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 32px 48px; padding-block: 40px max(32px, env(safe-area-inset-bottom)); }
+.foot-brand { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.foot-brand p { max-width: 36ch; margin: 0; }
 .foot-brand .brand { font-size: 15px; }
-.foot-nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 20px; align-content: start; }
+.foot-nav { display: grid; grid-template-columns: repeat(3, auto); gap: 28px 64px; align-items: start; }
+.foot-col { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+.foot-h { margin: 0 0 3px; color: var(--text); font-size: 13px; font-weight: 600; line-height: inherit; }
 .foot-nav a { color: var(--dim); text-decoration: none; }
 .foot-nav a:hover { color: var(--text); }
 .foot-note { grid-column: 1 / -1; padding-top: 20px; border-top: 1px solid var(--seam); }
@@ -591,7 +595,10 @@ kbd + kbd { margin-left: 3px; }
 }
 @media (max-width: 1100px) {
   .hero-grid { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
-  .builds { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 820px; }
+  .builds { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .builds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 960px) {
@@ -606,7 +613,7 @@ kbd + kbd { margin-left: 3px; }
   .stage { padding-bottom: 0; }
   .hero { padding-bottom: clamp(64px, 9vw, 96px); }
   .foot-inner { grid-template-columns: minmax(0, 1fr); }
-  .foot-nav { justify-content: flex-start; }
+  .foot-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 560px; }
 }
 
 /* Touch screens and narrow windows: no keyboard, so the palette becomes a list of sections to tap */
@@ -641,6 +648,8 @@ kbd + kbd { margin-left: 3px; }
 
 /* Phones */
 @media (max-width: 600px) {
+  .foot-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .foot-col:first-child { grid-row: span 2; }
   :root { --gutter: 20px; --pad: 56px; --h2-size: clamp(31px, 9vw, 38px); }
   /* No room for the rail beside the text: the lane colours stay in the tints and the light */
   .sec::before, .sec::after { display: none; }
@@ -701,6 +710,7 @@ kbd + kbd { margin-left: 3px; }
   .compare-range input { height: 44px; }
   .pal-list a { min-height: 48px; }
   .foot-nav a { display: inline-flex; align-items: center; min-height: 44px; }
+  .foot-col { gap: 0; }
 }
 .is-phone .btn, .is-phone .btn-sm { min-height: 44px; }
 .is-phone .theme-switch button { width: 44px; height: 44px; }
@@ -709,6 +719,7 @@ kbd + kbd { margin-left: 3px; }
 .is-phone .compare-range input { height: 44px; }
 .is-phone .pal-list a { min-height: 48px; }
 .is-phone .foot-nav a { display: inline-flex; align-items: center; min-height: 44px; }
+.is-phone .foot-col { gap: 0; }
 
 /* The desktop-only state on phones and tablets: one intentional panel, not a warning */
 .is-phone .hero-copy .device-note { order: 1; }

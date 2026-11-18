@@ -69,9 +69,10 @@ link previews do not read WebP.
 
 ## How the page behaves
 
-- **Theme.** `theme.js` applies a saved choice before the first paint; otherwise the system's
-  light or dark setting decides. The switch in the header saves Midnight or Daylight in
-  `localStorage` under `canopy-theme`, and only when the visitor picks one. Every screenshot has a
+- **Theme.** Midnight (dark) is the default. `theme.js` applies a saved choice before the first
+  paint. The switch in the header saves Daylight or Match the system in `localStorage` under
+  `canopy-theme`; choosing Midnight again removes the saved choice. Without scripts the system's
+  light or dark setting decides. Every screenshot has a
   Midnight (`m-`) and a Daylight (`d-`) render, and the page shows the one that matches.
 - **Palette.** With a mouse or trackpad and a window wider than 720 px, the palette is a
   combobox: type to filter, arrows to move, Enter to run, Esc to clear. `Ctrl+K` focuses it,
@@ -91,18 +92,19 @@ link previews do not read WebP.
   `hidden`, so they are never downloaded), under the title On this page. When the list is longer
   than its box, it fades out at the bottom until scrolled to the end.
 - **Install command.** The main download is one command, chosen from the visitor's system:
-  `curl -fsSL https://canopy.necturalabs.com/install | sh` on Linux and
+  `curl -fsSL https://canopy.necturalabs.com/install | sh` on Linux and macOS and
   `irm https://canopy.necturalabs.com/install.ps1 | iex` on Windows; below 720 px the line
   scrolls sideways (fading at the edge while more follows) rather than breaking. A switch shows the other
   line, the copy button says Copied and a polite status message announces it. Android, iPhone and
   iPad visitors get no command up front: the page says Canopy is a desktop app for Linux (x86_64
-  and arm64) and Windows (x86_64) with no mobile app yet, offers to copy the page's link to open
+  and arm64), macOS (Apple silicon and Intel) and Windows (x86_64) with no mobile app yet, offers to copy the page's link to open
   on a computer, and keeps the commands behind Show the install commands. The header's Download
   button and the archive downloads are hidden for them: there is nothing to install on a phone.
-  Unrecognised systems see that Canopy runs on Linux and Windows, and
-  macOS visitors that there is no macOS build yet (`install.sh` supports macOS, but no macOS
-  archive is published); both lines stay available to them. The archives remain listed below the
-  command as one card per build, the visitor's own marked with the white button.
+  Unrecognised systems see that Canopy runs on Linux, macOS and Windows; both lines stay
+  available to them. The archives remain listed below the command as one card per build, the
+  visitor's own marked with the white button (both macOS cards on a Mac, since a browser cannot
+  tell Apple silicon from Intel), with a note that the macOS builds are not notarised. The footer
+  groups its links in three labelled columns: Tour, Get Canopy and Legal.
 - **Phones.** Below 720 px each full-window screenshot is replaced by a crop of the same render
   (`*-crop.webp`, `*-changes-hunk.webp`). Below 600 px the crops sit in a taller frame
   (`object-fit: cover`, anchored top left) so they show at about three quarters of their real size
