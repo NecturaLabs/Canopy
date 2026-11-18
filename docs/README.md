@@ -24,6 +24,7 @@ in a document no longer exists.
 | The landing website: running it, deploying it, where its pictures and claims come from | [../site/README.md](../site/README.md) |
 | What leaves the machine, and under which terms | [legal/privacy-policy.md](legal/privacy-policy.md), [legal/terms-of-service.md](legal/terms-of-service.md) |
 | How to check performance with 30 repositories open | [stress-test.md](stress-test.md) |
+| Which sources each area of the work is audited against, and when it last was | [playbook/practices-audit.md](playbook/practices-audit.md) |
 | How the illustrations and the app icon are made | [art-prompts.md](art-prompts.md) |
 | What changed in a release | [../CHANGELOG.md](../CHANGELOG.md) |
 
