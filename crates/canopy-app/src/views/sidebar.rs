@@ -294,18 +294,18 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     crate::branch_tree::Node::Folder { path, name, depth, branches, has_head, .. } => {
                         let key = crate::branch_tree::folder_key(path);
                         let mut open = !tab.collapsed.contains(&key);
-                        let glyph = if open { icon::FOLDER_OPEN } else { icon::FOLDER_SIMPLE };
                         let spoken = format!("{path}, folder of {branches} {}", if *branches == 1 { "branch" } else { "branches" });
                         let mut row = TreeRow::new(("branch-folder", path), *depth)
                             .indent(section_tree_indent())
                             .open(&mut open)
                             .toggle_on_click(true)
-                            .icon(glyph)
                             .label(name.clone())
                             .trailing(branches.to_string())
                             .accessible_name(spoken)
                             .tooltip(path.clone())
                             .roving(list, at);
+                        // No folder glyph: the chevron already says it opens. Its accent marks
+                        // the folder that holds the checked-out branch.
                         if *has_head {
                             row = row.icon_tone(Tone::Accent);
                         }
@@ -349,7 +349,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 let mut notes: Vec<String> = Vec::new();
                 if b.ahead > 0 { notes.push(format!("↑{}", b.ahead)); }
                 if b.behind > 0 { notes.push(format!("↓{}", b.behind)); }
-                if let Some(r) = reason { notes.push(merged_word(r).to_owned()); }
+                // The merged, gone and squash marks are the glyph's (shape and tone) and the
+                // tooltip's: a word too would take the room the branch's name needs.
                 let mut spoken = b.name.clone();
                 if let Some(r) = reason { spoken = format!("{spoken}, {}", merged_word(r)); }
                 let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::Branch(n) if *n == b.name), b.target);
