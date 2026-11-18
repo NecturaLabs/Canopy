@@ -3,7 +3,7 @@
 Where an instruction file lives decides whether it loads at all, and how much of it survives
 decides whether the back half of a long file is ever seen. Both failures are silent — no error, no
 warning, just guidance that was never read. This reference states what is empirically verified on
-a development machine (Claude Code 2.1.278 and 2.1.280, Codex 0.155.1) separately from what is inferred, so a claim here
+the harnesses themselves (Claude Code 2.1.278 and 2.1.280, Codex 0.155.1) separately from what is inferred, so a claim here
 can be traced back to which kind of evidence backs it. Verify against the harness's own docs and,
 where possible, its own diagnostic output before relying on a fact here for a version this wasn't
 checked against.

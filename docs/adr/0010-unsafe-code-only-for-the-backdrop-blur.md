@@ -9,8 +9,7 @@ Canopy forbade `unsafe` everywhere (`unsafe_code = "forbid"` for the workspace).
 Translucent surfaces option blurs what lies behind menus, dialogs, toasts and the palette. egui has
 no backdrop blur; the only live one is an OpenGL paint callback through `egui_glow`, and every
 `glow` call is an `unsafe fn`. `forbid` cannot be relaxed by an inner `allow`, so a blur needs a
-policy change. The owner approved it in these words: "i authorize usage of unsafe as long as we
-make absolute sure no harm comes from it."
+policy change. The maintainer approved it on the condition that it is made certain to do no harm.
 
 ## Considered options
 

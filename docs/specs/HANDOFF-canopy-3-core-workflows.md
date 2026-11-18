@@ -121,7 +121,7 @@ failures stay `Error::Cli` with git's stderr.
 - `cli.rs` and `lfs.rs` gained 4 unit tests.
 - A mutation check turned the relevant tests red for: the flow `--no-ff`/preflight, the
   submodule name lookup, and every review fix.
-- An independent review (Sonnet) found:
+- An independent review found:
   - an orphan branch aborting `merged_branches`;
   - a stale index in `lfs_files`;
   - an invalid tag name stopping a finish half-way;
@@ -170,5 +170,5 @@ failures stay `Error::Cli` with git's stderr.
    - `commit_details` flags `lfs` from the current attributes, not the commit's.
    - `submodule_at` matches paths after turning `\` into `/`.
    - The symlink and `canonicalize` guards in `submodule_remove` were tested on Linux only.
-8. Platform check: this machine is Linux, so the macOS `packaging/test-install.sh` run was not
+8. Platform check: the work was done on Linux, so the macOS `packaging/test-install.sh` run was not
    done.

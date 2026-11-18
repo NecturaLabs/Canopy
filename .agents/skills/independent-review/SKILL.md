@@ -1,10 +1,10 @@
 ---
 name: independent-review
 description: Carry a finished non-trivial Canopy change through an independent review — exact diff scope, the canopy-review agent (or another separate reviewer) briefed with requirements and facts but none of the implementer's reasoning, evidence-backed findings, adjudication of disputed ones, and re-verification of only what the fixes touched. Use when a behavioral, cross-file, schema, dependency or concurrency change is complete and needs a reviewer that did not write it, when a separate reviewer must be briefed, or when a disputed finding needs adjudicating. Not for a typo, a formatting-only diff, or code still being written.
-license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
+license: MIT; see LICENSE.txt
 ---
 
-Adapted from NecturaLabs/AgentSkills (skills/independent-review).
+Adapted from the NecturaLabs independent-review skill.
 
 # Independent review
 

@@ -1,10 +1,10 @@
 ---
 name: agent-instructions
 description: Create, audit, shrink or restructure Canopy's agent instruction files — AGENTS.md, the CLAUDE.md adapter, and the prompts in .claude/agents/. Use when auditing them for stale or oversized guidance, deciding what belongs in persistent instructions versus a skill, a document or a lint rule, or migrating instruction files between agent harnesses. Not for editing ordinary project documentation (project-docs) or session handoff notes (memory-hygiene).
-license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
+license: MIT; see LICENSE.txt
 ---
 
-Adapted from NecturaLabs/AgentSkills (skills/agent-instructions).
+Adapted from the NecturaLabs agent-instructions skill.
 
 # Agent instructions
 

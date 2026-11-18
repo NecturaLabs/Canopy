@@ -24,8 +24,8 @@ follow a path relative to material it never loaded.
 Take the first row that matches. **Strong** is the strongest tier the setup provides and
 **ordinary** its standard one; the table is written in tiers because vendor model names change far
 faster than this guidance should. A setup may exclude a model, and an excluded model is never the
-strong tier: where the setup pins model-and-effort agent types, strong means its `opus-*` types and
-ordinary its `sonnet-*` types, with ordinary the default and strong chosen only from its own rows.
+strong tier: where the setup pins model-and-effort agent types, strong and ordinary mean its
+stronger and default model tiers, with ordinary the default and strong chosen only from its own rows.
 Never spend the strong tier on deterministic or low-judgment work.
 
 | Node | Tier | Effort |

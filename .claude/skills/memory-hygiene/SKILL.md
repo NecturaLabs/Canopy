@@ -1,10 +1,10 @@
 ---
 name: memory-hygiene
 description: Keep an agent's saved memories and Canopy's session handoff notes (docs/specs/HANDOFF-*.md) true — verify each against the repository, merge duplicates, retire finished handoff items into GitHub Issues or delete them, fix the memory index, and route drifted docs to an audit. Use when a startup check or a user flags stale memories, at a checkpoint after a batch of work, when a handoff's work is finished, or when a memory turns out to be wrong. Not for saving a new memory, not for writing or auditing project documentation (project-docs), and not for instruction files such as AGENTS.md (agent-instructions).
-license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
+license: MIT; see LICENSE.txt
 ---
 
-Adapted from NecturaLabs/AgentSkills (skills/memory-hygiene).
+Adapted from the NecturaLabs memory-hygiene skill.
 
 # Memory hygiene
 

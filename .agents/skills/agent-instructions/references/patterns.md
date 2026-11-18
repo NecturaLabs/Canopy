@@ -160,10 +160,9 @@ want to see how much detail a real file carries at a given scope, then write for
 repository rather than adapting theirs.
 
 <!-- Canopy note (not upstream): the two repository-scope examples are vendored beside this skill
-in `examples/`; the user-scope `global-agents.md` is not, since Canopy has no use for it. Read it
-upstream in NecturaLabs/AgentSkills under `examples/` if needed. -->
+in `examples/`; the user-scope `global-agents.md` is not, since Canopy has no use for it. -->
 
-- `examples/global-agents.md` (upstream only, NecturaLabs/AgentSkills)
+- `examples/global-agents.md` (upstream only)
   — user-scope working agreement. Note how every machine-specific rule is left as a `customize:`
   marker rather than stated literally, and how skill routing names each skill exactly as the
   harness lists it, so a user adds a scenario row in the same shape for any skill they rely on.

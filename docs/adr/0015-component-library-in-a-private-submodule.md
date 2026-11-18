@@ -7,7 +7,7 @@ is now public, so CI fetches it with `actions/checkout` and no deploy key
 ## Context
 
 Canopy's theme, fonts, motion, in-code illustrations and generic widget kit (`crates/canopy-app/src/ui`) are
-not about Git, and the owner's other applications need the same look. Keeping them inside
+not about Git, and other NecturaLabs applications need the same look. Keeping them inside
 `canopy-app` meant copying them or pulling Git-specific code into those applications.
 
 ## Decision
