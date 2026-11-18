@@ -40,6 +40,16 @@
     "description": "Acceptance still needs live, platform or owner verification."
   },
   {
+    "name": "good first issue",
+    "color": "7057ff",
+    "description": "Bounded, well-described work suited to a first contribution."
+  },
+  {
+    "name": "help wanted",
+    "color": "008672",
+    "description": "Ready for a contributor to pick up."
+  },
+  {
     "name": "security",
     "color": "b60205",
     "description": "Credential, trust, privacy or command-execution risk."

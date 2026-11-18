@@ -18,7 +18,9 @@ is not already a tagged build:
   anything else (docs, ci, chore, test, refactor, style, build)  no release
 
 `notes` writes the release notes: the commits since the last `build-*` tag, grouped as Keep a
-Changelog sections (feat Added, fix and revert Fixed, perf and build Changed). Before the first
+Changelog sections: Security (a `security` scope or a `Security:` footer) and Breaking changes
+(`!` or a `BREAKING CHANGE:` footer) first, then feat Added, fix and revert Fixed, perf and build
+Changed. A breaking security fix is listed in both of the first two. Before the first
 `build-*` tag it prints the Unreleased section of CHANGELOG.md instead, which holds the
 hand-written notes of everything since the last release made with semantic versions. The "Create
 release" workflow (.github/workflows/create-release.yml) runs `plan`, tags the result and hands it
@@ -117,20 +119,30 @@ GROUPS = (
 )
 
 
+def special_groups(m: re.Match, body: str) -> list[str]:
+    """Security for a `security` scope or a `Security:` footer; breaking for `!` or the footer."""
+    groups = []
+    if m["scope"] == "security" or re.search(r"^Security: ", body, re.M):
+        groups.append("Security")
+    if m["bang"] or re.search(r"^BREAKING[ -]CHANGE: ", body, re.M):
+        groups.append("Breaking changes")
+    return groups
+
+
 def generated_notes(commits: list[tuple[str, str]]) -> str:
-    """Keep a Changelog sections built from commit subjects."""
-    sections = []
-    for title, kinds in GROUPS:
-        items = []
-        for subject, body in commits:
-            m = SUBJECT.match(subject)
-            if not m or not releasable(subject, body) or m["type"] not in kinds:
-                continue
-            desc = m["desc"].strip().rstrip(".")
-            items.append(f"- {desc[:1].upper()}{desc[1:]}.")
-        if items:
-            sections.append(f"### {title}\n\n" + "\n".join(items))
-    return "\n\n".join(sections)
+    """Keep a Changelog sections built from commit subjects; security fixes and breaking
+    changes come first, in sections of their own."""
+    groups: dict[str, list[str]] = {}
+    for subject, body in commits:
+        m = SUBJECT.match(subject)
+        if not m or not releasable(subject, body):
+            continue
+        titles = special_groups(m, body) or [t for t, kinds in GROUPS if m["type"] in kinds]
+        desc = m["desc"].strip().rstrip(".")
+        for title in titles:
+            groups.setdefault(title, []).append(f"- {desc[:1].upper()}{desc[1:]}.")
+    order = ["Security", "Breaking changes"] + [t for t, _ in GROUPS]
+    return "\n\n".join(f"### {t}\n\n" + "\n".join(groups[t]) for t in order if t in groups)
 
 
 def section(text: str, name: str) -> str:
@@ -191,6 +203,21 @@ def selftest() -> None:
     notes_text = generated_notes([("feat(app): side by side diffs", ""), ("fix: crash on empty repo.", ""), ("docs: x", ""), ("build: y", "")])
     expect_eq(notes_text, "### Added\n\n- Side by side diffs.\n\n### Fixed\n\n- Crash on empty repo.")
     expect_eq(generated_notes([("docs: x", "")]), "")
+    # Security fixes and breaking changes are named in sections of their own, ahead of the rest.
+    expect_eq(
+        generated_notes([
+            ("feat: new thing", ""),
+            ("fix(security): token in a log line", ""),
+            ("fix: escape a path", "Security: GHSA-xxxx-xxxx-xxxx"),
+            ("feat!: drop the old flag", ""),
+            ("refactor: read settings in the new format", "BREAKING CHANGE: old files are not read"),
+            ("fix(security)!: refuse unsigned updates", ""),
+        ]),
+        "### Security\n\n- Token in a log line.\n- Escape a path.\n- Refuse unsigned updates.\n\n"
+        "### Breaking changes\n\n- Drop the old flag.\n- Read settings in the new format.\n"
+        "- Refuse unsigned updates.\n\n"
+        "### Added\n\n- New thing.",
+    )
     log = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- New thing.\n\n## [0.1.0] - 2026-09-01\n\n- First.\n\n[0.1.0]: https://x\n"
     expect_eq(section(log, "Unreleased"), "### Added\n\n- New thing.")
     expect_eq(section(log, "0.1.0"), "- First.")

@@ -150,7 +150,7 @@ macOS on Apple silicon and Windows x64; Linux arm64 and Intel Macs are being add
 
 Requirements:
 
-- A stable Rust toolchain (1.91 or newer) from [rustup](https://rustup.rs), with rustfmt and
+- A stable Rust toolchain (1.95 or newer) from [rustup](https://rustup.rs), with rustfmt and
   clippy. Canopy builds with the latest stable release; no exact release is pinned.
 - `git` 2.30 or newer on `PATH` at runtime.
 - A C compiler (libgit2 is built from source by the `git2` crate). No OpenSSL or libssh2 is needed.
@@ -185,6 +185,16 @@ To install the binary, desktop entry and icons for your user on Linux (`~/.local
 ```sh
 tools/install-desktop.sh            # tools/install-desktop.sh --uninstall to remove
 ```
+
+## Quick start
+
+1. Install Canopy (above) and open a repository: `canopy ~/code/my-project`, or pick one from the
+   welcome screen.
+2. Read the history in the commit graph; select a commit to see its files and diff.
+3. Open Changes, stage files with Space (or everything with Ctrl+Shift+S), write a message and
+   commit with Ctrl+Enter.
+4. Push with Ctrl+Shift+P. Ctrl+K opens the command palette and `?` lists every shortcut
+   ([docs/keybindings.md](docs/keybindings.md)).
 
 ## Usage
 
@@ -254,8 +264,8 @@ the visual design system.
 
 ```sh
 cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 cargo run -p canopy-app -- <repo>
 tools/check.sh                       # fmt, clippy, tests, release, notices, docs and stall checks, installer test
 tools/mkfixture.sh /tmp/demo         # deterministic demo repository
@@ -274,15 +284,19 @@ convention and pull request checklist, and [GitHub Issues](https://github.com/Ne
 │   ├── canopy-core/        Git backend: snapshots, graph layout, diffs, status, operations,
 │   │                       git-flow, ignore rules, LFS, submodules, forge URLs, conflicts
 │   ├── canopy-hosting/     GitHub and GitLab API client and the update-manifest fetch
-│   └── canopy-app/         GUI binary `canopy`
-│       ├── assets/         bundled fonts (OFL) and window icon
-│       └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/
+│   ├── canopy-app/         GUI binary `canopy`
+│   │   ├── assets/         window icon
+│   │   └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/
+│   └── nectura-ui/         component library (submodule): theme, fonts, motion, components
 ├── assets/                 application icon (PNG)
 ├── docs/                   architecture, design system, feature matrix, keybindings,
 │                           ADRs, specs, legal texts, screenshots
 ├── packaging/              one-line installers and their test; Linux desktop entry, macOS bundle
+├── site/                   landing site (canopy.necturalabs.com)
+├── vendor/                 eframe with Canopy's patch (tools/vendor-eframe.sh)
 ├── tools/                  check, fixture, screenshot, install, release and stress scripts
-├── .claude/                agents and skills for AI coding agents
+├── .claude/, .codex/,      agents and skills for AI coding agents
+│   .agents/
 └── .github/                CI, release workflows, templates
 ```
 
@@ -300,6 +314,17 @@ The repository is set up for coding agents. [AGENTS.md](AGENTS.md) (loaded by Cl
   `agent-orchestration`).
 - **Tools** (`tools/`): the scripts above let an agent build, check, create a reproducible
   repository and look at the result as an image.
+
+## Community
+
+- [Contributing](CONTRIBUTING.md): how to propose and make a change, and what fits Canopy.
+- [Discussions](https://github.com/NecturaLabs/Canopy/discussions) and [SUPPORT.md](SUPPORT.md):
+  questions and ideas.
+- [Code of conduct](CODE_OF_CONDUCT.md), [governance](GOVERNANCE.md) and the
+  [roadmap](docs/roadmap.md).
+- [Security policy](SECURITY.md): report vulnerabilities privately.
+- [Accessibility](ACCESSIBILITY.md), [changelog](CHANGELOG.md) and
+  [releases](https://github.com/NecturaLabs/Canopy/releases).
 
 ## Licence
 

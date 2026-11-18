@@ -33,6 +33,16 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("commit: ${{ needs.identity.outputs.commit }}", tests)
         self.assertIn("test", re.search(r"needs: \[(.*?)\]", job("release.yml", "release"))[1].split(", "))
 
+    def test_publishing_jobs_ship_the_identified_commit(self):
+        # A tag moved after the identity job checked it must not change what ships.
+        for name in ("release", "publish-update", "attach-experimental"):
+            body = job("release.yml", name)
+            self.assertIn("identity", re.search(r"needs: \[(.*?)\]", body)[1].split(", "), name)
+            refs = re.findall(r"^\s+ref: (.*)$", body, re.M)
+            self.assertTrue(refs, name)
+            for ref in refs:
+                self.assertTrue(ref.startswith("${{ needs.identity.outputs.commit }}"), f"{name}: {ref}")
+
     def test_test_job_has_no_write_permission_or_optional_gate(self):
         tests = job("test-release.yml", "test")
         self.assertIn("contents: read", tests)
