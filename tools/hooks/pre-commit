@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Git pre-commit hook: refuses a commit while clippy, with warnings denied as in CI, finds
-# anything or a workspace test fails, before CI runs the same tests on Linux. Skipped when the
-# commit stages no Rust source or build configuration.
+# anything or a workspace test fails, before CI runs the same tests on every platform. Skipped
+# when the commit stages no Rust source or build configuration.
 # Install with tools/install-hooks.sh.
 set -euo pipefail
 

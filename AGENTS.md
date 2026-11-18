@@ -113,10 +113,9 @@ adding a dependency.
   checks `site/` and, on `main`, deploys it to Netlify (https://canopy.necturalabs.com).
   `stall-check.py` runs in CI's Linux test job and must pass. Run `cargo deny check`
   yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) runs
-  the workspace tests on Linux for every push that changes code and for a fork's pull request;
-  its `Tests` check is required on `dev` and `main`. Windows and macOS builds are published
-  (`CI_MACOS` / `CI_WINDOWS` pick the release platforms) but not tested in CI; people on those
-  systems try them.
+  the workspace tests on Linux, macOS and Windows for every push that changes code and for a
+  fork's pull request; its `Tests` check sums them up and is required on `dev` and `main`.
+  `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` pick the release platforms only.
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`
   (`-h` lists the options)

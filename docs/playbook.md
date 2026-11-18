@@ -143,10 +143,9 @@ or how flows feel end to end.
   GitHub-hosted job. Create release waits for them before tagging; Release runs them again before
   publishing, including a direct dispatch or rebuild of an existing tag. Failed or cancelled tests
   prevent the tag or publication. Dry runs do not run these tests and cannot tag.
-- CI runs the workspace tests on Linux for every push that changes code and for a fork's pull
-  request; the "CI for dev" and "CI for main" rulesets require its `Tests` check. Windows and
-  macOS are built and published, not tested in CI (`CI_MACOS` / `CI_WINDOWS` pick the release
-  platforms only). The local
+- CI runs the workspace tests on Linux, macOS and Windows for every push that changes code and
+  for a fork's pull request; the "CI for dev" and "CI for main" rulesets require its `Tests`
+  check. `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` pick the release platforms only. The local
   pre-commit hook is an early check, while the mandatory release job is the enforced publication
   gate.
 - `dev` takes a pull request only when its branch is up to date, so after each merge the other

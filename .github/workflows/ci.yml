@@ -134,18 +134,23 @@ jobs:
       # code we do not write would fail CI.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-  # The tests run on Linux. Windows and macOS builds are published, and tried by people on those
-  # systems, but CI does not test them.
+  # The tests run on every platform Canopy ships for, on every push that changes code and on a
+  # pull request from a fork. The Tests job below is the one check a ruleset requires.
   test:
-    name: Test (Linux)
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.hosted }}
     needs: changes
-    # Every push that changes code, and a pull request from a fork. The Tests job below is the one
-    # check a ruleset requires.
     if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: Linux, hosted: ubuntu-latest }
+          - { os: macOS, hosted: macos-latest }
+          - { os: Windows, hosted: windows-latest }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -166,14 +171,18 @@ jobs:
       # A window the compositor is not drawing must keep answering its pings (ADR 0007). The check
       # runs the app on a stand-in compositor with software OpenGL, and must pass.
       - name: Install the tools for the hidden-window check
+        if: runner.os == 'Linux'
         run: >
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
           pkg-config libwayland-dev wayland-protocols libwayland-bin
           libxkbcommon0 libegl1 libegl-mesa0 libgl1-mesa-dri
       - name: Hidden-window check
+        if: runner.os == 'Linux'
         run: python3 tools/stall-check.py --require
 
-  # The check the rulesets require for the tests. It always runs, so a cancelled run fails it
+  # The check the rulesets require for the tests: one name for the matrix, since a skipped matrix
+  # job reports no per-platform name, and requiring "Test (Linux)" would leave a documentation-only
+  # push waiting forever. It always runs, so a cancelled run fails it
   # rather than skipping it (a skipped job satisfies a required check). A skipped test job passes
   # (a documentation-only push, or a pull request from a branch of this repository, which its push
   # run covers); a failed or cancelled one fails.

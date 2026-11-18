@@ -33,7 +33,7 @@ maintainer merges.
   fast-forward `main` to `dev` directly (that skips only "Source branch", which runs on pull
   requests). No other account has write access. Release tags (`build-*`, and `v*` in
   `nectura-ui`) cannot be moved or deleted by anyone (amended 2026-11-18 after a configuration
-  audit: CI used to share the bypassable ruleset; amended 2026-11-19: Tests (Linux), up-to-date branches, code
+  audit: CI used to share the bypassable ruleset; amended 2026-11-19: Tests on every platform, up-to-date branches, code
   owner and latest-push approval added, merge commits the only merge method).
 - **Issues: collaborators only** (GitHub's issue creation policy). Everyone else reports bugs and
   proposes features in Discussions; a maintainer files the issue. Pull requests stay open to
