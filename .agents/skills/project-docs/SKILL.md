@@ -1,10 +1,10 @@
 ---
 name: project-docs
 description: Create or maintain Canopy's durable project documentation — docs/architecture.md, docs/design.md, docs/features.md, ADRs, design documents, runbooks and reference docs. Use when recording a consequential decision and its rationale, documenting how a system is structured, or auditing documentation that has drifted from the code. Not for code comments, not for explaining code in conversation, not for cutting a release (the release skill), and not for AGENTS.md, CLAUDE.md, .claude/ agents or skills (agent-instructions).
-license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
+license: MIT (NecturaLabs); see LICENSE.txt
 ---
 
-Adapted from NecturaLabs/AgentSkills (skills/project-docs).
+Adapted from a NecturaLabs agent skill (MIT; see LICENSE.txt).
 
 # Project Docs
 

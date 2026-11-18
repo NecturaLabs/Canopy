@@ -23,7 +23,7 @@ case $os in
 esac
 
 # The name holds a space on purpose: the installer and this script must cope with a path that has
-# one, as a mounted disk's "/run/media/<user>/Programming SSD" does.
+# one, as a mounted disk's "/run/media/<user>/<disk label>" does.
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/canopy install test.XXXXXX")
 # The real path: the installer records real paths (pwd -P), and macOS's /tmp and TMPDIR are
 # symlinks into /private.

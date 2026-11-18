@@ -1,10 +1,10 @@
 ---
 name: agent-instructions
 description: Create, audit, shrink or restructure Canopy's agent instruction files — AGENTS.md, the CLAUDE.md adapter, and the prompts in .claude/agents/. Use when auditing them for stale or oversized guidance, deciding what belongs in persistent instructions versus a skill, a document or a lint rule, or migrating instruction files between agent harnesses. Not for editing ordinary project documentation (project-docs) or session handoff notes (memory-hygiene).
-license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
+license: MIT (NecturaLabs); see LICENSE.txt
 ---
 
-Adapted from NecturaLabs/AgentSkills (skills/agent-instructions).
+Adapted from a NecturaLabs agent skill (MIT; see LICENSE.txt).
 
 # Agent instructions
 
@@ -142,6 +142,6 @@ Whichever mode ran, report:
   has grown past what it should carry.
 - `references/patterns.md` — what a good instruction file contains, section by section, the
   anti-patterns that inflate one, how to write a nested file that survives on its own, and worked
-  global, project and nested examples to calibrate scope and size against.
+  project and nested examples to calibrate scope and size against.
 - `examples/project-agents.md` and `examples/nested-agents.md` — the finished repository-level and
   subtree files `references/patterns.md` discusses. Examples only, not instructions for Canopy.

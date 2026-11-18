@@ -159,18 +159,13 @@ The sections above are the reasoning; these are finished files that apply it. Re
 want to see how much detail a real file carries at a given scope, then write for your own
 repository rather than adapting theirs.
 
-<!-- Canopy note (not upstream): the two repository-scope examples are vendored beside this skill
-in `examples/`; the user-scope `global-agents.md` is not, since Canopy has no use for it. Read it
-upstream in NecturaLabs/AgentSkills under `examples/` if needed. -->
+<!-- Canopy note (not upstream): only the two repository-scope examples are vendored beside this
+skill, in `examples/`. -->
 
-- `examples/global-agents.md` (upstream only, NecturaLabs/AgentSkills)
-  — user-scope working agreement. Note how every machine-specific rule is left as a `customize:`
-  marker rather than stated literally, and how skill routing names each skill exactly as the
-  harness lists it, so a user adds a scenario row in the same shape for any skill they rely on.
 - [`examples/project-agents.md`](../examples/project-agents.md)
   — repository-level file. Note what it leaves out: no generic engineering doctrine, no framework
   conventions, no file-by-file tour, no routing to skills a contributor may not have installed. It
-  is under half the size of the global file, leaves to `make lint` what lint can decide, and
+  is short, leaves to `make lint` what lint can decide, and
   links out to the architecture docs instead of summarizing them.
 - [`examples/nested-agents.md`](../examples/nested-agents.md)
   — subtree file for a directory whose toolchain, command set and safety boundary genuinely

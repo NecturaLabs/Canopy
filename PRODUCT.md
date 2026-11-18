@@ -1,12 +1,10 @@
 # Product
 
-<!-- impeccable:product-schema 1 -->
-
 ## Platform
 
 desktop — a native desktop application (Rust, `eframe`/`egui`) for Linux first, then macOS and
-Windows, with one design language on every OS. None of the schema's values (web, ios, android,
-adaptive) fits; it is not a web app and does not adapt its look per OS.
+Windows, with one design language on every OS. It is not a web, iOS or Android app and does not
+adapt its look per OS.
 
 ## Users
 

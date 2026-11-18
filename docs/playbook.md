@@ -43,24 +43,24 @@ access), `python3 tools/stall-check.py`, `packaging/test-install.sh`.
 
 ## Running the app live (private Xvfb)
 
-Never open a Canopy window on the owner's Hyprland session. A launch that still has
+Never open a Canopy window on your own desktop session. A launch that still has
 `WAYLAND_DISPLAY` set opens there. A window on a hidden workspace gets no frame callbacks; Canopy
 used to block in its buffer swap then and Hyprland raised "Application Not Responding" for it
 (ADR 0007). `tools/stall-check.py` tests that safely, on a stand-in compositor. Run the app on its own
-X display instead: `xorg-server-xvfb` and `xorg-xauth` (Arch) are installed, `xdotool` and
-ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `xvfb-run`.
+X display instead: Xvfb (Arch `xorg-server-xvfb` and `xorg-xauth`, Debian/Ubuntu `xvfb`), `xdotool`
+and ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `xvfb-run`.
 
 1. Isolate it. The session exports `XDG_*` and the real `~/.gitconfig` is read by git, so a wrapper
    script must export `HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
-   `XDG_STATE_HOME` and `TMPDIR` pointing into a scratch folder under
-   `/run/media/nectura/Programming SSD/tmp`, `GIT_CONFIG_GLOBAL` pointing at an empty file there,
+   `XDG_STATE_HOME` and `TMPDIR` pointing into a scratch folder (a
+   `mktemp -d` directory), `GIT_CONFIG_GLOBAL` pointing at an empty file there,
    `GIT_CONFIG_NOSYSTEM=1`, unset `GIT_AUTHOR_*`, `GIT_COMMITTER_*` and `EMAIL`, and then
    `exec target/release/canopy "$@"`. Run it only on a fixture (`tools/mkfixture.sh`).
 2. Start the display and launch, with Wayland unset:
    `Xvfb :77 -screen 0 1440x900x24 -nolisten tcp &` then
    `env -u WAYLAND_DISPLAY DISPLAY=:77 LIBGL_ALWAYS_SOFTWARE=1 wrapper.sh FIXTURE &`. Add
-   `CANOPY_LOG=canopy=debug,canopy_core=debug` to check what is logged. Check with
-   `hyprctl clients -j` that no Canopy window exists on the real session.
+   `CANOPY_LOG=canopy=debug,canopy_core=debug` to check what is logged. Check on the
+   real session (on Hyprland, `hyprctl clients -j`) that no Canopy window exists there.
 3. Drive it. There is no window manager, so keyboard focus must be given explicitly:
    `xdotool windowfocus $(xdotool search --name Canopy | tail -1)` before typing. Then
    `xdotool mousemove X Y click 1`, `xdotool type --delay 40 -- TEXT` and `xdotool key ctrl+a`
@@ -91,8 +91,8 @@ or how flows feel end to end.
 
 1. `tools/usersim.sh start [--kind showcase|conflict|linear|big] [--size WxH] [--env NAME=VALUE]...`
    builds the release binary and launches it on a private Xvfb display with its own home, XDG folders and Git
-   configuration in a scratch folder, on a fixture with a local bare `origin`: never the owner's
-   repositories, never their Canopy settings, never the desktop session. The app gets a clean
+   configuration in a scratch folder, on a fixture with a local bare `origin`: never your own
+   repositories, never your Canopy settings, never the desktop session. The app gets a clean
    environment; `--env` adds `TERMINAL`, `VISUAL`, `EDITOR`, `XDG_DATA_DIRS` or `XDG_CONFIG_DIRS` to
    it, to stage another machine's launcher lists (desktop entries and programs in a scratch folder).
 2. Drive it with `tools/usersim.sh x ...` (xdotool: `x search --name Canopy windowfocus`, then
