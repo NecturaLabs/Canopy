@@ -12,6 +12,23 @@ Report security problems privately, never in a public issue or pull request:
 Say what is affected, how to reproduce it and what an attacker gains. Leave out real credentials,
 tokens and private repository contents.
 
+## What counts as a vulnerability
+
+A bug is a vulnerability when it crosses a security boundary: someone who should not, such as a
+repository you open, its configuration, a remote, a hosting server or a file you import, gains
+access, permissions or control they did not already have. Examples: running a program through a
+repository's settings, reading a credential, or sending data to a host the Privacy Policy does
+not list. Code that could be more robust without crossing a boundary is a normal bug: report it
+in an issue (Discussions if you cannot open one), and we may still credit you in the release
+notes.
+
+## Research in good faith
+
+Test only your own computer, repositories and accounts, or ones you have permission to test.
+Avoid privacy violations, data destruction and service disruption, including to GitHub, GitLab
+and the other hosts Canopy contacts. Do not exploit a problem beyond what shows it, and give us
+the time described below before publishing.
+
 ## What happens next
 
 1. We acknowledge the report within 7 days.
