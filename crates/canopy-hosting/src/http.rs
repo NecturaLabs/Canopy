@@ -536,7 +536,7 @@ const MAX_RETRY_AFTER: i64 = 86_400;
 /// When a rate limit resets, in unix seconds between now and [`MAX_RETRY_AFTER`] ahead: the
 /// provider's reset header (unix seconds), else `Retry-After` (seconds from now).
 pub(crate) fn rate_limit_reset(headers: &HeaderMap) -> Option<i64> {
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let latest = now.saturating_add(MAX_RETRY_AFTER);
     header_i64(headers, "x-ratelimit-reset")
         .or_else(|| header_i64(headers, "ratelimit-reset"))
@@ -914,7 +914,7 @@ mod tests {
 
     #[test]
     fn huge_retry_after_values_neither_overflow_nor_wait_for_ever() {
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let mut headers = HeaderMap::new();
         headers.insert(
             "retry-after",
@@ -939,7 +939,7 @@ mod tests {
 
     #[test]
     fn reset_times_are_kept_between_now_and_a_day_ahead() {
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         for name in ["x-ratelimit-reset", "ratelimit-reset"] {
             let reset = |value: &'static str| {
                 let mut headers = HeaderMap::new();
@@ -1163,7 +1163,7 @@ mod tests {
             Error::Unauthorized("Forbidden".into())
         );
         h.insert("x-ratelimit-remaining", HeaderValue::from_static("0"));
-        let soon = chrono::Utc::now().timestamp() + 600;
+        let soon = jiff::Timestamp::now().as_second() + 600;
         h.insert("x-ratelimit-reset", HeaderValue::from(soon));
         assert_eq!(
             map_status(403, &h, b"", ForgeKind::GitHub),

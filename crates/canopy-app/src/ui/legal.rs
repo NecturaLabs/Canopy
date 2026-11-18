@@ -468,9 +468,8 @@ mod tests {
             .lines()
             .find_map(|l| l.strip_prefix("Last updated: "))
             .expect("Last updated line");
-        chrono::NaiveDate::parse_from_str(line.trim(), "%-d %B %Y")
+        jiff::civil::Date::strptime("%d %B %Y", line.trim())
             .expect("date")
-            .format("%Y-%m-%d")
             .to_string()
     }
 

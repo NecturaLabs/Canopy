@@ -25,7 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true
 getrandom = "0.4"
-chrono.workspace = true
+jiff.workspace = true
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui = "0.36"
 egui-phosphor = { version = "0.14", features = ["regular", "fill"] }

@@ -1,7 +1,5 @@
 //! Errors from the hosting API, carrying the server's own message where it sent one.
 
-use chrono::{DateTime, Utc};
-
 /// A hosting API failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -84,10 +82,10 @@ fn not_found(message: &str) -> String {
 }
 
 fn rate_limited(reset: Option<i64>) -> String {
-    match reset.and_then(|t| DateTime::<Utc>::from_timestamp(t, 0)) {
+    match reset.and_then(|t| jiff::Timestamp::from_second(t).ok()) {
         Some(at) => format!(
             "API rate limit reached; it resets at {} UTC",
-            at.format("%Y-%m-%d %H:%M")
+            at.strftime("%Y-%m-%d %H:%M")
         ),
         None => "API rate limit reached; try again later".to_owned(),
     }

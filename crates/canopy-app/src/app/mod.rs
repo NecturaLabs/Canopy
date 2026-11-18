@@ -776,7 +776,7 @@ impl CanopyApp {
             }
             version.clone_into(&mut app.settings.last_seen_version);
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         app.update_check_due = app.settings.check_updates
             && now - app.settings.last_update_check >= updater::CHECK_INTERVAL_SECS;
         // Nothing leaves the computer until the user has accepted the terms and answered about

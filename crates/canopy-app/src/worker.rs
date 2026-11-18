@@ -1378,7 +1378,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     emit(Event::StaleCandidates {
                         serial,
                         result: repo
-                            .stale_candidates(older_than_days, chrono::Utc::now().timestamp())
+                            .stale_candidates(older_than_days, jiff::Timestamp::now().as_second())
                             .map(Arc::from)
                             .map_err(|error| error.to_string()),
                     });
@@ -2232,7 +2232,7 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
             repo.remove_stale_candidates(
                 &candidates,
                 older_than_days,
-                chrono::Utc::now().timestamp(),
+                jiff::Timestamp::now().as_second(),
             )?;
             Ok(format!(
                 "Removed {} stale worktrees and branches",

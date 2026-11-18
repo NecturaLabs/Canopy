@@ -40,9 +40,9 @@ pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) 
 }
 
 fn date(seconds: i64) -> String {
-    chrono::DateTime::from_timestamp(seconds, 0).map_or_else(
-        || "Unknown date".into(),
-        |date| date.format("%Y-%m-%d").to_string(),
+    jiff::Timestamp::from_second(seconds).map_or_else(
+        |_| "Unknown date".into(),
+        |date| date.strftime("%Y-%m-%d").to_string(),
     )
 }
 

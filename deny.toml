@@ -12,6 +12,13 @@ ignore = [
   # bincode 1 is unmaintained, not vulnerable. syntect uses it only to load the syntax
   # definitions compiled into Canopy (trusted, bundled data), never untrusted input.
   { id = "RUSTSEC-2025-0141", reason = "syntect loads only bundled syntax dumps with bincode" },
+  # The zbus 5 family is unmaintained, not vulnerable (zbus 6 replaces it). It comes only through
+  # egui's accessibility stack (egui-winit -> accesskit_winit -> accesskit_unix -> zbus, atspi);
+  # accesskit_unix needs zbus 5 even in its latest release (0.24.1). Remove these when it moves to
+  # zbus 6.
+  { id = "RUSTSEC-2026-0370", reason = "zvariant via accesskit_unix; accesskit (latest 0.24.1) still needs zbus 5" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names via accesskit_unix; accesskit (latest 0.24.1) still needs zbus 5" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive via accesskit_unix; accesskit (latest 0.24.1) still needs zbus 5" },
 ]
 
 [licenses]

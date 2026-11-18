@@ -56,10 +56,14 @@ pub fn absolute_date(seconds: i64) -> String {
 
 /// A local calendar date in ISO or English month format.
 pub fn absolute_date_format(seconds: i64, iso: bool) -> String {
-    chrono::DateTime::from_timestamp(seconds, 0)
+    date_in_zone(seconds, iso, jiff::tz::TimeZone::system())
+}
+
+fn date_in_zone(seconds: i64, iso: bool, zone: jiff::tz::TimeZone) -> String {
+    jiff::Timestamp::from_second(seconds)
         .map(|d| {
-            d.with_timezone(&chrono::Local)
-                .format(if iso { "%Y-%m-%d" } else { "%b %-d, %Y" })
+            d.to_zoned_datetime(zone)
+                .strftime(if iso { "%Y-%m-%d" } else { "%b %-d, %Y" })
                 .to_string()
         })
         .unwrap_or_default()
@@ -67,13 +71,17 @@ pub fn absolute_date_format(seconds: i64, iso: bool) -> String {
 
 /// A full timestamp in the author's offset, for tooltips and the details pane.
 pub fn full_date(seconds: i64, offset_minutes: i32) -> String {
-    let Some(offset) = chrono::FixedOffset::east_opt(offset_minutes * 60) else {
+    // Git allows offsets up to 99:59; past a day, show the local date, as before.
+    if offset_minutes.unsigned_abs() >= 24 * 60 {
+        return absolute_date(seconds);
+    }
+    let Ok(offset) = jiff::tz::Offset::from_seconds(offset_minutes.saturating_mul(60)) else {
         return absolute_date(seconds);
     };
-    chrono::DateTime::from_timestamp(seconds, 0)
+    jiff::Timestamp::from_second(seconds)
         .map(|d| {
-            d.with_timezone(&offset)
-                .format("%Y-%m-%d %H:%M (%:z)")
+            d.to_zoned_datetime(offset.to_time_zone())
+                .strftime("%Y-%m-%d %H:%M (%:z)")
                 .to_string()
         })
         .unwrap_or_default()
@@ -90,6 +98,24 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_keep_their_formats() {
+        // 2024-01-02T03:04:05Z.
+        let at = 1_704_164_645;
+        assert_eq!(
+            date_in_zone(at, false, jiff::tz::TimeZone::UTC),
+            "Jan 2, 2024"
+        );
+        assert_eq!(
+            date_in_zone(at, true, jiff::tz::TimeZone::UTC),
+            "2024-01-02"
+        );
+        assert_eq!(full_date(at, 330), "2024-01-02 08:34 (+05:30)");
+        assert_eq!(full_date(at, -480), "2024-01-01 19:04 (-08:00)");
+        assert_eq!(full_date(at, 1500), absolute_date(at));
+        assert_eq!(date_in_zone(i64::MAX, true, jiff::tz::TimeZone::UTC), "");
+    }
 
     #[test]
     fn paths() {
