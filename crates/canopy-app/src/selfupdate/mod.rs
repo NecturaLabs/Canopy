@@ -155,6 +155,26 @@ pub struct Plan {
     pub sha256: String,
     /// The folder of the release's files (`…/canopy-build-<n>`).
     pub release_url: String,
+    /// The SHA-256 the signed manifest gives this platform's installer script
+    /// ([`installer_name`]), when it gives one.
+    pub installer_sha256: Option<String>,
+}
+
+/// This platform's installer script in a release.
+pub fn installer_name() -> &'static str {
+    if cfg!(windows) {
+        "install.ps1"
+    } else {
+        "install.sh"
+    }
+}
+
+/// Whether `digest` is a SHA-256 the way the manifest writes it: 64 lowercase hex digits.
+fn is_sha256(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// The target triple and archive extension of this platform's builds.
@@ -194,13 +214,16 @@ impl Plan {
             ));
         }
         let sha256 = artifact.sha256.clone().unwrap_or_default();
-        if sha256.len() != 64
-            || !sha256
-                .bytes()
-                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-        {
+        if !is_sha256(&sha256) {
             return Err(format!(
                 "the manifest has no valid sha256 for {archive_name}"
+            ));
+        }
+        let installer_sha256 = manifest.installers.get(installer_name()).cloned();
+        if installer_sha256.as_deref().is_some_and(|d| !is_sha256(d)) {
+            return Err(format!(
+                "the manifest has no valid sha256 for {}",
+                installer_name()
             ));
         }
         Ok(Self {
@@ -209,6 +232,7 @@ impl Plan {
             archive_url,
             sha256,
             release_url,
+            installer_sha256,
         })
     }
 
@@ -1149,33 +1173,38 @@ fn unique_name(prefix: &str) -> String {
     format!("{prefix}{}-{nanos}-{count}", std::process::id())
 }
 
-/// The installer script of `plan`'s release, when it can be trusted: listed in the release's
-/// SHA256SUMS with the digest it has, headed `# canopy-installer` and passing `sh -n`.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "checks the installer script with `sh -n`"
-)]
-fn fetch_uninstaller(plan: &Plan, work: &Path) -> Result<PathBuf, String> {
-    let sums = updates::download_bytes(&format!("{}/SHA256SUMS", plan.release_url), MAX_SCRIPT)
-        .map_err(|e| format!("could not read the release's checksums: {e}"))?;
-    let script = updates::download_bytes(&format!("{}/install.sh", plan.release_url), MAX_SCRIPT)
-        .map_err(|e| format!("could not download install.sh: {e}"))?;
-    let expected = String::from_utf8_lossy(&sums)
-        .lines()
-        .filter_map(|l| l.split_once(char::is_whitespace))
-        .find(|(_, name)| name.trim().trim_start_matches('*') == "install.sh")
-        .map(|(digest, _)| digest.to_owned())
-        .ok_or_else(|| "the release's checksums do not list install.sh".to_owned())?;
+/// This platform's installer script from `plan`'s release, when it can be trusted: its SHA-256 is
+/// the one the signed manifest gives, and it is headed `# canopy-installer`.
+fn fetch_installer(plan: &Plan) -> Result<Vec<u8>, String> {
+    let name = installer_name();
+    let expected = plan
+        .installer_sha256
+        .as_deref()
+        .ok_or_else(|| format!("the signed update manifest gives no checksum for {name}"))?;
+    let script = updates::download_bytes(&format!("{}/{name}", plan.release_url), MAX_SCRIPT)
+        .map_err(|e| format!("could not download {name}: {e}"))?;
     if updates::sha256_hex(&script) != expected {
-        return Err("install.sh does not match the release's checksums".to_owned());
+        return Err(format!(
+            "{name} does not match the checksum in the signed update manifest"
+        ));
     }
     if script
         .split(|b| *b == b'\n')
         .nth(1)
         .is_none_or(|l| !l.starts_with(b"# canopy-installer"))
     {
-        return Err("install.sh is not Canopy's installer".to_owned());
+        return Err(format!("{name} is not Canopy's installer"));
     }
+    Ok(script)
+}
+
+/// The installer script of `plan`'s release ([`fetch_installer`]), when it also passes `sh -n`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "checks the installer script with `sh -n`"
+)]
+fn fetch_uninstaller(plan: &Plan, work: &Path) -> Result<PathBuf, String> {
+    let script = fetch_installer(plan)?;
     let path = work.join("install.sh");
     fs::write(&path, &script).map_err(|e| io_err("could not write", &path, &e))?;
     let syntax = Command::new("sh")
@@ -1289,31 +1318,22 @@ fn tail(output: &[u8]) -> String {
     lines[lines.len().saturating_sub(6)..].join("\n")
 }
 
-/// Runs the one-line installer from `feed` pinned to `build`.
+/// Runs the installer script of `plan`'s release, pinned to its build and to the archive checksum
+/// of the signed manifest (`--sha256`, so the script reads nothing from the feed to decide what it
+/// installs). The script itself must match the signed manifest too ([`fetch_installer`]).
 #[expect(clippy::disallowed_methods, reason = "runs the release's installer")]
 pub fn install_with_installer(
-    feed: &str,
-    build: u64,
+    plan: &Plan,
     progress: &mut dyn FnMut(Phase),
 ) -> Result<Installed, String> {
-    let feed = feed.trim_end_matches('/');
     let windows = cfg!(windows);
-    let name = if windows { "install.ps1" } else { "install.sh" };
+    let name = installer_name();
+    let build = plan.build;
     progress(Phase::Downloading {
         done: 0,
         total: None,
     });
-    let script = updates::download_bytes(&format!("{feed}/{name}"), MAX_SCRIPT)
-        .map_err(|e| format!("could not download {name}: {e}"))?;
-    if script
-        .split(|b| *b == b'\n')
-        .nth(1)
-        .is_none_or(|l| !l.starts_with(b"# canopy-installer"))
-    {
-        return Err(format!(
-            "{name} from the update feed is not Canopy's installer"
-        ));
-    }
+    let script = fetch_installer(plan)?;
     let dir = std::env::temp_dir().join(unique_name(UPDATE_STAGING_PREFIX));
     {
         let mut builder = fs::DirBuilder::new();
@@ -1341,11 +1361,17 @@ pub fn install_with_installer(
         ])
         .arg(&path)
         .arg("-Version")
-        .arg(build.to_string());
+        .arg(build.to_string())
+        .arg("-Sha256")
+        .arg(&plan.sha256);
         c
     } else {
         let mut c = Command::new("sh");
-        c.arg(&path).arg("--version").arg(build.to_string());
+        c.arg(&path)
+            .arg("--version")
+            .arg(build.to_string())
+            .arg("--sha256")
+            .arg(&plan.sha256);
         c
     };
     let output = command

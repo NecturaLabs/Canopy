@@ -79,6 +79,7 @@ class ReleaseGateTests(unittest.TestCase):
         allowed = {
             "APP_UPDATES_TOKEN": {("release.yml", "publish-update"), ("release.yml", "prune")},
             "NETLIFY_AUTH_TOKEN": {("site.yml", "deploy")},
+            "MANIFEST_SIGNING_KEY": {("release.yml", "publish-update")},
         }
         reads = re.compile(r"secrets\s*(?:\.\s*|\[\s*['\"])(\w+)")
         paths = sorted((ROOT / ".github").rglob("*.y*ml"))
@@ -97,6 +98,26 @@ class ReleaseGateTests(unittest.TestCase):
                         self.assertIn((path.name, name), allowed[secret], f"{path.name} {name} reads {secret}")
             if path.parent.name != "workflows":
                 self.assertFalse({m for m in reads.findall(text) if m in allowed}, path.name)
+
+    def test_signing_key_only_in_its_own_step(self):
+        # The manifest key sits in one step that runs nothing but the signer: no clone, no push,
+        # no other secret beside it.
+        steps = re.split(r"(?m)^      - ", job("release.yml", "publish-update"))
+        signing = [step for step in steps if "MANIFEST_SIGNING_KEY" in step]
+        self.assertEqual(len(signing), 2, "an early check and the signing step")
+        check, sign = signing
+        self.assertIn("secrets.MANIFEST_SIGNING_KEY != ''", check)
+        self.assertEqual(re.findall(r"secrets\.(\w+)", sign), ["MANIFEST_SIGNING_KEY"])
+        run = sign.split("run: |", 1)[1]
+        commands = [line.strip() for line in run.splitlines() if line.strip() and not line.strip().startswith("#")]
+        self.assertTrue(commands)
+        self.assertTrue(all(re.search(r'tools/sign-manifest\.py"? sign ', c) for c in commands), commands)
+        self.assertNotRegex(sign, r"\b(git|gh|curl)\b")
+
+    def test_release_builds_use_the_built_in_update_key(self):
+        # A compile-time key override exists for local end-to-end tests only.
+        for path in sorted((ROOT / ".github").rglob("*.y*ml")):
+            self.assertNotIn("CANOPY_UPDATE_KEY", path.read_text(), path.name)
 
     def test_experimental_builds_ship_without_holding_the_release(self):
         release = job("release.yml", "release")

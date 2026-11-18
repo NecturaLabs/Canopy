@@ -39,7 +39,8 @@ there by hand from `v0.2.1-beta.1`, so the addresses answer, but the stable chan
 (`sh -s -- --beta`) installs the newest beta build, which ships Linux builds only for now.
 
 These URLs are stable: everything Canopy publishes in the shared, public NecturaLabs/app-updates
-repository sits under its `canopy/` folder (scripts, `latest.json`, `beta.json`) or in releases
+repository sits under its `canopy/` folder (scripts, `latest.json`, `beta.json` and their
+`.minisig` signatures, ADR 0021) or in releases
 tagged `canopy-build-<number>`. Nothing, in the scripts, the docs or the app, uses the repository-wide
 `releases/latest`, which may belong to another app.
 
@@ -53,7 +54,9 @@ tagged `canopy-build-<number>`. Nothing, in the scripts, the docs or the app, us
    build's commit on `main`, and builds are ordered by that integer alone (a version such as
    `0.2.1-beta.1`, from before builds were numbered, is older than every build, and a beta
    manifest naming one counts as absent). With `--version N` they use the manifest when it names
-   N, else the `SHA256SUMS` of release `canopy-build-N`. Without `--version` they never install a
+   N, else the `SHA256SUMS` of release `canopy-build-N`; with `--sha256 HEX` too (`-Sha256`, what
+   Canopy's updater passes from its signed manifest, ADR 0021) they read neither and check the
+   archive against HEX. Without `--version` they never install a
    build older than the installed one: they stop and suggest `--beta` or `--version N` (so a beta
    build stays until asked otherwise).
 3. Accept only `https://github.com/NecturaLabs/app-updates/releases/download/canopy-build-<number>/canopy-build-<number>-<target>.<ext>`

@@ -199,6 +199,40 @@ fn a_plan_accepts_canopys_own_release_and_nothing_else() {
     Plan::from_manifest(&semver, base).unwrap_err();
 }
 
+#[test]
+fn a_plan_takes_this_platforms_installer_checksum_from_the_manifest() {
+    let key = updates::platform_key();
+    let Some((target, ext)) = target_of(&key) else {
+        return;
+    };
+    let base = "https://example.test/dl";
+    let url = format!("{base}/canopy-build-412/canopy-build-412-{target}.{ext}");
+    let manifest = |installers: &str| {
+        UpdateManifest::parse(
+            format!(
+                r#"{{"version":"412","platforms":{{"{key}":{{"url":"{url}","sha256":"{}"}}}},"installers":{{{installers}}}}}"#,
+                "a".repeat(64)
+            )
+            .as_bytes(),
+        )
+        .expect("manifest")
+    };
+    let (sh, ps1) = ("b".repeat(64), "c".repeat(64));
+    let plan = Plan::from_manifest(
+        &manifest(&format!(r#""install.sh":"{sh}","install.ps1":"{ps1}""#)),
+        base,
+    )
+    .expect("plan");
+    let mine = if cfg!(windows) { &ps1 } else { &sh };
+    assert_eq!(plan.installer_sha256.as_ref(), Some(mine));
+    let none = Plan::from_manifest(&manifest(""), base).expect("plan");
+    assert_eq!(none.installer_sha256, None);
+    let name = installer_name();
+    for bad in ["", "abc", &"B".repeat(64)] {
+        Plan::from_manifest(&manifest(&format!(r#""{name}":"{bad}""#)), base).expect_err(bad);
+    }
+}
+
 /// A refused download address reaches the update screen and the log as plain, short text: the
 /// feed cannot reorder or hide what the error says, or fill the screen with it.
 #[test]
@@ -1457,16 +1491,16 @@ fn plan_for(base: &str, archive: &[u8], sha: Option<String>) -> Plan {
         archive_name: name,
         sha256: sha.unwrap_or_else(|| updates::sha256_hex(archive)),
         release_url: base.to_owned(),
+        installer_sha256: Some(updates::sha256_hex(INSTALL_SH.as_bytes())),
     }
 }
 
-fn sums(script: &str) -> Vec<u8> {
-    format!(
-        "{}  install.sh\n{}  other\n",
-        updates::sha256_hex(script.as_bytes()),
-        "0".repeat(64)
-    )
-    .into_bytes()
+/// A plan for the installer fallback: the release at `base`, its script's checksum `script_sha`.
+fn installer_plan(base: &str, script_sha: Option<String>) -> Plan {
+    Plan {
+        installer_sha256: script_sha,
+        ..plan_for(base, b"", None)
+    }
 }
 
 // The in-app update runs only for a Linux install folder: its desktop entry and `sh` checks.
@@ -1478,10 +1512,9 @@ fn an_update_replaces_the_install_and_everything_registered_with_it() {
     let base = serve(
         vec![
             (format!("/{TOP}.tar.gz"), bytes.clone()),
-            ("/SHA256SUMS".to_owned(), sums(INSTALL_SH)),
             ("/install.sh".to_owned(), INSTALL_SH.as_bytes().to_vec()),
         ],
-        3,
+        2,
     );
     let mut phases = Vec::new();
     let done = install_managed(&old.root, &plan_for(&base, &bytes, None), &mut |p| {
@@ -1603,10 +1636,9 @@ fn an_archive_without_a_binary_is_refused_before_anything_changes() {
     let base = serve(
         vec![
             (format!("/{TOP}.tar.gz"), bytes.clone()),
-            ("/SHA256SUMS".to_owned(), sums(INSTALL_SH)),
             ("/install.sh".to_owned(), INSTALL_SH.as_bytes().to_vec()),
         ],
-        3,
+        2,
     );
     let err = install_managed(&old.root, &plan_for(&base, &bytes, None), &mut |_| {})
         .expect_err("no binary");
@@ -1617,35 +1649,37 @@ fn an_archive_without_a_binary_is_refused_before_anything_changes() {
 #[cfg(target_os = "linux")]
 #[test]
 fn an_installer_script_that_cannot_be_trusted_keeps_the_old_uninstaller() {
-    for (what, sums_body, script) in [
-        ("no checksums", None, INSTALL_SH.to_owned()),
+    let sha = |s: &str| Some(updates::sha256_hex(s.as_bytes()));
+    for (what, signed, script) in [
+        ("no checksum in the manifest", None, INSTALL_SH.to_owned()),
         (
-            "a script that does not match its checksum",
-            Some(sums("other")),
+            "a script that does not match the manifest",
+            sha("other"),
             INSTALL_SH.to_owned(),
         ),
         (
             "a script that is not Canopy's",
-            Some(sums("#!/bin/sh\nexit 0\n")),
+            sha("#!/bin/sh\nexit 0\n"),
             "#!/bin/sh\nexit 0\n".to_owned(),
         ),
         (
             "a script that does not parse",
-            Some(sums("#!/bin/sh\n# canopy-installer\nif then\n")),
+            sha("#!/bin/sh\n# canopy-installer\nif then\n"),
             "#!/bin/sh\n# canopy-installer\nif then\n".to_owned(),
         ),
     ] {
         let old = installed();
         let bytes = release_archive();
-        let mut files = vec![
+        let files = vec![
             (format!("/{TOP}.tar.gz"), bytes.clone()),
             ("/install.sh".to_owned(), script.into_bytes()),
         ];
-        if let Some(body) = sums_body {
-            files.push(("/SHA256SUMS".to_owned(), body));
-        }
-        let base = serve(files, 3);
-        let done = install_managed(&old.root, &plan_for(&base, &bytes, None), &mut |_| {})
+        let base = serve(files, 2);
+        let plan = Plan {
+            installer_sha256: signed,
+            ..plan_for(&base, &bytes, None)
+        };
+        let done = install_managed(&old.root, &plan, &mut |_| {})
             .unwrap_or_else(|e| panic!("{what}: {e}"));
         assert_eq!(done.notes.len(), 1, "{what}: {:?}", done.notes);
         assert!(
@@ -1753,10 +1787,15 @@ fn the_installer_fallback_runs_the_feeds_installer_pinned_to_the_build() {
         "#!/bin/sh\n# canopy-installer (test)\nprintf '%s ' \"$@\" > '{}'\necho 'warning: a launcher entry was left alone' >&2\nexit 0\n",
         log.display()
     );
+    let signed = Some(updates::sha256_hex(script.as_bytes()));
     let base = serve(vec![("/install.sh".to_owned(), script.into_bytes())], 1);
     let mut phases = Vec::new();
-    let done = install_with_installer(&base, 413, &mut |p| phases.push(p)).expect("installer");
-    assert_eq!(read(&log).trim(), "--version 413");
+    let done = install_with_installer(&installer_plan(&base, signed), &mut |p| phases.push(p))
+        .expect("installer");
+    assert_eq!(
+        read(&log).trim(),
+        format!("--version 413 --sha256 {}", updates::sha256_hex(b""))
+    );
     assert_eq!(
         done.notes,
         vec!["a launcher entry was left alone".to_owned()]
@@ -1772,19 +1811,50 @@ fn the_installer_fallback_reports_a_failure_and_refuses_a_foreign_script() {
         vec![("/install.sh".to_owned(), failing.as_bytes().to_vec())],
         1,
     );
-    let err = install_with_installer(&base, 413, &mut |_| {}).expect_err("failed");
+    let signed = Some(updates::sha256_hex(failing.as_bytes()));
+    let err =
+        install_with_installer(&installer_plan(&base, signed), &mut |_| {}).expect_err("failed");
     assert!(err.contains("the installer failed"), "{err}");
     assert!(err.contains("is not published"), "{err}");
 
-    let foreign = serve(
-        vec![("/install.sh".to_owned(), b"#!/bin/sh\nrm -rf x\n".to_vec())],
-        1,
-    );
-    let err = install_with_installer(&foreign, 413, &mut |_| {}).expect_err("foreign");
+    let script = b"#!/bin/sh\nrm -rf x\n";
+    let foreign = serve(vec![("/install.sh".to_owned(), script.to_vec())], 1);
+    let signed = Some(updates::sha256_hex(script));
+    let err = install_with_installer(&installer_plan(&foreign, signed), &mut |_| {})
+        .expect_err("foreign");
     assert!(err.contains("is not Canopy's installer"), "{err}");
 
     let missing = serve(vec![], 1);
-    install_with_installer(&missing, 413, &mut |_| {}).unwrap_err();
+    install_with_installer(&installer_plan(&missing, None), &mut |_| {}).unwrap_err();
+}
+
+/// Whoever can write the release cannot run a script of their own through Update: the script
+/// must match the checksum in the signed manifest, and one that does not never runs.
+#[cfg(unix)]
+#[test]
+fn the_installer_fallback_runs_only_the_script_the_signed_manifest_names() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let ran = tmp.path().join("ran");
+    let hostile = format!(
+        "#!/bin/sh\n# canopy-installer (hostile)\ntouch '{}'\n",
+        ran.display()
+    );
+    for (what, signed) in [
+        (
+            "another script's checksum",
+            Some(updates::sha256_hex(INSTALL_SH.as_bytes())),
+        ),
+        ("no checksum", None),
+    ] {
+        let base = serve(
+            vec![("/install.sh".to_owned(), hostile.clone().into_bytes())],
+            1,
+        );
+        let err =
+            install_with_installer(&installer_plan(&base, signed), &mut |_| {}).expect_err(what);
+        assert!(err.contains("signed update manifest"), "{what}: {err}");
+        assert!(!ran.exists(), "{what}: the script ran");
+    }
 }
 
 /// Writes `script` to a new executable at `path` from a child process. Written from this process,

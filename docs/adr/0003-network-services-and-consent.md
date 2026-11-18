@@ -61,7 +61,7 @@ the complete list; anything else is a product-rule change that needs the owner.
 | Service | What is sent | Where | Gate |
 |---|---|---|---|
 | GitHub or GitLab REST API | Requests for the repository's own project, with the user's token (ADR 0004) | The API host of the repository's remote only: `api.github.com` for github.com, `https://<host>/api/v4` for gitlab.com and self-hosted GitLab | Setting `hosting_api` (Pull and merge requests), default on; works without a token for public projects |
-| Update manifest | An anonymous GET, `User-Agent: Canopy/<version>` | `raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/{latest,beta}.json` (`updater::UPDATE_FEED`) | Setting `check_updates`, default on; at most once a day; nothing is downloaded or installed |
+| Update manifest | An anonymous GET, `User-Agent: Canopy/<version>` | `raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/{latest,beta}.json` and their `.minisig` signatures (`updater::UPDATE_FEED`, ADR 0021) | Setting `check_updates`, default on; at most once a day; nothing is downloaded or installed |
 | Sentry crash reports | Panic message and location, stack trace, version, OS and architecture; scrubbed by `crash_reports::scrub` | Canopy's Sentry project (EU region) | Opt-in, asked once; off until the user says yes; `crash_reports::DATA_VERSION` re-asks when reports carry more |
 
 - **Option 2 for requests** is the smallest change that meets the owner's request: the only new

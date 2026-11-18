@@ -716,6 +716,7 @@ impl CanopyApp {
                         pub_date: None,
                         release_page: None,
                         platforms: std::collections::BTreeMap::default(),
+                        installers: std::collections::BTreeMap::default(),
                     },
                 };
                 app.updater.install = if launch.overlay.as_deref() == Some("update-installed") {
