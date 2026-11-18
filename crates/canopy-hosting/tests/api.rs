@@ -313,7 +313,7 @@ fn gl_mr(iid: u64, state: &str, updated: &str) -> Value {
 /// A rate limit's reset ten minutes and `offset` seconds from now, as unix seconds and as its
 /// header text (a reset is kept within a day of now).
 fn reset_soon(offset: i64) -> (i64, String) {
-    let at = chrono::Utc::now().timestamp() + 600 + offset;
+    let at = jiff::Timestamp::now().as_second() + 600 + offset;
     (at, at.to_string())
 }
 
@@ -1509,7 +1509,7 @@ fn github_rollup_errors_and_empty_data() {
         Ok(Vec::new())
     );
     // A secondary limit: 200, a message saying so, and how long to wait.
-    let before = chrono::Utc::now().timestamp();
+    let before = jiff::Timestamp::now().as_second();
     let secondary = rollup(
         200,
         &[("retry-after", "60")],

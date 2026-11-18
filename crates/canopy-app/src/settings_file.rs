@@ -177,7 +177,7 @@ pub fn export(s: &Settings) -> Result<String, String> {
     let file = serde_json::json!({
         "format": FORMAT,
         "version": VERSION,
-        "exported": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "exported": jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
         "settings": prefs,
     });
     serde_json::to_string_pretty(&file).map_err(|e| format!("Could not write the settings: {e}"))

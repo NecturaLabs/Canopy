@@ -881,7 +881,7 @@ fn rows(
         }
         return;
     }
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let selected = tab.requests.selected;
     let roving = Roving::new(
         &ctx,
@@ -1491,7 +1491,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
     if let Some(d) = &details {
         remember_signals(ui.ctx(), tab, d);
     }
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let out = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {

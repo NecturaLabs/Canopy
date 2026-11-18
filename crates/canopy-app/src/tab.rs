@@ -3217,7 +3217,7 @@ impl RepoTab {
                     self.request_view_changed();
                 }
                 HostEvent::RateLimited { reset } => {
-                    let now = chrono::Utc::now().timestamp();
+                    let now = jiff::Timestamp::now().as_second();
                     self.requests.refresh.held_until =
                         Some(Instant::now() + rate_limit_hold(reset, now));
                 }
@@ -7182,7 +7182,7 @@ mod tests {
         let every = Duration::from_secs(60);
         let minutes = |m: u64| Duration::from_secs(m * 60);
         // (what the host said, wait before the next attempt in minutes)
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let cases = [
             ("a reset half an hour ahead", Some(now + 1_800), 30),
             ("no reset", None, 15),

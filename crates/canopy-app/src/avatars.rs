@@ -281,7 +281,7 @@ pub fn explain_tab(
         token: tab.requests.has_credential(),
         status: tab.avatars.status(),
     };
-    explain(&situation, chrono::Utc::now().timestamp())
+    explain(&situation, jiff::Timestamp::now().as_second())
 }
 
 #[derive(Default)]
@@ -344,7 +344,7 @@ impl Avatars {
     /// Whether `request` would start a lookup for `email` now; cheap enough to ask for every
     /// visible row on every frame.
     pub fn wants_now(&self, email: &str) -> bool {
-        self.wants(email, chrono::Utc::now().timestamp())
+        self.wants(email, jiff::Timestamp::now().as_second())
     }
 
     fn wants(&self, email: &str, now: i64) -> bool {
@@ -364,7 +364,7 @@ impl Avatars {
 
     /// Where this tab's pictures stand, for explaining missing ones ([`explain`]).
     pub fn status(&self) -> Status<'_> {
-        self.status_at(chrono::Utc::now().timestamp())
+        self.status_at(jiff::Timestamp::now().as_second())
     }
 
     fn status_at(&self, now: i64) -> Status<'_> {
@@ -381,7 +381,7 @@ impl Avatars {
     }
 
     pub fn request(&mut self, oid: Oid, email: &str) -> bool {
-        self.request_at(oid, email, chrono::Utc::now().timestamp())
+        self.request_at(oid, email, jiff::Timestamp::now().as_second())
     }
 
     fn request_at(&mut self, oid: Oid, email: &str, now: i64) -> bool {
@@ -596,7 +596,7 @@ fn load_at(
     let _lock = CACHE_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let old = path.as_deref().and_then(read_record);
     let due = old.as_ref().is_none_or(|r| !fresh(r.checked_at, now));
     let mut note = None;

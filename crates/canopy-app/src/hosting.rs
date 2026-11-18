@@ -540,7 +540,7 @@ fn add_rollups(
             if *last_list(last) != next.list {
                 continue;
             }
-            let now = chrono::Utc::now().timestamp();
+            let now = jiff::Timestamp::now().as_second();
             if add_rollup(&mut next.rows, client.has_token(), &mut paused, now, |n| {
                 client.rollup(n)
             }) {
@@ -600,7 +600,7 @@ fn serve_jobs(
                 if let Err(unsent) = avatar_jobs.send((oid, email)) {
                     // No picture thread: end the request so the tab does not wait for it.
                     let (oid, email) = unsent.into_inner();
-                    let result = crate::avatars::unavailable(chrono::Utc::now().timestamp());
+                    let result = crate::avatars::unavailable(jiff::Timestamp::now().as_second());
                     send(HostEvent::Avatar { oid, email, result });
                 }
             }
@@ -1205,7 +1205,7 @@ esac"#,
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let base = format!("http://{}", listener.local_addr().expect("address"));
-        let reset = chrono::Utc::now().timestamp() + 600;
+        let reset = jiff::Timestamp::now().as_second() + 600;
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };

@@ -627,7 +627,7 @@ impl CanopyApp {
                     self.apply(ctx, more);
                 }
                 Action::CheckUpdates => {
-                    self.settings.last_update_check = chrono::Utc::now().timestamp();
+                    self.settings.last_update_check = jiff::Timestamp::now().as_second();
                     self.updater
                         .start(ctx, self.settings.include_prereleases, true);
                 }

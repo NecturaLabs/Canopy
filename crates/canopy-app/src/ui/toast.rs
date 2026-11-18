@@ -725,7 +725,7 @@ impl Toasts {
             card_text(kind, &body, help).body,
         );
         self.next += 1;
-        let at = chrono::Utc::now().timestamp();
+        let at = jiff::Timestamp::now().as_second();
         // The same notice again, straight after itself and from the same repository (a fetch
         // that found nothing, ten times), is one row with a count and the latest time.
         // A decision collapses only into the same decision, and only for an error, which counts
@@ -1137,7 +1137,7 @@ impl Toasts {
             ui.add_space(theme::LG);
             return settings;
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let mut gone = None;
         let ground = theme::surfaces(ui.ctx()).overlay;
         let divider = theme::mix(ground, p.text, 0.08);
@@ -1362,13 +1362,8 @@ fn first_lines(text: &str, limit: usize) -> (String, bool) {
 
 /// The local zone's offset from UTC at `seconds`, in minutes.
 fn local_offset_minutes(seconds: i64) -> i32 {
-    use chrono::Offset;
-    chrono::DateTime::from_timestamp(seconds, 0).map_or(0, |d| {
-        d.with_timezone(&chrono::Local)
-            .offset()
-            .fix()
-            .local_minus_utc()
-            / 60
+    jiff::Timestamp::from_second(seconds).map_or(0, |d| {
+        jiff::tz::TimeZone::system().to_offset(d).seconds() / 60
     })
 }
 
@@ -2833,7 +2828,7 @@ mod tests {
         );
         assert_eq!(toasts.history[0].count, 11);
         assert!(
-            toasts.history[0].at > chrono::Utc::now().timestamp() - 50,
+            toasts.history[0].at > jiff::Timestamp::now().as_second() - 50,
             "the latest time"
         );
         assert_ne!(toasts.history[0].id, first_id);

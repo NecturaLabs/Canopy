@@ -346,7 +346,7 @@ impl CanopyApp {
     /// Runs the start-up update check if one is due.
     pub(super) fn start_due_update_check(&mut self, ctx: &egui::Context) {
         if std::mem::take(&mut self.update_check_due) {
-            self.settings.last_update_check = chrono::Utc::now().timestamp();
+            self.settings.last_update_check = jiff::Timestamp::now().as_second();
             self.updater
                 .start(ctx, self.settings.include_prereleases, false);
         }

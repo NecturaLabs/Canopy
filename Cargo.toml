@@ -32,7 +32,7 @@ ureq = { version = "3", default-features = false, features = ["rustls", "platfor
 # is built without its HTTPS and SSH transports: no OpenSSL or libssh2 on any platform.
 git2 = { version = "0.21", default-features = false }
 crossbeam-channel = "0.5"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+jiff = "1"
 tempfile = "3"
 # Tells whether two spellings of a path are the same folder (case-insensitive volumes, links).
 same-file = "1"

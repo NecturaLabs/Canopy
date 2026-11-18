@@ -167,7 +167,7 @@ impl Write for Capped {
             self.full = true;
             let note = format!(
                 "{{\"timestamp\":\"{}\",\"level\":\"WARN\",\"target\":\"canopy::logging\",\"message\":\"log size limit reached; later events are not written\"}}\n",
-                chrono::Utc::now().to_rfc3339()
+                jiff::Timestamp::now()
             );
             self.file.write_all(note.as_bytes())?;
             return Ok(buf.len());
@@ -184,7 +184,7 @@ impl Write for Capped {
 fn open_run_log(dir: &Path) -> Option<(PathBuf, Capped)> {
     fs::create_dir_all(dir).ok()?;
     prune(dir, KEEP_RUNS);
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ");
     let path = dir.join(format!("canopy-{stamp}-{}.jsonl", std::process::id()));
     let file = OpenOptions::new()
         .create(true)
@@ -215,7 +215,7 @@ impl<S: tracing::Subscriber> Layer<S> for RecentProblems {
         event.record(&mut MessageVisitor(&mut text));
         let line = format!(
             "{} {} {}: {}",
-            chrono::Utc::now().format("%H:%M:%S"),
+            jiff::Timestamp::now().strftime("%H:%M:%S"),
             meta.level(),
             meta.target(),
             text
@@ -379,13 +379,13 @@ fn render_report(message: &str, location: &str, thread: &str, backtrace: &str) -
         version = crate::build_info::label(),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
-        time = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        time = jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 }
 
 fn write_report(dir: &Path, report: &str) -> std::io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ");
     let mut path = dir.join(format!("crash-{stamp}.txt"));
     let mut n = 1;
     while path.exists() {

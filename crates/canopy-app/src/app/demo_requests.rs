@@ -1181,11 +1181,13 @@ mod tests {
 
     #[test]
     fn fixed_dates_are_the_ones_named() {
-        use chrono::{TimeZone, Utc};
         let unix = |y, m, d, h, min| {
-            Utc.with_ymd_and_hms(y, m, d, h, min, 0)
+            jiff::civil::date(y, m, d)
+                .at(h, min, 0, 0)
+                .to_zoned_datetime(jiff::tz::TimeZone::UTC)
                 .unwrap()
                 .timestamp()
+                .as_second()
         };
         assert_eq!(SEP_14.at(0), unix(2026, 9, 14, 9, 30));
         assert_eq!(SEP_09.at(0), unix(2026, 9, 9, 16, 5));

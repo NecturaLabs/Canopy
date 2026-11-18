@@ -183,7 +183,7 @@ impl CanopyApp {
         ctx: &egui::Context,
         scenario: demo_requests::Scenario,
     ) -> bool {
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let shown = match self.tabs.get_mut(self.active) {
             Some(tab) => scenario.show(ctx, tab, now),
             // Nothing is open (the welcome screen): there is nothing to wait for.
