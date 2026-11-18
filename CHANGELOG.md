@@ -990,7 +990,7 @@ commits since the previous build and published on the
 - Command-line options `--light`, `--view`, `--size` and `--screenshot`.
 - Linux desktop entry, AppStream metainfo and application icon.
 
-[Unreleased]: https://github.com/NecturaLabs/Canopy/compare/v0.2.1-beta.1...HEAD
-[0.2.1-beta.1]: https://github.com/NecturaLabs/Canopy/tree/v0.2.1-beta.1
-[0.2.0-beta.1]: https://github.com/NecturaLabs/Canopy/tree/v0.2.0-beta.1
+[Unreleased]: https://github.com/NecturaLabs/Canopy/compare/9f9206a6...HEAD
+[0.2.1-beta.1]: https://github.com/NecturaLabs/Canopy/commit/9f9206a6
+[0.2.0-beta.1]: https://github.com/NecturaLabs/Canopy/commit/7cacaaf6
 [0.1.0]: https://github.com/NecturaLabs/Canopy/commit/9cd79f1c
