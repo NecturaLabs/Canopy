@@ -528,8 +528,8 @@ mod tests {
         let file = entries[0].file.as_deref().expect("a file");
         assert!(file.is_absolute(), "{file:?}");
         assert_eq!(
-            std::fs::canonicalize(file).ok(),
-            std::fs::canonicalize(root.path().join(".git/config")).ok()
+            std::fs::canonicalize(file).expect("the file exists"),
+            std::fs::canonicalize(root.path().join(".git/config")).expect("the config exists")
         );
     }
 }

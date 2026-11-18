@@ -100,7 +100,15 @@ fn a_killed_write_is_reported_and_never_deleted() {
     fs::write(dir.path().join(".gitignore"), "*.tmp\n").expect("ignore");
     let repo = Repo::open(dir.path()).expect("open");
     let found = repo.abandoned_staging_files().expect("scan");
-    assert_eq!(found, [mine.clone(), nested.clone()]);
+    // Named from the repository's own folder, which libgit2 spells by its real path (`/private/var`
+    // on macOS, the long name with `/` on Windows): the same files are what matters.
+    let real = |paths: &[PathBuf]| -> Vec<PathBuf> {
+        paths
+            .iter()
+            .map(|p| fs::canonicalize(p).expect("the file exists"))
+            .collect()
+    };
+    assert_eq!(real(&found), real(&[mine.clone(), nested.clone()]));
     assert!(mine.is_file() && nested.is_file(), "nothing is deleted");
     assert_eq!(fs::read_to_string(&mine).expect("read"), "half a write");
 }

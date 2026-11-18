@@ -502,12 +502,7 @@ mod tests {
                 .find(|s| s.label.as_deref() == Some(name.as_str()))
                 .unwrap_or_else(|| panic!("{name} in {said:?}"));
             assert!(node.disabled, "{node:?}");
-            assert!(
-                node.description
-                    .as_deref()
-                    .is_some_and(|d| d.contains("git-lfs is not installed")),
-                "{node:?}"
-            );
+            assert_eq!(node.description, tab.lfs.unavailable(), "{node:?}");
         }
     }
 }

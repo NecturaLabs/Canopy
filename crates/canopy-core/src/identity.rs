@@ -458,8 +458,8 @@ mod tests {
         let file = Path::new(origin.strip_prefix("file:").expect("a file origin"));
         assert!(file.is_absolute(), "{origin}");
         assert_eq!(
-            std::fs::canonicalize(file).ok(),
-            std::fs::canonicalize(dir.join(".git/config")).ok(),
+            std::fs::canonicalize(file).expect("the origin exists"),
+            std::fs::canonicalize(dir.join(".git/config")).expect("the config exists"),
             "{origin}"
         );
     }
