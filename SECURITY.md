@@ -33,15 +33,22 @@ Only the latest published build receives security fixes. Canopy offers updates i
 
 ## Verifying a download
 
-From build 1683 on, every file a release publishes (the archives, `install.sh`, `install.ps1`
-and `SHA256SUMS`) carries signed build provenance. To check that a file was built by the Release
-workflow from the release's tag on a GitHub-hosted runner:
+Release archives carry signed build provenance from build 1683 on, and from the next build the
+installers (`install.sh`, `install.ps1`) and `SHA256SUMS` do too. A release is built by the
+Release workflow, which Create release runs from `main`, so the provenance names `main` and the
+release's commit. To check that a file was built that way, from build `<number>`'s commit, on a
+GitHub-hosted runner:
 
 ```sh
 gh attestation verify <file> --repo NecturaLabs/Canopy \
   --signer-workflow NecturaLabs/Canopy/.github/workflows/release.yml \
-  --source-ref refs/tags/build-<number> --deny-self-hosted-runners
+  --source-ref refs/heads/main \
+  --source-digest "$(git rev-parse 'build-<number>^{commit}')" \
+  --deny-self-hosted-runners
 ```
+
+Run the `git rev-parse` in a clone with the tags fetched, or put the commit from the release page
+in its place.
 
 `SHA256SUMS` in the release lists each file's checksum.
 
