@@ -1,8 +1,10 @@
 # Getting help
 
-- **Something is broken or missing**: search the [open issues](https://github.com/NecturaLabs/Canopy/issues)
-  first, then file one with the bug or feature form. Include Canopy's build number (About Canopy in
-  the command palette, or `canopy --version`), your operating system and git version (`git --version`), and the steps that show it.
+- **Something is broken or missing**: search the
+  [open issues](https://github.com/NecturaLabs/Canopy/issues) first, then file one with the bug or
+  feature form. Include Canopy's build number (About Canopy in the command palette, or
+  `canopy --version`), your operating system, your git version (`git --version`) and the steps
+  that show it.
 - **A question about using Canopy**: [docs/features.md](docs/features.md) lists what Canopy does,
   [docs/keybindings.md](docs/keybindings.md) its shortcuts and the README its install and command
   line. If those do not answer it, e-mail support@necturalabs.com.

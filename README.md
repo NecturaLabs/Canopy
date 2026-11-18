@@ -282,8 +282,11 @@ convention and pull request checklist, and [GitHub Issues](https://github.com/Ne
 ├── docs/                   architecture, design system, feature matrix, keybindings,
 │                           ADRs, specs, legal texts, screenshots
 ├── packaging/              one-line installers and their test; Linux desktop entry, macOS bundle
+├── site/                   landing site (canopy.necturalabs.com)
+├── vendor/                 eframe with Canopy's patch (tools/vendor-eframe.sh)
 ├── tools/                  check, fixture, screenshot, install, release and stress scripts
-├── .claude/                agents and skills for AI coding agents
+├── .claude/, .codex/,      agents and skills for AI coding agents
+│   .agents/
 └── .github/                CI, release workflows, templates
 ```
 
