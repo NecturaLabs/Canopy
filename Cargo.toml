@@ -27,7 +27,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Blocking HTTP client for the GitHub and GitLab REST APIs (canopy-hosting). rustls with the
 # platform verifier, so self-hosted GitLab behind a corporate CA in the OS trust store works.
-ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
+ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
 # Network operations go through the git CLI (credential helpers, SSH config, hooks), so libgit2
 # is built without its HTTPS and SSH transports: no OpenSSL or libssh2 on any platform.
 git2 = { version = "0.21", default-features = false }
