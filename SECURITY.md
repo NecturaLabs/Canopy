@@ -33,8 +33,16 @@ Only the latest published build receives security fixes. Canopy offers updates i
 
 ## Verifying a download
 
-Every release archive carries signed build provenance: `gh attestation verify <archive> --repo
-NecturaLabs/Canopy` shows that it was built by the Release workflow from the tagged commit.
+From build 1683 on, every file a release publishes (the archives, `install.sh`, `install.ps1`
+and `SHA256SUMS`) carries signed build provenance. To check that a file was built by the Release
+workflow from the release's tag on a GitHub-hosted runner:
+
+```sh
+gh attestation verify <file> --repo NecturaLabs/Canopy \
+  --signer-workflow NecturaLabs/Canopy/.github/workflows/release.yml \
+  --source-ref refs/tags/build-<number> --deny-self-hosted-runners
+```
+
 `SHA256SUMS` in the release lists each file's checksum.
 
 ## Scope

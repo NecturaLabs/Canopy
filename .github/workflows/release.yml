@@ -376,11 +376,15 @@ jobs:
         run: cp packaging/install.sh packaging/install.ps1 dist/
       - name: Checksums
         run: cd dist && sha256sum -- * > SHA256SUMS
-      # Signed SLSA build provenance for every archive: `gh attestation verify <file> --repo
-      # NecturaLabs/Canopy` proves it was built by this workflow from the tagged commit.
+      # Signed SLSA build provenance for every file the release publishes (SECURITY.md has the
+      # verify command): the archives, the installers and the checksum list.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: "dist/canopy-build-*"
+          subject-path: |
+            dist/canopy-build-*
+            dist/install.sh
+            dist/install.ps1
+            dist/SHA256SUMS
       # Earlier releases are removed once this one is out (the prune job): their notes live on in
       # the feed's changelog, which the release page links to.
       - name: Release page text
@@ -581,17 +585,22 @@ jobs:
         with:
           name: release-notes
           path: notes
+      - name: Checksums with them
+        if: steps.late.outputs.built != '0'
+        run: |
+          cp late/* packaging/install.sh packaging/install.ps1 dist/
+          (cd dist && sha256sum -- * > SHA256SUMS)
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: steps.late.outputs.built != '0'
         with:
-          subject-path: "late/canopy-build-*"
+          subject-path: |
+            late/canopy-build-*
+            dist/SHA256SUMS
       - name: Add them to the GitHub release
         if: steps.late.outputs.built != '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp late/* packaging/install.sh packaging/install.ps1 dist/
-          (cd dist && sha256sum -- * > SHA256SUMS)
           gh release upload "$TAG" late/* dist/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
       - name: Add them to the update feed
         if: steps.late.outputs.built != '0'
