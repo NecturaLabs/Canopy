@@ -1,0 +1,29 @@
+name: Advisories
+
+# CI checks advisories only when code changes. An advisory published against an unchanged
+# Cargo.lock, or one of deny.toml's ignores becoming stale, shows up here within a week.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  advisories:
+    name: cargo deny advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny
+      # The runner image's Rust is enough to read the lock file; nothing is built.
+      - name: cargo deny check advisories
+        run: cargo deny check advisories
