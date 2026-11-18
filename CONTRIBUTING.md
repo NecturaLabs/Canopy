@@ -4,6 +4,38 @@ Canopy is an open-source NecturaLabs project, and contributions are welcome. The
 everyone working on it, human or agent; [AGENTS.md](AGENTS.md) has the full conventions. Report
 security problems privately, as [SECURITY.md](SECURITY.md) says, never in a public issue.
 
+## Your first contribution
+
+1. Find an issue: [`good first issue`](https://github.com/NecturaLabs/Canopy/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+   and [`help wanted`](https://github.com/NecturaLabs/Canopy/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+   mark ones that are ready to pick up. Say in the issue that you are working on it.
+2. For a new feature or a large change, open an issue (or a
+   [discussion](https://github.com/NecturaLabs/Canopy/discussions)) first and agree the approach
+   before writing code; a pull request that arrives unannounced may not fit.
+3. Fork the repository, clone it with `--recurse-submodules`, and make a branch.
+4. Make the change with its tests, run `tools/check.sh` (see [Checks](#checks)), and commit with
+   [Conventional Commits](#commit-messages) and a sign-off (`git commit -s`).
+5. Open a pull request against `main`, fill in the template and link the issue.
+
+Questions about using Canopy go to [Discussions](https://github.com/NecturaLabs/Canopy/discussions)
+([SUPPORT.md](SUPPORT.md)).
+
+## What fits Canopy
+
+Canopy is a Git client for GitHub, GitLab (including self-hosted GitLab) and local repositories,
+built with egui. Contributions that keep to the product rules in [AGENTS.md](AGENTS.md#product-rules)
+are welcome. These will be declined: support for other hosting services, telemetry or analytics,
+contacting any new host without a documented reason and an off switch, storing credentials, a
+different UI toolkit, and code copied from GPL-licensed Git clients or under any licence not
+compatible with MIT OR Apache-2.0. [docs/roadmap.md](docs/roadmap.md) says what is planned.
+
+## What to expect
+
+Canopy has one maintainer, so reviews happen when there is time. A new issue or pull request
+usually gets a first reply within a week. A pull request is merged once its checks pass and the
+review's blocking points are resolved; one that stalls for 30 days without a reply from its author
+may be closed, and can be reopened at any time. How decisions are made: [GOVERNANCE.md](GOVERNANCE.md).
+
 ## Licence of contributions
 
 Canopy is licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the
@@ -11,8 +43,8 @@ Canopy is licensed under either of the [Apache License, Version 2.0](LICENSE-APA
 you intentionally submit for inclusion in Canopy, as defined in the Apache-2.0 licence, is dual
 licensed as above, without any additional terms or conditions. Please sign off each commit
 (`git commit -s`) to certify the [Developer Certificate of Origin](https://developercertificate.org/):
-that you wrote the change or otherwise have the right to submit it under these licences. No check
-enforces it.
+that you wrote the change or otherwise have the right to submit it under these licences. Commits
+made on the GitHub website are signed off automatically.
 
 A pull request from a fork runs CI with a read-only token and no secrets, once a maintainer has
 approved the run.
@@ -145,6 +177,8 @@ During triage, check for duplicates, confirm actionable scope and acceptance cri
 matching area, review priority and estimate size, then remove `needs-triage`. Resolve "Not sure"
 area answers before removing the flag. API/CLI issues follow the same conventions.
 
+`good first issue` and `help wanted` sit beside the type, area, priority and size: they mark open
+work that has checkable acceptance criteria and needs no owner decision.
 Use `needs-verification` when live, platform or owner acceptance checks remain, and `security`
 for credential, trust, privacy or execution risks. These flags supplement the type and area;
 they do not replace them. GitHub's open/closed state tracks completion. `dependencies`,
@@ -165,6 +199,8 @@ Keep independently reviewable work in atomic commits. Contribute to the existing
 - Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`.
 - Scopes: a crate (`core`, `app`) or a module (`graph`, `worker`, `diff`, `history`, `theme`, ...).
 - Breaking changes: `!` after the scope and a `BREAKING CHANGE:` footer.
+- Security fixes: the `security` scope or a `Security:` footer naming the advisory
+  (`Security: GHSA-...`), so the release notes list them under Security.
 
 Example: `feat(changes): stage individual lines from the diff viewer`.
 

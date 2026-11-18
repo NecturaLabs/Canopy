@@ -4,13 +4,27 @@
 
 Report security problems privately, never in a public issue or pull request:
 
-- on GitHub, through **Security → Report a vulnerability** in this repository (private
-  vulnerability reporting), or
+- on GitHub, through private vulnerability reporting:
+  <https://github.com/NecturaLabs/Canopy/security/advisories/new> (**Security → Report a
+  vulnerability**), or
 - by e-mail to support@necturalabs.com, with "Security" in the subject.
 
 Say what is affected, how to reproduce it and what an attacker gains. Leave out real credentials,
-tokens and private repository contents. We acknowledge a report within a week, keep you informed
-while we fix it, and credit you in the release notes unless you ask us not to.
+tokens and private repository contents.
+
+## What happens next
+
+1. We acknowledge the report within 7 days.
+2. We confirm or rule out the vulnerability and tell you which, within 14 days of the report where
+   we can.
+3. We fix it privately in a GitHub security advisory for this repository, asking GitHub for a CVE
+   when the issue affects published builds.
+4. We publish the fixed build, then the advisory. The build's release notes list the fix under
+   Security, and the advisory and notes credit you unless you ask us not to.
+
+We follow coordinated disclosure: please keep the details private until the advisory is published,
+or for 90 days from your report if that comes first. If a fix needs longer, we agree a date with
+you.
 
 ## Supported versions
 

@@ -12,6 +12,7 @@ in a document no longer exists.
 | Which module owns what, how data and threads flow, where a common change goes | [architecture.md](architecture.md) |
 | Why something was decided the way it was | [adr/](adr/README.md) |
 | What Canopy does today, what is planned, how it compares | [features.md](features.md) |
+| The themes planned for the next year, and what Canopy will not do | [roadmap.md](roadmap.md) |
 | Colours, type, spacing, motion, components | [design.md](design.md) |
 | Who Canopy is for, what it is for, its positioning and principles | [../PRODUCT.md](../PRODUCT.md) |
 | Which key does what | [keybindings.md](keybindings.md) (the table itself is `BINDINGS` in `crates/canopy-app/src/keymap.rs`) |
@@ -32,7 +33,8 @@ in a document no longer exists.
 
 - **Kept true with the code, in the same change as the code** (a stale line is a defect):
   `architecture.md`, `design.md`, `features.md`, `keybindings.md`, `playbook.md`, `legal/`,
-  `../tools/README.md`, `../packaging/README.md`, `../site/README.md` and `../AGENTS.md`.
+  `roadmap.md`, `../tools/README.md`, `../packaging/README.md`, `../site/README.md` and
+  `../AGENTS.md`.
   `tools/check-docs.py` checks the parts a script can: that every source module is in its crate's
   section of `architecture.md`, that every path in backticks or link exists (in every Markdown
   document except the ones below and the process skills written for any repository; `EXCLUDED` in

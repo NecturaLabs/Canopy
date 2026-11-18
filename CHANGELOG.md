@@ -4,7 +4,8 @@ All notable changes to Canopy are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases up to 0.2.1-beta.1 used
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html); from the first numbered build on, a
 release is a build named by its number (see Unreleased), and its notes are generated from the
-commits since the previous build.
+commits since the previous build and published on the
+[Releases page](https://github.com/NecturaLabs/Canopy/releases).
 
 ## [Unreleased]
 
@@ -990,6 +991,6 @@ commits since the previous build.
 - Linux desktop entry, AppStream metainfo and application icon.
 
 [Unreleased]: https://github.com/NecturaLabs/Canopy/compare/v0.2.1-beta.1...HEAD
-[0.2.1-beta.1]: https://github.com/NecturaLabs/Canopy/releases/tag/v0.2.1-beta.1
-[0.2.0-beta.1]: https://github.com/NecturaLabs/Canopy/releases/tag/v0.2.0-beta.1
-[0.1.0]: https://github.com/NecturaLabs/Canopy/releases/tag/v0.1.0
+[0.2.1-beta.1]: https://github.com/NecturaLabs/Canopy/tree/v0.2.1-beta.1
+[0.2.0-beta.1]: https://github.com/NecturaLabs/Canopy/tree/v0.2.0-beta.1
+[0.1.0]: https://github.com/NecturaLabs/Canopy/commit/9cd79f1c

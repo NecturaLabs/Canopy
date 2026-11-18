@@ -186,6 +186,16 @@ To install the binary, desktop entry and icons for your user on Linux (`~/.local
 tools/install-desktop.sh            # tools/install-desktop.sh --uninstall to remove
 ```
 
+## Quick start
+
+1. Install Canopy (above) and open a repository: `canopy ~/code/my-project`, or pick one from the
+   welcome screen.
+2. Read the history in the commit graph; select a commit to see its files and diff.
+3. Open Changes, stage files with Space (or everything with Ctrl+Shift+S), write a message and
+   commit with Ctrl+Enter.
+4. Push with Ctrl+Shift+P. Ctrl+K opens the command palette and `?` lists every shortcut
+   ([docs/keybindings.md](docs/keybindings.md)).
+
 ## Usage
 
 ```text
@@ -304,6 +314,17 @@ The repository is set up for coding agents. [AGENTS.md](AGENTS.md) (loaded by Cl
   `agent-orchestration`).
 - **Tools** (`tools/`): the scripts above let an agent build, check, create a reproducible
   repository and look at the result as an image.
+
+## Community
+
+- [Contributing](CONTRIBUTING.md): how to propose and make a change, and what fits Canopy.
+- [Discussions](https://github.com/NecturaLabs/Canopy/discussions) and [SUPPORT.md](SUPPORT.md):
+  questions and ideas.
+- [Code of conduct](CODE_OF_CONDUCT.md), [governance](GOVERNANCE.md) and the
+  [roadmap](docs/roadmap.md).
+- [Security policy](SECURITY.md): report vulnerabilities privately.
+- [Accessibility](ACCESSIBILITY.md), [changelog](CHANGELOG.md) and
+  [releases](https://github.com/NecturaLabs/Canopy/releases).
 
 ## Licence
 

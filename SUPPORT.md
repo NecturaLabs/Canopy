@@ -7,6 +7,8 @@
   that show it.
 - **A question about using Canopy**: [docs/features.md](docs/features.md) lists what Canopy does,
   [docs/keybindings.md](docs/keybindings.md) its shortcuts and the README its install and command
-  line. If those do not answer it, e-mail support@necturalabs.com.
+  line. If those do not answer it, ask in
+  [Discussions](https://github.com/NecturaLabs/Canopy/discussions) (Q&A), where the answer helps
+  the next person too. E-mail support@necturalabs.com only for something private.
 - **A security problem**: never in a public issue. Follow [SECURITY.md](SECURITY.md).
 - **Behaviour in project spaces**: see the [code of conduct](CODE_OF_CONDUCT.md).
