@@ -26,8 +26,9 @@ CHANGE:` footer. `docs`, `ci`, `chore`, `test`, `refactor`, `style` and plain `b
 release: with nothing releasable, or when HEAD already is a tagged build, the workflow stops with a
 notice unless "force" is chosen.
 
-The release notes are those commits grouped as Added (`feat`), Fixed (`fix`, `revert`) and Changed
-(`perf`, `build`), so a releasable commit's subject is user-facing text. Before the first
+The release notes are those commits grouped as Security (a `security` scope or a `Security:`
+footer), Breaking changes (`!` or a `BREAKING CHANGE:` footer), Added (`feat`), Fixed (`fix`,
+`revert`) and Changed (`perf`, `build`), so a releasable commit's subject is user-facing text. Before the first
 `build-*` tag the notes are the `[Unreleased]` section of `CHANGELOG.md`. The Release workflow
 embeds them in the build for the "What's new" dialog and publishes them with the release and in
 the feed manifest.

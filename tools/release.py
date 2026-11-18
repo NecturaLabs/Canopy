@@ -117,20 +117,32 @@ GROUPS = (
 )
 
 
+def special_group(m: re.Match, body: str) -> str | None:
+    """Security for a `security` scope or a `Security:` footer; breaking for `!` or the footer."""
+    if m["scope"] == "security" or re.search(r"^Security: ", body, re.M):
+        return "Security"
+    if m["bang"] or re.search(r"^BREAKING[ -]CHANGE: ", body, re.M):
+        return "Breaking changes"
+    return None
+
+
 def generated_notes(commits: list[tuple[str, str]]) -> str:
-    """Keep a Changelog sections built from commit subjects."""
-    sections = []
-    for title, kinds in GROUPS:
-        items = []
-        for subject, body in commits:
-            m = SUBJECT.match(subject)
-            if not m or not releasable(subject, body) or m["type"] not in kinds:
-                continue
-            desc = m["desc"].strip().rstrip(".")
-            items.append(f"- {desc[:1].upper()}{desc[1:]}.")
-        if items:
-            sections.append(f"### {title}\n\n" + "\n".join(items))
-    return "\n\n".join(sections)
+    """Keep a Changelog sections built from commit subjects; security fixes and breaking
+    changes come first, in sections of their own."""
+    groups: dict[str, list[str]] = {}
+    for subject, body in commits:
+        m = SUBJECT.match(subject)
+        if not m or not releasable(subject, body):
+            continue
+        title = special_group(m, body) or next(
+            (t for t, kinds in GROUPS if m["type"] in kinds), None
+        )
+        if title is None:
+            continue
+        desc = m["desc"].strip().rstrip(".")
+        groups.setdefault(title, []).append(f"- {desc[:1].upper()}{desc[1:]}.")
+    order = ["Security", "Breaking changes"] + [t for t, _ in GROUPS]
+    return "\n\n".join(f"### {t}\n\n" + "\n".join(groups[t]) for t in order if t in groups)
 
 
 def section(text: str, name: str) -> str:
@@ -191,6 +203,19 @@ def selftest() -> None:
     notes_text = generated_notes([("feat(app): side by side diffs", ""), ("fix: crash on empty repo.", ""), ("docs: x", ""), ("build: y", "")])
     expect_eq(notes_text, "### Added\n\n- Side by side diffs.\n\n### Fixed\n\n- Crash on empty repo.")
     expect_eq(generated_notes([("docs: x", "")]), "")
+    # Security fixes and breaking changes are named in sections of their own, ahead of the rest.
+    expect_eq(
+        generated_notes([
+            ("feat: new thing", ""),
+            ("fix(security): token in a log line", ""),
+            ("fix: escape a path", "Security: GHSA-xxxx-xxxx-xxxx"),
+            ("feat!: drop the old flag", ""),
+            ("refactor: settings file", "BREAKING CHANGE: old files are not read"),
+        ]),
+        "### Security\n\n- Token in a log line.\n- Escape a path.\n\n"
+        "### Breaking changes\n\n- Drop the old flag.\n- Settings file.\n\n"
+        "### Added\n\n- New thing.",
+    )
     log = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- New thing.\n\n## [0.1.0] - 2026-09-01\n\n- First.\n\n[0.1.0]: https://x\n"
     expect_eq(section(log, "Unreleased"), "### Added\n\n- New thing.")
     expect_eq(section(log, "0.1.0"), "- First.")
