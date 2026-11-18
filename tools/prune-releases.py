@@ -52,14 +52,15 @@ def gh(args, token_env, capture=True):
 
 
 def releases(repo, token_env):
-    """Every release of `repo`, as dicts with tag, name, published and body."""
+    """Every published release of `repo`, as dicts with tag, name, published and body."""
     out = gh(
         [
             "api",
             "--paginate",
             f"repos/{repo}/releases?per_page=100",
             "--jq",
-            ".[] | {tag: .tag_name, name: .name, published: (.published_at // .created_at), body: (.body // \"\")}",
+            # A draft never shipped: a failed run's leftover is neither kept as notes nor pruned.
+            ".[] | select(.draft | not) | {tag: .tag_name, name: .name, published: (.published_at // .created_at), body: (.body // \"\")}",
         ],
         token_env,
     )

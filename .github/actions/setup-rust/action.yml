@@ -30,6 +30,12 @@ inputs:
     required: false
     default: "false"
 
+# The isolated install runs rustup-init RUSTUP_VERSION from static.rust-lang.org and refuses it
+# unless its SHA-256 is the one recorded here (rustup publishes checksums, not signatures; a
+# checksum fetched beside the file would prove nothing). To move to a newer rustup, take the
+# hashes from https://static.rust-lang.org/rustup/archive/<version>/<target>/rustup-init[.exe].sha256
+# for every target below. rustup itself checks each toolchain component against the channel
+# manifest's hashes.
 runs:
   using: composite
   steps:
@@ -40,20 +46,37 @@ runs:
       shell: bash
       env:
         RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
+        RUSTUP_VERSION: "1.29.3"
       run: |
         set -euo pipefail
         root="$RUNNER_TEMP/canopy-rust"
         rm -rf "$root"
         export CARGO_HOME="$root/cargo" RUSTUP_HOME="$root/rustup"
-        # The installer script downloads rustup-init with no time limit, and one such download
-        # stalled for an hour (#144): each try gets five minutes where `timeout` exists.
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) target=x86_64-unknown-linux-gnu sum=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55 ;;
+          Linux-ARM64) target=aarch64-unknown-linux-gnu sum=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282 ;;
+          macOS-ARM64) target=aarch64-apple-darwin sum=63752a1919a3a4793173ec70f8f212621a7ce38ba6a246095984482f4de20f9f ;;
+          macOS-X64) target=x86_64-apple-darwin sum=bc107f1fb0228de7fa32413c89c1b305cea9cd256e94b01150cd054128145429 ;;
+          *) echo "::error::No recorded rustup-init checksum for $RUNNER_OS $RUNNER_ARCH."; exit 1 ;;
+        esac
+        init="$RUNNER_TEMP/rustup-init"
+        # One download stalled for an hour (#144): each try gets five minutes where `timeout`
+        # exists.
         limited() { if command -v timeout > /dev/null; then timeout -k 10 300 "$@"; else "$@"; fi; }
         for try in 1 2 3; do
           [[ -x "$CARGO_HOME/bin/rustup" ]] && break
           (( try == 1 )) || echo "::warning::Installing rustup failed or stalled; try $try of 3."
-          limited bash -c "set -o pipefail; curl --proto '=https' --tlsv1.2 --retry 10 --connect-timeout 30 --location --silent --show-error --fail https://sh.rustup.rs \
-            | sh -s -- --default-toolchain none --no-modify-path -y" || true
+          rm -f "$init"
+          limited curl --proto '=https' --tlsv1.2 --retry 10 --connect-timeout 30 --location --silent --show-error --fail \
+            --output "$init" "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/$target/rustup-init" || continue
+          if ! shasum -a 256 "$init" | grep -q "^$sum "; then
+            echo "::error::rustup-init $RUSTUP_VERSION for $target does not match its recorded SHA-256."
+            exit 1
+          fi
+          chmod +x "$init"
+          limited "$init" --default-toolchain none --no-modify-path -y || true
         done
+        rm -f "$init"
         [[ -x "$CARGO_HOME/bin/rustup" ]] || { echo "::error::Installing rustup failed three times."; exit 1; }
         echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
         echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
@@ -64,6 +87,8 @@ runs:
       shell: pwsh
       env:
         RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
+        RUSTUP_VERSION: "1.29.3"
+        RUSTUP_INIT_SHA256: 38027d51d69a5d05493627a0634dbea52d6cd793c8f072d2373d3f4163eec7db
       run: |
         $ErrorActionPreference = 'Stop'
         $root = Join-Path $env:RUNNER_TEMP 'canopy-rust'
@@ -72,7 +97,10 @@ runs:
         $env:RUSTUP_HOME = Join-Path $root 'rustup'
         $bin = Join-Path $env:CARGO_HOME 'bin'
         $init = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
-        Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $init
+        if ($env:RUNNER_ARCH -ne 'X64') { throw "No recorded rustup-init checksum for Windows $env:RUNNER_ARCH." }
+        Invoke-WebRequest -Uri "https://static.rust-lang.org/rustup/archive/$env:RUSTUP_VERSION/x86_64-pc-windows-msvc/rustup-init.exe" -OutFile $init
+        $actual = (Get-FileHash -Algorithm SHA256 $init).Hash.ToLowerInvariant()
+        if ($actual -ne $env:RUSTUP_INIT_SHA256) { throw "rustup-init $env:RUSTUP_VERSION does not match its recorded SHA-256." }
         & $init --default-toolchain none --no-modify-path -y
         if ($LASTEXITCODE -ne 0) { throw "rustup-init exited with $LASTEXITCODE" }
         "CARGO_HOME=$env:CARGO_HOME" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
