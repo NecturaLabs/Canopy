@@ -805,7 +805,7 @@ pub fn commit_menu(
         }
         m.separator();
     }
-    if m.item(icon::CHECK, "Check out (detached HEAD)")
+    if m.item(icon::SIGN_IN, "Check out (detached HEAD)")
         .show(m.ui)
         .clicked()
     {

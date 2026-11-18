@@ -415,7 +415,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             if m.item(icon::FOLDER_OPEN, "Open worktree").show(m.ui).clicked() {
                                 actions.push(Action::SwitchWorktree(w.clone()));
                             }
-                        } else if m.item(icon::CHECK, "Check out").show(m.ui).clicked() {
+                        } else if m.item(icon::SIGN_IN, "Check out").show(m.ui).clicked() {
                             actions.push(Action::Op(Op::Checkout(name.clone())));
                         }
                         if m.item(icon::GIT_MERGE, "Merge into current branch").show(m.ui).clicked() {
