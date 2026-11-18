@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml"><img src="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml/badge.svg?branch=dev" alt="CI"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/NecturaLabs/Canopy"><img src="https://api.scorecard.dev/projects/github.com/NecturaLabs/Canopy/badge" alt="OpenSSF Scorecard"></a>
   <a href="#licence"><img src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue" alt="Licence: MIT OR Apache-2.0"></a>
   <a href="https://canopy.necturalabs.com">Website</a>
 </p>

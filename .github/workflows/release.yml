@@ -356,6 +356,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -374,6 +376,11 @@ jobs:
         run: cp packaging/install.sh packaging/install.ps1 dist/
       - name: Checksums
         run: cd dist && sha256sum -- * > SHA256SUMS
+      # Signed SLSA build provenance for every archive: `gh attestation verify <file> --repo
+      # NecturaLabs/Canopy` proves it was built by this workflow from the tagged commit.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/canopy-build-*"
       # Earlier releases are removed once this one is out (the prune job): their notes live on in
       # the feed's changelog, which the release page links to.
       - name: Release page text
@@ -535,6 +542,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       BUILD: ${{ needs.identity.outputs.build }}
     steps:
@@ -572,6 +581,10 @@ jobs:
         with:
           name: release-notes
           path: notes
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: steps.late.outputs.built != '0'
+        with:
+          subject-path: "late/canopy-build-*"
       - name: Add them to the GitHub release
         if: steps.late.outputs.built != '0'
         env:
