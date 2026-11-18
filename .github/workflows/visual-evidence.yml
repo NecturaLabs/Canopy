@@ -10,10 +10,7 @@ on:
   pull_request:
     types: [opened, edited, synchronize, reopened, ready_for_review]
     paths:
-      - "crates/canopy-app/src/ui/**"
-      - "crates/canopy-app/src/views/**"
-      - "crates/canopy-app/src/app/**"
-      - "crates/canopy-app/src/request_view.rs"
+      - "crates/canopy-app/src/**"
       - "crates/nectura-ui"
       - "assets/**"
       - "site/**"
@@ -40,9 +37,9 @@ jobs:
           body=$(perl -0pe 's/<!--.*?-->//gs' <<<"$BODY")
           if grep -qiE '!\[[^]]*\]\([^)]+\)|<img[[:space:]]|<video[[:space:]]|https://github\.com/user-attachments/' <<<"$body"; then
             echo "The body shows the change."
-          elif grep -qiE '^[[:space:]]*No visible change:[[:space:]]*[^[:space:]]' <<<"$body"; then
+          elif grep -qiE '^[[:space:]>*_-]*No visible change[*_]*:[*_]*[[:space:]]*[^[:space:]<*_]' <<<"$body"; then
             echo "The body says nothing on screen changes."
           else
-            echo "::error::This pull request touches the UI or the site. Add before and after screenshots (tools/screenshot.sh, dark and light where colours change) to the Screenshots section, or a line 'No visible change: <why>'."
+            echo "::error::This pull request touches the UI or the site. Edit the description (re-running this check reuses the old one): add before and after screenshots (tools/screenshot.sh, dark and light where colours change) to the Screenshots section, or a line 'No visible change: <why>'."
             exit 1
           fi

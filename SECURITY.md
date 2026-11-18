@@ -14,13 +14,12 @@ tokens and private repository contents.
 
 ## What counts as a vulnerability
 
-A bug is a vulnerability when it crosses a security boundary: someone who should not, such as a
+A bug is a vulnerability when it crosses a security boundary: something untrusted, such as a
 repository you open, its configuration, a remote, a hosting server or a file you import, gains
-access, permissions or control they did not already have. Examples: running a program through a
+access, permissions or control it should not have. Examples: running a program through a
 repository's settings, reading a credential, or sending data to a host the Privacy Policy does
 not list. Code that could be more robust without crossing a boundary is a normal bug: report it
-in an issue (Discussions if you cannot open one), and we may still credit you in the release
-notes.
+in Discussions (collaborators open issues directly; see CONTRIBUTING.md).
 
 ## Research in good faith
 
