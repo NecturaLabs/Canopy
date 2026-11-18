@@ -3995,7 +3995,11 @@ fn repo_tab(ui: &mut Ui, s: &mut Settings, path: &Path) {
         .and_then(|r| r.display_name.clone())
         .unwrap_or_default();
     let mut name = saved.clone();
-    row(ui, "Name", "What its tab calls this repository.", |ui| {
+    let about = format!(
+        "What its tab calls this repository, up to {} characters.",
+        crate::settings::MAX_TAB_NAME
+    );
+    row(ui, "Name", &about, |ui| {
         fixed_width(ui, FIELD_WIDTH, |ui| {
             TextField::new(&mut name)
                 .placeholder(folder.clone())

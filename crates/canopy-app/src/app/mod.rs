@@ -594,7 +594,7 @@ impl CanopyApp {
                         stuck_lock: Some(PathBuf::from("/home/ada/.local/share/canopy/.lock")),
                     },
                     update_refused: Some(
-                        "/home/ada/.local/share/canopy holds the files of an update that was interrupted and has no Canopy of its own: run the installer again to repair it".to_owned(),
+                        "/home/ada/.local/share/canopy holds the files of an update that was interrupted and has no Canopy of its own: run the installer again to repair it.".to_owned(),
                     ),
                     ..Default::default()
                 };

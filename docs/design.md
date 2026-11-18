@@ -687,11 +687,12 @@ The rest of the kit, each with the states `--overlay gallery` shows:
 - `TreeRow` is a `ListRow` with an indent per level and a disclosure chevron (space is kept for it
   on leaves); Left collapses or asks for the parent, Right expands or asks for the first child.
   The sidebar's Branches are a tree of these: folders for the `/` prefixes (branches first, then
-  folders, each by name; a folder with the checked-out branch inside has an accent icon and shows
-  the number of branches in it), leaf rows with the last segment of the name, a merge icon and the
-  word `merged`, `gone` or `squash?` after it for a merged branch (its tooltip has the check),
+  folders, each by name; a folder row has its chevron and no icon, the chevron in the accent when
+  the checked-out branch is inside, and shows the number of branches in it), leaf rows with the
+  last segment of the name, a merge icon in the success tone (merged), merging arrows in the warning tone (squash-merged) or a
+  crossed-out cloud (upstream gone) for a merged branch, with the deciding check in its tooltip,
   and the ahead and behind counts as mono text. Screen readers hear the whole name, "current
-  branch" and the marker.
+  branch" and the marker. Each level is one `tree_indent` (14).
 
 ### Text field
 

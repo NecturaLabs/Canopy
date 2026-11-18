@@ -1021,7 +1021,7 @@ fn sweep(root: &Path) -> Result<bool, String> {
     }
     if let Some(kept) = previous.iter().find(|dir| dir.join(NOT_RESTORED).exists()) {
         return Err(format!(
-            "{} holds the old version of an update that could not be undone: move its files back from {}, or run the installer again to repair it",
+            "{} holds the old version of an update that could not be undone: move its files back from {}, or run the installer again to repair it.",
             root.display(),
             kept.display()
         ));
@@ -1042,7 +1042,7 @@ fn sweep(root: &Path) -> Result<bool, String> {
         // the staged rest of the new one and the old one are the only copies. Keep them.
         if !previous.is_empty() {
             return Err(format!(
-                "{} holds an update that was interrupted halfway and could not be undone: run the installer again to repair it",
+                "{} holds an update that was interrupted halfway and could not be undone: run the installer again to repair it.",
                 root.display()
             ));
         }
@@ -1050,7 +1050,7 @@ fn sweep(root: &Path) -> Result<bool, String> {
     let restored = previous.len() < found;
     if !previous.is_empty() && !root.join("bin/canopy").is_file() {
         return Err(format!(
-            "{} holds the files of an update that was interrupted and has no Canopy of its own: run the installer again to repair it",
+            "{} holds the files of an update that was interrupted and has no Canopy of its own: run the installer again to repair it.",
             root.display()
         ));
     }
