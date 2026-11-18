@@ -214,7 +214,9 @@ Example: `feat(changes): stage individual lines from the diff viewer`.
 - [ ] `tools/check.sh` passes, and all required GitHub Actions checks pass for the PR head.
 - [ ] New or changed Git operations have tests against a temporary repository.
 - [ ] UI changes include before and after screenshots (dark, and light where colours change),
-      taken with `tools/screenshot.sh` on a fixture.
+      taken with `tools/screenshot.sh` on a fixture, or a line `No visible change: <why>`. The
+      Visual evidence check asks for one when a pull request touches the UI or the site; it is a
+      reminder, not a required check.
 - [ ] `docs/features.md`, `docs/architecture.md`, `docs/design.md` and `CHANGELOG.md`
       (Unreleased) are updated where the change touches them.
 - [ ] Destructive actions go through a confirmation dialog.
