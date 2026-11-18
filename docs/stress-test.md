@@ -101,8 +101,8 @@ panics, no hung operations, no leaks stay absolute).
 Thirty public repositories on github.com, all verified to exist (and not to be forks) when
 this list was written. Sizes are what GitHub reports for the repository (an upper-bound style
 figure: a real clone is often somewhat smaller, and Git LFS objects are not included). The size
-class is a rough bucket by size: **large** (about 300 MB to 1 GB), **medium** (about 40 to
-300 MB), **small** (under 40 MB). 2 large, 20 medium, 8 small. `tools/stress.sh` also accepts a
+class is a rough bucket by size: **large** (about 300 MB to 1 GB), **medium** (about 30 to
+300 MB), **small** (under 30 MB). 2 large, 20 medium, 8 small. `tools/stress.sh` also accepts a
 **monstrous** class (about 1 GB or more, or a very long history) for a list of your own
 (`--list`); the standard list has none.
 
@@ -188,7 +188,7 @@ downloads them; to skip, run the clone as `GIT_LFS_SKIP_SMUDGE=1 tools/stress.sh
    `$CANOPY_STRESS_DIR`). Put it on a fast disk with the space above.
 
    ```sh
-   tools/stress.sh clone --jobs 4                                     # about 6 GB
+   tools/stress.sh clone --jobs 4                                     # about 6 to 7 GB
    tools/stress.sh clone --dry-run                                    # what it would do
    tools/stress.sh clone --subset 10 --shallow --dir /tmp/stress-try  # rehearsal
    ```
@@ -269,7 +269,8 @@ and the longest medium histories, `django/django`, `curl/curl` and `spring-proje
    clones and a few medium ones, then look at them in Canopy and stage, unstage and discard them:
 
    ```sh
-   tools/stress.sh churn --class large,medium --repos 4 --modify-many 5000
+   tools/stress.sh churn --class large --repos 2 --modify-many 5000
+   tools/stress.sh churn --class medium --repos 4 --modify-many 5000
    ```
 
    Press `2` for Changes in those tabs; scroll the list; stage all, unstage all. Afterwards
