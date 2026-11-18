@@ -19,6 +19,7 @@ mod error;
 mod file_history;
 pub mod flow;
 pub mod forge;
+mod gone;
 pub mod graph;
 pub mod identity;
 pub mod ignore;
@@ -58,6 +59,7 @@ pub use flow::{
 };
 pub use forge::{AuthorPage, Forge, ForgeKind};
 pub use git2::Oid;
+pub use gone::{GoneBranch, GoneRemoval};
 pub use search_changes::{ChangeHit, ChangeSearch};
 // `Segment` at the crate root is the conflict-file segment; the graph's is `GraphSegment`.
 pub use graph::{GraphRow, LineEnd, Segment as GraphSegment};

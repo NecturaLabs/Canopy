@@ -94,6 +94,7 @@ pub struct GitChoices {
     pull_mode: PullMode,
     prune_on_fetch: bool,
     prune_tags: bool,
+    remove_gone_branches: bool,
     autostash: bool,
     follow_tags: bool,
     recurse_submodules: bool,
@@ -113,6 +114,7 @@ impl Settings {
             pull_mode: self.pull_mode,
             prune_on_fetch: self.prune_on_fetch,
             prune_tags: self.prune_tags,
+            remove_gone_branches: self.remove_gone_branches,
             autostash: self.autostash,
             follow_tags: self.follow_tags,
             recurse_submodules: self.recurse_submodules,
@@ -132,6 +134,7 @@ impl Settings {
             pull_mode,
             prune_on_fetch,
             prune_tags,
+            remove_gone_branches,
             autostash,
             follow_tags,
             recurse_submodules,
@@ -147,6 +150,7 @@ impl Settings {
         self.pull_mode = pull_mode;
         self.prune_on_fetch = prune_on_fetch;
         self.prune_tags = prune_tags;
+        self.remove_gone_branches = remove_gone_branches;
         self.autostash = autostash;
         self.follow_tags = follow_tags;
         self.recurse_submodules = recurse_submodules;
@@ -528,6 +532,9 @@ pub struct Settings {
     pub cleanup: CleanupMode,
     /// A pruning fetch also deletes local tags the remote does not have (`--prune-tags`).
     pub prune_tags: bool,
+    /// After a pruning fetch, the local branches whose upstream the remote deleted are deleted
+    /// with `git branch -d`, so only merged ones go.
+    pub remove_gone_branches: bool,
     /// The first branch of a repository Canopy creates (`git init --initial-branch`).
     pub initial_branch: String,
     /// The one-time Git identity question has been shown.
@@ -657,6 +664,7 @@ impl Default for Settings {
             push_default: PushMode::Simple,
             cleanup: CleanupMode::Whitespace,
             prune_tags: false,
+            remove_gone_branches: true,
             initial_branch: INITIAL_BRANCH.to_owned(),
             identity_asked: false,
             commit_page: 2000,
@@ -798,6 +806,7 @@ impl Settings {
             push_default: self.push_default.push_default(),
             cleanup: self.cleanup.cleanup(),
             prune_tags: self.prune_tags,
+            remove_gone_branches: self.remove_gone_branches,
             recurse_submodules: self.recurse_submodules,
             discard_untracked_in_submodules: self.discard_untracked_in_submodules,
         }
@@ -945,6 +954,7 @@ mod tests {
             pull_mode: PullMode::Rebase,
             prune_on_fetch: false,
             prune_tags: true,
+            remove_gone_branches: false,
             autostash: false,
             follow_tags: false,
             recurse_submodules: false,
@@ -970,6 +980,10 @@ mod tests {
             (s.pull_mode != default.pull_mode, "pull_mode"),
             (s.prune_on_fetch != default.prune_on_fetch, "prune_on_fetch"),
             (s.prune_tags != default.prune_tags, "prune_tags"),
+            (
+                s.remove_gone_branches != default.remove_gone_branches,
+                "remove_gone_branches",
+            ),
             (s.autostash != default.autostash, "autostash"),
             (s.follow_tags != default.follow_tags, "follow_tags"),
             (
@@ -1336,6 +1350,7 @@ mod tests {
                 push_default: PushDefault::Simple,
                 cleanup: Cleanup::Whitespace,
                 prune_tags: false,
+                remove_gone_branches: true,
                 recurse_submodules: true,
                 discard_untracked_in_submodules: false,
             }
@@ -1435,6 +1450,7 @@ mod tests {
             push_default: PushMode::Current,
             cleanup: CleanupMode::Strip,
             prune_tags: true,
+            remove_gone_branches: false,
             recurse_submodules: false,
             discard_untracked_in_submodules: true,
             initial_branch: "  trunk ".into(),
@@ -1450,6 +1466,7 @@ mod tests {
                 push_default: PushDefault::Current,
                 cleanup: Cleanup::Strip,
                 prune_tags: true,
+                remove_gone_branches: false,
                 recurse_submodules: false,
                 discard_untracked_in_submodules: true,
             }

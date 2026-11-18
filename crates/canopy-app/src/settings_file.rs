@@ -399,6 +399,7 @@ mod tests {
             clone_protocol: CloneProtocol::Ssh,
             editor: "zed --wait %f".to_owned(),
             check_message: false,
+            remove_gone_branches: false,
             accepted_terms: "2026-10-03".to_owned(),
             accepted_privacy: "2026-10-03".to_owned(),
             crash_reports: Some(false),
@@ -429,6 +430,10 @@ mod tests {
         assert_eq!(back.theme, ThemeId::Daylight);
         assert_eq!(back.pull_mode, PullMode::Rebase);
         assert!(!back.check_message, "the message checks setting travels");
+        assert!(
+            !back.remove_gone_branches,
+            "removing branches deleted on the remote travels"
+        );
         assert_eq!(
             back.editor, "",
             "the programs Canopy runs stay this computer's"
@@ -662,12 +667,14 @@ mod tests {
             &here,
             &file_with(
                 r#"{"prune_on_fetch": false, "autostash": false, "follow_tags": false,
-                    "pull_mode": "Rebase", "initial_branch": "trunk"}"#,
+                    "remove_gone_branches": false, "pull_mode": "Rebase",
+                    "initial_branch": "trunk"}"#,
             ),
         )
         .unwrap();
         let s = imported.settings;
         assert!(!s.prune_on_fetch && !s.autostash && !s.follow_tags);
+        assert!(!s.remove_gone_branches);
         assert_eq!(s.initial_branch, "trunk");
         assert!(imported.kept.is_empty(), "{:?}", imported.kept);
     }

@@ -734,6 +734,14 @@ pub enum Event {
         announce: bool,
         result: Result<String, String>,
     },
+    /// After a fetch that pruned, the merged local branches whose upstream the remote deleted
+    /// were deleted ([`canopy_core::Repo::remove_gone_branches`]). `quiet` when the fetch was
+    /// one the user did not start.
+    GoneBranchesRemoved {
+        title: String,
+        names: String,
+        quiet: bool,
+    },
     Failed(String),
     /// Changes on disk are not watched (a folder could not be watched): from [`Job::WatchFailed`].
     WatchFailed(String),
@@ -1721,6 +1729,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         } => Some((strategy, follow_config)),
                         _ => None,
                     };
+                    // A fetch is followed by removing the branches it found gone, when it pruned.
+                    let fetched = match op {
+                        Op::Fetch { prune, quiet } => Some((prune, quiet)),
+                        _ => None,
+                    };
                     tracing::info!(operation = %label, "operation started");
                     emit(Event::OpStarted {
                         label: label.clone(),
@@ -1749,6 +1762,19 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         _ => None,
                     };
                     let fetch_failed = matches!(decided, Some(Err(_)));
+                    // The pull's preview fetched its upstream's remote, pruning as it said.
+                    if matches!(decided, Some(Ok(_)))
+                        && let Op::Pull {
+                            prune,
+                            checked: None,
+                            ..
+                        } = op
+                        && let Some(remote) = repo.preview_remote()
+                        && allowed()
+                        && let Some(removed) = remove_gone(&repo, Some(&remote), prune, false)
+                    {
+                        emit(removed);
+                    }
                     let result = match decided {
                         Some(Ok(PullNext::Ask(decision))) => {
                             tracing::info!(operation = %label, "waiting for the user's decision");
@@ -1767,6 +1793,13 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         }
                         None => perform(&repo, op, progress).map_err(|e| e.to_string()),
                     };
+                    if let Some((prune, quiet)) = fetched
+                        && result.is_ok()
+                        && allowed()
+                        && let Some(removed) = remove_gone(&repo, None, prune, quiet)
+                    {
+                        emit(removed);
+                    }
                     let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     match &result {
                         Ok(_) => tracing::info!(operation = %label, ms, "operation succeeded"),
@@ -1954,6 +1987,30 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
 /// `e` as it may appear in a log: git's own words, with credentials in URLs removed.
 fn redacted(e: &canopy_core::Error) -> String {
     canopy_core::cli::redact_url(&e.to_string())
+}
+
+/// After a fetch of `remote` (every remote when `None`) that asked git to prune as `prune` says:
+/// deletes the merged local branches whose upstream that fetch found deleted on the remote, and
+/// says which. Nothing to say when none went; a failure is logged, as the fetch itself worked.
+fn remove_gone(repo: &Repo, remote: Option<&str>, prune: bool, quiet: bool) -> Option<Event> {
+    match repo.remove_gone_branches(remote, prune) {
+        Ok(done) if done.removed.is_empty() => None,
+        Ok(done) => {
+            tracing::info!(
+                count = done.removed.len(),
+                "removed branches deleted on the remote"
+            );
+            Some(Event::GoneBranchesRemoved {
+                title: done.title(),
+                names: done.names(),
+                quiet,
+            })
+        }
+        Err(e) => {
+            tracing::warn!(error = %redacted(&e), "branches deleted on the remote not removed");
+            None
+        }
+    }
 }
 
 /// Runs `f` with the status bar saying where it is downloading from, then clears the line.

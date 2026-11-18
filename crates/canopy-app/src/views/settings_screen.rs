@@ -901,6 +901,7 @@ fn synonyms(title: &str) -> &'static str {
         "Discard in a submodule" => "submodule discard untracked clean delete reset",
         "Recurse into submodules" => "submodule.recurse submodule recursive git config",
         "Fetch in the background" => "auto fetch automatic interval minutes",
+        "Remove deleted branches" => "prune gone stale merged local branches delete cleanup",
         "Add Signed-off-by" => "signoff sign-off dco trailer",
         "Check commit messages" => {
             "message lint linting summary subject length 72 wrap description"
@@ -3502,6 +3503,7 @@ fn git(
             },
         );
     }
+    heading(ui, "Fetch");
     default_row(
         ui,
         "Fetch in the background",
@@ -3525,6 +3527,21 @@ fn git(
                 .recommended(DEFAULTS.auto_fetch_minutes)
                 .id_salt("auto-fetch")
                 .show(ui);
+        },
+    );
+    default_row(
+        ui,
+        "Remove deleted branches",
+        "After a fetch that prunes, deletes your merged branches that were deleted on the remote.",
+        None,
+        |ui| {
+            revert(
+                ui,
+                &mut s.remove_gone_branches,
+                &DEFAULTS.remove_gone_branches,
+                "Remove deleted branches",
+            );
+            switch(ui, &mut s.remove_gone_branches, "Remove deleted branches");
         },
     );
     heading(ui, "Cleanup");

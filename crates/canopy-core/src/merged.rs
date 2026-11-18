@@ -68,7 +68,7 @@ impl BranchBase {
 }
 
 /// The names kept whatever the repository says: the usual long-lived branches.
-const LONG_LIVED: [&str; 3] = ["main", "master", "develop"];
+pub(crate) const LONG_LIVED: [&str; 3] = ["main", "master", "develop"];
 
 /// What [`Repo::remove_merged_branches`] did.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -358,7 +358,7 @@ impl Repo {
 
     /// The branch `full` (`refs/heads/…`) has `branch.<name>.merge` configured but the ref it
     /// tracks does not exist.
-    fn upstream_gone(&self, full: &str) -> bool {
+    pub(crate) fn upstream_gone(&self, full: &str) -> bool {
         let git = self.git();
         let Some(short) = full.strip_prefix("refs/heads/") else {
             return false;
