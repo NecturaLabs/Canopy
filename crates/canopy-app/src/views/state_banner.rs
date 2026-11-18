@@ -98,8 +98,13 @@ pub fn show(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
 }
 
 /// The banner over a repository that is not trusted: it is read-only until the user trusts it.
+/// Dismiss hides it for this repository until Canopy restarts (no notice is forced to stay).
 fn untrusted(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
     if tab.trust != RepoTrust::Untrusted {
+        return;
+    }
+    let dismissed = egui::Id::new(("repository-untrusted-dismissed", &tab.path));
+    if ui.data(|d| d.get_temp::<bool>(dismissed)).unwrap_or(false) {
         return;
     }
     egui::Panel::top("repository-untrusted")
@@ -109,9 +114,13 @@ fn untrusted(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 .icon(icon::SHIELD_WARNING)
                 .body("Canopy changes nothing in it and runs nothing from it.")
                 .action(NoticeAction::new("Trust…").icon(icon::SHIELD_CHECK))
+                .action(NoticeAction::new("Dismiss").icon(icon::X))
                 .id_salt("repository-untrusted")
                 .show(ui)
                 .value;
+            if clicked == Some(1) {
+                ui.data_mut(|d| d.insert_temp(dismissed, true));
+            }
             if clicked == Some(0) {
                 actions.push(Action::OpenDialog(Dialog::Trust {
                     repo: tab.trust_folders.first().unwrap_or(&tab.path).clone(),

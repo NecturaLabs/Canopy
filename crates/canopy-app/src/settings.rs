@@ -539,6 +539,9 @@ pub struct Settings {
     pub initial_branch: String,
     /// The one-time Git identity question has been shown.
     pub identity_asked: bool,
+    /// The "Trust safety is off" notice was dismissed; turning trust safety on again clears it,
+    /// so turning it off later shows the notice again.
+    pub trust_off_dismissed: bool,
     /// Commits loaded per page in the history.
     pub commit_page: usize,
     /// Default diff options.
@@ -667,6 +670,7 @@ impl Default for Settings {
             remove_gone_branches: true,
             initial_branch: INITIAL_BRANCH.to_owned(),
             identity_asked: false,
+            trust_off_dismissed: false,
             commit_page: 2000,
             diff: DiffPrefs::default(),
             repo_diff: HashMap::new(),

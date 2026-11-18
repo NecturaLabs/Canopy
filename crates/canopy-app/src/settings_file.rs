@@ -41,6 +41,7 @@ pub const NOT_PREFERENCES: &[&str] = &[
     "trusted_folders",
     "trust_safety",
     "identity_asked",
+    "trust_off_dismissed",
     "last_update_check",
     "skipped_version",
     "last_seen_version",
