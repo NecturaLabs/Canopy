@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: tools/stress.sh <clone|open|churn|report> [options]     (tools/stress.sh --help)
 #
-# Stress-test harness for Canopy: 100 public repositories open at once, one per tab.
+# Stress-test harness for Canopy: 30 public repositories open at once, one per tab.
 # The procedure, scenarios and pass criteria are in docs/stress-test.md.
 #
 #   clone   Clone the repositories listed in tools/stress-repos.txt into a cache folder
@@ -46,7 +46,7 @@ clone
   --depth N           Shallow depth (implies --shallow)
   --blobless          Clone with --filter=blob:none (full history, file contents on demand;
                       libgit2 cannot fetch them, so old diffs may fail: see docs/stress-test.md)
-  --shallow-for R,R   Clone just these entries shallow, e.g. chromium/chromium
+  --shallow-for R,R   Clone just these entries shallow, e.g. python/cpython
   --submodules        Also initialise submodules (large; off by default)
   --jobs N            Parallel clones (default 4)
   --retries N         Retries per clone after a failure (default 2)

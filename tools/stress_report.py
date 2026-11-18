@@ -33,7 +33,7 @@ LIMITS = {
     "all_loaded_s": 120.0,  # last tab's first snapshot, seconds after start
     "repo_loaded_s": 60.0,  # p95 of the tabs' first snapshots
     "first_frame_ms": 2000.0,  # the `first frame` event (INFO)
-    "idle_cpu_median": 2.0,  # percent of one core, 100 tabs idle
+    "idle_cpu_median": 2.0,  # percent of one core, all tabs idle
     "idle_cpu_p95": 5.0,
     "rss_peak_mib": 4096.0,
     "rss_loaded_mib": 2048.0,  # median RSS in the minute after all tabs loaded

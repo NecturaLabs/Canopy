@@ -79,7 +79,7 @@ run by hand on a desktop session, not in CI.
 | `stress.sh churn [--repos N] [--duration SEC] [--modify-many N] [--conflict-setup] [--restore]` | Mutates N cached clones concurrently (files, commits, branch switches, tags) so the file watchers fire; prepares merge conflicts; restores the clones. Refuses any path that is not a clone made by `clone` inside the cache folder. |
 | `stress.sh report [--run DIR]` | Summarises a run with `stress_report.py`. |
 | `stress_report.py --run DIR` | Reads Canopy's JSON-lines log, the sampler CSV and the churn log; prints error and warning counts, job, operation and git durations (p50, p95, p99, max), slowest repositories, load times, peak memory, threads and descriptors, idle CPU, refresh lag, and a verdict against the pass criteria. Standard library only. |
-| `stress-repos.txt` | The 100 repositories, one `owner/repo size-class` per line. |
+| `stress-repos.txt` | The 30 repositories, one `owner/repo size-class` per line. |
 
 ```sh
 tools/stress.sh clone --subset 10 --shallow --dir /tmp/stress-try   # rehearsal
