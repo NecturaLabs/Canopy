@@ -192,14 +192,15 @@ take effect immediately. See GitHub's
 [issue-form syntax](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms)
 and [template configuration](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository).
 
-Keep independently reviewable work in atomic commits. Contribute to the existing feature branch or pull request for the work; do not open a duplicate PR. A PR needs an accurate summary, testing status, remaining risks and links to its issues. Wait for the owner's approval before merging.
+Keep independently reviewable work in atomic commits. Contribute to the existing feature branch or pull request for the work; do not open a duplicate PR. A PR is one focused change (a refactor goes apart from a behaviour change), on a branch named `<type>/<topic>` (`fix/rebase-abort`), titled like a commit subject (the Pull request title check asks for it), with the template filled in: summary, issue (`Closes #N`, or `Refs #N` for part of one), review focus, verification and what was not verified. CI must pass on a branch that is up to date with `dev`; **Update branch** on the pull request brings it up to date (keep **Allow edits by maintainers** on, so the maintainer can do it for you). Wait for the owner's approval before merging.
 
 ## Commit messages
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
-`<type>(<scope>): <summary>`, summary in the imperative and under 72 characters.
+`<type>(<scope>): <summary>`, summary in the imperative and at most 72 characters.
 
-- Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`.
+- Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`, `revert`
+  (`revert: feat(changes): ...`, not GitHub's default `Revert "..."`).
 - Scopes: a crate (`core`, `app`) or a module (`graph`, `worker`, `diff`, `history`, `theme`, ...).
 - Breaking changes: `!` after the scope and a `BREAKING CHANGE:` footer.
 - Security fixes: a releasable type (`fix`, `feat`, `perf`, `revert`, `build(deps)`) with the
@@ -210,7 +211,7 @@ Example: `feat(changes): stage individual lines from the diff viewer`.
 
 ## Before merging
 
-- [ ] Changes are reviewable as individual commits, based on current `main` or the agreed PR branch.
+- [ ] Changes are reviewable as individual commits, based on current `dev` or the agreed PR branch.
 - [ ] `tools/check.sh` passes, and all required GitHub Actions checks pass for the PR head.
 - [ ] New or changed Git operations have tests against a temporary repository.
 - [ ] UI changes include before and after screenshots (dark, and light where colours change),

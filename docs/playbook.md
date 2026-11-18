@@ -144,10 +144,16 @@ or how flows feel end to end.
   publishing, including a direct dispatch or rebuild of an existing tag. Failed or cancelled tests
   prevent the tag or publication. Dry runs do not run these tests and cannot tag.
 - Push CI's platform test job remains opt-in with repository variable `CI_TESTS=1` (a pull request
-  from a fork always runs it)
+  from a fork always runs it; off until the hosted-runner failures in #214 are fixed)
   (`gh variable set CI_TESTS --body 1`); unset or `0` skips it. Its per-platform toggles still
-  apply. This toggle never disables release tests. The local pre-commit hook is an early check,
-  while the mandatory release job is the enforced publication gate.
+  apply. Its `Tests` job sums up the matrix: make it a required check in the "CI for dev" and
+  "CI for main" rulesets when #214 closes. This toggle never disables release tests. The local
+  pre-commit hook is an early check, while the mandatory release job is the enforced publication
+  gate.
+- `dev` takes a pull request only when its branch is up to date, so after each merge the other
+  open pull requests need **Update branch** (`gh pr update-branch <n>`) and Dependabot's need a
+  `@dependabot rebase` comment. `main` does not require it: its release merge commits never reach
+  `dev`.
 - Manifests are signed (ADR 0021): every `canopy/*.json` in app-updates needs a `.minisig` whose
   trusted comment is `Canopy update manifest: channel=<channel> build=<build>`, or new builds
   refuse it. The release workflow writes that form; a manifest changed by hand is re-signed with

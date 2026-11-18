@@ -1,11 +1,30 @@
+<!--
+One focused change per pull request; a refactor goes in its own. The title takes commit-subject
+form, `type(scope): summary` (CONTRIBUTING.md, Commit messages).
+-->
+
 ## Summary
 
-<!-- What changes and why. Link the GitHub issues and state which acceptance criteria this PR completes. -->
+<!-- What was wrong or missing, what this does about it and why. Name any decision or shortcoming
+     a reviewer should know about. -->
+
+## Issue
+
+<!-- Closes #N when this completes the issue's acceptance criteria, Refs #N when it does part of
+     it, or None: <why>. -->
+
+## Review focus
+
+<!-- Where to look hardest, and what is safe to skim. -->
 
 ## Verification
 
-<!-- The checks you ran and the manual checks you did, with what you saw. Say what you could not
-     check. "Tests pass" alone is not enough. -->
+<!-- The checks you ran and the manual checks you did, with what you saw. "Tests pass" alone is
+     not enough. -->
+
+## Not verified
+
+<!-- What you could not run or see, and why. None, if everything was checked. -->
 
 ## Screenshots
 
