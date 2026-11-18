@@ -3503,6 +3503,7 @@ fn git(
             },
         );
     }
+    heading(ui, "Fetch");
     default_row(
         ui,
         "Fetch in the background",
