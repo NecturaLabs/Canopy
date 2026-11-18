@@ -231,7 +231,9 @@ jobs:
         run: python3 tools/check-site.py
       - name: Release tooling self-test
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
-        run: python3 tools/release.py selftest
+        run: |
+          python3 tools/release.py selftest
+          python3 tools/prune-releases.py selftest
       # A pinned, checksum-verified ShellCheck, so every runner reports the same findings.
       # packaging/ is held to every rule; tools/ to warnings and errors.
       - name: ShellCheck

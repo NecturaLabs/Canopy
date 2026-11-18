@@ -118,7 +118,14 @@ same feed release) unless beta already offers a newer build.
      `tools/update-manifest.sh`; a stable release also commits `packaging/install.sh` and
      `packaging/install.ps1` as `canopy/install.sh` and `canopy/install.ps1`, the files the
      one-line install commands fetch. A channel is never moved backwards (a manifest without a
-     build number counts as 0), and a beta build never replaces the installers.
+     build number counts as 0), and a beta build never replaces the installers;
+   - removes the previous releases (job "Remove the previous releases", `tools/prune-releases.py`):
+     first it writes every Canopy feed release's notes into app-updates' canopy/CHANGELOG.md,
+     which the release page links to, then deletes every Canopy release in app-updates (with its
+     tag) and every `build-*` release here (keeping the tag, which `release.py` reads), except
+     this build and the ones `latest.json` and `beta.json` offer. A release whose notes are not
+     in the changelog is never deleted. By hand: `python3 tools/prune-releases.py run --feed-dir
+     <app-updates clone> --keep <n> --dry-run`, then without `--dry-run`.
 
 ## Verify
 
