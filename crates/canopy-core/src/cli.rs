@@ -134,11 +134,6 @@ pub(crate) fn apply_env(cmd: &mut Command) {
         // program: only this variable outranks it.
         .env("GIT_SEQUENCE_EDITOR", "true")
         .env("GIT_MERGE_AUTOEDIT", "no");
-    // Git for Windows runs parts of git (the `git submodule` wrapper, hooks) in its MSYS shell,
-    // whose runtime expands wildcards in the arguments it starts with: `deps/lib[1]` would name
-    // an existing `deps/lib1`. `noglob` keeps every argument as Canopy passed it.
-    #[cfg(windows)]
-    cmd.env("MSYS", msys_without_glob(std::env::var_os("MSYS")));
     let slot = askpass_slot()
         .read()
         .unwrap_or_else(PoisonError::into_inner);
@@ -159,12 +154,20 @@ pub(crate) fn apply_env(cmd: &mut Command) {
     }
 }
 
+/// Adds `args` to `cmd`. `git submodule` is a shell script in Git for Windows, started in its MSYS
+/// shell, whose runtime expands wildcards in the arguments it starts with: the submodule
+/// `deps/lib[1]` would name an existing `deps/lib1`. For that command alone, wildcards are left
+/// unexpanded; every other git process keeps the user's own MSYS options, since `noglob` also
+/// changes how the shell reads quotes in the commands a user's configuration runs.
+fn with_args<'a>(cmd: &'a mut Command, args: &[&str]) -> &'a mut Command {
+    if cfg!(windows) && subcommand(args) == "submodule" {
+        cmd.env("MSYS", msys_without_glob(std::env::var_os("MSYS")));
+    }
+    cmd.args(args)
+}
+
 /// The MSYS runtime options `current` asks for, with argument wildcards left unexpanded: the
 /// options are words, and the last word about a setting wins.
-#[cfg_attr(
-    not(any(windows, test)),
-    expect(dead_code, reason = "only Windows runs git through MSYS")
-)]
 fn msys_without_glob(current: Option<OsString>) -> OsString {
     match current {
         Some(mut options) if !options.is_empty() => {
@@ -345,8 +348,7 @@ fn record(args: &[&str], started: Instant, status: Option<i32>, stderr: &[u8]) {
 /// Runs `git args…` in `workdir` and returns its standard output.
 pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
     let started = Instant::now();
-    let out = command(Some(workdir))
-        .args(args)
+    let out = with_args(&mut command(Some(workdir)), args)
         .output()
         .map_err(Error::GitMissing)?;
     record(args, started, out.status.code(), &out.stderr);
@@ -361,8 +363,7 @@ pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
 /// converted only for the redacted log and error text, never for the process itself.
 pub fn run_with_path(workdir: &Path, args: &[&str], path: &Path) -> Result<String> {
     let started = Instant::now();
-    let out = command(Some(workdir))
-        .args(args)
+    let out = with_args(&mut command(Some(workdir)), args)
         .arg(path)
         .output()
         .map_err(Error::GitMissing)?;
@@ -402,8 +403,7 @@ pub(crate) fn output_within_input(
         })
     }
     let started = Instant::now();
-    let mut child = cmd
-        .args(args)
+    let mut child = with_args(&mut cmd, args)
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -498,7 +498,9 @@ pub(crate) fn run_unchecked_english(workdir: &Path, args: &[&str]) -> Result<Out
 
 fn run_unchecked_with(mut cmd: Command, args: &[&str]) -> Result<Output> {
     let started = Instant::now();
-    let out = cmd.args(args).output().map_err(Error::GitMissing)?;
+    let out = with_args(&mut cmd, args)
+        .output()
+        .map_err(Error::GitMissing)?;
     let code = out.status.code();
     // Exit code 1 is an answer for these commands, not a failure worth a warning.
     record(
@@ -533,8 +535,7 @@ pub(crate) fn run_with_input_within(
 /// Like [`run`], feeding `input` to standard input.
 pub fn run_with_input(workdir: &Path, args: &[&str], input: &[u8]) -> Result<String> {
     let started = Instant::now();
-    let mut child = command(Some(workdir))
-        .args(args)
+    let mut child = with_args(&mut command(Some(workdir)), args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -571,8 +572,7 @@ pub(crate) fn run_answer(
     ok_codes: &[i32],
 ) -> Result<(i32, Vec<u8>)> {
     let started = Instant::now();
-    let mut child = command(Some(workdir))
-        .args(args)
+    let mut child = with_args(&mut command(Some(workdir)), args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -626,8 +626,7 @@ pub fn run_streaming_env(
 ) -> Result<String> {
     let started = Instant::now();
     tracing::info!(command = %subcommand(args), args = ?loggable(args), "git started");
-    let mut child = command(workdir)
-        .args(args)
+    let mut child = with_args(&mut command(workdir), args)
         .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -741,17 +740,28 @@ mod tests {
         );
     }
 
-    #[cfg(windows)]
     #[test]
-    fn git_runs_with_msys_wildcards_off() {
-        let cmd = command(None);
-        let msys = cmd
-            .get_envs()
-            .find(|(k, _)| k.eq_ignore_ascii_case("MSYS"))
-            .and_then(|(_, v)| v);
-        assert!(
-            msys.is_some_and(|v| v.to_string_lossy().ends_with("noglob")),
-            "{msys:?}"
+    fn only_git_submodule_runs_with_msys_wildcards_off() {
+        let msys = |args: &[&str]| {
+            let mut cmd = command(None);
+            with_args(&mut cmd, args);
+            cmd.get_envs()
+                .find(|(k, _)| k.eq_ignore_ascii_case("MSYS"))
+                .and_then(|(_, v)| v.map(OsStr::to_os_string))
+        };
+        let submodule = msys(&["--literal-pathspecs", "-c", "a=b", "submodule", "update"]);
+        if cfg!(windows) {
+            assert!(
+                submodule.is_some_and(|v| v.to_string_lossy().ends_with("noglob")),
+                "the shell wrapper keeps paths as given"
+            );
+        } else {
+            assert_eq!(submodule, None, "no MSYS outside Windows");
+        }
+        assert_eq!(
+            msys(&["status"]),
+            None,
+            "other commands keep the user's options"
         );
     }
 
