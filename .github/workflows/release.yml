@@ -372,12 +372,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if out=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>&1); then
-            draft=$out
-          elif grep -qi 'release not found' <<<"$out"; then
+          err="$RUNNER_TEMP/release-view.err"
+          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> "$err"); then
+            :
+          elif grep -qi 'release not found' "$err"; then
             draft=missing
           else
-            echo "::error::Reading release $TAG failed: $out"
+            echo "::error::Reading release $TAG failed: $(tr '\n' ' ' < "$err")"
             exit 1
           fi
           published=false
@@ -426,6 +427,17 @@ jobs:
         run: cp packaging/install.sh packaging/install.ps1 dist/
       - name: Checksums
         run: cd dist && sha256sum -- * > SHA256SUMS
+      # The published files and installers must be exactly the ones the release lists.
+      - name: Match the published checksums
+        if: steps.state.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --output "$RUNNER_TEMP/published-sums"
+          if ! diff -u "$RUNNER_TEMP/published-sums" dist/SHA256SUMS; then
+            echo "::error::The files of release $TAG do not match its SHA256SUMS."
+            exit 1
+          fi
       # Signed SLSA build provenance for every file the release publishes (SECURITY.md has the
       # verify command): the archives, the installers and the checksum list.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -533,20 +545,24 @@ jobs:
           GH_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
           FEED_TAG: ${{ steps.feed.outputs.tag }}
         run: |
-          if out=$(gh release view "$FEED_TAG" --repo NecturaLabs/app-updates --json isDraft --jq .isDraft 2>&1); then
-            draft=$out
-          elif grep -qi 'release not found' <<<"$out"; then
+          err="$RUNNER_TEMP/release-view.err"
+          if draft=$(gh release view "$FEED_TAG" --repo NecturaLabs/app-updates --json isDraft --jq .isDraft 2> "$err"); then
+            :
+          elif grep -qi 'release not found' "$err"; then
             draft=missing
           else
-            echo "::error::Reading feed release $FEED_TAG failed: $out"
+            echo "::error::Reading feed release $FEED_TAG failed: $(tr '\n' ' ' < "$err")"
             exit 1
           fi
           published=false
           if [[ $draft == false ]]; then
             published=true
-            # It must hold exactly the files the manifest is about to describe.
-            gh release download "$FEED_TAG" --repo NecturaLabs/app-updates --pattern SHA256SUMS --output "$RUNNER_TEMP/feed-sums"
-            if ! diff -u "$RUNNER_TEMP/feed-sums" dist/SHA256SUMS; then
+            # It must hold exactly the files the manifest is about to describe: the same list, and
+            # every file matching it.
+            feed="$RUNNER_TEMP/feed-files"
+            rm -rf "$feed"
+            gh release download "$FEED_TAG" --repo NecturaLabs/app-updates --dir "$feed"
+            if ! diff -u "$feed/SHA256SUMS" dist/SHA256SUMS || ! (cd "$feed" && sha256sum --check --quiet SHA256SUMS); then
               echo "::error::Feed release $FEED_TAG is published with other files than release $TAG."
               exit 1
             fi

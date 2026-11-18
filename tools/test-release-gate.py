@@ -127,8 +127,15 @@ class ReleaseGateTests(unittest.TestCase):
         for step in re.split(r"(?m)^      - ", release):
             if "pattern: canopy-*" in step or "attest-build-provenance@" in step or "name: Add the experimental archives" in step:
                 self.assertIn("steps.state.outputs.published != 'true'", step)
+        for step in re.split(r"(?m)^      - ", release):
+            if "gh release download" in step:
+                self.assertIn("steps.state.outputs.published == 'true'", step)
+            if "name: Add the installers" in step or "name: Checksums" in step:
+                self.assertNotIn("if:", step)
+        self.assertIn("name: Match the published checksums", release)
         feed = job("release.yml", "publish-update")
         self.assertIn("is published with other files than release", feed)
+        self.assertIn("sha256sum --check", feed)
 
     def test_nothing_can_fail_after_the_release_is_published(self):
         release = job("release.yml", "release")
