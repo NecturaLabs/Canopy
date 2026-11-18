@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def job(workflow, name):
     text = (ROOT / ".github/workflows" / workflow).read_text()
-    match = re.search(rf"^  {re.escape(name)}:\n(.*?)(?=^  [a-z][a-z_-]*:|\Z)", text, re.M | re.S)
+    match = re.search(rf"^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\s*$|\Z)", text, re.M | re.S)
     if match is None:
         raise AssertionError(f"{workflow} has no {name} job")
     return match[1]
@@ -80,16 +80,23 @@ class ReleaseGateTests(unittest.TestCase):
             "APP_UPDATES_TOKEN": {("release.yml", "publish-update"), ("release.yml", "prune")},
             "NETLIFY_AUTH_TOKEN": {("site.yml", "deploy")},
         }
-        for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        reads = re.compile(r"secrets\s*(?:\.\s*|\[\s*['\"])(\w+)")
+        paths = sorted((ROOT / ".github").rglob("*.y*ml"))
+        self.assertTrue(paths)
+        for path in paths:
             text = path.read_text()
-            self.assertNotIn("secrets: inherit", text, path.name)
-            if "\njobs:\n" not in text:
-                continue
-            for name in re.findall(r"^  ([a-z][a-z_-]*):\n", text.split("\njobs:\n", 1)[1], re.M):
-                body = job(path.name, name)
-                for secret, where in allowed.items():
-                    if f"secrets.{secret}" in body:
-                        self.assertIn((path.name, name), where, f"{path.name} {name} reads {secret}")
+            self.assertNotRegex(text, r"secrets\s*:\s*inherit", path.name)
+            self.assertNotRegex(text, r"toJSON\(\s*secrets", path.name)
+            head, _, body = text.partition("\njobs:\n")
+            self.assertFalse(
+                {m for m in reads.findall(head) if m in allowed}, f"{path.name} reads a token outside a job"
+            )
+            for name in re.findall(r"^  ([\w-]+):\s*$", body, re.M):
+                for secret in set(reads.findall(job(path.name, name) if path.parent.name == "workflows" else "")):
+                    if secret in allowed:
+                        self.assertIn((path.name, name), allowed[secret], f"{path.name} {name} reads {secret}")
+            if path.parent.name != "workflows":
+                self.assertFalse({m for m in reads.findall(text) if m in allowed}, path.name)
 
     def test_experimental_builds_ship_without_holding_the_release(self):
         release = job("release.yml", "release")
@@ -112,6 +119,17 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("needs: [identity, publish-update]", prune)
         self.assertIn("if: ${{ !cancelled() && needs.publish-update.result == 'success' }}", prune)
 
+    def test_a_published_release_ships_its_own_files(self):
+        release = job("release.yml", "release")
+        state = release.index("name: Is the release already published")
+        self.assertLess(state, release.index("pattern: canopy-*"))
+        self.assertIn("gh release download", release)
+        for step in re.split(r"(?m)^      - ", release):
+            if "pattern: canopy-*" in step or "attest-build-provenance@" in step or "name: Add the experimental archives" in step:
+                self.assertIn("steps.state.outputs.published != 'true'", step)
+        feed = job("release.yml", "publish-update")
+        self.assertIn("is published with other files than release", feed)
+
     def test_nothing_can_fail_after_the_release_is_published(self):
         release = job("release.yml", "release")
         published = release.index("--draft=false")
@@ -133,8 +151,11 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual(re.findall(r"uses: ([^@\s]+)@", deploy), ["actions/checkout"])
         self.assertNotRegex(deploy, r"\b(apt-get|apt|pip3?|cargo install|go install)\b|\| *(ba)?sh\b")
         # Only `ready` with a publish time counts as live.
-        self.assertEqual(re.findall(r"^\s+(\w+)\)", deploy, re.M), ["ready"])
-        self.assertIn("published_at", deploy)
+        self.assertEqual(deploy.count("exit 0"), 1)
+        cases = deploy[deploy.index("case $state in") : deploy.index("esac")]
+        self.assertEqual(re.findall(r"^\s+([^\s(#][^()\n]*)\)", cases, re.M), ["ready", "error | rejected"])
+        live = deploy.index("exit 0")
+        self.assertIn("published_at", deploy[deploy.index("ready)"):live])
 
     def test_test_job_has_no_write_permission_or_optional_gate(self):
         tests = job("test-release.yml", "test")

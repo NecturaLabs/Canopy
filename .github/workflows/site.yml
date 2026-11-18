@@ -86,7 +86,7 @@ jobs:
           reply="$RUNNER_TEMP/netlify-reply.json"
           if ! curl -sS --fail-with-body --retry 3 -H @"$header" -H 'Content-Type: application/zip' \
             --data-binary @"$RUNNER_TEMP/site.zip" -o "$reply" "$api/sites/$NETLIFY_SITE_ID/deploys?title=$title"; then
-            echo "::error::Netlify refused the deploy: $(head -c 500 "$reply" 2> /dev/null)"
+            echo "::error::Netlify refused the deploy: $(head -c 500 "$reply" 2> /dev/null | tr '\n' ' ')"
             exit 1
           fi
           id=$(jq -r .id "$reply")
@@ -97,23 +97,22 @@ jobs:
           state=new
           for _ in $(seq 60); do
             curl -sS --fail-with-body --retry 3 -H @"$header" -o "$reply" "$api/deploys/$id" || {
-              echo "::error::Reading deploy $id failed: $(head -c 500 "$reply" 2> /dev/null)"
+              echo "::error::Reading deploy $id failed: $(head -c 500 "$reply" 2> /dev/null | tr '\n' ' ')"
               exit 1
             }
             state=$(jq -r .state "$reply")
             case $state in
               ready)
-                # Ready is not live when the site's auto publishing is locked.
-                if [[ $(jq -r '.published_at // empty' "$reply") == "" ]]; then
-                  echo "::error::Deploy $id is ready but not published (is auto publishing locked?)."
-                  exit 1
+                # Ready is live only once it has a publish time (never, when auto publishing is
+                # locked): keep waiting for it until the time limit.
+                if [[ -n $(jq -r '.published_at // empty' "$reply") ]]; then
+                  echo "Deploy $id is live."
+                  exit 0
                 fi
-                echo "Deploy $id is live."
-                exit 0
                 ;;
               error | rejected) echo "::error::Netlify deploy $id ended in state $state."; exit 1 ;;
             esac
             sleep 5
           done
-          echo "::error::Netlify deploy $id was not ready after five minutes (state $state)."
+          echo "::error::Netlify deploy $id was not live after five minutes (state $state; ready but unpublished means auto publishing is locked)."
           exit 1

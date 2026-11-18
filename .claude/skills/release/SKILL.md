@@ -102,8 +102,8 @@ same feed release) unless beta already offers a newer build.
      with a job-local toolchain. The
      two cross-compiled targets are `experimental`: they build in a job of their own (20 minute
      limit once a runner starts it) that may fail, so a failure or a hang never holds back the
-     release beyond that limit; a job still queued for a runner does, until you cancel the run and
-     dispatch Release by hand. Publishing waits for it and ships the archives that built, warning about each target
+     release beyond that limit; a job still queued for a runner holds it until it runs (there is
+     no switch for the experimental targets alone). Publishing waits for it and ships the archives that built, warning about each target
      that did not; the installer reports that platform as having no build;
    - publishes both releases (here and the feed's in app-updates) as drafts, attaches every file,
      then publishes them: both repositories have immutable releases on, so a published release's
@@ -173,8 +173,10 @@ same feed release) unless beta already offers a newer build.
   immutable release cannot take it later. It ships with the next build.
 - A publish job failed: rerun the failed jobs (`gh run rerun <id> --failed`). A release still a
   draft is completed; one already published is left exactly as it is (immutable) and the job goes
-  on to the steps after it, such as the feed manifest. Files missing from a published release can
-  only ship with the next build.
+  on to the steps after it, such as the feed manifest. Rerun within 3 days: the run's artifacts
+  expire after that. Running Release by hand for a published tag ships the files that release
+  published, never a rebuild, and refuses a published feed release whose files differ. Files
+  missing from a published release can only ship with the next build.
 - The code is wrong after a release was published: never move or delete a published tag. Merge the
   fix and cut a new build.
 - A tag that never produced a published release may be deleted
