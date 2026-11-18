@@ -584,6 +584,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             pub_date: Some("2026-10-04T09:30:00Z".into()),
             release_page: None,
             platforms: std::collections::BTreeMap::default(),
+            installers: std::collections::BTreeMap::default(),
         },
     };
     let notes = "### Added\n\n- Settings search finds any option by name, description or synonym.\n- Repository settings: clone protocol, pull strategy and identity per repository.\n\n### Fixed\n\n- Author pictures load again for public GitHub repositories.";

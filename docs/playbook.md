@@ -114,11 +114,16 @@ or how flows feel end to end.
 
 1. Build two binaries with different numbers and a local feed: `CANOPY_BUILD_NUMBER=1000
    CANOPY_COMMIT=1000aaa CANOPY_UPDATE_FEED=http://127.0.0.1:8765/canopy
-   CANOPY_UPDATE_DOWNLOADS=http://127.0.0.1:8765/releases/download cargo build -p canopy-app
-   --release`, then again with 1001 (the feed and downloads are compile-time settings; loopback HTTP
-   is accepted nowhere else).
+   CANOPY_UPDATE_DOWNLOADS=http://127.0.0.1:8765/releases/download
+   CANOPY_UPDATE_KEY=<public key> cargo build -p canopy-app --release`, then again with 1001 (the
+   feed, downloads and key are compile-time settings; loopback HTTP is accepted nowhere else). The
+   key is the last line of a minisign public key file of a throwaway key: make one as the
+   `selftest` in `tools/sign-manifest.py` does (OpenSSL 3).
 2. Lay out a fake feed folder like `packaging/test-install.sh` does: `canopy/latest.json` (`version`
-   `1001`, the platform URL and its SHA-256), `releases/download/canopy-build-N/` holding
+   `1001`, the platform URL and its SHA-256, `installers` with the SHA-256 of `install.sh` and
+   `install.ps1`; `tools/update-manifest.sh` writes it), signed with `CANOPY_MANIFEST_KEY=<pem>
+   python3 tools/sign-manifest.py sign <public key file> canopy/latest.json`,
+   `releases/download/canopy-build-N/` holding
    `canopy-build-N-x86_64-unknown-linux-gnu.tar.gz` (a folder of that name with `canopy`, README,
    LICENSE, `legal/`, the desktop entry, metainfo, icon png), `install.sh` and `SHA256SUMS`.
    Serve it with `python3 -m http.server 8765 --bind 127.0.0.1`.
@@ -143,6 +148,12 @@ or how flows feel end to end.
   (`gh variable set CI_TESTS --body 1`); unset or `0` skips it. Its per-platform toggles still
   apply. This toggle never disables release tests. The local pre-commit hook is an early check,
   while the mandatory release job is the enforced publication gate.
+- Manifests are signed (ADR 0021): every `canopy/*.json` in app-updates needs a `.minisig` whose
+  trusted comment is `Canopy update manifest: channel=<channel> build=<build>`, or new builds
+  refuse it. The release workflow writes that form; a manifest changed by hand is re-signed with
+  `CANOPY_MANIFEST_KEY=<pem> python3 tools/sign-manifest.py sign packaging/update-signing.pub
+  canopy/latest.json canopy/beta.json` from a clone of app-updates (done for build 1683 on
+  2026-11-18, after its content verified against the earlier signature).
 - Read the `release` skill first. Work lands in `dev`; merge a pull request from `dev` into `main`
   first (ADR 0020). A release publishes to users: confirm the build and channel with
   the owner, then dispatch it once for real (`gh workflow run create-release.yml --ref main -f
@@ -166,7 +177,10 @@ or how flows feel end to end.
   build 119 failed there (git's "dubious ownership"), so its tag was deleted and the fix released
   as build 120. A release job's composite actions come from the tag's own commit, so a workflow fix
   needs a new build, not a rerun of the old tag.
-- `APP_UPDATES_TOKEN` must exist in the Canopy repository's `release` environment (main only) or the feed step is skipped. `NETLIFY_AUTH_TOKEN` is the `site`
+- `APP_UPDATES_TOKEN` must exist in the Canopy repository's `release` environment (main only) or the feed step is skipped.
+  `MANIFEST_SIGNING_KEY` (the PEM Ed25519 key of `packaging/update-signing.pub`; ADR 0021) must be
+  there too, or the release fails before it touches the feed; the owner keeps an offline copy.
+  `NETLIFY_AUTH_TOKEN` is the `site`
   environment's (main only). A secret added as a repository or organisation secret would reach
   any branch's workflow: keep them in the environments.
 

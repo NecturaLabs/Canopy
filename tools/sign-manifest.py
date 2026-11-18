@@ -3,6 +3,7 @@
 
     sign-manifest.py sign PUBLIC_KEY_FILE MANIFEST...
     sign-manifest.py selftest
+    sign-manifest.py emit DIR    (a throwaway key and signed manifest, for Canopy's own tests)
 
 `sign` reads the Ed25519 secret key as PEM from the environment variable CANOPY_MANIFEST_KEY,
 checks that it belongs to PUBLIC_KEY_FILE (a minisign public key, `packaging/update-signing.pub`),
@@ -11,13 +12,18 @@ not verify against a key built into it (`canopy_hosting::updates`), so whoever c
 feed cannot ship an archive without this key.
 
 The signature is minisign's prehashed form: an Ed25519 signature of the manifest's BLAKE2b-512
-digest, then a global signature over that signature and the trusted comment. The release workflow
-runs `sign` in the `release` environment, which alone holds the key.
+digest, then a global signature over that signature and the trusted comment. The trusted comment
+names the channel (the manifest's file name: `latest.json` or `beta.json`) and the build, and
+Canopy checks both, so a signed manifest cannot be served as another channel's. Each signature is
+verified again before `sign` returns. The release workflow runs `sign` in the `release`
+environment, which alone holds the key. Needs OpenSSL 3 (`pkeyutl -rawin`).
 """
 
 import base64
 import hashlib
+import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -28,7 +34,8 @@ PUBLIC_ALGORITHM = b"Ed"
 KEY_ID_LEN = 8
 PUBLIC_KEY_LEN = 32
 DER_PREFIX_LEN = 12
-TRUSTED_COMMENT = "Canopy update manifest"
+TRUSTED_COMMENT = "Canopy update manifest: channel={channel} build={build}"
+CHANNELS = ("latest", "beta")
 
 
 def public_key(path):
@@ -51,13 +58,24 @@ def ed25519_sign(key_file, message, work):
     return openssl("pkeyutl", "-sign", "-rawin", "-inkey", str(key_file), "-in", str(message_file))
 
 
-def signature_text(key_file, key_id, manifest, work):
+def trusted_comment(path, manifest):
+    """What the signature vouches for besides the bytes: the channel and the build."""
+    channel = Path(path).name.removesuffix(".json")
+    if channel not in CHANNELS:
+        raise SystemExit(f"{path}: a manifest is named latest.json or beta.json")
+    build = str(json.loads(manifest).get("version", ""))
+    if not re.fullmatch(r"[0-9]+", build):
+        raise SystemExit(f"{path}: the manifest names no build number")
+    return TRUSTED_COMMENT.format(channel=channel, build=build)
+
+
+def signature_text(key_file, key_id, manifest, comment, work):
     signature = ed25519_sign(key_file, hashlib.blake2b(manifest, digest_size=64).digest(), work)
-    global_signature = ed25519_sign(key_file, signature + TRUSTED_COMMENT.encode(), work)
+    global_signature = ed25519_sign(key_file, signature + comment.encode(), work)
     line = base64.b64encode(ALGORITHM + key_id + signature).decode()
     return (
         f"untrusted comment: signature from the Canopy release workflow\n{line}\n"
-        f"trusted comment: {TRUSTED_COMMENT}\n{base64.b64encode(global_signature).decode()}\n"
+        f"trusted comment: {comment}\n{base64.b64encode(global_signature).decode()}\n"
     )
 
 
@@ -72,9 +90,15 @@ def sign(public_key_file, manifests, pem):
             raise SystemExit("CANOPY_MANIFEST_KEY does not belong to " + str(public_key_file))
         for manifest in manifests:
             path = Path(manifest)
-            path.with_name(path.name + ".minisig").write_text(
-                signature_text(key_file, key_id, path.read_bytes(), work)
-            )
+            signature = path.with_name(path.name + ".minisig")
+            # The feed repository is not trusted: a link there must not redirect a write.
+            if path.is_symlink() or signature.is_symlink():
+                raise SystemExit(f"{path}: a manifest or its signature is a symbolic link")
+            data = path.read_bytes()
+            signature.write_text(signature_text(key_file, key_id, data, trusted_comment(path, data), work))
+            if not verify(public_key_file, path, signature, work):
+                signature.unlink()
+                raise SystemExit(f"{path}: the new signature does not verify")
             print(f"signed {path}")
 
 
@@ -120,8 +144,26 @@ def selftest():
         sign(pub, [manifest], pem)
         signature = work / "latest.json.minisig"
         assert verify(pub, manifest, signature, work), "a fresh signature does not verify"
+        assert "trusted comment: Canopy update manifest: channel=latest build=1\n" in signature.read_text()
         manifest.write_text('{"version": "2"}\n')
         assert not verify(pub, manifest, signature, work), "a changed manifest still verifies"
+        link = work / "beta.json"
+        link.symlink_to(manifest)
+        try:
+            sign(pub, [link], pem)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("a symbolic link was signed")
+        link.unlink()
+        for name, body in (("other.json", '{"version": "1"}'), ("beta.json", '{"version": "0.2.1"}'), ("beta.json", '{"version": "١٢"}')):
+            (work / name).write_text(body)
+            try:
+                sign(pub, [work / name], pem)
+            except SystemExit:
+                pass
+            else:
+                raise AssertionError(f"{name} {body} was signed")
         other = openssl("genpkey", "-algorithm", "ed25519").decode()
         try:
             sign(pub, [manifest], other)
@@ -132,10 +174,27 @@ def selftest():
     print("sign-manifest selftest: ok")
 
 
+def emit(directory):
+    """Writes a throwaway public key, a signed latest.json and its signature into DIRECTORY, for
+    the Rust test that checks Canopy accepts what this script signs."""
+    out = Path(directory)
+    with tempfile.TemporaryDirectory() as work:
+        pem = openssl("genpkey", "-algorithm", "ed25519").decode()
+        (Path(work) / "k.pem").write_text(pem)
+        raw = openssl("pkey", "-in", str(Path(work) / "k.pem"), "-pubout", "-outform", "DER")[DER_PREFIX_LEN:]
+    key_id = bytes(range(8, 0, -1))
+    pub = out / "test.pub"
+    pub.write_text("untrusted comment: test\n" + base64.b64encode(PUBLIC_ALGORITHM + key_id + raw).decode() + "\n")
+    (out / "latest.json").write_text('{"version": "1700", "platforms": {}}\n')
+    sign(pub, [out / "latest.json"], pem)
+
+
 def main():
     args = sys.argv[1:]
     if args == ["selftest"]:
         selftest()
+    elif len(args) == 2 and args[0] == "emit":
+        emit(args[1])
     elif len(args) >= 3 and args[0] == "sign":
         pem = os.environ.get("CANOPY_MANIFEST_KEY", "")
         if "PRIVATE KEY" not in pem:

@@ -492,6 +492,29 @@ edited" ]
     run_status
     check "back to the newest" [ "$("$link")" = "canopy 103 (fake)" ]
 
+    echo "== a checksum given by Canopy's updater"
+    real102=$(sha "$srv/releases/download/canopy-build-102/canopy-build-102-$target.tar.gz")
+    # The feed's manifest and checksum list disagree with the signed checksum Canopy passes:
+    # only the signed one counts.
+    publish latest 102 "$(printf '%064d' 0)"
+    cp "$srv/releases/download/canopy-build-102/SHA256SUMS" "$tmp/sums-102"
+    printf '%064d  canopy-build-102-%s.tar.gz\n' 0 "$target" >"$srv/releases/download/canopy-build-102/SHA256SUMS"
+    run_status --version 102 --sha256 "$real102"
+    check "--sha256 exits 0" [ "$status" = 0 ]
+    check "--sha256 installs the build" [ "$("$link")" = "canopy 102 (fake)" ]
+    run_status --version 103 --sha256 "$real102"
+    check "a download that differs from --sha256 is refused" [ "$status" != 0 ]
+    check "a download that differs from --sha256 is refused (2)" out_has "checksum mismatch"
+    check "a refused --sha256 changes nothing" [ "$("$link")" = "canopy 102 (fake)" ]
+    run_status --sha256 "$real102"
+    check "--sha256 without --version is refused" out_has "goes with --version"
+    run_status --version 102 --sha256 ABC
+    check "a malformed --sha256 is refused" out_has "64 lowercase hex digits"
+    cp "$tmp/sums-102" "$srv/releases/download/canopy-build-102/SHA256SUMS"
+    publish latest 103
+    run_status
+    check "back to the newest after --sha256" [ "$("$link")" = "canopy 103 (fake)" ]
+
     echo "== beta channel, and no silent downgrade"
     publish beta 105
     run_status --beta

@@ -6,5 +6,6 @@
         "platforms": {
             "linux-x86_64": { "url": "https://example.invalid/l.tar.gz", "sha256": "ab" },
             "windows-x86_64": { "url": "https://example.invalid/w.zip" }
-        }
+        },
+        "installers": { "install.sh": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
     }

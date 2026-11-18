@@ -3615,6 +3615,7 @@ mod tests {
                 pub_date: None,
                 release_page: None,
                 platforms: std::collections::BTreeMap::default(),
+                installers: std::collections::BTreeMap::default(),
             },
         };
         for state in [
