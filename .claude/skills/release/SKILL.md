@@ -43,6 +43,8 @@ same feed release) unless beta already offers a newer build.
 
 ## Before dispatching
 
+0. Bring the work to `main`: open a pull request from `dev` into `main` (the only source the
+   required "Source branch" check accepts), let its checks pass and merge it.
 1. Confirm the build and channel with the user: run `python3 tools/release.py plan` and
    `python3 tools/release.py notes` on an up-to-date `main` (full history, not a shallow clone) and
    show the result. A release is public and cannot be unpublished cleanly.

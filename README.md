@@ -7,7 +7,7 @@
 <p align="center">A fast, beautiful, Linux-first Git client.</p>
 
 <p align="center">
-  <a href="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml"><img src="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml"><img src="https://github.com/NecturaLabs/Canopy/actions/workflows/ci.yml/badge.svg?branch=dev" alt="CI"></a>
   <a href="#licence"><img src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue" alt="Licence: MIT OR Apache-2.0"></a>
   <a href="https://canopy.necturalabs.com">Website</a>
 </p>
