@@ -72,11 +72,17 @@ LEGAL_PAGE = """<!doctype html>
       <p>Canopy is open source under the MIT or Apache-2.0 licence and made by NecturaLabs.</p>
     </div>
     <nav class="foot-nav" aria-label="Footer">
-      <a href="./">Home</a>
-      <a href="./#download">Download</a>
-      <a href="https://github.com/NecturaLabs/Canopy">Source code</a>
-      <a href="privacy.html">Privacy Policy</a>
-      <a href="terms.html">Terms of Service</a>
+      <div class="foot-col">
+        <p class="foot-h">Canopy</p>
+        <a href="./">Home</a>
+        <a href="./#download">Download</a>
+        <a href="https://github.com/NecturaLabs/Canopy">Source code</a>
+      </div>
+      <div class="foot-col">
+        <p class="foot-h">Legal</p>
+        <a href="privacy.html">Privacy Policy</a>
+        <a href="terms.html">Terms of Service</a>
+      </div>
     </nav>
   </div>
 </footer>

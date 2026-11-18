@@ -22,12 +22,12 @@ function store(key, value) {
   } catch (e) { /* storage blocked: the choice lasts for this page only */ }
 }
 
-/* Theme: Midnight, Daylight or the system's choice */
+/* Theme: Midnight (the default), Daylight or the system's choice */
 const themeButtons = $$("[data-theme-choice]");
 function setTheme(choice) {
   if (choice === "auto") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", choice);
-  store("canopy-theme", choice === "auto" ? null : choice);
+  store("canopy-theme", choice === "dark" ? null : choice);
   $$('meta[name="theme-color"]').forEach((m) => {
     m.dataset.scheme ??= m.content;
     m.content = choice === "auto" ? m.dataset.scheme : choice === "light" ? "#FBFBFC" : "#09090B";
