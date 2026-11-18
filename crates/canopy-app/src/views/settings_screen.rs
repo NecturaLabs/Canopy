@@ -8638,8 +8638,7 @@ mod tests {
     fn a_long_path_is_cut_in_the_middle_to_the_width() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        let path =
-            "From global: /home/ada/projects/scratch/canopy-polish/tmpdir/gitconfig";
+        let path = "From global: /home/ada/projects/scratch/canopy-polish/tmpdir/gitconfig";
         let font = FontId::proportional(theme::metrics().small_size);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
