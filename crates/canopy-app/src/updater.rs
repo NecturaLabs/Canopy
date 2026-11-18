@@ -166,9 +166,15 @@ fn check(include_beta: bool) -> Result<Option<Available>, String> {
         }
     }
     match (best, first_error) {
-        (Some(b), _) => Ok(crate::build_info::number()
-            .is_some_and(|running| is_newer(Some(b.build), running))
-            .then_some(b)),
+        (Some(b), error) => {
+            // One channel answered: the other's failure is only logged.
+            if let Some(e) = error {
+                tracing::warn!("an update channel could not be read: {e}");
+            }
+            Ok(crate::build_info::number()
+                .is_some_and(|running| is_newer(Some(b.build), running))
+                .then_some(b))
+        }
         (None, Some(e)) => Err(e),
         (None, None) => Ok(None),
     }
@@ -240,10 +246,10 @@ impl Updater {
                     (Install::Managed { root }, Ok(plan)) => {
                         selfupdate::install_managed(root, &plan, &mut report)
                     }
-                    (Install::Managed { .. }, Err(e)) => Err(e),
-                    (Install::Other, _) => {
-                        selfupdate::install_with_installer(UPDATE_FEED, build, &mut report)
+                    (Install::Other, Ok(plan)) => {
+                        selfupdate::install_with_installer(&plan, &mut report)
                     }
+                    (_, Err(e)) => Err(e),
                 };
                 let _ = thread_tx.send(InstallMsg::Finished(result));
                 thread_ctx.request_repaint();

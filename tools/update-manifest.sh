@@ -36,12 +36,18 @@ for name, digest in sorted(sums.items()):
     for target, key in targets.items():
         if target in name:
             platforms[key] = {"url": f"{base.rstrip('/')}/{name}", "sha256": digest}
+# The installer scripts' checksums: an in-app update that runs one (any install not in its own
+# folder) or refreshes uninstall.sh from it checks the script against the signed manifest.
+installers = {name: sums[name] for name in ("install.sh", "install.ps1") if name in sums}
+if len(installers) != 2:
+    sys.exit("update-manifest.sh: SHA256SUMS does not list install.sh and install.ps1")
 manifest = {
     "version": version,
     "notes": notes.strip(),
     "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "release_page": page,
     "platforms": platforms,
+    "installers": installers,
 }
 print(json.dumps(manifest, indent=2))
 PY

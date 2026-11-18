@@ -19,6 +19,12 @@
 //!   }
 //! }
 //! ```
+//!
+//! Each manifest is signed: `latest.json.minisig` beside it holds a minisign signature
+//! (prehashed Ed25519) made by the release workflow with a key only the `release` environment
+//! holds. A manifest is trusted only when its signature verifies against a key in
+//! [`MANIFEST_KEYS`], so whoever can write the feed repository still cannot point Canopy at an
+//! archive of their own: the archive's SHA-256 comes from the signed manifest.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -55,6 +61,11 @@ pub struct UpdateManifest {
     pub release_page: Option<String>,
     #[serde(default)]
     pub platforms: BTreeMap<String, Artifact>,
+    /// The SHA-256 of each installer script in the build's release (`install.sh`,
+    /// `install.ps1`): an update that runs one, or refreshes `uninstall.sh` from it, checks the
+    /// script against this signed list.
+    #[serde(default)]
+    pub installers: BTreeMap<String, String>,
 }
 
 impl UpdateManifest {
@@ -90,8 +101,96 @@ pub fn platform_key() -> String {
     format!("{OS}-{}", std::env::consts::ARCH)
 }
 
-/// Fetches and parses the manifest at `url`.
+/// The minisign public keys a manifest may be signed with (`packaging/update-signing.pub`). A new
+/// key is added here, and released, before the workflow signs with it.
+pub const MANIFEST_KEYS: &[&str] = &["RWS8kMOXkmLyv2FOTa9wPxIv1i3pWYghSD/4ba+BI0zuHKj2DD7Zxw6L"];
+
+/// A key that replaces [`MANIFEST_KEYS`] in a build made with `CANOPY_UPDATE_KEY` set, for
+/// testing an update end to end against a local feed signed with a key of one's own
+/// (`docs/playbook.md`). Release builds never set it.
+const KEY_OVERRIDE: Option<&str> = option_env!("CANOPY_UPDATE_KEY");
+
+/// Fetches the manifest at `url` and its signature at `<url>.minisig`, and parses the manifest
+/// only once the signature verifies against one of [`MANIFEST_KEYS`].
 pub fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
+    match KEY_OVERRIDE {
+        Some(key) => fetch_signed_manifest(url, &[key]),
+        None => fetch_signed_manifest(url, MANIFEST_KEYS),
+    }
+}
+
+/// [`fetch_manifest`] with the keys given. The channel is the manifest's file name
+/// (`latest.json`, `beta.json`), which the signature must name.
+pub fn fetch_signed_manifest(url: &str, keys: &[&str]) -> Result<UpdateManifest> {
+    let channel = url
+        .rsplit('/')
+        .next()
+        .and_then(|name| name.strip_suffix(".json"))
+        .unwrap_or_default();
+    let manifest = fetch_feed_file(url, Some("application/json"))?;
+    let signature = fetch_feed_file(&format!("{url}.minisig"), None).map_err(|e| match e {
+        Error::NotFound(_) => Error::Parse(format!("the update manifest at {url} is not signed")),
+        other => other,
+    })?;
+    verify_manifest(&manifest, &signature, keys, channel)
+}
+
+/// The trusted comment the release workflow signs with (`tools/sign-manifest.py`).
+fn trusted_comment(channel: &str, build: &str) -> String {
+    format!("Canopy update manifest: channel={channel} build={build}")
+}
+
+/// Checks a manifest's minisign signature against `keys` (prehashed signatures only) and that it
+/// was signed for `channel` and the build the manifest names, then parses the manifest.
+pub fn verify_manifest(
+    manifest: &[u8],
+    signature: &[u8],
+    keys: &[&str],
+    channel: &str,
+) -> Result<UpdateManifest> {
+    // Right after a release the feed's cached copies of the manifest and its signature can
+    // briefly disagree.
+    let refused = || {
+        Error::Parse(
+            "the update manifest's signature does not verify (if a build was just released, \
+             try again in a few minutes)"
+                .to_owned(),
+        )
+    };
+    let unreadable = |e: &dyn std::fmt::Display| {
+        Error::Parse(shorten(&format!(
+            "the update manifest's signature is unreadable: {e}"
+        )))
+    };
+    let text = std::str::from_utf8(signature).map_err(|e| unreadable(&e))?;
+    let signature = minisign_verify::Signature::decode(text).map_err(|e| unreadable(&e))?;
+    let verifies = |legacy: bool| {
+        keys.iter().any(|key| {
+            minisign_verify::PublicKey::from_base64(key)
+                .is_ok_and(|key| key.verify(manifest, &signature, legacy).is_ok())
+        })
+    };
+    if !verifies(false) {
+        if verifies(true) {
+            return Err(Error::Parse(
+                "the update manifest is signed in an older format that Canopy no longer accepts"
+                    .to_owned(),
+            ));
+        }
+        return Err(refused());
+    }
+    let parsed = UpdateManifest::parse(manifest)?;
+    if signature.trusted_comment() != trusted_comment(channel, &parsed.version) {
+        return Err(Error::Parse(format!(
+            "the update manifest's signature is for another channel or build, not for build {} on the {channel} channel",
+            plain_text(&parsed.version, MAX_ERROR_TEXT)
+        )));
+    }
+    Ok(parsed)
+}
+
+/// Fetches one file of the update feed, asking for `accept` when given.
+fn fetch_feed_file(url: &str, accept: Option<&str>) -> Result<Vec<u8>> {
     let tls = TlsConfig::builder()
         .root_certs(RootCerts::PlatformVerifier)
         .build();
@@ -105,9 +204,11 @@ pub fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
         config = config.proxy(None);
     }
     let agent = crate::transport::agent(config.build());
-    let mut response = agent
-        .get(url)
-        .header("Accept", "application/json")
+    let mut request = agent.get(url);
+    if let Some(accept) = accept {
+        request = request.header("Accept", accept);
+    }
+    let mut response = request
         .call()
         .map_err(|e| Error::Network(shorten(&e.to_string())))?;
     let status = response.status().as_u16();
@@ -118,7 +219,7 @@ pub fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
         .read_to_vec()
         .map_err(|e| Error::Network(shorten(&e.to_string())))?;
     match status {
-        s if crate::http::status::SUCCESS.contains(&s) => UpdateManifest::parse(&bytes),
+        s if crate::http::status::SUCCESS.contains(&s) => Ok(bytes),
         crate::http::status::NOT_FOUND => {
             Err(Error::NotFound(format!("no update manifest at {url}")))
         }
@@ -360,16 +461,16 @@ pub fn download_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
 
-    const SAMPLE: &str = r#"{
-        "version": "412",
-        "notes": "New themes",
-        "pub_date": "2026-10-01T00:00:00Z",
-        "release_page": "https://example.invalid/r",
-        "platforms": {
-            "linux-x86_64": { "url": "https://example.invalid/l.tar.gz", "sha256": "ab" },
-            "windows-x86_64": { "url": "https://example.invalid/w.zip" }
-        }
-    }"#;
+    const SAMPLE: &str = include_str!("../testdata/sample-manifest.json");
+    const SAMPLE_SIG: &str = include_str!("../testdata/sample-manifest.json.minisig");
+    /// The public key of a throwaway key that signed `SAMPLE`; never a release key.
+    fn test_key() -> String {
+        include_str!("../testdata/update-test.pub")
+            .lines()
+            .last()
+            .expect("key line")
+            .to_owned()
+    }
 
     #[test]
     fn parses_manifest() {
@@ -418,12 +519,156 @@ mod tests {
     }
 
     #[test]
-    fn fetches_over_http() {
-        let url = serve_once("200 OK", SAMPLE);
-        let m = fetch_manifest(&url).expect("fetch");
+    fn fetches_a_signed_manifest_over_http() {
+        let key = test_key();
+        let base = serve_routes(
+            vec![
+                ("/latest.json", ok(SAMPLE)),
+                ("/latest.json.minisig", ok(SAMPLE_SIG)),
+            ],
+            2,
+        );
+        let m = fetch_signed_manifest(&format!("{base}/latest.json"), &[&key]).expect("fetch");
         assert_eq!(m.version, "412");
         let missing = serve_once("404 Not Found", "404: Not Found");
-        assert!(matches!(fetch_manifest(&missing), Err(Error::NotFound(_))));
+        assert!(matches!(
+            fetch_signed_manifest(&missing, &[&key]),
+            Err(Error::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn an_unsigned_or_altered_manifest_is_refused() {
+        let key = test_key();
+        // No signature beside it.
+        let base = serve_routes(vec![("/latest.json", ok(SAMPLE))], 2);
+        let err =
+            fetch_signed_manifest(&format!("{base}/latest.json"), &[&key]).expect_err("unsigned");
+        assert!(err.to_string().contains("not signed"), "{err}");
+        // One changed byte: another archive checksum.
+        let altered = SAMPLE.replace("\"ab\"", "\"ac\"");
+        assert_ne!(altered, SAMPLE);
+        verify_manifest(altered.as_bytes(), SAMPLE_SIG.as_bytes(), &[&key], "latest")
+            .expect_err("altered");
+        // A key Canopy does not trust, and the release keys for a test signature.
+        verify_manifest(
+            SAMPLE.as_bytes(),
+            SAMPLE_SIG.as_bytes(),
+            MANIFEST_KEYS,
+            "latest",
+        )
+        .expect_err("other key");
+        verify_manifest(SAMPLE.as_bytes(), b"not a signature", &[&key], "latest")
+            .expect_err("garbage");
+        verify_manifest(SAMPLE.as_bytes(), SAMPLE_SIG.as_bytes(), &[&key], "latest")
+            .expect("intact");
+    }
+
+    /// The signature vouches for the channel and the build: a signed stable manifest is no beta
+    /// manifest, and a manifest served under another channel's name is refused.
+    #[test]
+    fn a_signature_binds_the_channel_and_build() {
+        let key = test_key();
+        assert_eq!(
+            verify_manifest(SAMPLE.as_bytes(), SAMPLE_SIG.as_bytes(), &[&key], "latest")
+                .expect("latest")
+                .build(),
+            Some(412)
+        );
+        let err = verify_manifest(SAMPLE.as_bytes(), SAMPLE_SIG.as_bytes(), &[&key], "beta")
+            .expect_err("another channel");
+        assert!(
+            err.to_string().contains("another channel or build"),
+            "{err}"
+        );
+        let base = serve_routes(
+            vec![
+                ("/beta.json", ok(SAMPLE)),
+                ("/beta.json.minisig", ok(SAMPLE_SIG)),
+            ],
+            2,
+        );
+        fetch_signed_manifest(&format!("{base}/beta.json"), &[&key]).expect_err("served as beta");
+    }
+
+    /// minisign's legacy, not prehashed, signatures are refused even when they are genuine.
+    #[test]
+    fn a_legacy_signature_is_refused() {
+        let key = test_key();
+        let legacy = include_str!("../testdata/sample-manifest.json.legacy-minisig");
+        let decoded = minisign_verify::Signature::decode(legacy).expect("decode");
+        minisign_verify::PublicKey::from_base64(&key)
+            .expect("key")
+            .verify(SAMPLE.as_bytes(), &decoded, true)
+            .expect("a genuine legacy signature");
+        let err = verify_manifest(SAMPLE.as_bytes(), legacy.as_bytes(), &[&key], "latest")
+            .expect_err("legacy");
+        assert!(err.to_string().contains("older format"), "{err}");
+    }
+
+    /// What `tools/sign-manifest.py` signs, Canopy accepts: the two implementations agree.
+    /// Skipped where python3 or openssl is missing.
+    #[test]
+    #[expect(clippy::disallowed_methods, reason = "runs the release's signer")]
+    fn the_release_signer_makes_signatures_canopy_accepts() {
+        let present = |program: &str, arg: &str| {
+            std::process::Command::new(program)
+                .arg(arg)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        if !present("python3", "--version") || !present("openssl", "version") {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tmp");
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/sign-manifest.py");
+        let out = std::process::Command::new("python3")
+            .arg(&script)
+            .arg("emit")
+            .arg(dir.path())
+            .output()
+            .expect("run the signer");
+        assert!(
+            out.status.success(),
+            "the signer failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let read = |name: &str| std::fs::read(dir.path().join(name)).expect(name);
+        let public = String::from_utf8(read("test.pub")).expect("utf-8");
+        let key = public.lines().last().expect("key line").to_owned();
+        let manifest = verify_manifest(
+            &read("latest.json"),
+            &read("latest.json.minisig"),
+            &[&key],
+            "latest",
+        )
+        .expect("Canopy accepts the signer's signature");
+        assert_eq!(manifest.build(), Some(1700));
+        verify_manifest(
+            &read("latest.json"),
+            &read("latest.json.minisig"),
+            &[&key],
+            "beta",
+        )
+        .expect_err("another channel");
+    }
+
+    #[test]
+    fn a_manifest_names_its_installers_checksums() {
+        let m = UpdateManifest::parse(SAMPLE.as_bytes()).expect("parse");
+        assert_eq!(
+            m.installers.get("install.sh").map(String::as_str),
+            Some("c".repeat(64).as_str())
+        );
+        let none = UpdateManifest::parse(br#"{"version":"1"}"#).expect("parse");
+        assert!(none.installers.is_empty());
+    }
+
+    #[test]
+    fn the_release_key_is_the_published_one() {
+        let published = include_str!("../../../packaging/update-signing.pub");
+        assert_eq!(MANIFEST_KEYS, [published.lines().last().expect("key line")]);
+        minisign_verify::PublicKey::from_base64(MANIFEST_KEYS[0]).expect("a minisign key");
     }
 
     /// Serves each request from `routes` (path → raw response), `count` times, on a loopback port.
@@ -567,7 +812,7 @@ mod tests {
         );
         let base = serve_routes(vec![("/failed", failed), ("/moved", moved)], 2);
         for path in ["/failed", "/moved"] {
-            let err = fetch_manifest(&format!("{base}{path}")).expect_err(path);
+            let err = fetch_signed_manifest(&format!("{base}{path}"), &[]).expect_err(path);
             assert!(plain(&err), "{path}: {err:?}");
         }
         let wrong = format!(

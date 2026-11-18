@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 14 November 2026
+Last updated: 18 November 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -68,15 +68,15 @@ To turn crash reports on or off, use Send crash reports in the Privacy section o
 
 When Canopy starts, it checks for a new version if it has not checked in the last 24 hours. It also checks when you choose Check for updates in the About dialog or the command palette, or Check now in the Updates section of Settings. The first automatic check waits until you have accepted the terms and answered about crash reports.
 
-To check, Canopy downloads a small file that names the latest version from the NecturaLabs/app-updates repository on GitHub (raw.githubusercontent.com). If Include beta builds is on, it downloads a second file for beta builds. The request reveals your IP address to GitHub and names your Canopy build number in its User-Agent header. It contains nothing else about you. NecturaLabs does not receive the request or any record of it. GitHub's privacy statement covers what GitHub does with it.
+To check, Canopy downloads a small file that names the latest version, and the file's signature, from the NecturaLabs/app-updates repository on GitHub (raw.githubusercontent.com). If Include beta builds is on, it downloads the same two files for beta builds. The request reveals your IP address to GitHub and names your Canopy build number in its User-Agent header. It contains nothing else about you. NecturaLabs does not receive the request or any record of it. GitHub's privacy statement covers what GitHub does with it.
 
 Canopy checks for updates so that you learn about bug and security fixes. Our legal basis is this legitimate interest (Article 6(1)(f) of the GDPR). To object, turn off Check for updates in the Updates section of Settings. Canopy never downloads or installs an update by itself.
 
 ## Installing an update
 
-Only when you choose Update in the update dialog, Canopy downloads the new build from the same NecturaLabs/app-updates repository: from github.com, which redirects to GitHub's file servers (githubusercontent.com), over HTTPS. It downloads the build's archive for your system and, to refresh the program that uninstalls Canopy, the build's checksum list and installer script. Each request reveals your IP address to GitHub and names your Canopy build number in its User-Agent header, and contains nothing else about you. NecturaLabs does not receive these requests or any record of them. GitHub's privacy statement covers what GitHub does with them.
+Only when you choose Update in the update dialog, Canopy downloads the new build from the same NecturaLabs/app-updates repository: from github.com, which redirects to GitHub's file servers (githubusercontent.com), over HTTPS. It downloads the build's archive for your system or, where Canopy was installed some other way, the build's installer script, and, to refresh the program that uninstalls Canopy, that installer script. Each request reveals your IP address to GitHub and names your Canopy build number in its User-Agent header, and contains nothing else about you. NecturaLabs does not receive these requests or any record of them. GitHub's privacy statement covers what GitHub does with them.
 
-Canopy checks the archive against the SHA-256 checksum in the update file before it installs anything, and stops if they differ. Where Canopy was put in its own folder by Canopy's installer, it replaces its program files there and leaves your settings, logs and repositories alone. Anywhere else, Update downloads Canopy's installer script from the update repository and runs it on your computer, which installs a copy of Canopy in its own folder and leaves the one you are running as it is. Canopy downloads nothing until you choose Update.
+Canopy uses an update file only when its signature verifies against a key built into Canopy, and checks the archive against the SHA-256 checksum in that file before it installs anything, stopping if they differ. Where Canopy was put in its own folder by Canopy's installer, it replaces its program files there and leaves your settings, logs and repositories alone. Anywhere else, Update downloads Canopy's installer script from the build's release, checks it against the checksum in that signed file, and runs it on your computer, which installs a copy of Canopy in its own folder and leaves the one you are running as it is. Canopy downloads nothing until you choose Update.
 
 ## GitHub and GitLab
 

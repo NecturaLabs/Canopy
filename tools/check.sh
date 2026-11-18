@@ -50,6 +50,7 @@ GIT_CONFIG_GLOBAL="$test_gitconfig" GIT_CONFIG_NOSYSTEM=1 cargo test --workspace
 step "tools/release.py selftest"
 python3 tools/release.py selftest
 python3 tools/prune-releases.py selftest
+python3 tools/sign-manifest.py selftest
 python3 tools/test-release-gate.py
 
 step "pre-commit hook regressions"
@@ -57,6 +58,9 @@ python3 tools/test-hooks.py
 
 step "tools/notices.py --check"
 python3 tools/notices.py --check
+# LICENSES/ (REUSE layout, which licence scanners look for) holds the root licence texts unchanged.
+cmp LICENSE-MIT LICENSES/MIT.txt
+cmp LICENSE-APACHE LICENSES/Apache-2.0.txt
 
 step "tools/check-docs.py"
 python3 tools/check-docs.py
