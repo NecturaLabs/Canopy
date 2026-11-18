@@ -555,7 +555,7 @@ kurbo 0.13.1 (Apache-2.0 OR MIT), used under MIT: Copyright (c) 2018 Raph Levien
 lazy_static 1.5.1 (MIT OR Apache-2.0), used under MIT: Copyright (c) Marvin Löbel
 libc 0.2.189 (MIT OR Apache-2.0), used under MIT: Copyright (c) The Rust Project Developers
 libgit2-sys 0.18.8+1.9.7 (MIT OR Apache-2.0), used under MIT: Copyright (c) 2014 Alex Crichton
-libz-sys 1.1.29 (MIT OR Apache-2.0), used under MIT: Copyright (c) 2014 Alex Crichton; Copyright (c) 2020 Josh Triplett
+libz-sys 1.1.33 (MIT OR Apache-2.0), used under MIT: Copyright (c) 2014 Alex Crichton; Copyright (c) 2020 Josh Triplett
 linebender_resource_handle 0.1.1 (Apache-2.0 OR MIT), used under MIT: Copyright (c) the linebender_resource_handle developers
 linux-raw-sys 0.12.1 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT): Copyright (c) Dan Gohman
 linux-raw-sys 0.4.15 (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT): Copyright (c) Dan Gohman
@@ -3181,7 +3181,7 @@ Software.
 
 
 ==============================================================================
-rustls-webpki 0.103.15 (ISC)
+rustls-webpki 0.103.17 (ISC)
 ==============================================================================
 
 --- LICENSE ---
@@ -3429,7 +3429,7 @@ untrusted 0.9.0 (ISC)
 
 
 ==============================================================================
-webpki-roots 1.0.9 (CDLA-Permissive-2.0)
+webpki-roots 1.0.12 (CDLA-Permissive-2.0)
 ==============================================================================
 
 --- LICENSE ---
