@@ -738,13 +738,17 @@ impl Toasts {
                 && e.offer == offer
                 && (offer.is_none() || kind == ToastKind::Error)
         });
-        // A failure that repeats while its card is still on screen adds no second card: the row
-        // counts it. Once the card is gone (dismissed or expired), the next occurrence, a retry
-        // for example, raises one again.
-        let again = kind == ToastKind::Error
-            && repeated
-                .as_ref()
-                .is_some_and(|e| self.items.iter().any(|t| t.id == e.id));
+        // A notice that repeats while its card is still on screen (Fetch clicked four times)
+        // adds no second card: the row counts it and the card stays up for the new one's time.
+        // Once the card is gone (dismissed or expired), the next occurrence, a retry for
+        // example, raises one again.
+        let shown = repeated
+            .as_ref()
+            .and_then(|e| self.items.iter_mut().find(|t| t.id == e.id));
+        let again = shown.is_some();
+        if let Some(t) = shown {
+            t.left = t.left.max(left);
+        }
         let card = interrupts && self.prefs.shows(topic) && !self.center_open && !again;
         let unread = !card && !again && topic.counts() && !self.center_open;
         if let Some(entry) = repeated {
@@ -2673,6 +2677,52 @@ mod tests {
             "Fetched",
             body,
             Some(Path::new(repo)),
+        );
+    }
+
+    /// Fetch clicked four times with Finished cards on: one card that stays up for the latest,
+    /// not four stacked over the diff; the center counts all four.
+    #[test]
+    fn a_repeated_success_is_one_card() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs {
+            finished: true,
+            ..NotificationPrefs::default()
+        });
+        for _ in 0..4 {
+            fetched(
+                &mut toasts,
+                &ctx,
+                "/work/mote",
+                "Nothing new on any remote.",
+            );
+        }
+        assert_eq!(toasts.items.len(), 1, "four identical notices, one card");
+        assert_eq!(toasts.history[0].count, 4, "the center counts them");
+        assert_eq!(
+            toasts.items[0].id, toasts.history[0].id,
+            "the card is the row's"
+        );
+        toasts.items[0].left = 0.5;
+        fetched(
+            &mut toasts,
+            &ctx,
+            "/work/mote",
+            "Nothing new on any remote.",
+        );
+        assert!(toasts.items[0].left > 0.5, "a repeat keeps the card up");
+        toasts.items.clear();
+        fetched(
+            &mut toasts,
+            &ctx,
+            "/work/mote",
+            "Nothing new on any remote.",
+        );
+        assert_eq!(
+            toasts.items.len(),
+            1,
+            "once it is gone, the next one shows again"
         );
     }
 
