@@ -540,7 +540,13 @@ mod tests {
         run_git(dir.path(), &["init", "-q"]);
         check_repository(command(Some(dir.path()))).expect("an ordinary repository opens");
         let mut refused = command(Some(dir.path()));
-        refused.env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
+        // A system or global `safe.directory = *` (CI runner images set one) would let git open it.
+        let empty = dir.path().join("empty-global-config");
+        std::fs::write(&empty, "").expect("empty config");
+        refused
+            .env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", &empty);
         let err = check_repository(refused).expect_err("git refuses it");
         assert!(err.to_string().contains("dubious ownership"), "{err}");
     }
