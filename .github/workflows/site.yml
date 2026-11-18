@@ -83,17 +83,34 @@ jobs:
           api=https://api.netlify.com/api/v1
           title=$(jq -rn --arg m "$MESSAGE" '$m | @uri')
           # A zip deploy that is not a draft goes to production once Netlify has processed it.
-          id=$(curl -sS --fail-with-body --retry 3 -H @"$header" -H 'Content-Type: application/zip' \
-            --data-binary @"$RUNNER_TEMP/site.zip" "$api/sites/$NETLIFY_SITE_ID/deploys?title=$title" | jq -r .id)
+          reply="$RUNNER_TEMP/netlify-reply.json"
+          if ! curl -sS --fail-with-body --retry 3 -H @"$header" -H 'Content-Type: application/zip' \
+            --data-binary @"$RUNNER_TEMP/site.zip" -o "$reply" "$api/sites/$NETLIFY_SITE_ID/deploys?title=$title"; then
+            echo "::error::Netlify refused the deploy: $(head -c 500 "$reply" 2> /dev/null)"
+            exit 1
+          fi
+          id=$(jq -r .id "$reply")
           if [[ ! $id =~ ^[0-9a-f]+$ ]]; then
             echo "::error::Netlify returned no deploy id."
             exit 1
           fi
           state=new
           for _ in $(seq 60); do
-            state=$(curl -sS --fail-with-body --retry 3 -H @"$header" "$api/deploys/$id" | jq -r .state)
+            curl -sS --fail-with-body --retry 3 -H @"$header" -o "$reply" "$api/deploys/$id" || {
+              echo "::error::Reading deploy $id failed: $(head -c 500 "$reply" 2> /dev/null)"
+              exit 1
+            }
+            state=$(jq -r .state "$reply")
             case $state in
-              ready) echo "Deploy $id is live."; exit 0 ;;
+              ready)
+                # Ready is not live when the site's auto publishing is locked.
+                if [[ $(jq -r '.published_at // empty' "$reply") == "" ]]; then
+                  echo "::error::Deploy $id is ready but not published (is auto publishing locked?)."
+                  exit 1
+                fi
+                echo "Deploy $id is live."
+                exit 0
+                ;;
               error | rejected) echo "::error::Netlify deploy $id ended in state $state."; exit 1 ;;
             esac
             sleep 5

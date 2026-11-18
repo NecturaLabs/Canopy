@@ -166,8 +166,7 @@ or how flows feel end to end.
   build 119 failed there (git's "dubious ownership"), so its tag was deleted and the fix released
   as build 120. A release job's composite actions come from the tag's own commit, so a workflow fix
   needs a new build, not a rerun of the old tag.
-- `APP_UPDATES_TOKEN` must exist in the Canopy repository's `release` environment (main and
-  `build-*` tags only) or the feed step is skipped. `NETLIFY_AUTH_TOKEN` is the `site`
+- `APP_UPDATES_TOKEN` must exist in the Canopy repository's `release` environment (main only) or the feed step is skipped. `NETLIFY_AUTH_TOKEN` is the `site`
   environment's (main only). A secret added as a repository or organisation secret would reach
   any branch's workflow: keep them in the environments.
 

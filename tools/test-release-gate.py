@@ -75,6 +75,67 @@ class ReleaseGateTests(unittest.TestCase):
         # No package manager runs while the token is in the job.
         self.assertNotRegex(deploy, r"\b(npx|npm|pnpm|yarn|bunx|setup-node)\b")
 
+    def test_tokens_appear_nowhere_else(self):
+        allowed = {
+            "APP_UPDATES_TOKEN": {("release.yml", "publish-update"), ("release.yml", "prune")},
+            "NETLIFY_AUTH_TOKEN": {("site.yml", "deploy")},
+        }
+        for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            text = path.read_text()
+            self.assertNotIn("secrets: inherit", text, path.name)
+            if "\njobs:\n" not in text:
+                continue
+            for name in re.findall(r"^  ([a-z][a-z_-]*):\n", text.split("\njobs:\n", 1)[1], re.M):
+                body = job(path.name, name)
+                for secret, where in allowed.items():
+                    if f"secrets.{secret}" in body:
+                        self.assertIn((path.name, name), where, f"{path.name} {name} reads {secret}")
+
+    def test_experimental_builds_ship_without_holding_the_release(self):
+        release = job("release.yml", "release")
+        needs = re.search(r"needs: \[(.*?)\]", release)[1].split(", ")
+        self.assertIn("build-experimental", needs)
+        self.assertIn(
+            "if: ${{ !cancelled() && needs.identity.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' }}",
+            release,
+        )
+        self.assertNotIn("needs.build-experimental.result", release)
+        # The checksums and provenance cover the experimental archives too.
+        self.assertLess(release.index("name: Add the experimental archives"), release.index("name: Checksums"))
+        self.assertLess(release.index("name: Checksums"), release.index("attest-build-provenance@"))
+        # The feed ships exactly the files the GitHub release did.
+        feed = job("release.yml", "publish-update")
+        self.assertIn("name: release-files", feed)
+        self.assertNotIn("pattern: canopy-*", feed)
+        self.assertIn("if: ${{ !cancelled() && needs.release.result == 'success' }}", feed)
+        prune = job("release.yml", "prune")
+        self.assertIn("needs: [identity, publish-update]", prune)
+        self.assertIn("if: ${{ !cancelled() && needs.publish-update.result == 'success' }}", prune)
+
+    def test_nothing_can_fail_after_the_release_is_published(self):
+        release = job("release.yml", "release")
+        published = release.index("--draft=false")
+        self.assertLess(release.index("name: release-files"), published)
+        self.assertNotRegex(release[published:], r"(?m)^      - ")
+        # A rerun leaves an already published (immutable) release alone.
+        for name in ("release", "publish-update"):
+            body = job("release.yml", name)
+            for step in re.split(r"(?m)^      - ", body):
+                if "softprops/action-gh-release@" in step or "--draft=false" in step:
+                    self.assertRegex(step, r"published != 'true'", name)
+
+    def test_site_deploy_is_main_only_and_waits_until_live(self):
+        deploy = job("site.yml", "deploy")
+        self.assertIn(
+            "if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')",
+            deploy,
+        )
+        self.assertEqual(re.findall(r"uses: ([^@\s]+)@", deploy), ["actions/checkout"])
+        self.assertNotRegex(deploy, r"\b(apt-get|apt|pip3?|cargo install|go install)\b|\| *(ba)?sh\b")
+        # Only `ready` with a publish time counts as live.
+        self.assertEqual(re.findall(r"^\s+(\w+)\)", deploy, re.M), ["ready"])
+        self.assertIn("published_at", deploy)
+
     def test_test_job_has_no_write_permission_or_optional_gate(self):
         tests = job("test-release.yml", "test")
         self.assertIn("contents: read", tests)
