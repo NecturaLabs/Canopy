@@ -13,6 +13,9 @@ rust-version = "1.91"
 authors = ["NecturaLabs"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/NecturaLabs/Canopy"
+homepage = "https://canopy.necturalabs.com"
+keywords = ["git", "git-client", "gui", "egui", "linux"]
+categories = ["development-tools", "gui"]
 publish = false
 
 [workspace.dependencies]
