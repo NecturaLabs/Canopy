@@ -141,10 +141,13 @@ adding a dependency.
 - Subagents (the owner's rule): at most 3 at a time. Small things are done directly. Each builder
   gets its own `CARGO_TARGET_DIR` in a scratch directory, deleted afterwards; keep 5 GB of disk
   free.
-- Branches: use short-lived branches and reviewable GitHub PRs, linking the relevant issues.
+- Branches: `dev` is the default branch and takes all work; `main` takes only `dev`, through a
+  pull request, when a build is released (rulesets and `branch-policy.yml` enforce it; only the
+  owner can merge into either). Branch from `dev`, open short-lived, reviewable PRs into `dev`,
+  linking the relevant issues. Only collaborators can open issues; others use Discussions.
   Commit frequently and atomically using Conventional Commits. Related small backlog fixes can
-  share one PR, with a separate commit per independent fix. **Never merge or push directly to
-  `main` without the owner's explicit approval.** Before recommending a merge, run
+  share one PR, with a separate commit per independent fix. **Never merge into `dev` or `main`
+  without the owner's explicit approval.** Before recommending a merge, run
   `tools/check.sh`, check CI and perform relevant live verification. For a known failure, link
   its GitHub issue and report the actual run; do not bypass checks.
 - Before declaring work done: `tools/check.sh` passes and the `canopy-review` agent has reviewed

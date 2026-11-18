@@ -31,6 +31,12 @@ you.
 Only the latest published build receives security fixes. Canopy offers updates in the app
 (Settings → Updates); update before reporting if you can.
 
+## Verifying a download
+
+Every release archive carries signed build provenance: `gh attestation verify <archive> --repo
+NecturaLabs/Canopy` shows that it was built by the Release workflow from the tagged commit.
+`SHA256SUMS` in the release lists each file's checksum.
+
 ## Scope
 
 Canopy runs `git` on your computer and talks only to the hosts its Privacy Policy lists
