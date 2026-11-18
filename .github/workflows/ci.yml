@@ -234,6 +234,7 @@ jobs:
         run: |
           python3 tools/release.py selftest
           python3 tools/prune-releases.py selftest
+          python3 tools/sign-manifest.py selftest
       # A pinned, checksum-verified ShellCheck, so every runner reports the same findings.
       # packaging/ is held to every rule; tools/ to warnings and errors.
       - name: ShellCheck

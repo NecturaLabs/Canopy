@@ -68,6 +68,11 @@ in its place.
 
 `SHA256SUMS` in the release lists each file's checksum.
 
+Canopy's in-app updater trusts an update manifest only when its signature (`<manifest>.minisig`
+beside it in `NecturaLabs/app-updates`) verifies against the key built into Canopy,
+`packaging/update-signing.pub` (ADR 0021). To check one by hand:
+`minisign -Vm latest.json -p packaging/update-signing.pub`.
+
 Releases published after build 1683 are immutable, in this repository and in
 `NecturaLabs/app-updates`: their files and tags cannot change once published, and GitHub signs a
 release attestation. `gh release verify-asset build-<number> <file> --repo NecturaLabs/Canopy`

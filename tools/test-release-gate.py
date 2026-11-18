@@ -79,6 +79,7 @@ class ReleaseGateTests(unittest.TestCase):
         allowed = {
             "APP_UPDATES_TOKEN": {("release.yml", "publish-update"), ("release.yml", "prune")},
             "NETLIFY_AUTH_TOKEN": {("site.yml", "deploy")},
+            "MANIFEST_SIGNING_KEY": {("release.yml", "publish-update")},
         }
         reads = re.compile(r"secrets\s*(?:\.\s*|\[\s*['\"])(\w+)")
         paths = sorted((ROOT / ".github").rglob("*.y*ml"))

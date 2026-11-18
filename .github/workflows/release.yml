@@ -26,7 +26,9 @@
 # Secrets: APP_UPDATES_TOKEN (required for the update feed), a fine-grained token with Contents
 # read/write on NecturaLabs/app-updates only, is a secret of the `release` environment (Settings →
 # Environments), which only main can use; only the jobs that write the feed declare it. Without
-# it the feed step is skipped with a warning.
+# it the feed step is skipped with a warning. MANIFEST_SIGNING_KEY, in the same environment, is
+# the Ed25519 key (PEM) that signs each manifest; Canopy refuses a manifest without a valid
+# signature (packaging/update-signing.pub, canopy_hosting::updates::MANIFEST_KEYS).
 # Variables: CANOPY_SENTRY_DSN overrides the built-in crash-report DSN (`off` disables crash
 # reporting; unset keeps the built-in one);
 # CI_LINUX, CI_MACOS and CI_WINDOWS pick the platforms (the `platforms` job).
@@ -593,6 +595,8 @@ jobs:
         if: steps.token.outputs.present == 'true'
         env:
           APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
+          # Canopy trusts a manifest only with a valid signature beside it (tools/sign-manifest.py).
+          CANOPY_MANIFEST_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
           BUILD: ${{ steps.feed.outputs.build }}
           FEED_TAG: ${{ steps.feed.outputs.tag }}
           PRERELEASE: ${{ steps.feed.outputs.prerelease }}
@@ -642,6 +646,12 @@ jobs:
               also=" and the beta channel"
             fi
           fi
+          signed=("$manifest")
+          [[ -n $also ]] && signed+=("$work/canopy/beta.json")
+          python3 tools/sign-manifest.py sign packaging/update-signing.pub "${signed[@]}"
+          for file in "${signed[@]}"; do
+            git -C "$work" add "canopy/$(basename "$file").minisig"
+          done
           # The one-line installers live next to the manifests. Only a stable release replaces
           # them, so a beta build never changes what new users run.
           if [[ $channel == latest ]]; then

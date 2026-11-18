@@ -98,7 +98,7 @@ thread.
 | `preview.rs` | `description_preview`: a request's description flattened to one line of plain text (at most `PREVIEW_CHARS`), from the list response's own body, for a row and its text filter. |
 | `token.rs` | `TOKEN_PREFIXES`, the shapes of GitHub and GitLab tokens, for scrubbing logs, errors and crash reports. Nothing here finds a token. |
 | `cli_token.rs` | The only credential source (ADR 0017): the sign-in of the `gh` or `glab` CLI. `login_from_cli` runs `auth status` and the token command for a host through argv (no shell, host as one argument, no token variables in the child's environment, ten seconds in all, output capped) and returns a `CliLogin` whose `Debug` hides the token and whose `CliAccount` (account, listed scopes) may be shown, or a `CliError` (not installed, signed out, missing scope, failed) in words for the user, with `fix_command` (the command to run) and `install_page`. The parser reads `gh`'s and `glab`'s current `auth status` words. Tests use fake executables in a temporary directory. |
-| `updates.rs` | Canopy's own update manifest, fetched anonymously from the public `NecturaLabs/app-updates` repository. |
+| `updates.rs` | Canopy's own update manifest, fetched anonymously from the public `NecturaLabs/app-updates` repository with its minisign signature, and trusted only when that verifies against a built-in key (ADR 0021). |
 | `error.rs` | Errors, carrying the server's message. |
 | `test_server.rs`, `avatars/network_failures.rs` | Test-only: a scripted 127.0.0.1 listener (answer, hang up, stall, redirect) and the tests that drive profile lookups and picture downloads against it, asserting each failure names its cause and repeats no token, email, private repository or picture address. |
 
