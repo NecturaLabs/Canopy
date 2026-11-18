@@ -134,24 +134,18 @@ jobs:
       # code we do not write would fail CI.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  # The tests run on Linux. Windows and macOS builds are published, and tried by people on those
+  # systems, but CI does not test them.
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.hosted }}
+    name: Test (Linux)
+    runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true' && (vars.CI_TESTS == '1' || github.event_name == 'pull_request') && (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1' || vars.CI_WINDOWS == '1')
+    # Every push that changes code, and a pull request from a fork. The Tests job below is the one
+    # check a ruleset requires.
+    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      # On a push the whole job runs only when the repository variable CI_TESTS is '1' (off until
-      # #214; the maintainers' pre-commit hook runs the tests before every commit). A pull request
-      # from a fork always runs them. Then one toggle per platform, as repository variables:
-      # Linux runs unless CI_LINUX is '0'; macOS and Windows run when CI_MACOS or CI_WINDOWS is
-      # '1'.
-      # The Tests job below is the one check a ruleset requires.
-      matrix:
-        include: ${{ fromJSON(format('[{0}{1}{2}]', format('{0}', vars.CI_LINUX) != '0' && '{"os":"Linux","hosted":"ubuntu-latest"}' || '', vars.CI_MACOS == '1' && format('{0}{1}', format('{0}', vars.CI_LINUX) != '0' && ',' || '', '{"os":"macOS","hosted":"macos-latest"}') || '', vars.CI_WINDOWS == '1' && format('{0}{1}', (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1') && ',' || '', '{"os":"Windows","hosted":"windows-latest"}') || '')) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -172,22 +166,17 @@ jobs:
       # A window the compositor is not drawing must keep answering its pings (ADR 0007). The check
       # runs the app on a stand-in compositor with software OpenGL, and must pass.
       - name: Install the tools for the hidden-window check
-        if: runner.os == 'Linux'
         run: >
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
           pkg-config libwayland-dev wayland-protocols libwayland-bin
           libxkbcommon0 libegl1 libegl-mesa0 libgl1-mesa-dri
       - name: Hidden-window check
-        if: runner.os == 'Linux'
         run: python3 tools/stall-check.py --require
 
-  # One check named for the whole test matrix, so a ruleset can require it: the matrix jobs are
-  # named per platform, and a skipped matrix job reports no per-platform name, so requiring
-  # "Test (Linux)" would leave a documentation-only push waiting forever. It always runs, so a
-  # cancelled run fails it rather than skipping it (a skipped job satisfies a required check).
-  # Skipped jobs pass (documentation only, CI_TESTS off, or a pull request from a branch of this
-  # repository, which its push run covers); a failed or cancelled one fails. Not required yet:
-  # a fork's pull request always runs the tests, and they fail on Windows until #214 is fixed.
+  # The check the rulesets require for the tests. It always runs, so a cancelled run fails it
+  # rather than skipping it (a skipped job satisfies a required check). A skipped test job passes
+  # (a documentation-only push, or a pull request from a branch of this repository, which its push
+  # run covers); a failed or cancelled one fails.
   tests:
     name: Tests
     runs-on: ubuntu-latest

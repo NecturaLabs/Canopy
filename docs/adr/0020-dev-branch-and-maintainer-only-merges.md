@@ -23,8 +23,8 @@ maintainer merges.
   pull request's code). Releases stay on `main` (`create-release.yml`), so build numbers are
   unchanged.
 - **Three rulesets on each branch**. "Protect": no deletion or force push, with no bypass.
-  "CI for": the required CI checks (What changed, Clippy, and Format, docs, tooling
-  and dependencies; Tests too once #214 makes the suite pass on hosted runners) must pass,
+  "CI for": the required CI checks (What changed, Clippy, Tests, and Format, docs,
+  tooling and dependencies) must pass,
   with no bypass, so nothing reaches either branch with failing CI; on `dev` the branch must
   also be up to date, so the tested code is the merged code (not on `main`,
   whose release merge commits `dev` never takes). "Pull request for": a pull request with one
@@ -33,7 +33,7 @@ maintainer merges.
   fast-forward `main` to `dev` directly (that skips only "Source branch", which runs on pull
   requests). No other account has write access. Release tags (`build-*`, and `v*` in
   `nectura-ui`) cannot be moved or deleted by anyone (amended 2026-11-18 after a configuration
-  audit: CI used to share the bypassable ruleset; amended 2026-11-19: up-to-date branches, code
+  audit: CI used to share the bypassable ruleset; amended 2026-11-19: Tests (Linux), up-to-date branches, code
   owner and latest-push approval added, merge commits the only merge method).
 - **Issues: collaborators only** (GitHub's issue creation policy). Everyone else reports bugs and
   proposes features in Discussions; a maintainer files the issue. Pull requests stay open to

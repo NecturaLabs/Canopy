@@ -29,8 +29,9 @@ added to #42, #95 and #188.
 
 ## 2026-11-19
 
-Branches, pull requests and review, added as an area. Fixed: one `Tests` check for the test matrix,
-to be required on `dev` and `main` once #214 makes the suite pass on hosted runners; `dev` requires an up-to-date branch; the approval rule asks
+Branches, pull requests and review, added as an area. Fixed: CI runs the tests on Linux for every code
+push, and its `Tests` check is required on `dev` and `main` (Windows and macOS are published, not
+tested in CI); `dev` requires an up-to-date branch; the approval rule asks
 for a code owner and the latest push; only merge commits are allowed in the repository settings
 too; the pull request template asks for the issue, review focus and what was not verified; a
 Pull request title check; branch naming and promotion titles documented. Kept: the maintainer's
