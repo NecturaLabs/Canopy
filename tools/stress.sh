@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: tools/stress.sh <clone|open|churn|report> [options]     (tools/stress.sh --help)
 #
-# Stress-test harness for Canopy: 100 public repositories open at once, one per tab.
+# Stress-test harness for Canopy: 30 public repositories open at once, one per tab.
 # The procedure, scenarios and pass criteria are in docs/stress-test.md.
 #
 #   clone   Clone the repositories listed in tools/stress-repos.txt into a cache folder
@@ -46,13 +46,13 @@ clone
   --depth N           Shallow depth (implies --shallow)
   --blobless          Clone with --filter=blob:none (full history, file contents on demand;
                       libgit2 cannot fetch them, so old diffs may fail: see docs/stress-test.md)
-  --shallow-for R,R   Clone just these entries shallow, e.g. chromium/chromium
+  --shallow-for R,R   Clone just these entries shallow, e.g. python/cpython
   --submodules        Also initialise submodules (large; off by default)
   --jobs N            Parallel clones (default 4)
   --retries N         Retries per clone after a failure (default 2)
   --base-url URL      Where repositories come from (default https://github.com; or
                       $CANOPY_STRESS_BASE_URL, e.g. a local mirror)
-  --min-free-gb N     Refuse to start with less free space than this (default 5)
+  --min-free-gb N     Refuse to start with less free space than this (default 8)
   --dry-run           Print what would be cloned and the free space, then stop
 
 open
@@ -113,7 +113,7 @@ RESULTS=${CANOPY_STRESS_RESULTS:-}
 BIN=${CANOPY_BIN:-}
 BASE_URL=${CANOPY_STRESS_BASE_URL:-https://github.com}
 SUBSET=0 CLASSES="" EXCLUDE=""
-SHALLOW=0 DEPTH=1 BLOBLESS=0 SHALLOW_FOR="" SUBMODULES=0 JOBS=4 RETRIES=2 MIN_FREE_GB=5 DRY=0
+SHALLOW=0 DEPTH=1 BLOBLESS=0 SHALLOW_FOR="" SUBMODULES=0 JOBS=4 RETRIES=2 MIN_FREE_GB=8 DRY=0
 LOG_FILTER='info,canopy=debug,canopy_core=debug,canopy_hosting=debug'
 DURATION="" SAMPLE_INTERVAL=1 LABEL="" REAL_DATA=0
 REPOS=20 INTERVAL=3 FILES=10 SEED=1 DEEP=0 MODIFY_MANY=0 CONFLICT=0 LEAVE_MERGING=0 RESTORE=0
