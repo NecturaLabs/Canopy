@@ -14,7 +14,7 @@
 
 <p align="center"><a href="#install">Install</a> · <a href="#features">Features</a> · <a href="https://canopy.necturalabs.com">Website</a> · <a href="docs/README.md">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="#licence">Licence</a></p>
 
-Canopy is a native desktop Git client for Linux and Windows (macOS builds are coming), written in Rust. It reads
+Canopy is a native desktop Git client for Linux, macOS and Windows, written in Rust. It reads
 repositories directly through libgit2, so the commit graph, status and diffs appear immediately
 and stay responsive on large histories. Every change it makes runs through your own `git`
 executable, so credential helpers, SSH keys and config, hooks, commit signing, Git LFS and proxies
@@ -110,9 +110,10 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex
 ```
 
-Builds exist for Linux x86_64, Linux arm64 (experimental) and Windows x86_64. There is no macOS
-build yet; until there is, the installer stops on a Mac with a message that the release has no
-build for it.
+Builds exist for Linux x86_64, Linux arm64 (experimental), macOS on Apple silicon, macOS on Intel
+(experimental) and Windows x86_64. The macOS builds are signed ad hoc, not notarised: the install
+command is not affected, but an archive downloaded in a browser is blocked the first time it opens,
+until you choose Open Anyway in System Settings → Privacy & Security.
 
 The installer reads Canopy's update manifest, downloads the build for your system over HTTPS,
 checks its SHA-256 against the manifest and refuses anything that does not match. It never asks
@@ -143,7 +144,8 @@ curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy
 Uninstalling removes exactly what the installer created (files of your own in its folder stay);
 your settings and logs stay unless you add `--purge`. Re-running never replaces a newer installed
 version with an older one unless you ask with `--version`. Builds exist for Linux x86_64 (glibc 2.35 or newer, e.g. Ubuntu 22.04),
-Linux arm64 (experimental) and Windows x86_64. Details:
+Linux arm64 (experimental), macOS 11 or newer on Apple silicon, macOS on Intel (experimental) and
+Windows x86_64. Details:
 [packaging/README.md](packaging/README.md).
 
 ## Install from source

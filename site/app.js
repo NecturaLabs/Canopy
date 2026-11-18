@@ -64,13 +64,12 @@ function detect() {
   return "unknown";
 }
 const system = detect();
-const suggested = $('[data-platform="' + system + '"]');
-if (suggested) suggested.classList.add("is-suggested");
+// A browser cannot tell Apple silicon from Intel, so a Mac gets both macOS rows
+$$(system === "macos" ? '[data-platform^="darwin-"]' : '[data-platform="' + system + '"]').forEach((row) => row.classList.add("is-suggested"));
 
 const NOTES = {
-  phone: ["\uE560", "It runs on Linux (x86_64 and arm64) and Windows (x86_64). There is no mobile app yet; open this page on your computer to install it.", "Canopy is a desktop app"],
-  macos: ["", "There is no macOS build yet. Canopy runs on Linux and Windows."],
-  unknown: ["", "Canopy runs on Linux and Windows. Choose your system below."],
+  phone: ["\uE560", "It runs on Linux (x86_64 and arm64), macOS (Apple silicon and Intel) and Windows (x86_64). There is no mobile app yet; open this page on your computer to install it.", "Canopy is a desktop app"],
+  unknown: ["", "Canopy runs on Linux, macOS and Windows. Choose your system below."],
 };
 if (NOTES[system]) {
   $$("[data-note]").forEach((n) => {
@@ -89,7 +88,7 @@ if (NOTES[system]) {
 
 /* One install command per system; the switch shows the other one */
 const COMMANDS = {
-  sh: { name: "Linux", prompt: "$", text: "curl -fsSL https://canopy.necturalabs.com/install | sh" },
+  sh: { name: "Linux and macOS", prompt: "$", text: "curl -fsSL https://canopy.necturalabs.com/install | sh" },
   ps: { name: "Windows", prompt: "PS>", text: "irm https://canopy.necturalabs.com/install.ps1 | iex" },
 };
 const copyStatus = $("#copy-status");
@@ -274,7 +273,7 @@ const go = (href) => () => {
 };
 const commands = [
   ...sectionLinks.map((s) => ({ group: "Go to", label: s.label, icon: s.icon, view: s.view, keys: s.href === "#download" ? ["Ctrl", "Enter"] : [], run: go(s.href) })),
-  { group: "Actions", label: "Copy the Linux install command", icon: "", keys: [], run: () => { setOs("sh"); copyCommand("sh", $("[data-install] [data-copy-cmd]")); } },
+  { group: "Actions", label: "Copy the Linux and macOS install command", icon: "", keys: [], run: () => { setOs("sh"); copyCommand("sh", $("[data-install] [data-copy-cmd]")); } },
   { group: "Actions", label: "Copy the Windows install command", icon: "", keys: [], run: () => { setOs("ps"); copyCommand("ps", $("[data-install] [data-copy-cmd]")); } },
   { group: "Actions", label: "Theme: Midnight", icon: "", keys: [], run: () => setTheme("dark") },
   { group: "Actions", label: "Theme: Daylight", icon: "", keys: [], run: () => setTheme("light") },

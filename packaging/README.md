@@ -216,8 +216,8 @@ yet in `install.ps1` ([#39](https://github.com/NecturaLabs/Canopy/issues/39)).
   `canopy`, the desktop entry, the metainfo, and `io.necturalabs.Canopy.png`.
 - macOS (`aarch64-apple-darwin`; `x86_64-apple-darwin` cross-compiled, experimental):
   `Canopy.app`, ad-hoc signed, not notarised. The installer downloads with curl, so Gatekeeper
-  does not quarantine it; an archive downloaded in a browser needs right-click → Open the first
-  time.
+  does not quarantine it; an archive downloaded in a browser is blocked the first time it opens,
+  until Open Anyway is chosen in System Settings → Privacy & Security.
 - Windows (`x86_64-pc-windows-msvc`): `canopy.exe`.
 
 An experimental build may fail without holding back the release; the installer then reports

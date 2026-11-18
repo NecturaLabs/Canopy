@@ -504,7 +504,8 @@ kbd + kbd { margin-left: 3px; }
 .install-facts li { padding: 11px 0; border-top: 1px solid var(--seam); font-size: 14.5px; color: var(--dim); }
 .install-facts code { color: var(--text); }
 .archives-head { margin-top: clamp(48px, 6vw, 72px); font-size: 15px; font-weight: 500; color: var(--dim); }
-.builds { max-width: 1040px; margin-top: 18px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.builds { margin-top: 18px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.builds + .cta-meta { margin-top: 18px; max-width: 72ch; }
 .builds li {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 20px;
   border: 1px solid var(--edge); border-radius: var(--r-lg); background: linear-gradient(var(--pane-2), var(--pane)); box-shadow: var(--sh-pane);
@@ -591,7 +592,10 @@ kbd + kbd { margin-left: 3px; }
 }
 @media (max-width: 1100px) {
   .hero-grid { grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); }
-  .builds { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 820px; }
+  .builds { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .builds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 960px) {

@@ -12,7 +12,7 @@ Update this table in the same change that adds or alters a feature.
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
 |---|---|---|---|---|
 | Linux | Done | No | Yes | No |
-| macOS | Planned | Yes | Yes | Yes |
+| macOS (signed ad hoc, not notarised) | Done | Yes | Yes | Yes |
 | Windows | Done | Yes | Yes | Yes |
 | Native (non-Electron) UI | Done | Yes | No | Yes |
 | One-line install into its own folder, with uninstall (Linux, Windows) | Done | No | No | No |
