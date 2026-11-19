@@ -2932,14 +2932,22 @@ mod tests {
     fn the_new_worktree_dialog_needs_a_branch_and_a_full_folder() {
         use super::worktree_op;
         use crate::worker::Op;
-        use std::path::Path;
-        let repo = Path::new("/work/canopy");
+        use std::path::PathBuf;
+        // A full path on this platform: on Windows one starts with a drive.
+        let full = |path: &str| {
+            PathBuf::from(if cfg!(windows) {
+                format!("C:{path}")
+            } else {
+                path.to_owned()
+            })
+        };
+        let repo = &full("/work/canopy");
         let run =
             |create, name, existing, folder| worktree_op(repo, create, name, existing, folder);
 
         assert_eq!(
             super::worktree_folder(repo, ""),
-            Path::new("/work/canopy-worktree"),
+            full("/work/canopy-worktree"),
             "never the repository itself"
         );
         assert!(run(true, "", "", "").is_none(), "a new branch needs a name");
@@ -2958,17 +2966,23 @@ mod tests {
             matches!(
                 &new,
                 Op::AddWorktree { folder, branch, create: true, start: None }
-                    if folder == Path::new("/work/canopy-feature-x") && branch == "feature/x"
+                    if *folder == full("/work/canopy-feature-x") && branch == "feature/x"
             ),
             "{new:?}"
         );
 
-        let old = run(false, "ignored", "main", " /elsewhere/wt ").expect("typed folder");
+        let old = run(
+            false,
+            "ignored",
+            "main",
+            format!(" {} ", full("/elsewhere/wt").display()).as_str(),
+        )
+        .expect("typed folder");
         assert!(
             matches!(
                 &old,
                 Op::AddWorktree { folder, branch, create: false, .. }
-                    if folder == Path::new("/elsewhere/wt") && branch == "main"
+                    if *folder == full("/elsewhere/wt") && branch == "main"
             ),
             "{old:?}"
         );

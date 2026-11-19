@@ -654,7 +654,16 @@ mod tests {
 
     impl Backend for Recorder {
         fn watch(&mut self, path: &Path) -> Result<(), String> {
-            assert!(self.panic.as_deref() != Some(path), "backend failure");
+            // libgit2 names the folder its own way (on Windows with `/`, perhaps by another
+            // spelling of the temporary folder), so the folder is compared, not its name.
+            let same = |a: &Path| {
+                a == path
+                    || std::fs::canonicalize(a)
+                        .ok()
+                        .zip(std::fs::canonicalize(path).ok())
+                        .is_some_and(|(a, b)| a == b)
+            };
+            assert!(!self.panic.as_deref().is_some_and(same), "backend failure");
             if self.fail.iter().any(|f| f == path) {
                 return Err(format!("Cannot watch {}.", path.display()));
             }

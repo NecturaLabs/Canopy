@@ -186,8 +186,10 @@ fn an_untrusted_folder_never_runs_the_repository_s_programs() {
     fs::write(p.join(".gitattributes"), "f.txt filter=x diff=y\n").expect("write");
     git_as(p, "Ada", &["add", "--", ".gitattributes"]);
     commit(p, "Ada", "f.txt", "one\n", "add f");
-    // Programs that leave a marker when git runs them.
-    let marker = |name: &str| format!("sh -c 'touch {}/{name}; cat' --", p.display());
+    // Programs that leave a marker when git runs them. The shell takes `\\` for an escape, so
+    // the folder is written with `/`, which Windows takes too.
+    let folder = p.display().to_string().replace('\\', "/");
+    let marker = |name: &str| format!("sh -c 'touch {folder}/{name}; cat' --");
     git_as(p, "Ada", &["config", "filter.x.clean", &marker("CLEAN")]);
     git_as(
         p,

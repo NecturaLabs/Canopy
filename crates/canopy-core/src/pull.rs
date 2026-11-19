@@ -341,13 +341,23 @@ mod tests {
             .iter()
             .rfind(|e| e.key == "pull.ff")
             .expect("pull.ff");
+        // Git names the file by its real path, which on Windows may be spelled differently from
+        // the temporary folder's (a short 8.3 name, `/`): the same file is what matters.
+        let config = Some(std::fs::canonicalize(dir.join(".git/config")).expect("the config"));
+        let origin = Path::new(entry.origin.strip_prefix("file:").expect("a file origin"));
+        assert!(origin.is_absolute(), "{}", entry.origin);
         assert_eq!(
-            entry.origin,
-            format!("file:{}", dir.join(".git/config").display())
+            Some(std::fs::canonicalize(origin).expect("the origin exists")),
+            config,
+            "{}",
+            entry.origin
         );
         assert_eq!(
-            entry.file.as_deref(),
-            Some(dir.join(".git/config").as_path())
+            entry
+                .file
+                .as_deref()
+                .and_then(|f| std::fs::canonicalize(f).ok()),
+            config
         );
     }
 

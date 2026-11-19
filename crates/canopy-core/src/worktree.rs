@@ -16,13 +16,30 @@ use crate::{
 /// how many more.
 const SHOWN_PATHS: usize = 8;
 
-/// Whether `a` and `b` name the same folder, however each was spelled (links, a trailing slash).
+/// Whether `a` and `b` name the same folder, however each was spelled (links, `..`, a trailing
+/// slash, a short 8.3 name on Windows), even when it no longer exists.
 fn same_folder(a: &Path, b: &Path) -> bool {
-    a == b
-        || std::fs::canonicalize(a)
-            .ok()
-            .zip(std::fs::canonicalize(b).ok())
-            .is_some_and(|(a, b)| a == b)
+    a == b || resolved(a) == resolved(b)
+}
+
+/// `path` with its longest existing ancestor resolved by the file system and the rest of it, which
+/// does not exist (a folder that was deleted), appended as written. A path nothing of which can
+/// be resolved is returned as it is.
+fn resolved(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut base = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(base) {
+            return missing.iter().rev().fold(real, |at, name| at.join(name));
+        }
+        match (base.parent(), base.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name);
+                base = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 /// Git's test for a registered folder to forget: the `.git` file in it is gone. A folder that
