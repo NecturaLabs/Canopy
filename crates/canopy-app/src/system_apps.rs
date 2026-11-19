@@ -2543,6 +2543,8 @@ mod tests {
         let there = there.join("alacritty");
         let saved = |program: &Path| format!("{} --unity-launch %F", program.display());
         let (gone_command, there_command) = (saved(&gone), saved(&there));
+        // A path to no file that no known program is called by, absolute on every platform.
+        let nothing_else = dir.path().join("nothing/else").display().to_string();
         let apps = Apps {
             editor: Some(SystemChoice {
                 name: "Text Editor".to_owned(),
@@ -2556,14 +2558,14 @@ mod tests {
             absent: absent_commands(&[
                 gone_command.clone(),
                 format!(" {there_command} "),
-                "/usr/share/nothing/else".to_owned(),
+                nothing_else.clone(),
                 "code".to_owned(),
             ]),
             ..Apps::default()
         };
         assert_eq!(
             apps.absent,
-            [gone_command.clone(), "/usr/share/nothing/else".to_owned()],
+            [gone_command.clone(), nothing_else],
             "only a path to a missing file is recorded"
         );
         let ran = launch(Some(&apps), &gone_command, Kind::Editor);

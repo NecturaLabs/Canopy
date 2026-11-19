@@ -999,21 +999,28 @@ fn a_file_an_interrupted_write_left_beside_a_registered_one_is_reported_never_de
     ));
     write(&gone, "half a copy");
     // Not this entry's, not a process id, and a write in progress in this very process.
-    write(
-        &apps.join(format!("other.desktop.canopy-new.{}", u32::MAX)),
-        "x",
-    );
-    write(
-        &apps.join("io.necturalabs.Canopy.desktop.canopy-new.abc"),
-        "x",
-    );
-    write(
-        &apps.join(format!(
+    let others = [
+        apps.join(format!("other.desktop.canopy-new.{}", u32::MAX)),
+        apps.join("io.necturalabs.Canopy.desktop.canopy-new.abc"),
+        apps.join(format!(
             "io.necturalabs.Canopy.desktop.canopy-new.{}",
             std::process::id()
         )),
-        "being written",
-    );
+    ];
+    for other in &others {
+        write(other, "x");
+    }
+    // Where a process id cannot be looked up (every system but Linux), a staging file counts as
+    // abandoned once untouched for an hour: they all look that old, so only the names decide.
+    for old in others.iter().chain([&gone]) {
+        fs::File::options()
+            .write(true)
+            .open(old)
+            .and_then(|f| {
+                f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_hours(2))
+            })
+            .expect("set the age");
+    }
     assert_eq!(abandoned_beside(&entry), std::slice::from_ref(&gone));
     let mut notes = Vec::new();
     note_abandoned_beside(&entry, &mut notes);

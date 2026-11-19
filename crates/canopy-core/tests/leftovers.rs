@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use canopy_core::leftovers::sweep_temp_dirs;
 use canopy_core::{Oid, Repo};
@@ -54,6 +54,33 @@ fn init(p: &Path) {
 /// A process id no process has: the staging name of a Canopy that was killed.
 const GONE: u32 = u32::MAX;
 
+/// Older than the hour after which a staging file or folder counts as abandoned where the system
+/// cannot say whether a process id is in use (every system but Linux).
+const LONG_AGO: Duration = Duration::from_hours(2);
+
+/// Makes the file or folder at `path` look untouched for [`LONG_AGO`].
+fn aged(path: &Path) {
+    let mut options = fs::File::options();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        /// The right to change a file's times, without the right to write to it.
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+        /// What lets `CreateFileW` open a folder.
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    // The owner may change the times through a read-only descriptor, a folder's included.
+    #[cfg(not(windows))]
+    options.read(true);
+    options
+        .open(path)
+        .and_then(|f| f.set_modified(SystemTime::now() - LONG_AGO))
+        .expect("set the age");
+}
+
 fn staging(dir: &Path, name: &str, pid: u32) -> PathBuf {
     let path = dir.join(format!(".{name}.canopy-{pid}-0.tmp"));
     fs::write(&path, "half a write").expect("write");
@@ -67,11 +94,21 @@ fn a_killed_write_is_reported_and_never_deleted() {
     fs::create_dir(dir.path().join("src")).expect("mkdir");
     let mine = staging(dir.path(), "a.txt", GONE);
     let nested = staging(&dir.path().join("src"), "lib.rs", GONE);
+    aged(&mine);
+    aged(&nested);
     // `*.tmp` is a common ignore rule: the leftover is still reported.
     fs::write(dir.path().join(".gitignore"), "*.tmp\n").expect("ignore");
     let repo = Repo::open(dir.path()).expect("open");
     let found = repo.abandoned_staging_files().expect("scan");
-    assert_eq!(found, [mine.clone(), nested.clone()]);
+    // Named from the repository's own folder, which libgit2 spells by its real path (`/private/var`
+    // on macOS, the long name with `/` on Windows): the same files are what matters.
+    let real = |paths: &[PathBuf]| -> Vec<PathBuf> {
+        paths
+            .iter()
+            .map(|p| fs::canonicalize(p).expect("the file exists"))
+            .collect()
+    };
+    assert_eq!(real(&found), real(&[mine.clone(), nested.clone()]));
     assert!(mine.is_file() && nested.is_file(), "nothing is deleted");
     assert_eq!(fs::read_to_string(&mine).expect("read"), "half a write");
 }
@@ -80,10 +117,15 @@ fn a_killed_write_is_reported_and_never_deleted() {
 fn a_file_being_written_now_and_other_files_are_not_reported() {
     let dir = tempfile::tempdir().expect("tempdir");
     init(dir.path());
-    // This process is writing it; so is process 1 (always running on Linux).
-    staging(dir.path(), "a.txt", std::process::id());
+    // This process is writing it, however old it looks; so is process 1 (always running on
+    // Linux).
+    aged(&staging(dir.path(), "a.txt", std::process::id()));
     if cfg!(target_os = "linux") {
         staging(dir.path(), "b.txt", 1);
+    } else {
+        // Where a process id cannot be looked up, a file touched within the hour may be one
+        // being written.
+        staging(dir.path(), "c.txt", GONE);
     }
     // Names that only look similar, and a committed file whose name matches the pattern.
     fs::write(dir.path().join("notes.canopy-5-0.tmp"), "x").expect("write");
@@ -132,6 +174,13 @@ fn swept_temp_folders_are_only_canopys_own_and_abandoned() {
     };
     #[cfg(target_os = "linux")]
     let running = make("canopy-patches-1-0");
+    // Where a process id cannot be looked up, a folder counts as abandoned once untouched for an
+    // hour; the others look as old, so only their names keep them.
+    for old in [&gone_patches, &gone_update, &own, &similar, &other, &file] {
+        aged(old);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let recent = make(&format!("canopy-patches-{GONE}-1"));
 
     let mut removed = sweep_temp_dirs(temp.path(), &["canopy-patches-", "canopy-update."]);
     removed.sort();
@@ -142,6 +191,8 @@ fn swept_temp_folders_are_only_canopys_own_and_abandoned() {
     assert!(own.is_dir() && similar.is_dir() && other.is_dir() && file.is_file());
     #[cfg(target_os = "linux")]
     assert!(running.is_dir(), "a running process's folder stays");
+    #[cfg(not(target_os = "linux"))]
+    assert!(recent.is_dir(), "a folder touched within the hour stays");
     #[cfg(unix)]
     assert!(link.symlink_metadata().is_ok(), "a link is never followed");
     assert!(outside.path().is_dir());

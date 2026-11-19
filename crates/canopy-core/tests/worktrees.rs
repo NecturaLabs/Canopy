@@ -101,11 +101,35 @@ impl Fixture {
     fn registered(&self) -> String {
         git(&self.main, &["worktree", "list", "--porcelain"]).replace('\\', "/")
     }
+
+    /// Whether git lists `folder` as a working folder of this repository.
+    fn is_registered(&self, folder: &Path) -> bool {
+        let want = resolved(folder);
+        git(&self.main, &["worktree", "list", "--porcelain"])
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .any(|listed| resolved(Path::new(listed)) == want)
+    }
 }
 
-/// `path` as git prints it: with `/` between the parts.
-fn slashed(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+/// `path` with its longest existing ancestor resolved by the file system and the rest appended as
+/// written, so a folder compares equal however it is spelled (git prints the long, real name with
+/// `/`; a temporary folder on Windows may be named by its short 8.3 name), deleted or not.
+fn resolved(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut base = path;
+    loop {
+        if let Ok(real) = fs::canonicalize(base) {
+            return missing.iter().rev().fold(real, |at, name| at.join(name));
+        }
+        match (base.parent(), base.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name);
+                base = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 fn exists(path: &Path) -> bool {
@@ -127,7 +151,7 @@ fn a_clean_worktree_is_removed_and_its_branch_stays() {
     f.repo.remove_worktree(&removal, &[]).expect("remove");
     assert!(!exists(&wt));
     assert!(!f.registered().contains("topic\n"), "{}", f.registered());
-    assert!(!f.registered().contains(&slashed(&wt)));
+    assert!(!f.is_registered(&wt));
     let branches = git(&f.main, &["branch", "--list", "topic"]);
     assert!(branches.contains("topic"), "branch stays: {branches}");
     assert_eq!(f.repo.worktrees().len(), 1);
@@ -172,7 +196,7 @@ fn each_kind_of_dirt_is_counted_and_git_refuses_it_without_force() {
         .remove_worktree(&removal, &[])
         .expect("forced removal");
     assert!(!exists(&wt));
-    assert!(!f.registered().contains(&slashed(&wt)));
+    assert!(!f.is_registered(&wt));
 }
 
 #[test]
@@ -457,18 +481,18 @@ fn missing_worktrees_are_listed_and_forgetting_matches_git_prune() {
     f.repo
         .forget_worktrees(&listed)
         .expect_err("the set changed");
-    assert!(f.registered().contains(&slashed(&gone)));
+    assert!(f.is_registered(&gone));
     fs::create_dir_all(&kept).expect("put the folder back");
     // (An empty folder without `.git` is as gone as a deleted one to git.)
     let expected = f.repo.forget_preview().expect("preview");
     assert_eq!(expected.entries.len(), 3);
     f.repo.forget_worktrees(&expected).expect("forget");
     let after = f.registered();
-    assert!(!after.contains(&slashed(&gone)), "{after}");
-    assert!(!after.contains(&slashed(&also)), "{after}");
-    assert!(!after.contains(&slashed(&kept)), "{after}");
+    assert!(!f.is_registered(&gone), "{after}");
+    assert!(!f.is_registered(&also), "{after}");
+    assert!(!f.is_registered(&kept), "{after}");
     // The locked one stays registered, with its reason, and so do the branches.
-    assert!(after.contains(&slashed(&held)), "{after}");
+    assert!(f.is_registered(&held), "{after}");
     assert!(after.contains("locked drive"), "{after}");
     let branches = git(&f.main, &["branch", "--list"]);
     assert!(branches.contains("gone") && branches.contains("held"));
@@ -488,6 +512,29 @@ fn removing_a_missing_worktree_is_refused_with_the_way_out() {
     assert!(reason.contains("Forget"), "{reason}");
     f.repo.remove_worktree(&removal, &[]).expect_err("refused");
     assert!(f.registered().contains("vanished"));
+}
+
+/// A missing folder cannot be resolved itself, but the folder it was in can: named through a
+/// link to that folder (or, on Windows, by its short 8.3 name) it is still the registered one.
+#[cfg(unix)]
+#[test]
+fn a_missing_worktree_named_through_a_linked_parent_is_found() {
+    let f = fixture();
+    let wt = f.linked("vanished");
+    fs::remove_dir_all(&wt).expect("delete by hand");
+    let link = f.main.parent().expect("root").join("link-to-linked");
+    std::os::unix::fs::symlink(&f.beside, &link).expect("symlink");
+    let removal = f
+        .repo
+        .worktree_removal(&link.join("vanished"), &[])
+        .expect("found through the link");
+    assert!(
+        removal
+            .blocked
+            .as_deref()
+            .is_some_and(|r| r.contains("Forget")),
+        "{removal:?}"
+    );
 }
 
 #[cfg(unix)]
@@ -537,8 +584,8 @@ fn forgetting_does_not_prune_an_unreadable_folder_next_to_a_missing_one() {
     let reason = preview.blocked.clone().expect("blocked");
     assert!(reason.contains("lo"), "{reason}");
     result.expect_err("refused");
-    assert!(after.contains(&slashed(&lo)), "still registered");
-    assert!(after.contains(&slashed(&gone)), "nothing was pruned");
+    assert!(f.is_registered(&lo), "still registered: {after}");
+    assert!(f.is_registered(&gone), "nothing was pruned: {after}");
 }
 
 /// What forgetting deletes is in the preview: a detached `HEAD` whose commits nothing else
@@ -889,7 +936,7 @@ fn a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it() {
     );
     f.repo.remove_worktree(&removal, &[]).expect_err("refused");
     assert!(exists(&guest), "the inner worktree is kept");
-    assert!(f.registered().contains(&slashed(&guest)));
+    assert!(f.is_registered(&guest));
 
     // The inner one is removable by itself, and then the outer one is too.
     let inner_removal = f.repo.worktree_removal(&guest, &[]).expect("inspect");
@@ -1060,7 +1107,8 @@ fn a_repository_inside_an_ignored_folder_is_never_deleted_with_it() {
 }
 
 /// A repository in an untracked folder whose name is not valid UTF-8 is just as much one.
-#[cfg(unix)]
+// macOS file systems (APFS, HFS+) refuse a file name that is not UTF-8.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn a_repository_in_a_folder_that_is_not_utf8_is_never_deleted_with_it() {
     use std::ffi::OsString;
@@ -1087,7 +1135,8 @@ fn a_repository_in_a_folder_that_is_not_utf8_is_never_deleted_with_it() {
 /// A folder whose name is not valid UTF-8 gets an administrative folder with a name that is not
 /// text either, which libgit2 cannot list. Canopy leaves it out of the list, refuses to remove
 /// it, and refuses to forget it (git's prune would) without it having been shown.
-#[cfg(unix)]
+// macOS file systems (APFS, HFS+) refuse a file name that is not UTF-8.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 #[expect(
     clippy::disallowed_methods,
@@ -1167,7 +1216,7 @@ fn the_same_folder_is_found_however_it_is_spelled_and_a_name_prefix_is_not_it() 
     f.repo.remove_worktree(&removal, &[]).expect("remove alpha");
     assert!(!exists(&alpha));
     assert!(exists(&alpha2.join("keep.txt")), "alpha2 is untouched");
-    assert!(f.registered().contains(&slashed(&alpha2)));
+    assert!(f.is_registered(&alpha2));
 
     // A path that is only a prefix of a registered folder is no worktree.
     let prefix = f.beside.join("alph");
@@ -1192,8 +1241,8 @@ fn forgetting_one_folder_leaves_a_neighbour_with_the_same_prefix() {
     assert_eq!(preview.entries[0].id, "wt");
     f.repo.forget_worktrees(&preview).expect("forget");
     let after = f.registered();
-    assert!(!after.contains(&format!("{}\n", slashed(&wt))), "{after}");
-    assert!(after.contains(&slashed(&wt2)), "{after}");
+    assert!(!f.is_registered(&wt), "{after}");
+    assert!(f.is_registered(&wt2), "{after}");
     assert!(exists(&wt2));
 }
 

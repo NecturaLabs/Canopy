@@ -16,6 +16,7 @@ issues. `never` means it has not been audited against this table yet.
 | Testing | The Rust book's testing chapter, the Cargo test documentation, the project's `testing` skill | 2026-11-18 |
 | Documentation | Diátaxis, the ADR guidance at adr.github.io, the project's `project-docs` skill | 2026-11-18 |
 | Open-source governance | GitHub's community health file documentation, the Open Source Guides (opensource.guide), the Contributor Covenant, SPDX licence identifiers, REUSE | 2026-11-18 |
+| Branches, pull requests and review | GitHub's ruleset, protected branch and pull request documentation, the OpenSSF Scorecard Branch-Protection and Code-Review checks, Conventional Commits, opensource.guide | 2026-11-19 |
 | Landing site | WCAG 2.2, web.dev guidance, MDN | 2026-11-18 |
 
 ## 2026-11-18
@@ -25,3 +26,15 @@ weekly RustSec advisory check, the AppStream metadata, the code of conduct (Cont
 3.0), `SUPPORT.md`, `ACCESSIBILITY.md` and README drift; secret scanning's non-provider patterns
 and validity checks and the required SHA pinning of actions were turned on. Filed: #196 to #209;
 added to #42, #95 and #188.
+
+## 2026-11-19
+
+Branches, pull requests and review, added as an area. Fixed: CI runs the tests on Linux, macOS and Windows
+for every code push, and its `Tests` check is required on `dev` and `main` (#214 made the suite
+pass on hosted runners); `dev` requires an up-to-date branch; the approval rule asks
+for a code owner and the latest push; only merge commits are allowed in the repository settings
+too; the pull request template asks for the issue, review focus and what was not verified; a
+Pull request title check; branch naming and promotion titles documented. Kept: the maintainer's
+admin bypass of the approval rule (one maintainer cannot approve their own pull requests; the
+Scorecard Code-Review check stays at 0 until there is a second reviewer), and `main`'s release
+merge commits not being on `dev`.

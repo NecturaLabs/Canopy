@@ -134,35 +134,38 @@ jobs:
       # code we do not write would fail CI.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  # The tests run on every platform Canopy ships for, on every push that changes code and on a
+  # pull request from a fork. The Tests job below is the one check a ruleset requires.
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.hosted }}
     needs: changes
-    if: needs.changes.outputs.code == 'true' && (vars.CI_TESTS == '1' || github.event_name == 'pull_request') && (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1' || vars.CI_WINDOWS == '1')
+    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      # On a push the whole job is off unless the repository variable CI_TESTS is '1' (the
-      # maintainers' pre-commit hook runs the tests before every commit; set CI_TESTS=1 to run them
-      # here again). A pull request from a fork always runs them.
-      # Then one toggle per platform, as repository variables: Linux runs unless CI_LINUX is '0';
-      # macOS and Windows run only when CI_MACOS or CI_WINDOWS is '1' (both off for now).
       matrix:
-        include: ${{ fromJSON(format('[{0}{1}{2}]', format('{0}', vars.CI_LINUX) != '0' && '{"os":"Linux","hosted":"ubuntu-latest"}' || '', vars.CI_MACOS == '1' && format('{0}{1}', format('{0}', vars.CI_LINUX) != '0' && ',' || '', '{"os":"macOS","hosted":"macos-latest"}') || '', vars.CI_WINDOWS == '1' && format('{0}{1}', (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1') && ',' || '', '{"os":"Windows","hosted":"windows-latest"}') || '')) }}
+        include:
+          - { os: Linux, hosted: ubuntu-latest }
+          - { os: macOS, hosted: macos-latest }
+          - { os: Windows, hosted: windows-latest }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           submodules: true
       - uses: ./.github/actions/setup-rust
-      # A job-local global config, so the tests never read the runner's own ~/.gitconfig.
+      # A job-local global config, so the tests never read the runner's own ~/.gitconfig, and no
+      # system config, whose values differ per runner image (Git for Windows sets core.autocrlf
+      # and the Linux image a safe.directory), as test-release.yml does.
       - name: Configure git for tests
         shell: bash
         run: |
           export GIT_CONFIG_GLOBAL="$RUNNER_TEMP/gitconfig"
           echo "GIT_CONFIG_GLOBAL=$GIT_CONFIG_GLOBAL" >> "$GITHUB_ENV"
+          echo "GIT_CONFIG_NOSYSTEM=1" >> "$GITHUB_ENV"
           git config --global user.name "Canopy CI"
           git config --global user.email "ci@canopy.invalid"
           git config --global init.defaultBranch main
@@ -179,6 +182,30 @@ jobs:
       - name: Hidden-window check
         if: runner.os == 'Linux'
         run: python3 tools/stall-check.py --require
+
+  # The check the rulesets require for the tests: one name for the matrix, since a skipped matrix
+  # job reports no per-platform name, and requiring "Test (Linux)" would leave a documentation-only
+  # push waiting forever. It always runs, so a cancelled run fails it
+  # rather than skipping it (a skipped job satisfies a required check). A skipped test job passes
+  # (a documentation-only push, or a pull request from a branch of this repository, which its push
+  # run covers); a failed or cancelled one fails.
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    needs: [changes, test]
+    if: always()
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every test job passed or was skipped
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RESULT: ${{ needs.test.result }}
+        run: |
+          echo "What changed: $CHANGES; test jobs: $RESULT"
+          for r in "$CHANGES" "$RESULT"; do
+            [[ $r == success || $r == skipped ]] || exit 1
+          done
 
   # The quick checks share one job, so a run starts fewer jobs. Every check runs even when an earlier one failed, so one
   # run reports them all. A documentation-only change runs only the documentation check.

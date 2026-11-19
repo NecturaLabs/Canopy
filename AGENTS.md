@@ -112,11 +112,10 @@ adding a dependency.
   (a merge of an up-to-date branch), and runs whenever that cannot be established. `site.yml`
   checks `site/` and, on `main`, deploys it to Netlify (https://canopy.necturalabs.com).
   `stall-check.py` runs in CI's Linux test job and must pass. Run `cargo deny check`
-  yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) adds
-  tests per platform only when `CI_TESTS` is `1` (off: the pre-commit hook runs `cargo test`; a
-  pull request from a fork always runs them),
-  then one repository variable each: Linux runs unless `CI_LINUX`
-  is `0`; macOS and Windows run only when `CI_MACOS` / `CI_WINDOWS` is `1` (off for now).
+  yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) runs
+  the workspace tests on Linux, macOS and Windows for every push that changes code and for a
+  fork's pull request; its `Tests` check sums them up and is required on `dev` and `main`.
+  `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` pick the release platforms only.
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`
   (`-h` lists the options)
@@ -143,8 +142,12 @@ adding a dependency.
   free.
 - Branches: `dev` is the default branch and takes all work; `main` takes only `dev`, through a
   pull request, when a build is released (rulesets and `branch-policy.yml` enforce it; only the
-  owner can merge into either). Branch from `dev`, open short-lived, reviewable PRs into `dev`,
-  linking the relevant issues. Only collaborators can open issues; others use Discussions.
+  owner can merge into either). Branch from `dev` as `<type>/<topic>` (`feat/`, `fix/`, `docs/`,
+  `ci/`, `chore/`...), open short-lived, reviewable PRs into `dev`: one focused change each (a
+  refactor apart from a behaviour change), titled in commit-subject form, the template filled in
+  and `Closes #N` (or `Refs #N` for part of an issue) for the relevant issues. A promotion PR from
+  `dev` into `main` is titled `chore(release): promote <what> to main`; `main`'s merge commits
+  are not on `dev`, and that is expected. Only collaborators can open issues; others use Discussions.
   Commit frequently and atomically using Conventional Commits. Related small backlog fixes can
   share one PR, with a separate commit per independent fix. **Never merge into `dev` or `main`
   without the owner's explicit approval.** Before recommending a merge, run

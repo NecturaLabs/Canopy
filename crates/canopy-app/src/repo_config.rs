@@ -685,9 +685,13 @@ mod tests {
             .expect("read")
             .expect("set");
         assert_eq!(found.scope, "local");
+        // Git names the file by its real path, which on Windows may be spelled differently from
+        // the temporary folder's (a short 8.3 name, `/`): the same file is what matters.
+        let file = Path::new(found.origin.strip_prefix("file:").expect("a file origin"));
+        assert!(file.is_absolute(), "{}", found.origin);
         assert_eq!(
-            found.origin,
-            format!("file:{}", dir.join(".git/config").display())
+            std::fs::canonicalize(file)?,
+            std::fs::canonicalize(dir.join(".git/config"))?
         );
         Ok(())
     }
@@ -702,12 +706,17 @@ mod tests {
         let found = get_value(dir.path(), &[], "commit.gpgsign")
             .expect("read")
             .expect("set");
-        assert_eq!(found.file, Some(dir.path().join(".git/ü.inc")));
+        let file = found.file.as_deref().expect("a file");
+        assert_eq!(
+            std::fs::canonicalize(file)?,
+            std::fs::canonicalize(dir.path().join(".git/ü.inc"))?
+        );
         assert!(!found.origin.contains('"'), "{}", found.origin);
         Ok(())
     }
 
-    #[cfg(unix)]
+    // macOS file systems (APFS, HFS+) refuse a file name that is not UTF-8.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn a_config_file_keeps_non_utf8_path_bytes() -> std::io::Result<()> {
         use std::os::unix::ffi::OsStringExt;
