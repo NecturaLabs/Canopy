@@ -30,6 +30,7 @@ mod settings_file;
 mod settings_store;
 mod storage;
 mod system_apps;
+mod system_theme;
 mod tab;
 mod trust;
 mod ui;
@@ -87,6 +88,7 @@ OPTIONS:
                               accent=<hue 0-359>, intensity=<20-140>, tint=<0-100>,
                               tint-hue=<0-359> (with --theme custom)
         --motion <MOTION>     Motion: system, reduced or full
+        --system <MODE>       Match system, as in a dark or light system: dark or light
         --gallery-page <N>    With --overlay gallery, scroll down N window heights
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
         --demo-requests <V>   With --screenshot, show invented pull requests (no network) in a
@@ -179,6 +181,15 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                         "on" => true,
                         "off" => false,
                         _ => return Err("--contrast takes on or off".into()),
+                    },
+                );
+            }
+            "--system" => {
+                launch.system_dark = Some(
+                    match next_text(&mut args, "--system needs dark or light")?.as_str() {
+                        "dark" => true,
+                        "light" => false,
+                        _ => return Err("--system takes dark or light".into()),
                     },
                 );
             }

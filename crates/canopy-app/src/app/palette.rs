@@ -17,6 +17,12 @@ impl CanopyApp {
             AppearanceChoice::Density(v) => s.density = v,
             AppearanceChoice::Translucent(on) => s.translucent = on,
             AppearanceChoice::HighContrast(on) => s.high_contrast = on,
+            AppearanceChoice::MatchSystem(on) => {
+                s.match_system = on;
+                if on {
+                    self.ask_system(ctx);
+                }
+            }
             AppearanceChoice::Motion(v) => {
                 s.motion = v;
                 if v == MotionPref::System {
@@ -27,8 +33,8 @@ impl CanopyApp {
         self.apply_look(ctx);
     }
 
-    /// The palette's Appearance entries: Style, Density, Translucent surfaces, High contrast and
-    /// Motion (spec 6.2). Turning translucency on is offered only where it can work.
+    /// The palette's Appearance entries: Style, Density, Translucent surfaces, High contrast, Match
+    /// system and Motion (spec 6.2). Turning translucency on is offered only where it can work.
     fn appearance_entries(&self) -> Vec<(Entry, Action)> {
         let e = |icon: &'static str, label: String, choice: AppearanceChoice| {
             (
@@ -76,6 +82,13 @@ impl CanopyApp {
                 icon::CIRCLE_HALF,
                 format!("High contrast: {}", if on { "On" } else { "Off" }),
                 AppearanceChoice::HighContrast(on),
+            ));
+        }
+        for on in [true, false] {
+            v.push(e(
+                icon::MONITOR,
+                format!("Match system: {}", if on { "On" } else { "Off" }),
+                AppearanceChoice::MatchSystem(on),
             ));
         }
         for motion in MotionPref::ALL {
@@ -906,7 +919,12 @@ mod tests {
             assert!(all.contains(&label.as_str()), "{all:?}");
         }
         assert!(all.iter().any(|l| l.starts_with("Motion: ")), "{all:?}");
-        for label in ["High contrast: On", "High contrast: Off"] {
+        for label in [
+            "High contrast: On",
+            "High contrast: Off",
+            "Match system: On",
+            "Match system: Off",
+        ] {
             assert!(all.contains(&label), "{all:?}");
         }
     }

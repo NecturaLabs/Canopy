@@ -177,6 +177,8 @@ pub struct Launch {
     pub high_contrast: Option<bool>,
     pub custom_theme: Option<crate::ui::custom_theme::CustomTheme>,
     pub motion: Option<crate::ui::motion::MotionPref>,
+    /// `--system dark|light`: Match system on, with this as the system's answer.
+    pub system_dark: Option<bool>,
     /// The gallery page (window heights scrolled) for `--overlay gallery`.
     pub gallery_page: usize,
     /// `--glass-soak N` (debug builds): paint floating layers, glass when Translucent surfaces is
@@ -271,6 +273,10 @@ pub struct CanopyApp {
     trust_seen: u64,
     /// The theme and appearance installed in egui, so they are re-applied only when they change.
     applied: Option<(ThemeId, bool, theme::CustomTheme, theme::Appearance)>,
+    /// Where Match system's answer comes from.
+    system: SystemMode,
+    /// Whether the window had the focus last frame: Match system asks again when it returns.
+    focused: bool,
     /// The gallery overlay (`--overlay gallery`) and the page it shows.
     gallery: Option<usize>,
     /// The translucent-surfaces soak run (`--glass-soak`), if one was asked for.
@@ -372,6 +378,10 @@ impl CanopyApp {
         }
         if let Some(t) = launch.theme {
             settings.theme = t;
+            settings.match_system = false;
+        }
+        if launch.system_dark.is_some() {
+            settings.match_system = true;
         }
         if let Some(zoom) = launch.zoom {
             settings.zoom = zoom;
@@ -412,6 +422,10 @@ impl CanopyApp {
         // Screenshots stay deterministic: no system answer (motion counts as not reduced).
         if !shooting && settings.motion == crate::ui::motion::MotionPref::System {
             crate::ui::motion::query_system(&cc.egui_ctx);
+        }
+        // A screenshot's system is the one `--system` names, or none.
+        if !shooting && launch.system_dark.is_none() && settings.match_system {
+            crate::system_theme::query(&cc.egui_ctx);
         }
         crate::ui::kit::glass::init(cc.gl.as_deref());
         if !shooting {
@@ -462,6 +476,11 @@ impl CanopyApp {
                 start_askpass(&cc.egui_ctx)
             },
             applied: None,
+            system: match (launch.system_dark, shooting) {
+                (None, false) => SystemMode::Live,
+                (fixed, _) => SystemMode::Fixed(fixed),
+            },
+            focused: true,
             gallery: (launch.overlay.as_deref() == Some("gallery")).then_some(launch.gallery_page),
             glass_soak: launch
                 .glass_soak
@@ -826,9 +845,38 @@ impl CanopyApp {
         self.tabs.iter_mut().find(|t| t.path == repo)
     }
 
+    /// Shows the theme the user picked by name, which ends Match system: the pick would
+    /// otherwise last only until the system's answer is next applied.
     fn set_theme(&mut self, ctx: &egui::Context, id: ThemeId) {
         self.settings.theme = id;
+        self.settings.match_system = false;
         self.apply_look(ctx);
+    }
+
+    /// Whether the system is dark, for Match system (`None` while it has not said).
+    fn system_dark(&self, ctx: &egui::Context) -> Option<bool> {
+        match self.system {
+            SystemMode::Live => crate::system_theme::dark(ctx),
+            SystemMode::Fixed(dark) => dark,
+        }
+    }
+
+    /// Asks the system again when the window gets the focus back with Match system on: the user
+    /// may be returning from changing it, and Linux does not announce the change.
+    fn refresh_system_theme(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.focused);
+        let returned = focused && !self.focused;
+        self.focused = focused;
+        if returned && self.settings.match_system {
+            self.ask_system(ctx);
+        }
+    }
+
+    /// Asks the system whether it is dark, unless the answer is fixed.
+    pub(super) fn ask_system(&self, ctx: &egui::Context) {
+        if self.system == SystemMode::Live {
+            crate::system_theme::query(ctx);
+        }
     }
 
     /// What the settings, the system's motion and transparency answers and the graphics backend
@@ -849,6 +897,8 @@ impl CanopyApp {
     /// Installs the theme and appearance when either changed (a setting, or the system's motion
     /// answer arriving).
     fn apply_look(&mut self, ctx: &egui::Context) {
+        let system_dark = self.system_dark(ctx);
+        self.settings.follow_system(system_dark);
         theme::set_high_contrast(self.settings.high_contrast);
         theme::set_custom(self.settings.custom_theme);
         let look = self.look();
@@ -886,7 +936,16 @@ impl CanopyApp {
                 .map_or("(not written)".to_owned(), |f| f.display().to_string())
         );
         let _ = writeln!(t, "Log detail: {}", self.settings.log_level.label());
-        let _ = writeln!(t, "Theme: {}", self.settings.theme.name());
+        let _ = writeln!(
+            t,
+            "Theme: {}{}",
+            self.settings.theme.name(),
+            if self.settings.match_system {
+                " (matching the system)"
+            } else {
+                ""
+            }
+        );
         let _ = writeln!(
             t,
             "High contrast: {}",
@@ -941,6 +1000,9 @@ impl CanopyApp {
         {
             crate::ui::motion::query_system(ctx);
         }
+        if s.match_system && !before.match_system {
+            self.ask_system(ctx);
+        }
         self.apply_look(ctx);
         let s = &self.settings;
         if (ctx.zoom_factor() - s.zoom).abs() > f32::EPSILON {
@@ -990,11 +1052,21 @@ fn name_window(ctx: &egui::Context, repository: Option<&str>) {
     ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(name));
 }
 
+/// Where Match system's answer comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SystemMode {
+    /// The system itself.
+    Live,
+    /// A fixed answer: `--system`'s, and none in a screenshot or a test, which never ask.
+    Fixed(Option<bool>),
+}
+
 /// The settings whose change needs more than a repaint, as they were before Settings drew a
 /// frame: compared after it, without copying the whole settings every frame Settings is open.
 #[derive(Debug, Clone, Copy)]
 struct Watched {
     motion: crate::ui::motion::MotionPref,
+    match_system: bool,
     diff: settings::DiffPrefs,
     split_diff: bool,
     request_density: crate::request_view::RequestDensity,
@@ -1008,6 +1080,7 @@ impl Watched {
     fn of(s: &Settings) -> Self {
         Self {
             motion: s.motion,
+            match_system: s.match_system,
             diff: s.diff,
             split_diff: s.split_diff,
             request_density: s.request_density,
@@ -1080,6 +1153,7 @@ impl eframe::App for CanopyApp {
         let ctx = ui.ctx().clone();
         name_window(&ctx, self.tabs.get(self.active).map(|t| t.name.as_str()));
         update_window_minimum(&ctx);
+        self.refresh_system_theme(&ctx);
         self.apply_look(&ctx);
         let p = palette(&ctx);
         let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
@@ -1140,6 +1214,7 @@ impl eframe::App for CanopyApp {
                     &self.tabs,
                     self.active,
                     self.settings.theme,
+                    self.settings.match_system,
                     &mut actions,
                 );
             });
@@ -1779,6 +1854,8 @@ pub(super) fn test_app() -> CanopyApp {
         askpass: None,
         trust_seen: 0,
         applied: None,
+        system: SystemMode::Fixed(None),
+        focused: true,
         gallery: None,
         glass_soak: None,
         frame_stats: crate::frame_stats::FrameStats::default(),

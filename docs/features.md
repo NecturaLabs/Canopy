@@ -369,10 +369,11 @@ A response with the wrong JSON shape reports its failure location without quotin
 | Configurable keybindings: Settings → Keyboard changes any row's key (a key another row uses is refused, naming it), resets one or all, and keeps them in settings export and import | Done | ? | ? | ? |
 | Dark and light themes (Midnight and Daylight) | Done | Yes | Yes | ? |
 | Observatory theme (the previous Midnight) | Done | ? | ? | ? |
+| Match system: follows the system's light or dark mode with a chosen dark theme and light theme (Midnight and Daylight by default); in Settings → Appearance, the toolbar's theme menu and the command palette; kept in settings export and import | Done | ? | ? | ? |
 | High contrast switch for every theme (keeps the theme's backgrounds and colours, raises text, outlines and focus) | Done | ? | ? | ? |
 | History graph options: commit marks (dots, rings, squares, diamonds) and lines (curves, metro, circuit) | Done | ? | ? | ? |
 | Appearance options: Style (Standard, Deeper), Density (Comfortable, Dense), Motion (match system, reduced, full); Translucent surfaces (off by default; menus, select lists, popovers, dialogs, toasts, the command palette and the cheatsheet) | Done | ? | ? | ? |
-| Command palette entries for Style, Density, Translucent surfaces, High contrast and Motion; High contrast also in the toolbar's theme menu | Done | ? | ? | ? |
+| Command palette entries for Style, Density, Translucent surfaces, High contrast, Match system and Motion; High contrast also in the toolbar's theme menu | Done | ? | ? | ? |
 | Custom theme: Midnight or Daylight recoloured from an accent (swatches, hue, intensity) and a tint (swatches, hue, strength); text and lines keep their contrast; works with High contrast | Done | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |

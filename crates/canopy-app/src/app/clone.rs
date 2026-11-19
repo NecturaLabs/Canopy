@@ -136,6 +136,8 @@ mod tests {
             askpass: None,
             trust_seen: 0,
             applied: None,
+            system: SystemMode::Fixed(None),
+            focused: true,
             gallery: None,
             glass_soak: None,
             frame_stats: crate::frame_stats::FrameStats::default(),

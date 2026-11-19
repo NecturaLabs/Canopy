@@ -884,6 +884,9 @@ fn matches_all(words: &[String], texts: &[&str]) -> bool {
 fn synonyms(title: &str) -> &'static str {
     match title {
         "Theme" => "colour color dark light mode midnight daylight observatory contrast",
+        "Match system" => "follow os automatic auto dark light mode appearance colour color scheme",
+        "Dark theme" => "match system night midnight observatory colour color",
+        "Light theme" => "match system day daylight colour color",
         "Style" => "standard deeper flat depth shadows look",
         "High contrast" => "contrast accessibility low vision glare legibility readable bold",
         "Translucent surfaces" => "glass blur transparency transparent frosted",
@@ -2252,7 +2255,27 @@ const STALE_DAYS: RangeInclusive<f64> = 1.0..=3650.0;
 
 fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
-    if block(ui, "Theme", "") {
+    row_explained(
+        ui,
+        "Match system",
+        "Follow the system's light or dark mode.",
+        "Shows one theme while the system is dark and another while it is light. Choosing a \
+         theme by name, from the toolbar or the command palette, turns this off.",
+        |ui| {
+            revert(
+                ui,
+                &mut s.match_system,
+                &DEFAULTS.match_system,
+                "Match system",
+            );
+            let on = s.match_system;
+            switch_with(Switch::new(&mut s.match_system, ""), ui, on, "Match system");
+        },
+    );
+    if s.match_system {
+        system_theme_row(ui, s, true);
+        system_theme_row(ui, s, false);
+    } else if block(ui, "Theme", "") {
         theme_cards(ui, s);
     }
     if s.theme == ThemeId::Custom {
@@ -2526,6 +2549,42 @@ fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
             });
         });
     }
+}
+
+/// Match system's theme for a dark or a light system: the themes of that kind (the custom theme
+/// with the one its base belongs to).
+fn system_theme_row(ui: &mut Ui, s: &mut Settings, dark: bool) {
+    let (title, help, default) = if dark {
+        (
+            "Dark theme",
+            "Shown while the system is dark.",
+            crate::settings::SYSTEM_DARK,
+        )
+    } else {
+        (
+            "Light theme",
+            "Shown while the system is light.",
+            crate::settings::SYSTEM_LIGHT,
+        )
+    };
+    row(ui, title, help, |ui| {
+        let mut chosen = s.system_theme(dark);
+        let before = chosen;
+        revert(ui, &mut chosen, &default, title);
+        let options: Vec<(ThemeId, &str)> = s
+            .themes_for(dark)
+            .into_iter()
+            .map(|t| (t, t.name()))
+            .collect();
+        Segmented::new(&mut chosen, &options).label(title).show(ui);
+        if chosen != before {
+            if dark {
+                s.dark_theme = chosen;
+            } else {
+                s.light_theme = chosen;
+            }
+        }
+    });
 }
 
 /// The theme cards, whole cards per row.

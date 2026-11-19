@@ -1447,6 +1447,32 @@ mod tests {
         assert!(!theme::high_contrast());
         assert!(!palette(&ctx).strict);
     }
+
+    /// Match system from the palette or the theme menu shows the theme the system asks for on
+    /// the same frame; picking a theme by name turns it off, so the pick stays.
+    #[test]
+    fn match_system_follows_the_system_until_a_theme_is_picked() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.system = SystemMode::Fixed(Some(false));
+        app.apply(
+            &ctx,
+            vec![Action::SetAppearance(AppearanceChoice::MatchSystem(true))],
+        );
+        assert!(app.settings.match_system);
+        assert_eq!(app.settings.theme, ThemeId::Daylight);
+        assert_eq!(theme::active(), ThemeId::Daylight);
+
+        app.system = SystemMode::Fixed(Some(true));
+        app.apply_look(&ctx);
+        assert_eq!(theme::active(), ThemeId::Midnight);
+
+        app.apply(&ctx, vec![Action::SetTheme(ThemeId::Daylight)]);
+        assert!(!app.settings.match_system);
+        app.apply_look(&ctx);
+        assert_eq!(theme::active(), ThemeId::Daylight);
+    }
+
     #[test]
     fn insights_refresh_targets_its_repository_and_keeps_one_dialog() {
         let ctx = egui::Context::default();
