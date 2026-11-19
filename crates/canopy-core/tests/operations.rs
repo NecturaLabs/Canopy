@@ -1834,7 +1834,8 @@ fn pull_config_reads_a_key_without_a_value_and_included_files() {
     assert_eq!(value_less.sources[0].value, "true");
 }
 
-#[cfg(unix)]
+// macOS file systems (APFS, HFS+) refuse a file name that is not UTF-8.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn pull_config_names_a_file_that_is_not_utf8() {
     use std::os::unix::ffi::OsStrExt;
@@ -4066,7 +4067,8 @@ fn stale_candidates_period_uses_strict_committer_time_cutoff() {
     );
 }
 
-#[cfg(unix)]
+// macOS file systems (APFS, HFS+) refuse a file name that is not UTF-8.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn stale_candidates_non_utf8_worktree_path_is_protected_without_lossy_removal() {
     use std::os::unix::ffi::OsStringExt as _;

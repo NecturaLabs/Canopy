@@ -1189,6 +1189,9 @@ fn submodule_fixture() -> (tempfile::TempDir, Repo, std::path::PathBuf) {
         ],
     );
     let sub = sup.join("deps").join("lib");
+    // The clone takes none of `lib`'s local configuration: LF line endings here too, whatever
+    // the system's configuration says (Git for Windows sets core.autocrlf).
+    git(&sub, &["config", "core.autocrlf", "false"]);
     git(&sub, &["checkout", "-q", "HEAD~1"]);
     git(&sup, &["add", "deps/lib"]);
     git(&sup, &["commit", "-q", "-m", "feat: add lib"]);
@@ -1962,6 +1965,17 @@ fn discarding_a_submodule_allows_an_unrelated_case_variant_path() {
     fs::create_dir(sub.join("A.TXT")).expect("make case-variant directory");
     fs::write(sub.join("A.TXT").join("notes"), "precious\n").expect("write note");
 
+    if sub.join("a.txt").exists() {
+        // A file system that ignores case (Windows, macOS by default) has `A.TXT` be `a.txt`: the
+        // folder obstructs the tracked file, so Discard refuses and keeps the note.
+        let err = repo.discard(&submodule_row(&repo)).expect_err("refused");
+        assert!(err.to_string().contains("obstruct"), "{err}");
+        assert_eq!(
+            fs::read_to_string(sub.join("A.TXT").join("notes")).expect("read note"),
+            "precious\n"
+        );
+        return;
+    }
     repo.discard(&submodule_row(&repo)).expect("discard");
 
     assert_eq!(
@@ -2095,7 +2109,9 @@ fn discarding_a_submodule_with_glob_characters_touches_only_its_literal_path() {
         let (dir, repo, _sub) = submodule_fixture();
         let sup = dir.path().join("super");
         let url = dir.path().join("lib").to_string_lossy().into_owned();
-        for path in ["deps/lib1", "deps/lib[1]"] {
+        // `deps/lib[1]` first: on Windows the shell part of `git submodule` expands a pattern
+        // that matches a folder (`deps/lib1`) before git sees it.
+        for path in ["deps/lib[1]", "deps/lib1"] {
             git(
                 &sup,
                 &[
@@ -2154,7 +2170,8 @@ fn discarding_a_submodule_with_glob_characters_touches_only_its_literal_path() {
 }
 
 /// Submodule operations keep a native non-UTF-8 path rather than looking for U+FFFD on disk.
-#[cfg(unix)]
+// macOS file systems (APFS, HFS+) refuse a file name that is not UTF-8.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn discarding_a_submodule_uses_its_non_utf8_path() {
     use std::os::unix::ffi::OsStrExt;

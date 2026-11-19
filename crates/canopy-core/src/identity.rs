@@ -448,12 +448,19 @@ mod tests {
             .iter()
             .rfind(|(key, _)| key == "user.name")
             .expect("name");
+        let origin = match &name.source {
+            Some(Source::Config { scope, origin }) if scope == "local" => Some(origin),
+            _ => None,
+        }
+        .expect("a local config origin");
+        // Git names the file by its real path, which on Windows may be spelled differently from
+        // the temporary folder's (a short 8.3 name, `/`): the same file is what matters.
+        let file = Path::new(origin.strip_prefix("file:").expect("a file origin"));
+        assert!(file.is_absolute(), "{origin}");
         assert_eq!(
-            name.source,
-            Some(Source::Config {
-                scope: "local".into(),
-                origin: format!("file:{}", dir.join(".git/config").display()),
-            })
+            std::fs::canonicalize(file).expect("the origin exists"),
+            std::fs::canonicalize(dir.join(".git/config")).expect("the config exists"),
+            "{origin}"
         );
     }
 

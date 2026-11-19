@@ -523,9 +523,13 @@ mod tests {
         let sub = root.path().join("sub");
         std::fs::create_dir(&sub).expect("directory");
         let entries = read(&sub, false, Query::Get("a.b")).expect("read");
+        // Git names the file by its real path, which on Windows may be spelled differently from
+        // the temporary folder's (a short 8.3 name, `/`): the same file is what matters.
+        let file = entries[0].file.as_deref().expect("a file");
+        assert!(file.is_absolute(), "{file:?}");
         assert_eq!(
-            entries[0].file.as_deref(),
-            Some(root.path().join(".git/config").as_path())
+            std::fs::canonicalize(file).expect("the file exists"),
+            std::fs::canonicalize(root.path().join(".git/config")).expect("the config exists")
         );
     }
 }

@@ -1874,10 +1874,16 @@ impl RepoTab {
 
     /// Sends the planned search when its time has come; returns how long until it does.
     pub fn run_search_if_due(&mut self) -> Option<Duration> {
+        self.run_search_if_due_at(Instant::now())
+    }
+
+    /// [`Self::run_search_if_due`] at `now`.
+    fn run_search_if_due_at(&mut self, now: Instant) -> Option<Duration> {
         let due = self.requests.search_due?;
-        let now = Instant::now();
-        if let Some(wait) = due.checked_duration_since(now) {
-            return Some(wait);
+        // Due at `now` is due: on a clock as coarse as Windows' the two often read the same, and
+        // an answer of "in no time" would only put the search off to the next frame.
+        if due > now {
+            return Some(due - now);
         }
         if self.requests.loading {
             // The list on its way answers first; the search follows it.
@@ -6618,8 +6624,10 @@ mod tests {
         tab.request_view_changed();
         assert!(tab.run_search_if_due().is_some(), "not before the pause");
         assert_eq!(queries(&jobs).len(), 0);
-        tab.requests.search_due = Some(Instant::now());
-        assert_eq!(tab.run_search_if_due(), None);
+        // Due at this very instant is due (a clock as coarse as Windows' often reads the same).
+        let now = Instant::now();
+        tab.requests.search_due = Some(now);
+        assert_eq!(tab.run_search_if_due_at(now), None);
         let asked = queries(&jobs);
         assert_eq!(asked.len(), 1);
         assert_eq!(asked[0].text, "needle");

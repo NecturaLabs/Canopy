@@ -1,3 +1,6 @@
 # The vendored crates and their patches must stay byte-exact: no line-ending conversion, even with
 # core.autocrlf=true (tools/vendor-eframe.sh --check compares them with the published crate).
 vendor/** -text
+# Signed test manifests: a signature covers the exact bytes, so a checkout must not convert line
+# endings either (Git for Windows' core.autocrlf would).
+crates/canopy-hosting/testdata/** -text
