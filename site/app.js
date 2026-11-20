@@ -314,7 +314,9 @@ function tourSync() {
   const available = !calm.matches && !search.hidden && !input.value;
   if (!available && document.activeElement === tourToggle) (search.hidden ? $("a", list) : input)?.focus();
   tourToggle.hidden = !available;
-  tourToggle.setAttribute("aria-pressed", String(tourPaused));
+  const tourName = tourPaused ? "Resume tour" : "Pause tour";
+  tourToggle.setAttribute("aria-label", tourName);
+  tourToggle.title = tourName;
   tourIcon.textContent = tourPaused ? "\uE3D0" : "\uE39E";
   const run = available && !tourPaused && heroInView && !document.hidden;
   palette.classList.toggle("is-touring", run);
