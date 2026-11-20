@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, is_login, optional, search_words, unix};
 use crate::error::{Error, Result, map_head_conflict};
-use crate::http::{Http, Method, encode};
+use crate::http::{Http, Method, encode, visible_name};
 use crate::model::{
     Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
     RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
@@ -73,10 +73,17 @@ struct Pull {
     deletions: Option<u32>,
 }
 
+/// The login to show: GitHub's name for a deleted account when there is none, or nothing of it
+/// is visible.
 fn login(user: Option<&User>) -> String {
-    user.map(|u| u.login.clone())
+    user.map(|u| visible_name(&u.login))
         .filter(|l| !l.is_empty())
         .unwrap_or_else(|| "ghost".to_owned())
+}
+
+/// A label's name as shown; `None` when nothing of it is visible.
+fn label_name(label: &Label) -> Option<String> {
+    Some(visible_name(&label.name)).filter(|name| !name.is_empty())
 }
 
 impl Pull {
@@ -96,7 +103,7 @@ impl Pull {
         };
         RequestSummary {
             number: self.number,
-            title: self.title.clone(),
+            title: visible_name(&self.title),
             author: login(self.user.as_ref()),
             state,
             draft: self.draft,
@@ -106,7 +113,7 @@ impl Pull {
             created_at: unix(self.created_at.as_deref()),
             updated_at: unix(self.updated_at.as_deref()),
             web_url: self.html_url.clone(),
-            labels: self.labels.iter().map(|l| l.name.clone()).collect(),
+            labels: self.labels.iter().filter_map(label_name).collect(),
             description: description_preview(self.body.as_deref().unwrap_or_default()),
             rollup: None,
         }
@@ -332,7 +339,7 @@ impl SearchPull {
     fn summary(&self) -> Option<RequestSummary> {
         (self.number != 0).then(|| RequestSummary {
             number: self.number,
-            title: self.title.clone(),
+            title: visible_name(&self.title),
             author: login(self.author.as_ref()),
             state: match self.state.as_str() {
                 "MERGED" => RequestState::Merged,
@@ -346,7 +353,7 @@ impl SearchPull {
             created_at: unix(self.created_at.as_deref()),
             updated_at: unix(self.updated_at.as_deref()),
             web_url: self.url.clone(),
-            labels: self.labels.nodes.iter().map(|l| l.name.clone()).collect(),
+            labels: self.labels.nodes.iter().filter_map(label_name).collect(),
             description: description_preview(self.body.as_deref().unwrap_or_default()),
             rollup: None,
         })
@@ -569,11 +576,7 @@ pub(crate) fn details(http: &Http, repo: &str, number: u64) -> Result<RequestDet
                 None,
             ),
         ) {
-            checks.extend(runs.check_runs.into_iter().map(|r| Check {
-                state: check_run_state(&r.status, r.conclusion.as_deref()),
-                url: r.html_url.or(r.details_url).filter(|u| !u.is_empty()),
-                name: r.name,
-            }));
+            checks.extend(runs.check_runs.into_iter().map(check_from_run));
         }
         if let Some(combined) = optional(
             "commit statuses",
@@ -583,11 +586,7 @@ pub(crate) fn details(http: &Http, repo: &str, number: u64) -> Result<RequestDet
                 None,
             ),
         ) {
-            checks.extend(combined.statuses.into_iter().map(|s| Check {
-                state: status_state(&s.state),
-                url: s.target_url.filter(|u| !u.is_empty()),
-                name: s.context,
-            }));
+            checks.extend(combined.statuses.into_iter().map(check_from_status));
         }
     }
 
@@ -604,6 +603,22 @@ pub(crate) fn details(http: &Http, repo: &str, number: u64) -> Result<RequestDet
         checks,
         comments,
     })
+}
+
+fn check_from_run(r: CheckRun) -> Check {
+    Check {
+        state: check_run_state(&r.status, r.conclusion.as_deref()),
+        url: r.html_url.or(r.details_url).filter(|u| !u.is_empty()),
+        name: visible_name(&r.name),
+    }
+}
+
+fn check_from_status(s: Status) -> Check {
+    Check {
+        state: status_state(&s.state),
+        url: s.target_url.filter(|u| !u.is_empty()),
+        name: visible_name(&s.context),
+    }
 }
 
 pub(crate) fn create(http: &Http, repo: &str, req: &NewRequest) -> Result<RequestSummary> {
@@ -670,6 +685,131 @@ pub(crate) fn approve(http: &Http, repo: &str, number: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn user(login: &str) -> User {
+        User {
+            login: login.into(),
+        }
+    }
+
+    #[test]
+    fn pull_summary_drops_what_hides_text_and_blanks_the_braille_blank() {
+        let pull = Pull {
+            title: "Fix\u{202E}  A\u{2800}\u{115F}\u{1160}\u{3164}\u{FFA0}\u{200B}B 👩\u{200D}💻 ❤\u{FE0F}".into(),
+            user: Some(user("a\u{2800}da")),
+            ..Pull::default()
+        };
+        let summary = pull.summary();
+        assert_eq!(summary.title, "Fix  A B 👩💻 ❤");
+        assert_eq!(summary.author, "a da");
+    }
+
+    #[test]
+    fn pull_summary_titles_have_no_controls_and_no_blank_ends() {
+        let title = |t: &str| {
+            Pull {
+                title: t.into(),
+                ..Pull::default()
+            }
+            .summary()
+            .title
+        };
+        assert_eq!(title("a\tb\nc\u{2028}d\u{2029}e"), "a b c d e");
+        assert_eq!(title(" \u{2800}Fix\u{2800}bug\u{2800} "), "Fix bug");
+        assert_eq!(title("\u{2800} \u{2800}"), "");
+        assert_eq!(title("\u{200D}\u{200D}\u{FE0F}"), "");
+    }
+
+    #[test]
+    fn an_author_of_only_hidden_characters_is_the_ghost() {
+        for hidden in ["", "\u{202E}", "\u{200B}\u{2800}\u{200D}", " \t"] {
+            assert_eq!(login(Some(&user(hidden))), "ghost", "{hidden:?}");
+        }
+        assert_eq!(login(Some(&user("\u{202E}ada\u{202C}"))), "ada");
+        let pull = Pull {
+            user: Some(user("\u{202E}")),
+            ..Pull::default()
+        };
+        assert_eq!(pull.summary().author, "ghost");
+    }
+
+    #[test]
+    fn labels_are_cleaned_and_blank_ones_dropped() {
+        let pull = Pull {
+            labels: ["\u{2800}", "good\u{2800}first\u{200B} issue", "\u{202E}"]
+                .map(|name| Label { name: name.into() })
+                .into(),
+            ..Pull::default()
+        };
+        assert_eq!(pull.summary().labels, ["good first issue"]);
+        let search = SearchPull {
+            number: 1,
+            labels: LabelNodes {
+                nodes: vec![Label {
+                    name: "\u{2800}".into(),
+                }],
+            },
+            ..SearchPull::default()
+        };
+        assert_eq!(
+            search.summary().expect("a pull").labels,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn search_summary_cleans_title_and_author_like_the_list() {
+        let pull = SearchPull {
+            number: 1,
+            title: "Fix  A\u{2800}B\u{200D}".into(),
+            author: Some(user("\u{202E}")),
+            ..SearchPull::default()
+        };
+        let summary = pull.summary().expect("search result with a pull number");
+        assert_eq!(summary.title, "Fix  A B");
+        assert_eq!(summary.author, "ghost");
+    }
+
+    #[test]
+    fn review_and_comment_authors_are_cleaned() {
+        let folded = fold_reviews(vec![
+            review("\u{202E}ann", "COMMENTED"),
+            review("ann\u{200B}", "APPROVED"),
+            review("\u{202E}", "APPROVED"),
+        ]);
+        assert_eq!(
+            folded,
+            vec![
+                Review {
+                    author: "ann".into(),
+                    state: "Approved".into()
+                },
+                Review {
+                    author: "ghost".into(),
+                    state: "Approved".into()
+                },
+            ]
+        );
+        let comment = CommentJson {
+            user: Some(user("\u{202E}")),
+            ..CommentJson::default()
+        };
+        assert_eq!(login(comment.user.as_ref()), "ghost");
+    }
+
+    #[test]
+    fn check_names_are_cleaned() {
+        let run = CheckRun {
+            name: "build\u{2800}linux\u{202E}".into(),
+            ..CheckRun::default()
+        };
+        assert_eq!(check_from_run(run).name, "build linux");
+        let status = Status {
+            context: "ci\u{200B}/\tlint".into(),
+            ..Status::default()
+        };
+        assert_eq!(check_from_status(status).name, "ci/ lint");
+    }
 
     fn review(user: &str, state: &str) -> ReviewJson {
         ReviewJson {
