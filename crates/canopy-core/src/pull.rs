@@ -323,9 +323,11 @@ fn decide(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::isolate_git;
 
     #[test]
     fn config_origins_are_absolute_in_non_ascii_repository() {
+        isolate_git!(config_origins_are_absolute_in_non_ascii_repository);
         let root = tempfile::tempdir().expect("tempdir");
         let dir = root.path().join("répo");
         std::fs::create_dir(&dir).expect("directory");
@@ -385,6 +387,7 @@ mod tests {
 
     #[test]
     fn nothing_set_asks_for_nothing() {
+        isolate_git!(nothing_set_asks_for_nothing);
         let config = decide(None, None, None);
         assert_eq!(config, PullConfig::default());
         assert_eq!(config.describe(), None);
@@ -393,6 +396,7 @@ mod tests {
 
     #[test]
     fn merge_ff_alone_asks_for_nothing() {
+        isolate_git!(merge_ff_alone_asks_for_nothing);
         // git still refuses diverged branches, so there is no preference to carry over.
         let config = decide(
             None,
@@ -405,6 +409,7 @@ mod tests {
 
     #[test]
     fn rebase_values_pick_the_rebase_strategies() {
+        isolate_git!(rebase_values_pick_the_rebase_strategies);
         let yes = decide(Some(rebase("true", Some(Rebase::Yes))), None, None);
         assert_eq!(yes.strategy, Some(PullStrategy::Rebase));
         let merges = decide(Some(rebase("merges", Some(Rebase::Merges))), None, None);
@@ -416,6 +421,7 @@ mod tests {
 
     #[test]
     fn a_rebase_ignores_pull_ff_false_and_merge_ff() {
+        isolate_git!(a_rebase_ignores_pull_ff_false_and_merge_ff);
         let config = decide(
             Some(rebase("true", Some(Rebase::Yes))),
             Some(ff("pull.ff", "false", Some(FastForward::Never))),
@@ -427,6 +433,7 @@ mod tests {
 
     #[test]
     fn pull_ff_only_beats_a_rebase() {
+        isolate_git!(pull_ff_only_beats_a_rebase);
         let config = decide(
             Some(rebase("true", Some(Rebase::Yes))),
             Some(ff("pull.ff", "only", Some(FastForward::Only))),
@@ -438,6 +445,7 @@ mod tests {
 
     #[test]
     fn a_merge_follows_pull_ff_then_merge_ff() {
+        isolate_git!(a_merge_follows_pull_ff_then_merge_ff);
         let never = decide(
             Some(rebase("false", Some(Rebase::No))),
             Some(ff("pull.ff", "false", Some(FastForward::Never))),
@@ -471,6 +479,7 @@ mod tests {
 
     #[test]
     fn pull_ff_alone_picks_a_merge() {
+        isolate_git!(pull_ff_alone_picks_a_merge);
         let never = decide(
             None,
             Some(ff("pull.ff", "false", Some(FastForward::Never))),
@@ -487,6 +496,7 @@ mod tests {
 
     #[test]
     fn rejected_values_are_listed_and_ignored() {
+        isolate_git!(rejected_values_are_listed_and_ignored);
         let config = decide(
             Some(rebase("sometimes", None)),
             Some(ff("pull.ff", "false", Some(FastForward::Never))),
@@ -499,6 +509,7 @@ mod tests {
 
     #[test]
     fn describe_names_the_setting_its_value_and_where() {
+        isolate_git!(describe_names_the_setting_its_value_and_where);
         let config = decide(Some(rebase("true", Some(Rebase::Yes))), None, None);
         assert_eq!(
             config.describe().as_deref(),

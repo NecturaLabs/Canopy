@@ -2682,6 +2682,7 @@ fn read_ignore(repo: &Repo, query: &IgnoreQuery) -> canopy_core::Result<IgnoreDa
 #[cfg(test)]
 mod tests {
     use super::{Job, Op, OpKind, PullStrategy, read_only_message};
+    use crate::repo_config::in_isolated_git_env;
     use crate::watcher::watch;
     use std::path::Path;
     use std::process::Command;
@@ -2740,6 +2741,9 @@ mod tests {
     /// worker goes nowhere, and starting it runs the thread, which then answers once.
     #[test]
     fn a_lazy_worker_runs_nothing_until_it_starts() {
+        if !in_isolated_git_env("worker::tests::a_lazy_worker_runs_nothing_until_it_starts") {
+            return;
+        }
         let dir = tempfile::tempdir().expect("tempdir");
         git(dir.path(), &["init", "-q", "-b", "main"]);
         std::fs::write(dir.path().join("a.txt"), "a\n").expect("write");
@@ -2828,6 +2832,11 @@ mod tests {
     /// the tab being shown never waits for it.
     #[test]
     fn a_background_refresh_waits_for_the_limit_and_a_shown_tab_does_not() {
+        if !in_isolated_git_env(
+            "worker::tests::a_background_refresh_waits_for_the_limit_and_a_shown_tab_does_not",
+        ) {
+            return;
+        }
         let repo = committed_repo();
         // No permit is ever free: only the priority bypass can let a read through.
         let limiter = Arc::new(crate::read_limit::Limiter::new(0));
@@ -2866,6 +2875,10 @@ mod tests {
     /// every permit taken, on a tab that is not shown.
     #[test]
     fn an_operation_and_an_on_demand_read_are_not_limited() {
+        if !in_isolated_git_env("worker::tests::an_operation_and_an_on_demand_read_are_not_limited")
+        {
+            return;
+        }
         let repo = committed_repo();
         let limiter = Arc::new(crate::read_limit::Limiter::new(0));
         let worker = super::Worker::spawn_limited(
@@ -2896,6 +2909,9 @@ mod tests {
     /// wait would have been.
     #[test]
     fn a_dropped_worker_waiting_for_a_permit_ends() {
+        if !in_isolated_git_env("worker::tests::a_dropped_worker_waiting_for_a_permit_ends") {
+            return;
+        }
         let repo = committed_repo();
         let limiter = Arc::new(crate::read_limit::Limiter::new(0));
         let worker = super::Worker::spawn_limited(
@@ -2979,6 +2995,9 @@ mod tests {
     /// does not.
     #[test]
     fn a_worker_knows_whether_its_thread_runs() {
+        if !in_isolated_git_env("worker::tests::a_worker_knows_whether_its_thread_runs") {
+            return;
+        }
         let repo = committed_repo();
         let worker = super::Worker::spawn(repo.path().to_path_buf(), &egui::Context::default());
         assert!(worker.is_alive());
@@ -3048,6 +3067,11 @@ mod tests {
     #[test]
     fn a_linked_worktree_reports_its_shared_git_folder_to_the_trust_dialog()
     -> Result<(), Box<dyn std::error::Error>> {
+        if !in_isolated_git_env(
+            "worker::tests::a_linked_worktree_reports_its_shared_git_folder_to_the_trust_dialog",
+        ) {
+            return Ok(());
+        }
         let dir = tempfile::tempdir()?;
         let main = dir.path().join("main");
         std::fs::create_dir(&main)?;
@@ -3106,6 +3130,11 @@ mod tests {
     fn git_flow_runs_through_the_worker_from_set_up_to_the_push()
     -> Result<(), Box<dyn std::error::Error>> {
         use canopy_core::{FlowConfig, FlowFinish, FlowKind};
+        if !in_isolated_git_env(
+            "worker::tests::git_flow_runs_through_the_worker_from_set_up_to_the_push",
+        ) {
+            return Ok(());
+        }
         let dir = tempfile::tempdir()?;
         let main = dir.path().join("main");
         let remote = dir.path().join("remote.git");
@@ -3211,6 +3240,11 @@ mod tests {
     #[test]
     fn merged_branches_and_the_base_update_run_through_the_worker()
     -> Result<(), Box<dyn std::error::Error>> {
+        if !in_isolated_git_env(
+            "worker::tests::merged_branches_and_the_base_update_run_through_the_worker",
+        ) {
+            return Ok(());
+        }
         let dir = tempfile::tempdir()?;
         let main = dir.path().join("main");
         std::fs::create_dir(&main)?;
@@ -3296,6 +3330,9 @@ mod tests {
 
     #[test]
     fn a_linked_worktrees_git_folder_is_watched() -> Result<(), Box<dyn std::error::Error>> {
+        if !in_isolated_git_env("worker::tests::a_linked_worktrees_git_folder_is_watched") {
+            return Ok(());
+        }
         let dir = tempfile::tempdir()?;
         let main = dir.path().join("main");
         std::fs::create_dir(&main)?;
@@ -3873,6 +3910,10 @@ mod read_tests {
         git(&up, &["commit", "-q", "-m", "base"]);
         let copy = root.join("copy");
         git(root, &["clone", "-q", "up", "copy"]);
+        // Canopy's own git commits here (a pull's merge, applied patches): its identity is the
+        // repository's, never one from the developer's global configuration.
+        git(&copy, &["config", "user.name", "Ada Lovelace"]);
+        git(&copy, &["config", "user.email", "ada@example.com"]);
         std::fs::write(up.join("up.txt"), "upstream\n").expect("write");
         git(&up, &["add", "."]);
         git(&up, &["commit", "-q", "-m", "upstream"]);
@@ -4095,6 +4136,11 @@ mod read_tests {
     /// not bring in the commits they were not shown, but ask about the new state.
     #[test]
     fn a_checked_pull_asks_again_when_the_upstream_moved_since_the_preview() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_checked_pull_asks_again_when_the_upstream_moved_since_the_preview",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         let up = root.path().join("up");
@@ -4188,6 +4234,11 @@ mod read_tests {
     /// Where the upstream is still the commit the user was shown, the checked pull just goes.
     #[test]
     fn a_checked_pull_goes_ahead_when_the_upstream_is_unchanged() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_checked_pull_goes_ahead_when_the_upstream_is_unchanged",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         let seen = Oid::from_str(&git(&copy, &["rev-parse", "origin/main"])).expect("oid");
@@ -4769,6 +4820,11 @@ mod read_tests {
     #[cfg(unix)]
     #[test]
     fn an_untrusted_repository_is_read_only_and_starts_no_program() {
+        if !in_isolated_git_env(
+            "worker::read_tests::an_untrusted_repository_is_read_only_and_starts_no_program",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let (repo, hook, fsmonitor) = hostile_repository(root.path());
         let worker = Worker::spawn(repo.clone(), &egui::Context::default());
@@ -4860,6 +4916,11 @@ mod read_tests {
     #[cfg(unix)]
     #[test]
     fn git_lfs_programs_do_not_run_for_an_untrusted_repository() {
+        if !in_isolated_git_env(
+            "worker::read_tests::git_lfs_programs_do_not_run_for_an_untrusted_repository",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let (repo, _hook, _fsmonitor) = hostile_repository(root.path());
         let worker = Worker::spawn(repo, &egui::Context::default());
@@ -5149,6 +5210,11 @@ mod read_tests {
     /// patch that does not fit stops in the "Applying patches" state and names its file.
     #[test]
     fn exported_patches_apply_again_and_a_misfit_stops_naming_its_file() {
+        if !in_isolated_git_env(
+            "worker::read_tests::exported_patches_apply_again_and_a_misfit_stops_naming_its_file",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         // The fixture helper ignores system configuration; Canopy's git calls respect it.
@@ -5203,6 +5269,11 @@ mod read_tests {
     /// skipped with a word about it instead of writing its parent's patch.
     #[test]
     fn several_commits_export_oldest_first_and_apply_again() {
+        if !in_isolated_git_env(
+            "worker::read_tests::several_commits_export_oldest_first_and_apply_again",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         git(&copy, &["config", "core.autocrlf", "false"]);

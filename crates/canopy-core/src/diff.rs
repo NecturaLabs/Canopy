@@ -635,9 +635,11 @@ pub(crate) fn quoted(prefix: &[u8], path: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::isolate_git;
 
     #[test]
     fn unsupported_workdir_types_fail_instead_of_claiming_binary() {
+        isolate_git!(unsupported_workdir_types_fail_instead_of_claiming_binary);
         let dir = tempfile::tempdir().expect("fixture");
         std::fs::create_dir(dir.path().join("directory")).expect("directory");
         assert!(workdir_side(dir.path(), "directory").is_err());
@@ -645,6 +647,7 @@ mod tests {
 
     #[test]
     fn quotes_paths_like_git() {
+        isolate_git!(quotes_paths_like_git);
         let cases: &[(&[u8], &[u8])] = &[
             (b"plain.txt", b"a/plain.txt"),
             (b"with space.txt", b"a/with space.txt"),
