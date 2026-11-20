@@ -31,6 +31,31 @@ pub(crate) fn valid_ref_name(name: &str) -> bool {
             .all(|part| !part.is_empty() && !part.starts_with('.') && !part.ends_with(".lock"))
 }
 
+/// Why git refuses `name` as a branch name, if it does: the common reasons by name, anything else
+/// [`valid_ref_name`] refuses (a leading `-`, a trailing `.`, `@{`, a control character, `HEAD`,
+/// a part that starts with `.` or is empty) as "Not a valid branch name".
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "git refuses a ref name ending in `.lock`, compared as written"
+)]
+pub(super) fn branch_name_problem(name: &str) -> Option<&'static str> {
+    if valid_ref_name(name) {
+        None
+    } else if name.contains(' ') {
+        Some("A branch name cannot contain spaces")
+    } else if name.contains("..") {
+        Some("A branch name cannot contain '..'")
+    } else if name.starts_with('/') || name.ends_with('/') {
+        Some("A branch name cannot start or end with '/'")
+    } else if name.ends_with(".lock") {
+        Some("A branch name cannot end with '.lock'")
+    } else if name.contains(['~', '^', ':', '?', '*', '[', '\\']) {
+        Some("A branch name cannot contain ~ ^ : ? * [ or a backslash")
+    } else {
+        Some("Not a valid branch name")
+    }
+}
+
 /// Why `name` cannot name a new remote among `existing`, if it cannot.
 pub(super) fn remote_name_problem(name: &str, existing: &[&str]) -> Option<String> {
     if name.is_empty() {
@@ -401,7 +426,80 @@ pub(super) fn identity_in_scope(
 
 #[cfg(test)]
 mod tests {
-    use super::valid_ref_name;
+    use super::{branch_name_problem, valid_ref_name};
+
+    /// Whether `git check-ref-format --branch` accepts `name`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test compares the check with git's own"
+    )]
+    fn git_accepts(name: &str) -> bool {
+        let dir = tempfile::tempdir().expect("temporary folder");
+        std::process::Command::new("git")
+            .args(["check-ref-format", "--branch", name])
+            .current_dir(dir.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git runs")
+            .status
+            .success()
+    }
+
+    /// F17: each refused name says why, and git refuses every one of them too.
+    #[test]
+    fn a_refused_branch_name_says_why() {
+        let cases: &[(&str, &str)] = &[
+            ("my branch", "A branch name cannot contain spaces"),
+            ("a..b", "A branch name cannot contain '..'"),
+            ("/topic", "A branch name cannot start or end with '/'"),
+            ("topic/", "A branch name cannot start or end with '/'"),
+            ("topic.lock", "A branch name cannot end with '.lock'"),
+            (
+                "a~b",
+                "A branch name cannot contain ~ ^ : ? * [ or a backslash",
+            ),
+            (
+                "a^b",
+                "A branch name cannot contain ~ ^ : ? * [ or a backslash",
+            ),
+            (
+                "a:b",
+                "A branch name cannot contain ~ ^ : ? * [ or a backslash",
+            ),
+            (
+                "a?b",
+                "A branch name cannot contain ~ ^ : ? * [ or a backslash",
+            ),
+            (
+                "a*b",
+                "A branch name cannot contain ~ ^ : ? * [ or a backslash",
+            ),
+            (
+                "a[b",
+                "A branch name cannot contain ~ ^ : ? * [ or a backslash",
+            ),
+            (
+                "a\\b",
+                "A branch name cannot contain ~ ^ : ? * [ or a backslash",
+            ),
+            // Everything else keeps the general text.
+            ("-x", "Not a valid branch name"),
+            ("topic.", "Not a valid branch name"),
+            ("a@{b", "Not a valid branch name"),
+            ("HEAD", "Not a valid branch name"),
+            ("a/.b", "Not a valid branch name"),
+            ("a//b", "Not a valid branch name"),
+            ("a\tb", "Not a valid branch name"),
+        ];
+        for (name, why) in cases {
+            assert_eq!(branch_name_problem(name), Some(*why), "{name:?}");
+            assert!(!git_accepts(name), "git refuses {name:?} too");
+        }
+        for name in ["feature/login", "release/v1.2", "topic/HEAD"] {
+            assert_eq!(branch_name_problem(name), None, "{name:?}");
+            assert!(git_accepts(name), "git takes {name:?}");
+        }
+    }
 
     #[test]
     fn reserved_head_cannot_name_a_new_ref() {

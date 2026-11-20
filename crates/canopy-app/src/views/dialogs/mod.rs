@@ -49,9 +49,9 @@ mod url;
 mod worktree;
 
 use common::{
-    FolderField, alternatives, answer, beside, bullet, confirm, document, field, field_with_error,
-    file_row, folder_row, home, identity_in_scope, inset_scroll, note, recent_rows,
-    remote_name_problem, swallow_enter, tilde, working,
+    FolderField, alternatives, answer, beside, branch_name_problem, bullet, confirm, document,
+    field, field_with_error, file_row, folder_row, home, identity_in_scope, inset_scroll, note,
+    recent_rows, remote_name_problem, swallow_enter, tilde, working,
 };
 use credential::credential;
 pub use flow::{FlowFinishForm, FlowInitForm, FlowStartForm};
@@ -837,8 +837,11 @@ pub fn show(
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
                 .body(|ui| {
-                    let error = (!name.is_empty() && !valid_ref_name(name.trim()))
-                        .then_some("Not a valid branch name");
+                    let error = if name.is_empty() {
+                        None
+                    } else {
+                        branch_name_problem(name.trim())
+                    };
                     field_with_error(ui, "Name", name, "feature/something", true, error);
                     note(
                         ui,
@@ -901,8 +904,11 @@ pub fn show(
                             .id_salt("worktree-kind")
                             .show(ui);
                         if *create {
-                            let error = (!name.is_empty() && !valid_ref_name(name.trim()))
-                                .then_some("Not a valid branch name");
+                            let error = if name.is_empty() {
+                                None
+                            } else {
+                                branch_name_problem(name.trim())
+                            };
                             field_with_error(ui, "Name", name, "feature/something", true, error);
                             note(
                                 ui,
@@ -1010,8 +1016,11 @@ pub fn show(
                 .initial_focus(InitialFocus::Body)
                 .description("The remote branch it tracks keeps its name.")
                 .body(|ui| {
-                    let error = (!new.trim().is_empty() && !valid_ref_name(new.trim()))
-                        .then_some("Not a valid branch name");
+                    let error = if new.trim().is_empty() {
+                        None
+                    } else {
+                        branch_name_problem(new.trim())
+                    };
                     field_with_error(ui, "New name", new, old.as_str(), true, error);
                 })
                 .footer(|f| confirm(f, "Rename", ok, "Enter a new, valid branch name"))
