@@ -6052,7 +6052,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row_explained(
         ui,
         "Export settings",
-        "Saves your preferences to a file, without consent.",
+        "Saves your preferences to a file.",
         "Left out: consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Export…" })
