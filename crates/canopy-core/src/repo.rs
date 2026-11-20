@@ -507,7 +507,7 @@ impl Repo {
         push_refs(
             &self.git,
             &mut walk,
-            &["refs/heads/", "refs/remotes/", "refs/tags/"],
+            &["refs/heads/*", "refs/remotes/*", "refs/tags/*"],
         )?;
         let mut out = Vec::with_capacity(max_commits.min(MAX_PREALLOCATED_COMMITS));
         let mut truncated = false;
@@ -1065,19 +1065,18 @@ impl Repo {
     }
 }
 
-/// Pushes onto `walk` the commit each ref under one of `prefixes` leads to. Unlike
+/// Pushes onto `walk` the commit each ref matching one of `globs` leads to. Unlike
 /// [`Revwalk::push_glob`], it reads the commit from the ref itself, not by looking the name up
-/// again, which fails for a name over libgit2's length limit (#270). As with `push_glob`, a ref
-/// that leads to no commit (a tag of a tree, a missing object) is passed over.
-pub(crate) fn push_refs(git: &Repository, walk: &mut Revwalk<'_>, prefixes: &[&str]) -> Result<()> {
-    for reference in git.references()? {
-        let reference = reference?;
-        let name = reference.name_bytes();
-        if !prefixes.iter().any(|p| name.starts_with(p.as_bytes())) {
-            continue;
-        }
-        if let Ok(commit) = reference.peel_to_commit() {
-            walk.push(commit.id())?;
+/// again, which fails for a name over libgit2's length limit (#270). Each glob lists only its
+/// own folder, as `push_glob` does, so a ref folder deeper than libgit2 lists (100 levels)
+/// elsewhere hides nothing. As with `push_glob`, a ref that leads to no commit (a tag of a tree,
+/// a missing object) is passed over.
+pub(crate) fn push_refs(git: &Repository, walk: &mut Revwalk<'_>, globs: &[&str]) -> Result<()> {
+    for glob in globs {
+        for reference in git.references_glob(glob)? {
+            if let Ok(commit) = reference?.peel_to_commit() {
+                walk.push(commit.id())?;
+            }
         }
     }
     Ok(())
