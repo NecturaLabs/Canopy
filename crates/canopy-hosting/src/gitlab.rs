@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, search_words, unix};
 use crate::error::{Error, Result, head_changed, map_head_conflict};
-use crate::http::{Http, Method, encode, shorten};
+use crate::http::{Http, Method, encode, shorten, status};
 use crate::model::{
     Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
     RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
@@ -174,20 +174,23 @@ fn pipeline_state(status: &str, allow_failure: bool) -> CheckState {
 /// The first GitLab release whose merge request list takes `draft`; it deprecated `wip`.
 const DRAFT_FILTER_MAJOR: u64 = 19;
 
-/// The name of the merge request list's draft filter on one instance.
+/// The merge request list's draft filter on one instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DraftParam {
-    /// `draft=yes|no`, GitLab 19.0 and newer.
+    /// `draft=true|false` (a Boolean), GitLab 19.0 and newer.
     Draft,
-    /// `wip=yes|no`, deprecated since 19.0 but still accepted by every release.
+    /// `wip=yes|no` (a String), deprecated since 19.0 but still accepted by every release.
     Wip,
 }
 
 impl DraftParam {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Draft => "draft",
-            Self::Wip => "wip",
+    /// The query parameter for asking for drafts (`true`) or for everything else.
+    fn query(self, draft: bool) -> &'static str {
+        match (self, draft) {
+            (Self::Draft, true) => "draft=true",
+            (Self::Draft, false) => "draft=false",
+            (Self::Wip, true) => "wip=yes",
+            (Self::Wip, false) => "wip=no",
         }
     }
 
@@ -206,6 +209,15 @@ impl DraftParam {
     }
 }
 
+/// What [`draft_param`] decided and whether it is final for the instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DraftChoice {
+    pub param: DraftParam,
+    /// The instance answered (its version, or a refusal that will not change on its own), so the
+    /// choice can be kept. `false` after a failure that may pass: the next search asks again.
+    pub settled: bool,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Version {
@@ -214,18 +226,26 @@ struct Version {
 
 /// Which draft filter the instance behind `http` understands, from `GET /version` on the same
 /// host with the same sign-in. An older instance ignores an unknown `draft` without an error, so
-/// the version is the only way to tell. A version that cannot be read (no sign-in, a refusal, a
-/// network error, an unparsable answer) gives [`DraftParam::Wip`], which every release still
-/// accepts. Only [`Error::Stopped`] is returned, so a switched-off client sends nothing.
-pub(crate) fn draft_param(http: &Http) -> Result<DraftParam> {
-    match http.json::<Version>(Method::Get, "/version", None) {
-        Ok(v) => Ok(DraftParam::for_version(&v.version)),
-        Err(Error::Stopped) => Err(Error::Stopped),
+/// the version is the only way to tell. Without a version the choice is [`DraftParam::Wip`],
+/// which every release still accepts; it is settled when the instance answered (a version, text
+/// that is not one, or a 401, 403, 404 or other 4xx refusal) and not when the failure may pass
+/// (the network, a rate limit, a 5xx, an answer that is not JSON). Only [`Error::Stopped`] is
+/// returned, so a switched-off client sends nothing.
+pub(crate) fn draft_param(http: &Http) -> Result<DraftChoice> {
+    let (param, settled) = match http.json::<Version>(Method::Get, "/version", None) {
+        Ok(v) => (DraftParam::for_version(&v.version), true),
+        Err(Error::Stopped) => return Err(Error::Stopped),
         Err(e) => {
-            tracing::debug!(error = %e, "GitLab version unreadable, filtering drafts with wip");
-            Ok(DraftParam::Wip)
+            let settled = match &e {
+                Error::Unauthorized(_) | Error::NotFound(_) => true,
+                Error::Api { status: code, .. } => *code < status::SERVER_ERROR,
+                _ => false,
+            };
+            tracing::debug!(error = %e, settled, "GitLab version unreadable, filtering drafts with wip");
+            (DraftParam::Wip, settled)
         }
-    }
+    };
+    Ok(DraftChoice { param, settled })
 }
 
 pub(crate) fn viewer(http: &Http) -> Result<String> {
@@ -349,12 +369,7 @@ fn search_state_page(
         let _ = write!(path, "&author_username={}", encode(author));
     }
     if let Some(draft) = query.draft {
-        let _ = write!(
-            path,
-            "&{}={}",
-            param.name(),
-            if draft { "yes" } else { "no" }
-        );
+        let _ = write!(path, "&{}", param.query(draft));
     }
     let mrs: Vec<Mr> = http.json(Method::Get, &path, None)?;
     Ok(mrs.iter().map(Mr::summary).collect())
@@ -655,7 +670,7 @@ fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<S
             // A merge_error left over from an earlier attempt is stale once the head moved.
             if !error.is_empty() && now.sha == before.sha {
                 return Err(Error::Api {
-                    status: crate::http::status::CONFLICT,
+                    status: status::CONFLICT,
                     message: shorten(&format!(
                         "GitLab could not rebase the merge request: {error}"
                     )),
@@ -665,7 +680,7 @@ fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<S
         }
         if Instant::now() >= deadline {
             return Err(Error::Api {
-                status: crate::http::status::ACCEPTED,
+                status: status::ACCEPTED,
                 message: "GitLab is still rebasing the merge request; merge it again once the \
                           rebase has finished"
                     .to_owned(),
@@ -723,6 +738,42 @@ mod tests {
         ] {
             assert_eq!(DraftParam::for_version(version), expected, "{version:?}");
         }
+    }
+
+    #[test]
+    fn the_draft_filter_is_a_boolean_and_the_old_one_a_yes_no() {
+        assert_eq!(DraftParam::Draft.query(true), "draft=true");
+        assert_eq!(DraftParam::Draft.query(false), "draft=false");
+        assert_eq!(DraftParam::Wip.query(true), "wip=yes");
+        assert_eq!(DraftParam::Wip.query(false), "wip=no");
+    }
+
+    /// An address on 127.0.0.1 below every ephemeral port range that refuses connections.
+    fn refused_address() -> std::net::SocketAddr {
+        (1..=16u16)
+            .map(|port| std::net::SocketAddr::from(([127, 0, 0, 1], port)))
+            .find(|address| {
+                std::net::TcpStream::connect(address)
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
+            })
+            .expect("a port below 17 on 127.0.0.1 that refuses connections")
+    }
+
+    #[test]
+    fn an_unreachable_host_gives_wip_without_settling_it() {
+        let http = Http::new(
+            canopy_core::forge::ForgeKind::GitLab,
+            &format!("http://{}/api/v4", refused_address()),
+            Some("tok-SECRET".to_owned()),
+        );
+        let choice = draft_param(&http).expect("a failure falls back");
+        assert_eq!(
+            choice,
+            DraftChoice {
+                param: DraftParam::Wip,
+                settled: false
+            }
+        );
     }
 
     #[test]

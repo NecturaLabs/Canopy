@@ -27,6 +27,8 @@ pub(crate) mod status {
     pub const NOT_FOUND: u16 = 404;
     pub const CONFLICT: u16 = 409;
     pub const TOO_MANY_REQUESTS: u16 = 429;
+    /// The first 5xx code: the server's own failure, which may pass.
+    pub const SERVER_ERROR: u16 = 500;
     /// The 2xx codes: from 200 up to, not including, 300.
     pub const SUCCESS: std::ops::Range<u16> = 200..300;
 }
@@ -45,10 +47,11 @@ const MAX_BODY: u64 = 10 * 1024 * 1024;
 /// breaking changes touches an endpoint or a field Canopy uses.
 const GITHUB_API_VERSION: &str = "2026-03-10";
 
-/// The REST API version sent to every GitHub host but `api.github.com`. GitHub Enterprise Server
-/// 3.20 and older know only this one and answer another with an error; GitHub supports it until
-/// 2028-03-10. Move a server to [`GITHUB_API_VERSION`] only once its releases accept it.
-const GITHUB_ENTERPRISE_API_VERSION: &str = "2022-11-28";
+/// The REST API version sent to every GitHub host but `api.github.com`: GitHub Enterprise Server,
+/// `*.ghe.com` hosts and local test servers. Enterprise Server 3.20 and older know only this one
+/// and answer another with an error; GitHub supports it until 2028-03-10. Move a host to
+/// [`GITHUB_API_VERSION`] only once its releases accept it.
+const GITHUB_LEGACY_API_VERSION: &str = "2022-11-28";
 
 /// The API root of github.com itself; any other GitHub root is Enterprise Server (`/api/v3`) or a
 /// local test server.
@@ -59,7 +62,7 @@ fn github_api_version(base: &str) -> &'static str {
     if base.eq_ignore_ascii_case(GITHUB_API_ROOT) {
         GITHUB_API_VERSION
     } else {
-        GITHUB_ENTERPRISE_API_VERSION
+        GITHUB_LEGACY_API_VERSION
     }
 }
 
@@ -820,16 +823,17 @@ mod tests {
         for ghes in [
             "https://ghe.example.com/api/v3",
             "https://ghe.example.com:8443/api/v3",
+            "https://api.acme.ghe.com",
             "https://api.github.com.evil.example",
             "http://127.0.0.1:8080",
         ] {
             assert_eq!(
                 sent_github_version(ghes),
-                GITHUB_ENTERPRISE_API_VERSION,
+                GITHUB_LEGACY_API_VERSION,
                 "{ghes}"
             );
         }
-        assert_eq!(GITHUB_ENTERPRISE_API_VERSION, "2022-11-28");
+        assert_eq!(GITHUB_LEGACY_API_VERSION, "2022-11-28");
     }
 
     #[test]

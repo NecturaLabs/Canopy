@@ -85,7 +85,7 @@ pub struct Client {
     kind: ForgeKind,
     /// `/repos/owner/repo` or `/projects/group%2Fproject`.
     project: String,
-    /// GitLab's draft filter name for this host, read once on the first draft search.
+    /// GitLab's draft filter for this host, kept once the instance has answered.
     draft_param: OnceLock<gitlab::DraftParam>,
 }
 
@@ -235,8 +235,8 @@ impl Client {
     /// and backslashes removed on GitHub, so a word cannot become a qualifier or leave the
     /// repository); at most [`SEARCH_WORDS`] words are sent.
     ///
-    /// A GitLab search that filters on drafts first reads the instance's version (`GET /version`,
-    /// once per client, with the same sign-in) to name the filter `draft` or `wip`.
+    /// A GitLab search that filters on drafts first reads the instance's version (`GET /version`
+    /// with the same sign-in, kept once the host answers) to name the filter `draft` or `wip`.
     pub fn search_page(
         &self,
         filter: StateFilter,
@@ -259,8 +259,9 @@ impl Client {
         }
     }
 
-    /// The draft filter name for a GitLab search: from the instance's version, read once per
-    /// client and only when `query` filters on drafts (no request otherwise).
+    /// The draft filter for a GitLab search: from the instance's version, read only when `query`
+    /// filters on drafts. An answer from the instance is kept for the client's life; a failure
+    /// that may pass (network, rate limit, 5xx) is not, so the next draft search asks again.
     fn gitlab_draft_param(&self, query: &RequestQuery) -> Result<gitlab::DraftParam> {
         if query.draft.is_none() {
             return Ok(gitlab::DraftParam::Wip);
@@ -268,8 +269,11 @@ impl Client {
         if let Some(param) = self.draft_param.get() {
             return Ok(*param);
         }
-        let param = gitlab::draft_param(&self.http)?;
-        Ok(*self.draft_param.get_or_init(|| param))
+        let choice = gitlab::draft_param(&self.http)?;
+        if choice.settled {
+            return Ok(*self.draft_param.get_or_init(|| choice.param));
+        }
+        Ok(choice.param)
     }
 
     /// Where the checks and reviews of requests `numbers` stand, as `(number, rollup)` pairs for
