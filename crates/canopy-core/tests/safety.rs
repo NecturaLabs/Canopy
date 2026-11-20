@@ -1109,6 +1109,38 @@ fn preview_of_a_negation_follows_git_for_case_and_unfinished_classes() {
     assert_eq!(preview("!*.lo[g"), Vec::<String>::new());
 }
 
+/// `git check-ignore --stdin` answers while it still reads, so a preview of thousands of long
+/// paths fills both pipes at once. Feeding it must not wait on the answer (issue #196).
+#[test]
+fn preview_of_thousands_of_long_paths_does_not_deadlock() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// Far more than the pipe buffers hold (64 KiB on Linux) in each direction.
+    const PATHS: usize = 4_000;
+    /// Generous for a slow machine; a hung git never answers.
+    const LIMIT: Duration = Duration::from_secs(60);
+
+    let (_dir, repo) = fixture();
+    let long = "x".repeat(150);
+    let paths: Vec<String> = (0..PATHS)
+        .map(|i| format!("dir{i}/{long}{i}.tmp"))
+        .collect();
+    let expected = paths.clone();
+    let (tx, rx) = mpsc::channel();
+    // Not joined: a deadlocked run must fail the test, not hang it.
+    std::thread::spawn(move || {
+        let rule = IgnoreRule::Extension("a.tmp".into());
+        let _ = tx.send(repo.preview_ignore_rule(&rule, IgnoreTarget::Root, &paths));
+    });
+    let preview = rx
+        .recv_timeout(LIMIT)
+        .expect("git check-ignore answered within the limit")
+        .unwrap();
+    assert_eq!(preview.ignored, expected);
+    assert_eq!(preview.unignored, Vec::<String>::new());
+}
+
 #[test]
 fn ignore_case_setting_decides_duplicates() {
     isolate_git!(ignore_case_setting_decides_duplicates);
