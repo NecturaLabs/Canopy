@@ -140,11 +140,11 @@ pub(super) fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) ->
     } = &target;
     let body = match seen {
         Some(oid) => format!(
-            "{remote}/{dest} is at {} and is overwritten with your local {branch}. Git refuses if it has moved since.",
+            "{remote}/{dest} was at {} when you last fetched, and is overwritten with your local {branch}. Git refuses if the remote branch is elsewhere now.",
             canopy_core::short_id(*oid)
         ),
         None => format!(
-            "{remote}/{dest} is not on the remote yet. Your local {branch} creates it. Git refuses if someone else has pushed it since."
+            "Canopy has not fetched {remote}/{dest}. Your local {branch} creates it; if it already exists on the remote, Git refuses."
         ),
     };
     Dialog::Confirm {
@@ -1598,8 +1598,8 @@ mod tests {
         assert_eq!(step(false, false, false, None, true), IdentityStep::Ask);
     }
 
-    /// The force push question says what the push is pinned to: the remote's tip, or that the
-    /// branch is not there yet.
+    /// The force push question says what the push is pinned to: the tip the last fetch saw, or
+    /// that nothing was fetched.
     #[test]
     fn the_force_push_question_shows_the_tip_it_pins_the_push_to() {
         let target = |seen| canopy_core::PushTarget {
@@ -1617,11 +1617,11 @@ mod tests {
             canopy_core::Oid::from_str("0123456789abcdef0123456789abcdef01234567").expect("an oid");
         assert_eq!(
             body(Some(oid)),
-            "origin/topic is at 0123456 and is overwritten with your local topic. Git refuses if it has moved since."
+            "origin/topic was at 0123456 when you last fetched, and is overwritten with your local topic. Git refuses if the remote branch is elsewhere now."
         );
         assert_eq!(
             body(None),
-            "origin/topic is not on the remote yet. Your local topic creates it. Git refuses if someone else has pushed it since."
+            "Canopy has not fetched origin/topic. Your local topic creates it; if it already exists on the remote, Git refuses."
         );
     }
 }

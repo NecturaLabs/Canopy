@@ -145,7 +145,7 @@ fn error_help(
     if title.to_lowercase().contains("push") && lower.contains("stale info") {
         // A force push pinned to what the user was asked about (`--force-with-lease=<ref>:<oid>`).
         Some((
-            "The remote changed since you were asked. Fetch, check what arrived, then force push again.",
+            "The remote branch is not where your last fetch saw it. Fetch, check what arrived, then force push again.",
             None,
         ))
     } else if title.to_lowercase().contains("push")
@@ -1441,7 +1441,7 @@ mod tests {
         let (help, offer) = error_help("Could not force push", raw, Some(Path::new("/work/mote")))
             .expect("an explanation");
         assert!(
-            help.starts_with("The remote changed since you were asked"),
+            help.starts_with("The remote branch is not where your last fetch saw it"),
             "{help}"
         );
         assert_eq!(offer, None, "pulling would not be the fix");

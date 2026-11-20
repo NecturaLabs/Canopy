@@ -1196,7 +1196,7 @@ mod tests {
             "Force push feature/dark-mode to origin/feature/dark-mode?"
         );
         assert!(
-            body.contains("origin/feature/dark-mode is at 0707070 and is overwritten"),
+            body.contains("origin/feature/dark-mode was at 0707070 when you last fetched"),
             "{body}"
         );
         let Op::ForcePush(expect) = op else {

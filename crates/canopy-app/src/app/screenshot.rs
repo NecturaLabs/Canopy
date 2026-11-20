@@ -1035,8 +1035,10 @@ mod tests {
             }) => body,
             other => panic!("--overlay {name} opens {other:?}"),
         };
-        assert!(body("force-push").starts_with("origin/topic is at 38b14e7 "));
-        assert!(body("force-push-new").starts_with("origin/topic is not on the remote yet."));
+        assert!(
+            body("force-push").starts_with("origin/topic was at 38b14e7 when you last fetched")
+        );
+        assert!(body("force-push-new").starts_with("Canopy has not fetched origin/topic."));
     }
 
     #[test]
