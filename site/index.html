@@ -83,28 +83,33 @@
         </div>
       </div>
 
-      <div class="palette" data-palette>
-        <div class="pal-search" data-pal-search hidden>
-          <i class="ph" aria-hidden="true">&#xE30C;</i>
-          <label class="sr" for="pal-input">Command</label>
-          <input id="pal-input" type="text" placeholder="Type a command or a section" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list" aria-keyshortcuts="Control+K">
-          <span class="pal-shortcut" aria-hidden="true"><kbd>Ctrl</kbd><kbd>K</kbd></span>
+      <div class="pal-area">
+        <div class="palette" data-palette>
+          <div class="pal-search" data-pal-search hidden>
+            <i class="ph" aria-hidden="true">&#xE30C;</i>
+            <label class="sr" for="pal-input">Command</label>
+            <input id="pal-input" type="text" placeholder="Type a command or a section" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list" aria-keyshortcuts="Control+K">
+            <span class="pal-shortcut" aria-hidden="true"><kbd>Ctrl</kbd><kbd>K</kbd></span>
+          </div>
+          <p class="pal-title" data-pal-title aria-hidden="true">On this page</p>
+          <nav class="pal-body" aria-label="On this page" data-pal-body>
+            <ul class="pal-list" id="pal-list">
+              <li><a href="#history" data-view="history"><i class="ph" aria-hidden="true">&#xE27A;</i><span>History</span></a></li>
+              <li><a href="#changes" data-view="changes"><i class="ph" aria-hidden="true">&#xE27C;</i><span>Staging and committing</span></a></li>
+              <li><a href="#conflicts" data-view="conflicts"><i class="ph" aria-hidden="true">&#xE280;</i><span>Merges and conflicts</span></a></li>
+              <li><a href="#requests" data-view="requests"><i class="ph" aria-hidden="true">&#xE282;</i><span>Pull and merge requests</span></a></li>
+              <li><a href="#git" data-view="git"><i class="ph" aria-hidden="true">&#xE434;</i><span>Your git settings</span></a></li>
+              <li><a href="#keyboard" data-view="keyboard"><i class="ph" aria-hidden="true">&#xE2D8;</i><span>Keyboard</span></a></li>
+              <li><a href="#themes" data-view="themes"><i class="ph" aria-hidden="true">&#xE5B8;</i><span>Themes</span></a></li>
+              <li><a href="#privacy"><i class="ph" aria-hidden="true">&#xE40C;</i><span>Privacy</span></a></li>
+              <li><a href="#download"><i class="ph" aria-hidden="true">&#xE20C;</i><span>Download</span></a></li>
+            </ul>
+          </nav>
+          <p class="pal-foot" data-pal-foot hidden><span><kbd>&uarr;</kbd><kbd>&darr;</kbd> move</span><span><kbd>Enter</kbd> run</span><span><kbd>J</kbd><kbd>K</kbd> next and previous section</span></p>
         </div>
-        <p class="pal-title" data-pal-title aria-hidden="true">On this page</p>
-        <nav class="pal-body" aria-label="On this page" data-pal-body>
-          <ul class="pal-list" id="pal-list">
-            <li><a href="#history" data-view="history"><i class="ph" aria-hidden="true">&#xE27A;</i><span>History</span></a></li>
-            <li><a href="#changes" data-view="changes"><i class="ph" aria-hidden="true">&#xE27C;</i><span>Staging and committing</span></a></li>
-            <li><a href="#conflicts" data-view="conflicts"><i class="ph" aria-hidden="true">&#xE280;</i><span>Merges and conflicts</span></a></li>
-            <li><a href="#requests" data-view="requests"><i class="ph" aria-hidden="true">&#xE282;</i><span>Pull and merge requests</span></a></li>
-            <li><a href="#git" data-view="git"><i class="ph" aria-hidden="true">&#xE434;</i><span>Your git settings</span></a></li>
-            <li><a href="#keyboard" data-view="keyboard"><i class="ph" aria-hidden="true">&#xE2D8;</i><span>Keyboard</span></a></li>
-            <li><a href="#themes" data-view="themes"><i class="ph" aria-hidden="true">&#xE5B8;</i><span>Themes</span></a></li>
-            <li><a href="#privacy"><i class="ph" aria-hidden="true">&#xE40C;</i><span>Privacy</span></a></li>
-            <li><a href="#download"><i class="ph" aria-hidden="true">&#xE20C;</i><span>Download</span></a></li>
-          </ul>
-        </nav>
-        <p class="pal-foot" data-pal-foot hidden><span><kbd>&uarr;</kbd><kbd>&darr;</kbd> move</span><span><kbd>Enter</kbd> run</span><span><kbd>J</kbd><kbd>K</kbd> next and previous section</span></p>
+        <button type="button" class="btn btn-sm pal-tour" data-tour-toggle aria-label="Pause palette tour" aria-pressed="false" hidden>
+          <i class="ph" aria-hidden="true">&#xE39E;</i>
+        </button>
       </div>
 
       <div class="stage">

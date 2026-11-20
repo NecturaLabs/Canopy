@@ -87,13 +87,14 @@ link previews do not read WebP.
 - **The hero window.** It holds one real render per palette row with a view (History, Changes,
   the conflict resolver, pull requests, Settings → Git, the shortcuts sheet and Observatory for
   Themes), and crossfades to the active row's view whenever that row changes: by arrow key, by
-  pointer or as the filter narrows the list. Until the visitor points at or focuses the palette, it
-  steps through those rows by itself every 4.2 seconds, the active row's background filling from
-  left to right until the next step; it pauses while less than a third of the first screen (the
-  palette and the window) is in view or the tab is hidden, never runs with reduced motion, and stops for good once the visitor reaches for the palette. Where the
-  palette is the plain list of links, only the History render is in the page (the others are
-  `hidden`, so they are never downloaded), under the title On this page. When the list is longer
-  than its box, it fades out at the bottom until scrolled to the end.
+  pointer or as the filter narrows the list. The tour steps through the rows every 4.2 seconds.
+  The active row's background fills from left to right until the next step. The button below
+  the palette pauses or plays the tour. Hovering over or focusing the palette pauses it until
+  the visitor selects Play. The tour also stops while the hero is out of view or the tab is
+  hidden. The button is hidden when the search field has text, when reduced motion is on or
+  when the palette is a list of links. In link list mode, only the History render is in the page
+  (the others are `hidden`, so they are never downloaded), under the title On this page. When the
+  list is longer than its box, it fades out at the bottom until scrolled to the end.
 - **Install command.** The main download is one command, chosen from the visitor's system:
   `curl -fsSL https://canopy.necturalabs.com/install | sh` on Linux and macOS and
   `irm https://canopy.necturalabs.com/install.ps1 | iex` on Windows; below 720 px the line
@@ -168,11 +169,11 @@ the release-asset pattern in `app.js` before the page uses it.
 | `fonts/Inter-*.woff2` | Inter (Regular, Medium, SemiBold), Latin subset | SIL OFL 1.1, `fonts/OFL-Inter.txt` |
 | `fonts/InterDisplay-SemiBold.woff2` | Inter Display SemiBold from Inter 4.1, cut to the same code points as the Inter files | SIL OFL 1.1, `fonts/OFL-Inter.txt` |
 | `fonts/JetBrainsMonoNL-Regular.woff2` | JetBrains Mono NL, Latin subset | SIL OFL 1.1, `fonts/OFL-JetBrainsMono.txt` |
-| `fonts/Phosphor-3.woff2` | Phosphor Regular from the `egui-phosphor` crate, only the icons the page uses | MIT, `fonts/LICENSE-Phosphor-MIT.txt` |
+| `fonts/Phosphor-4.woff2` | Phosphor Regular from the `egui-phosphor` crate, only the icons the page uses | MIT, `fonts/LICENSE-Phosphor-MIT.txt` |
 
 A new icon on the page needs the Phosphor subset made again with `pyftsubset` (fontTools) from the
 crate's `res/Phosphor.ttf`, listing every code point that `index.html` and `app.js` use (today
-E06C, E182, E18C, E1CA, E1E0, E20C, E27A, E27C, E280, E282, E2D8, E30C, E330, E40C, E434,
-E472, E516, E560, E5B8, E692 and EB02), with `--flavor=woff2`. Give the new subset a new file
-name (`Phosphor-4.woff2`, and so on) and update `styles.css`: `fonts/` is served with a one-year
-`immutable` cache, so a file changed in place stays stale for returning visitors.
+E06C, E182, E18C, E1CA, E1E0, E20C, E27A, E27C, E280, E282, E2D8, E30C, E330, E39E, E3D0,
+E40C, E434, E472, E516, E560, E5B8, E692 and EB02), with `--flavor=woff2`. Give the new subset a
+new file name (`Phosphor-5.woff2`, and so on) and update `styles.css`: `fonts/` is served with a
+one-year `immutable` cache, so a file changed in place stays stale for returning visitors.

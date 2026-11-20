@@ -7,7 +7,7 @@
 @font-face { font-family: "Inter"; src: url("fonts/Inter-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
 @font-face { font-family: "Inter"; src: url("fonts/Inter-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
 @font-face { font-family: "JetBrains Mono"; src: url("fonts/JetBrainsMonoNL-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "Phosphor"; src: url("fonts/Phosphor-3.woff2") format("woff2"); font-display: block; }
+@font-face { font-family: "Phosphor"; src: url("fonts/Phosphor-4.woff2") format("woff2"); font-display: block; }
 
 /* Dark */
 :root {
@@ -312,13 +312,14 @@ kbd + kbd { margin-left: 3px; }
 .hero-shot .view:not(.is-on) { opacity: 0; filter: blur(5px); transform: scale(1.012); pointer-events: none; }
 
 /* The palette: a live command palette on desktop, a list of the page's sections on touch screens */
+.pal-area { grid-area: pal; position: relative; z-index: 2; }
 .palette {
-  grid-area: pal; position: relative; z-index: 2; align-self: center;
   background: var(--pane);
   border: 1px solid var(--edge); border-radius: var(--r-lg); box-shadow: var(--sh-float); overflow: hidden;
   transition: border-color 160ms var(--ease), box-shadow 200ms var(--ease);
 }
 .palette:focus-within { border-color: color-mix(in srgb, var(--focus) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 18%, transparent), var(--sh-float); }
+.pal-tour { position: absolute; inset-block-start: calc(100% + 6px); inset-inline-end: 0; padding-inline: 10px; }
 .pal-search { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--seam); }
 .pal-search .ph { font-size: 18px; color: var(--dim); }
 .pal-search input { flex: 1; min-width: 0; height: 40px; border: 0; background: none; color: var(--text); font: 400 15.5px var(--font); outline: none; }
@@ -605,7 +606,6 @@ kbd + kbd { margin-left: 3px; }
   .nav { display: none; }
       .top-end { margin-left: auto; }
   .hero-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "stage" "pal"; }
-  .palette { align-self: stretch; }
   .split-list, .lists, .duo, .duo.reverse, .duo.custom { grid-template-columns: minmax(0, 1fr); }
   .duo.reverse > .text { order: 0; }
   .split-list > .text { padding-right: 0; }
