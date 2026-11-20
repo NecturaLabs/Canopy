@@ -142,7 +142,13 @@ fn error_help(
     repo: Option<&Path>,
 ) -> Option<(&'static str, Option<Offer>)> {
     let lower = body.to_lowercase();
-    if title.to_lowercase().contains("push")
+    if title.to_lowercase().contains("push") && lower.contains("stale info") {
+        // A force push pinned to what the user was asked about (`--force-with-lease=<ref>:<oid>`).
+        Some((
+            "The remote changed since you were asked. Fetch, check what arrived, then force push again.",
+            None,
+        ))
+    } else if title.to_lowercase().contains("push")
         && (lower.contains("fetch first") || lower.contains("non-fast-forward"))
     {
         Some((
@@ -1426,6 +1432,33 @@ mod tests {
             );
             assert_eq!(offer, Some(Offer::Accounts), "{api}");
         }
+    }
+
+    /// A force push whose remote moved after the question says what to do, and keeps git's text.
+    #[test]
+    fn a_force_push_refused_as_stale_says_to_fetch_and_look() {
+        let raw = " ! [rejected]        HEAD -> main (stale info)\nerror: failed to push some refs";
+        let (help, offer) = error_help("Could not force push", raw, Some(Path::new("/work/mote")))
+            .expect("an explanation");
+        assert!(
+            help.starts_with("The remote changed since you were asked"),
+            "{help}"
+        );
+        assert_eq!(offer, None, "pulling would not be the fix");
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.push(
+            &ctx,
+            ToastKind::Error,
+            Topic::Error,
+            "Could not force push",
+            raw,
+        );
+        assert!(
+            toasts.history[0].body.contains("stale info"),
+            "git's own text stays: {:?}",
+            toasts.history[0].body
+        );
     }
 
     #[test]
