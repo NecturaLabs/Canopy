@@ -150,7 +150,7 @@ impl Repo {
     /// # Errors
     /// `path` is not a linked working folder of this repository.
     pub fn worktree_removal(&self, path: &Path, open_in: &[OpenFolder]) -> Result<WorktreeRemoval> {
-        let (_, worktree) = self.linked_worktree(path)?;
+        let (id, worktree) = self.linked_worktree(path)?;
         let folder = worktree.path().to_path_buf();
         let mut removal = WorktreeRemoval {
             path: folder.clone(),
@@ -160,6 +160,7 @@ impl Repo {
             untracked: WorktreeLoss::default(),
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
+            held_by: Vec::new(),
             blocked: None,
             operation: None,
             fingerprint: 0,
@@ -292,12 +293,32 @@ impl Repo {
             ));
             return Ok(removal);
         }
-        // A detached `HEAD` is kept alive only by this folder's administrative files, which the
-        // removal deletes; a branch, remote branch or tag containing a commit keeps it.
+        // A detached `HEAD` and the refs the folder keeps for itself live in its administrative
+        // files, which the removal deletes; a branch, remote branch or tag containing a commit
+        // keeps it.
+        let mut holders = Vec::new();
         if removal.branch.is_none()
             && let Some(head) = removal.head
         {
-            removal.unreachable_commits = self.commits_only_reached_by([head])?;
+            holders.push(("HEAD".to_owned(), head));
+        }
+        let common = Repository::open(self.git().commondir())?;
+        let admin = self.git().commondir().join("worktrees").join(&id);
+        let Some(own) = own_refs(&common, &admin) else {
+            removal.blocked = Some(
+                "Canopy cannot read the refs this folder keeps for itself, so it cannot tell which commits the removal would lose.".into(),
+            );
+            return Ok(removal);
+        };
+        holders.extend(own);
+        removal.unreachable_commits =
+            self.commits_only_reached_by(holders.iter().map(|(_, tip)| *tip))?;
+        if removal.unreachable_commits > 0 {
+            for (name, tip) in holders {
+                if self.commits_only_reached_by([tip])? > 0 {
+                    removal.held_by.push(name);
+                }
+            }
         }
         Ok(removal)
     }
@@ -354,7 +375,9 @@ impl Repo {
         if now != *expected {
             let what = if now.branch != expected.branch || now.head != expected.head {
                 "another branch or commit is checked out there"
-            } else if now.unreachable_commits != expected.unreachable_commits {
+            } else if now.unreachable_commits != expected.unreachable_commits
+                || now.held_by != expected.held_by
+            {
                 "its commits changed"
             } else {
                 "its files changed"

@@ -674,6 +674,53 @@ fn the_forget_preview_names_what_forgetting_loses() {
     assert!(contains.trim().is_empty(), "{contains}");
 }
 
+/// #292: removing a worktree deletes its own refs (`refs/worktree/*`, a bisect's refs) too, so
+/// the commits only they reach are counted with the ones a detached `HEAD` holds, with what holds
+/// them, and a ref added after the confirmation makes the removal refuse.
+#[test]
+fn the_removal_counts_commits_only_a_worktree_s_own_refs_hold() {
+    isolate_git!(the_removal_counts_commits_only_a_worktree_s_own_refs_hold);
+    let f = fixture();
+    let parked = f.linked("parked");
+    fs::write(parked.join("a.txt"), "parked\n").expect("edit");
+    git(&parked, &["commit", "-q", "-am", "parked work"]);
+    git(&parked, &["update-ref", "refs/worktree/wip", "HEAD"]);
+    git(&parked, &["reset", "-q", "--hard", "HEAD~1"]);
+    let removal = f.repo.worktree_removal(&parked, &[]).expect("inspect");
+    assert_eq!(removal.branch.as_deref(), Some("parked"));
+    assert_eq!(removal.unreachable_commits, 1, "{removal:?}");
+    assert_eq!(removal.held_by, ["refs/worktree/wip"]);
+
+    let both = f.beside.join("both");
+    git(
+        &f.main,
+        &["worktree", "add", "-q", "--detach", &both.to_string_lossy()],
+    );
+    fs::write(both.join("a.txt"), "ref\n").expect("edit");
+    git(&both, &["commit", "-q", "-am", "under a ref"]);
+    git(&both, &["update-ref", "refs/bisect/bad", "HEAD"]);
+    git(&both, &["reset", "-q", "--hard", "HEAD~1"]);
+    fs::write(both.join("a.txt"), "head\n").expect("edit");
+    git(&both, &["commit", "-q", "-am", "at head"]);
+    let removal = f.repo.worktree_removal(&both, &[]).expect("inspect");
+    assert_eq!(removal.unreachable_commits, 2, "{removal:?}");
+    assert_eq!(removal.held_by, ["HEAD", "refs/bisect/bad"]);
+
+    // A ref that holds a commit, added after the confirmation, makes the removal refuse.
+    let seen = f.repo.worktree_removal(&both, &[]).expect("inspect");
+    fs::write(both.join("b.txt"), "later\n").expect("edit");
+    git(&both, &["add", "b.txt"]);
+    git(&both, &["commit", "-q", "-m", "later"]);
+    git(&both, &["update-ref", "refs/worktree/later", "HEAD"]);
+    git(&both, &["reset", "-q", "--hard", "HEAD~1"]);
+    let err = f
+        .repo
+        .remove_worktree(&seen, &[])
+        .expect_err("a new ref holding a commit is a change");
+    assert!(err.to_string().contains("its commits changed"), "{err}");
+    assert!(exists(&both));
+}
+
 /// #285: forgetting deletes a worktree's own refs (`refs/worktree/*`, a bisect's refs) with
 /// its entry, so the commits only they reach are counted too, on a branch as well as detached,
 /// and the row can say what holds them.

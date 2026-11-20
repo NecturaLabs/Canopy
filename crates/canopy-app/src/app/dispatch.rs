@@ -1085,6 +1085,7 @@ mod tests {
             untracked: canopy_core::WorktreeLoss::default(),
             ignored: canopy_core::WorktreeLoss::default(),
             unreachable_commits: 0,
+            held_by: Vec::new(),
             blocked: None,
             operation: None,
             fingerprint: 0,

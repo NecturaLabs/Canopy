@@ -153,9 +153,10 @@ pub(super) fn show(
                         Callout::new(
                             Tone::Danger,
                             format!(
-                                "{} reachable only from this folder's detached HEAD; once it is removed nothing points to {}.",
-                                plural(removal.unreachable_commits, "commit is", "commits are"),
+                                "{} that no branch, remote branch or tag contains: nothing points to {} once {} deleted.",
+                                plural(removal.unreachable_commits, "commit", "commits"),
                                 if removal.unreachable_commits == 1 { "it" } else { "them" },
+                                holders(&removal.held_by),
                             ),
                         )
                         .show(ui);
@@ -381,6 +382,7 @@ mod tests {
             },
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
+            held_by: Vec::new(),
             blocked: None,
             operation: None,
             fingerprint: 0,
@@ -621,6 +623,7 @@ mod tests {
         let ctx = setup();
         let mut lonely = removal();
         lonely.unreachable_commits = 2;
+        lonely.held_by = vec!["HEAD".into(), "refs/worktree/wip".into()];
         let tab = tab_with(&lonely);
         let mut form = RemoveWorktreeForm::new(tab.path.clone(), lonely.path, 1);
         let (nodes, _) = frames(&ctx, &mut form, &tab);
@@ -638,7 +641,7 @@ mod tests {
         );
         assert!(said("Commits only that reflog holds are lost"));
         assert!(said(
-            "2 commits are reachable only from this folder's detached HEAD"
+            "2 commits that no branch, remote branch or tag contains: nothing points to them once its HEAD and refs/worktree/wip are deleted."
         ));
         assert!(!said("Safety is checked again"));
     }
