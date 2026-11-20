@@ -4,7 +4,7 @@
 //! on GitLab), so a row needs no request of its own: the Markdown is flattened here, on the
 //! hosting thread, and only the first part is kept.
 
-use crate::http::plain_text;
+use crate::http::{BRAILLE_BLANK, plain_text};
 
 /// The most characters of a description kept for a list row.
 pub const PREVIEW_CHARS: usize = 600;
@@ -18,8 +18,6 @@ const DOUBLE_MARK: usize = 2;
 /// What stands between two paragraphs, so the end of one sentence does not run into the start of
 /// the next.
 const PARAGRAPH_BREAK: &str = " \u{B7} ";
-/// The Braille blank: a character that draws nothing and is neither whitespace nor ignorable.
-const BRAILLE_BLANK: char = '\u{2800}';
 /// The most characters a link's target (or a reference's name) is read over. A target longer than
 /// this is left as text, which bounds what a run of openers can cost.
 const TARGET_CHARS: usize = 512;
@@ -31,6 +29,7 @@ const TARGET_CHARS: usize = 512;
 /// links and images reduced to their text, paragraphs told apart by [`PARAGRAPH_BREAK`], and
 /// control and invisible characters removed ([`plain_text`]).
 pub fn description_preview(markdown: &str) -> String {
+    // The blank becomes a space before the parse, so it ends a heading or list mark like one.
     let source: String = markdown
         .chars()
         .take(SOURCE_CHARS)
@@ -217,29 +216,44 @@ fn inline(text: &str) -> String {
     out
 }
 
-/// A link or reference `[label](target)` / `[label][reference]` starting at `open`: its label
-/// and the index after it. `None` for a bare bracket.
+/// A link, reference or badge link starting at `open`: its label and the index after the
+/// complete link. `None` for a bare bracket.
 fn bracketed(c: &[char], open: usize) -> Option<(String, usize)> {
-    // The label ends at the first `]`; a `[` before it opens a link of its own, so a run of `[` is
-    // scanned once, not once each.
-    let close = open
-        + 1
-        + c[open + 1..]
+    let start = open + 1;
+    let (start, badge) = match &c[start..] {
+        ['[', ..] => (start + 1, true),
+        ['!', '[', ..] => (start + 2, true), // Skip `![`.
+        _ => (start, false),
+    };
+    // Allow one nested opener for a badge. Stop at any further `[` so runs of openers stay linear.
+    let close = start
+        + c[start..]
             .iter()
             .position(|&ch| ch == ']' || ch == '[')
-            .filter(|&at| c[open + 1 + at] == ']')?;
+            .filter(|&at| c[start + at] == ']')?;
     let closer = match c.get(close + 1)? {
         '(' => ')',
-        '[' => ']',
+        '[' if !badge => ']',
         _ => return None,
     };
-    let end = close
-        + 1
-        + c[close + 1..]
-            .iter()
-            .take(TARGET_CHARS)
-            .position(|&ch| ch == closer)?;
-    Some((c[open + 1..close].iter().collect(), end + 1))
+    let mut end = target_end(c, close + 1, closer)?;
+    if badge {
+        // The inner target must be followed immediately by the enclosing link's target.
+        if !c[end..].starts_with(&[']', '(']) {
+            return None;
+        }
+        end = target_end(c, end + 1, ')')?;
+    }
+    Some((c[start..close].iter().collect(), end))
+}
+
+/// The index after a link or reference target, within the bounded scan from its opener.
+fn target_end(c: &[char], open: usize, closer: char) -> Option<usize> {
+    c[open..]
+        .iter()
+        .take(TARGET_CHARS)
+        .position(|&ch| ch == closer)
+        .map(|offset| open + offset + 1)
 }
 
 #[cfg(test)]
@@ -255,6 +269,29 @@ mod tests {
             description_preview(text),
             "Summary · Adds bold and soft text, a link, an screenshot and code. · quoted done \
              open first a b 1 2"
+        );
+    }
+
+    #[test]
+    fn a_badge_link_keeps_only_its_label() {
+        for input in ["[[alt](img)](url)", "[![alt](img)](url)"] {
+            assert_eq!(description_preview(input), "alt", "{input}");
+        }
+    }
+
+    #[test]
+    fn a_badge_link_leaves_following_text() {
+        assert_eq!(
+            description_preview("[![**Build**](img)](url) passed"),
+            "Build passed"
+        );
+    }
+
+    #[test]
+    fn consecutive_badge_links_keep_both_labels() {
+        assert_eq!(
+            description_preview("[![Build](img)](url)[[Coverage](img)](url)"),
+            "BuildCoverage"
         );
     }
 
@@ -332,6 +369,18 @@ mod tests {
     }
 
     #[test]
+    fn hangul_fillers_are_dropped_from_preview_text() {
+        for filler in ['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'] {
+            assert_eq!(
+                description_preview(&format!("a{filler}b")),
+                "ab",
+                "U+{:04X}",
+                u32::from(filler)
+            );
+        }
+    }
+
+    #[test]
     fn unclosed_marks_cost_one_pass_and_closed_ones_still_work() {
         // Far past what a description is cut to, so a pass per mark could not finish.
         let n = 200_000;
@@ -342,6 +391,11 @@ mod tests {
             "[".repeat(n),
             "[a](".repeat(n / 4),
             "[a][".repeat(n / 4),
+            "[![a](".repeat(n / 4),
+            "[[a](".repeat(n / 4),
+            "[[a](b)](c".repeat(n / 4),
+            "![[".repeat(n / 4),
+            "[[a]](".repeat(n / 4),
         ] {
             let flat = inline(&hostile);
             assert_ne!(flat, "");
