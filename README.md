@@ -63,8 +63,8 @@ graph and command palette of GitKraken, and the breadth of operations of Sourcet
   check out, comment on, approve, merge and close pull and merge requests (self-hosted GitLab
   included) through the host's API (REST, and one GraphQL query for the list's checks and
   reviews) with the sign-in of the GitHub CLI (`gh`) or GitLab CLI (`glab`); Canopy stores no token. Besides `git`, Canopy contacts only the repository's
-  GitHub or GitLab, its picture hosts, the update feed and, if you agree, Sentry for crash
-  reports; each has an off switch; see the
+  GitHub or GitLab, its picture hosts, the update feed, and Sentry for crash reports
+  if you agree. Each has an off switch; see the
   [privacy policy](docs/legal/privacy-policy.md).
 - **Credentials**: git and ssh ask for passwords, passphrases and host-key confirmation in Canopy's
   own dialog, never in a terminal.
