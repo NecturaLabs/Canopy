@@ -224,8 +224,8 @@ subject pattern used to generate release notes. The type is any lowercase word, 
 `tools/release.py`; the list above is what to use. Two kinds of subject fail the check:
 
 - `fixup!` and `squash!` commits. Fold them in with `git rebase -i --autosquash` before you push.
-- GitHub's default `Revert "..."` subject. Reword it as `revert: ...` (`git commit --amend`, or the
-  message box when you revert on the website).
+- GitHub's default `Revert "..."` subject. Reword it as `revert: ...` with `git commit --amend`
+  (`git rebase -i` for an earlier commit).
 
 ## Before merging
 
