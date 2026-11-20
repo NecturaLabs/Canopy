@@ -33,6 +33,11 @@ struct Trust {
 struct State {
     folders: Vec<PathBuf>,
     safety: bool,
+    /// Folders tests trusted for themselves ([`add_for_tests`]): kept apart from the published
+    /// list, so a test that publishes settings (any that runs the app's frame) cannot take them
+    /// from tests running beside it (#254).
+    #[cfg(test)]
+    test_folders: Vec<PathBuf>,
 }
 
 static TRUST: Trust = Trust::new();
@@ -43,6 +48,8 @@ impl Trust {
             state: RwLock::new(State {
                 folders: Vec::new(),
                 safety: true,
+                #[cfg(test)]
+                test_folders: Vec::new(),
             }),
             changes: AtomicU64::new(0),
         }
@@ -69,9 +76,18 @@ impl Trust {
 
     fn snapshot(&self) -> Snapshot {
         let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
+        #[cfg(test)]
+        let folders = state
+            .folders
+            .iter()
+            .chain(&state.test_folders)
+            .cloned()
+            .collect();
+        #[cfg(not(test))]
+        let folders = state.folders.clone();
         Snapshot {
             version: self.changes(),
-            folders: state.folders.clone(),
+            folders,
             safety: state.safety,
         }
     }
@@ -102,12 +118,11 @@ pub fn changes() -> u64 {
     TRUST.changes()
 }
 
-/// Trusts `folder` for the rest of the test run. Unlike [`publish`] it adds to the list under one
-/// lock, so tests running in parallel cannot lose each other's folders.
+/// Trusts `folder` for the rest of the test run, whatever settings tests publish meanwhile.
 #[cfg(test)]
 pub fn add_for_tests(folder: PathBuf) {
     let mut state = TRUST.state.write().unwrap_or_else(PoisonError::into_inner);
-    state.folders.push(folder);
+    state.test_folders.push(folder);
 }
 
 /// The trusted folders, whether trust is checked, and the version of that decision.
@@ -205,6 +220,21 @@ pub fn add(list: &mut Vec<PathBuf>, folder: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #254: a test that publishes settings trusting nothing (any test that runs the app's
+    /// frame does) leaves the folders other tests trusted for themselves, whichever tests run
+    /// together and in whatever order.
+    #[test]
+    fn publishing_settings_keeps_the_folders_tests_trusted_for_themselves() {
+        let dir = PathBuf::from("/canopy-tests/trusted-by-one-test");
+        add_for_tests(dir.clone());
+        publish(&Settings::default());
+        assert!(
+            snapshot().folders.contains(&dir),
+            "{:?}",
+            snapshot().folders
+        );
+    }
 
     #[test]
     fn linked_worktree_offers_cover_every_folder_the_gate_checks()
