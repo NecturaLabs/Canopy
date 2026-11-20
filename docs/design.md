@@ -355,11 +355,15 @@ in the density's metrics:
   the toolbar's navigation menu, preserving room for repository content. It stays open for
   section toggles, double-click checkout and context menus. A section's items sit one
   `tree_indent` right of its header's icon (the header reads as their parent; a remote's branches
-  one level further) with their selection and hover fills at full width; a new tab opens only
-  Branches, and a section the user opened or closed keeps its state. The Remotes header carries no
-  button and no menu.
+  one level further). At each level of a tree a folder and a branch share one glyph column (the
+  folder's chevron where a branch's icon is) and one label column. Selection and hover fills
+  span the full width; a new tab opens only Branches, and a section the user opened or closed
+  keeps its state. The Remotes header carries no button and no menu.
 - History column widths follow the currently visible rows: graph lane spans, ref pills and
-  messages, author names and formatted dates. Metadata sits after the measured message width
+  messages, author names and formatted dates. One ref pill is at most 220 points wide (cut with
+  "…", its tooltip the full name); a row's pills take at most 55% of the description column and
+  leave the message at least 160 points, and those that do not fit become one neutral "+N" badge
+  whose tooltip lists them. Metadata sits after the measured message width
   instead of at the far window edge. Narrow views omit lower-priority columns; long messages
   elide, and busy graphs compress their lane spacing. Measurements stay bounded to the viewport.
 - History details sit below the graph, initially 40% of its available height, growing with
@@ -428,9 +432,11 @@ in the density's metrics:
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
-- The action toolbar uses `action_bar_height` (58 points in Comfortable density), with 46-point tools, body-size captions
-  and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has no
-  scroll bar and fades out at the edge it hides behind (Scroll edges). The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
+- The action toolbar uses `action_bar_height` (58 points in Comfortable density), with 46-point tools and body-size
+  captions. It never scrolls: when the tools are wider than the bar, only the active view keeps its name and the Local
+  only badge goes; the tools that still do not fit move, in order, into a More menu (dots-three icon, "More actions")
+  pinned at the right end, each row with the tool's icon, label, shortcut and disabled reason. The view switcher and
+  Fetch, Pull and Push never move. Document tabs scroll horizontally when needed. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
 - When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
@@ -440,6 +446,10 @@ in the density's metrics:
   Secondary Add remote….
 - On the welcome screen, the status bar says "No repository open" so it remains informative even
   before the first tab is opened.
+- The status bar's right end (the bell, an update) always keeps its room. The branch name takes
+  at most 32% of the bar (320 points at most) and the upstream's name 24% (240 points at most);
+  a longer name is cut in its middle with "…", with the full name in its tooltip and accessible name.
+  An item that does not fit whole in what is left is left out, never cut.
 - Welcome action cards explain Open, Clone and Init in two short lines without requiring hover;
   the shortcut stays in each card's top corner.
 - The welcome illustration's layout bounds end just below its trunk. The stack uses the height
@@ -475,7 +485,9 @@ in the density's metrics:
   A line wider than the pane fades out at the edge. A hunk header shows its title and actions
   only; how to pick lines is in the Stage hunk and Unstage hunk tooltips.
 - The diff header names the file with its folder and its +/− count on the left; the diff
-  options, layout switch, Blame and the file's action keep to the right edge.
+  options, layout switch, Blame and the file's action keep to the right edge. From 720 points it
+  is one row, the name cut to leave the controls their room; narrower, it is one row when both
+  parts fit whole (measured on the two-row layout for that file) and two rows otherwise.
 - Conflict side previews (no line numbers) drop the indentation their lines share, and a line
   too long for the card is cut back to a word or number boundary before its ellipsis, so a number
   is never cut in two, unless that would lose more than a quarter of what fits. A file both sides
@@ -498,8 +510,8 @@ in the density's metrics:
   one (`RepoTab::marked`, the kit's `Selection` rules); the Unstaged header then adds "Stage N
   files" to the right of Stage all (which becomes its icon), and that button, a picked row's
   Stage button, Space and the row menu stage all of them. Any plain selection drops the rest.
-  Narrow columns show both as icons. The diff header has no Stage file button: one file is
-  staged from its row, its menu or Space. Discard
+  Narrow columns show both as icons. The diff header has Stage file for an unstaged file, as it
+  has Unstage file for a staged one. Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
@@ -687,9 +699,10 @@ The rest of the kit, each with the states `--overlay gallery` shows:
 - `TreeRow` is a `ListRow` with an indent per level and a disclosure chevron (space is kept for it
   on leaves); Left collapses or asks for the parent, Right expands or asks for the first child.
   The sidebar's Branches are a tree of these: folders for the `/` prefixes (branches first, then
-  folders, each by name; a folder row has its chevron and no icon, the chevron in the accent when
-  the checked-out branch is inside, and shows the number of branches in it), leaf rows with the
-  last segment of the name, a merge icon in the success tone (merged), merging arrows in the warning tone (squash-merged) or a
+  folders, each by name; a folder row has its chevron and no icon (`TreeRow::glyph_chevron` puts
+  the chevron in the icon column), the chevron in the accent when the checked-out branch is
+  inside, and shows the number of branches in it), leaf rows with the last segment of the name
+  (shown whole on hover when cut), a merge icon in the success tone (merged), merging arrows in the warning tone (squash-merged) or a
   crossed-out cloud (upstream gone) for a merged branch, with the deciding check in its tooltip,
   and the ahead and behind counts as mono text. Screen readers hear the whole name, "current
   branch" and the marker. Each level is one `tree_indent` (14).
@@ -762,7 +775,8 @@ strength, where more content lies beyond, so a cut row reads as "more" (`kit::pa
 their scrollbar stands 2 points in from the card's edge; and once they overflow, 8 points of room
 follow the last line so it scrolls clear of the edge. The ground is `kit::overlay::ground`, the fill
 the layer really has (the translucent overlay over glass, else the opaque overlay), so the fades and
-row washes match the card in both. The palette opens on whole entries, its group headings counted.
+row washes match the card in both. When more entries follow than fit, the palette's list ends half
+way into one (a group heading stays whole), so the fade has a cut entry to fade.
 A scrollbar's handle is never shorter than 32 points, so a long document's stays easy to see and
 grab. Scroll bars are a 4-point handle in the text colour: floating ones appear at 45% while the
 area is hovered; code, diff and detail boxes and the pull and merge request list (`theme::solid_scroll`)
@@ -784,8 +798,8 @@ cherry-pick in progress): the tone's tint over the chrome, a seam in the tone, i
 left, and up to two `Sm` ghost actions right. Each action is a `NoticeAction`: a label, an optional
 glyph and its tone (Abort's `danger` circle), and, when unavailable, disabled with the reason on
 hover ("Resolve the 2 conflicts first"), so History, Changes and Requests share one layout.
-`Callout` is the inline note: tint, icon, optional title, wrapped text and up to two actions under
-it, their labels in line with the text (`Callout::show_actions` reports a click). Screen readers
+`Callout` is the inline note, as wide as its room: tint, icon, optional title, wrapped text and up
+to two actions under it, their labels in line with the text (`Callout::show_actions` reports a click). Screen readers
 hear it as a group named for its tone (Note, Success, Warning, Error) holding the title, text and
 actions once each; the icon is painted, never spoken. `Card::compact`
 gives picture-led cards (the settings theme cards) `SM` padding instead of `card_pad`.

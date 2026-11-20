@@ -300,10 +300,9 @@ pub(super) fn show_forget(
                     }
                     note(
                         ui,
-                        "Git forgets these worktrees, whose folders are gone. It deletes no working folder, but it deletes each one's entry in the repository (.git/worktrees): its HEAD and reflog, its index, its config.worktree and refs/worktree/*, and the repositories of its submodules. The branches stay.",
+                        "Removes git's record of worktrees whose folders are gone. No folder is deleted and their branches stay. Commits that only such a worktree's HEAD log or submodules hold are lost.",
                         p.text,
                     );
-                    note(ui, "Commits only a HEAD reflog holds are lost.", p.text);
                     for entry in &forget.entries {
                         forgotten(ui, entry);
                     }
@@ -469,7 +468,7 @@ mod tests {
         nodes
     }
 
-    /// The confirmation says what forgetting deletes, plainly, and names each worktree that
+    /// The confirmation says what forgetting removes, plainly, and names each worktree that
     /// holds commits nothing else reaches.
     #[test]
     fn forgetting_names_what_it_deletes_and_the_commits_it_orphans() {
@@ -491,11 +490,14 @@ mod tests {
                     .any(|text| text.contains(part))
             })
         };
+        // F23: in plain words, without git's file names.
         assert!(
-            said("deletes each one's entry in the repository"),
+            said("Removes git's record of worktrees whose folders are gone"),
             "{nodes:?}"
         );
-        assert!(said("HEAD and reflog, its index"));
+        assert!(said("No folder is deleted and their branches stay"));
+        assert!(said("HEAD log or submodules hold are lost"));
+        assert!(!said("config.worktree"), "no plumbing: {nodes:?}");
         assert!(said(
             "2 commits that no branch, remote branch or tag contains"
         ));

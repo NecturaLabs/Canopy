@@ -1003,10 +1003,7 @@ impl CanopyApp {
         if s.split_diff != before.split_diff || s.syntax_highlight != before.syntax_highlight {
             for t in &mut self.tabs {
                 t.split_diff = s.split_diff;
-                if t.highlight_diff != s.syntax_highlight {
-                    t.highlight_diff = s.syntax_highlight;
-                    t.reload_diff();
-                }
+                t.set_highlight(s.syntax_highlight);
             }
         }
         if s.hosting_api != before.hosting_api {

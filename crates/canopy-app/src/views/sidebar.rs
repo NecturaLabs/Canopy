@@ -297,6 +297,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         let spoken = format!("{path}, folder of {branches} {}", if *branches == 1 { "branch" } else { "branches" });
                         let mut row = TreeRow::new(("branch-folder", path), *depth)
                             .indent(section_tree_indent())
+                            .glyph_chevron()
                             .open(&mut open)
                             .toggle_on_click(true)
                             .label(name.clone())
@@ -599,6 +600,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 let remote_at = at;
                 let shown = TreeRow::new(("remote", &r.name), 0)
                     .indent(section_tree_indent())
+                    .glyph_chevron()
                     .open(&mut open)
                     .toggle_on_click(true)
                     .label(label)
@@ -1273,6 +1275,96 @@ mod tests {
         }
     }
 
+    /// F10: at each level of the branch tree a folder and a branch share one glyph column (the
+    /// folder's chevron where the branch's icon is) and one label column; a folder's children
+    /// sit one tree level further in.
+    #[test]
+    fn folders_and_branches_at_one_level_share_their_columns() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let mut tab = branch_tab();
+        tab.collapsed.clear();
+        if let Some(snap) = tab.snap.as_mut() {
+            std::sync::Arc::make_mut(snap)
+                .branches
+                .push(canopy_core::BranchInfo {
+                    name: "fix/typo".into(),
+                    target: Some(oid(10)),
+                    is_head: false,
+                    upstream: None,
+                    ahead: 0,
+                    behind: 0,
+                    worktree: None,
+                });
+        }
+        tab.snap_index = crate::tab::SnapIndex::new(tab.snap.as_ref().expect("snapshot"));
+        let mut actions = Vec::new();
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let shapes = crate::ui::kit::testkit::frame(&ctx, Vec::new(), |ui| {
+                ui.set_max_size(egui::vec2(260.0, 700.0));
+                show(ui, &mut tab, &mut actions);
+            });
+            texts.clear();
+            for c in &shapes {
+                painted_text(&c.shape, &mut texts);
+            }
+        }
+        // Labels by where their text starts (`painted_text` measures ink, which differs by
+        // letter); glyphs by their ink.
+        let mut origins = Vec::new();
+        let shapes = crate::ui::kit::testkit::frame(&ctx, Vec::new(), |ui| {
+            ui.set_max_size(egui::vec2(260.0, 700.0));
+            show(ui, &mut tab, &mut actions);
+        });
+        for c in &shapes {
+            if let egui::Shape::Text(t) = &c.shape {
+                origins.push((t.galley.text().to_owned(), t.pos.x));
+            }
+        }
+        let rect = |text: &str| {
+            texts
+                .iter()
+                .find(|(t, _)| t == text)
+                .unwrap_or_else(|| panic!("{text}: {texts:?}"))
+                .1
+        };
+        let starts = |text: &str| {
+            origins
+                .iter()
+                .find(|(t, _)| t == text)
+                .unwrap_or_else(|| panic!("{text}: {origins:?}"))
+                .1
+        };
+        let (folder, branch) = (rect("fix"), rect("feature"));
+        assert!(
+            (starts("fix") - starts("feature")).abs() < 0.5,
+            "one label column: folder {} branch {}",
+            starts("fix"),
+            starts("feature")
+        );
+        let branch_glyph = texts
+            .iter()
+            .find(|(t, r)| t == icon::GIT_BRANCH && r.y_range().intersects(branch.y_range()))
+            .map(|(_, r)| r.center().x)
+            .expect("the branch's glyph");
+        let chevron = texts
+            .iter()
+            .find(|(t, r)| t == icon::CARET_RIGHT && r.y_range().intersects(folder.y_range()))
+            .map(|(_, r)| r.center().x)
+            .expect("the folder's chevron");
+        assert!(
+            (chevron - branch_glyph).abs() < 1.0,
+            "one glyph column: chevron {chevron} branch glyph {branch_glyph}"
+        );
+        let step = theme::metrics().tree_indent;
+        assert!(
+            (starts("typo") - (starts("feature") + step)).abs() < 0.5,
+            "a child one level in: {} vs {}",
+            starts("typo"),
+            starts("feature") + step
+        );
+    }
+
     /// #139: the rows of a section sit right of its header's icon in every section, and a
     /// remote's branches one level right of the remote.
     #[test]
@@ -1328,6 +1420,14 @@ mod tests {
                 .1
                 .left()
         };
+        let rows_of = |label: &str| {
+            texts
+                .iter()
+                .find(|(t, _)| t == label)
+                .unwrap_or_else(|| panic!("{label}: {texts:?}"))
+                .1
+                .y_range()
+        };
         let step = theme::metrics().tree_indent / 2.0;
         // Branches: the header's glyph first, then the rows' (branch and remote branch).
         let branch = lefts(icon::GIT_BRANCH);
@@ -1343,14 +1443,20 @@ mod tests {
         assert!(tags[1] > tags[0] + step, "tags {tags:?}");
         let stashes = lefts(icon::ARCHIVE);
         assert!(stashes[1] > stashes[0] + step, "stashes {stashes:?}");
-        // Remotes: the remote's name lines up with the items, its branch is one level further.
+        // Remotes: the remote sits right of the header, its branch one level further in than the
+        // remote's chevron (F10: a folder's chevron is in the glyph column of its level).
         let cloud = lefts(icon::CLOUD)[0];
         let origin = left_of("origin");
         assert!(origin > cloud + step, "remote {cloud} {origin}");
+        let chevron = texts
+            .iter()
+            .find(|(t, r)| t == icon::CARET_RIGHT && r.y_range().intersects(rows_of("origin")))
+            .map(|(_, r)| r.left())
+            .expect("the remote's chevron");
         let remote_branch = rows.last().copied().expect("remote branch glyph");
         assert!(
-            remote_branch > origin + step,
-            "remote branch {origin} {remote_branch}"
+            remote_branch > chevron + step,
+            "remote branch {chevron} {remote_branch}"
         );
     }
 

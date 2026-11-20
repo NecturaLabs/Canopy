@@ -188,6 +188,9 @@ pub struct BlameRead {
     pub result: Option<Result<Arc<canopy_core::Blame>, String>>,
     /// The characters of the longest line of `result`, for the width of the view.
     pub longest: usize,
+    /// The code's syntax colours, once the highlighter threads have them (with Settings → Git →
+    /// Syntax highlighting on and a known language).
+    pub highlights: Option<Arc<Highlights>>,
 }
 
 /// A file whose diff is shown.
@@ -1584,6 +1587,7 @@ impl RepoTab {
             rev,
             result: None,
             longest: 0,
+            highlights: None,
         });
     }
 
@@ -1593,7 +1597,25 @@ impl RepoTab {
             serial: self.blame_serial,
             path,
             rev,
+            highlight: self.highlight_diff,
         });
+    }
+
+    /// Follows Settings → Git → Syntax highlighting: `on` colours the diff and an open blame
+    /// (read again, keeping the plain one on screen until then), off shows both plain at once.
+    pub fn set_highlight(&mut self, on: bool) {
+        if self.highlight_diff == on {
+            return;
+        }
+        self.highlight_diff = on;
+        self.reload_diff();
+        if let Some(read) = &mut self.blame {
+            read.highlights = None;
+            if on {
+                let (path, rev) = (read.path.clone(), read.rev);
+                self.send_blame(path, rev);
+            }
+        }
     }
 
     /// Back to the file's diff; a reply still on its way is ignored.
@@ -2915,11 +2937,36 @@ impl RepoTab {
                             blame
                                 .lines
                                 .iter()
-                                .map(|l| l.text.chars().count())
+                                // Tabs show as four spaces (`diff::code_job`).
+                                .map(|l| l.text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum::<usize>())
                                 .max()
                                 .unwrap_or(0)
                         });
+                        // Colours of the last read fit only the same lines: a refresh that
+                        // changed the file shows it plain until its own colours arrive.
+                        let same_lines = match (&read.result, &result) {
+                            (Some(Ok(old)), Ok(new)) => {
+                                old.lines.len() == new.lines.len()
+                                    && old
+                                        .lines
+                                        .iter()
+                                        .zip(&new.lines)
+                                        .all(|(a, b)| a.text == b.text)
+                            }
+                            _ => false,
+                        };
+                        if !same_lines {
+                            read.highlights = None;
+                        }
                         read.result = Some(result);
+                    }
+                }
+                Event::BlameHighlight { serial, highlights } => {
+                    if serial == self.blame_serial
+                        && self.highlight_diff
+                        && let Some(read) = &mut self.blame
+                    {
+                        read.highlights = Some(highlights);
                     }
                 }
                 Event::Insights { serial, result } => {
@@ -5838,6 +5885,7 @@ mod tests {
             serial: current,
             path,
             rev: None,
+            highlight: true,
         } = jobs.recv()?
         else {
             panic!("blame job");
@@ -5860,6 +5908,129 @@ mod tests {
             tab.blame,
             Some(BlameRead { result: Some(Err(ref error)), .. }) if error == "no such path"
         ));
+        Ok(())
+    }
+
+    /// J7: a blame's syntax colours apply only to the newest blame, and Settings' switch turns
+    /// them off at once and asks for them again when turned back on.
+    #[test]
+    fn blame_colours_follow_the_newest_read_and_the_switch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.read_blame("Cargo.toml".into(), None);
+        let Job::Blame { serial: old, .. } = jobs.recv()? else {
+            panic!("blame job");
+        };
+        tab.read_blame("Cargo.toml".into(), None);
+        let Job::Blame { serial, .. } = jobs.recv()? else {
+            panic!("blame job");
+        };
+        let colours = Arc::new(Highlights::default());
+        let coloured = |tab: &RepoTab| tab.blame.as_ref().is_some_and(|b| b.highlights.is_some());
+        events.send(Event::BlameHighlight {
+            serial: old,
+            highlights: Arc::clone(&colours),
+        })?;
+        tab.poll(&[]);
+        assert!(!coloured(&tab), "colours for an older read were kept");
+        events.send(Event::BlameHighlight {
+            serial,
+            highlights: Arc::clone(&colours),
+        })?;
+        tab.poll(&[]);
+        assert!(coloured(&tab));
+        tab.set_highlight(false);
+        assert!(!coloured(&tab), "turned off, the blame stays coloured");
+        tab.set_highlight(true);
+        let asked = std::iter::from_fn(|| jobs.try_recv().ok()).any(|job| {
+            matches!(
+                job,
+                Job::Blame {
+                    highlight: true,
+                    ..
+                }
+            )
+        });
+        assert!(asked, "turned on, the blame is not coloured again");
+        Ok(())
+    }
+
+    /// A blame read again keeps its colours while its lines are the same, and drops them once
+    /// they differ, so old spans never colour new text (a file too long to highlight again
+    /// would keep them for good).
+    #[test]
+    fn a_refreshed_blame_keeps_its_colours_only_for_the_same_lines()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let blame = |texts: &[&str]| {
+            Ok(Arc::new(canopy_core::Blame {
+                commits: Vec::new(),
+                lines: texts
+                    .iter()
+                    .map(|t| canopy_core::BlameLine {
+                        commit: 0,
+                        text: (*t).into(),
+                    })
+                    .collect(),
+            }))
+        };
+        let read = |tab: &mut RepoTab, texts: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+            tab.read_blame("a.rs".into(), None);
+            let serial = std::iter::from_fn(|| jobs.try_recv().ok())
+                .find_map(|job| match job {
+                    Job::Blame { serial, .. } => Some(serial),
+                    _ => None,
+                })
+                .expect("a blame job");
+            events.send(Event::Blame {
+                serial,
+                result: blame(texts),
+            })?;
+            tab.poll(&[]);
+            Ok(())
+        };
+        read(&mut tab, &["fn a() {}", "fn b() {}"])?;
+        events.send(Event::BlameHighlight {
+            serial: tab.blame_serial,
+            highlights: Arc::new(Highlights::default()),
+        })?;
+        tab.poll(&[]);
+        let coloured = |tab: &RepoTab| tab.blame.as_ref().is_some_and(|b| b.highlights.is_some());
+        assert!(coloured(&tab));
+        // Read again with the same lines (a refresh): the colours stay.
+        let serial = tab.blame_serial;
+        tab.send_blame("a.rs".into(), None);
+        let again = std::iter::from_fn(|| jobs.try_recv().ok())
+            .find_map(|job| match job {
+                Job::Blame { serial, .. } => Some(serial),
+                _ => None,
+            })
+            .expect("a blame job");
+        assert_ne!(again, serial);
+        events.send(Event::Blame {
+            serial: again,
+            result: blame(&["fn a() {}", "fn b() {}"]),
+        })?;
+        tab.poll(&[]);
+        assert!(coloured(&tab), "the same lines lost their colours");
+        // A line inserted at the top: the old spans would colour the wrong lines.
+        tab.send_blame("a.rs".into(), None);
+        let changed = std::iter::from_fn(|| jobs.try_recv().ok())
+            .find_map(|job| match job {
+                Job::Blame { serial, .. } => Some(serial),
+                _ => None,
+            })
+            .expect("a blame job");
+        events.send(Event::Blame {
+            serial: changed,
+            result: blame(&["// new", "fn a() {}", "fn b() {}"]),
+        })?;
+        tab.poll(&[]);
+        assert!(!coloured(&tab), "new lines kept the old colours");
         Ok(())
     }
 

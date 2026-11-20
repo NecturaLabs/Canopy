@@ -51,7 +51,7 @@ use crate::ui::theme::{
     self, Curve, Density, Elevation, Fill, GlassBlocked, NodeShape, Palette, Style, Surfaces,
     ThemeId, palette,
 };
-use crate::ui::widgets::forge_icon;
+use crate::ui::widgets::{elide_middle, field_placeholder, forge_icon};
 use crate::updater::{self, UpdateState, Updater};
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
@@ -1877,6 +1877,13 @@ fn row_end(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), paint::SEAM), Sense::hover());
     paint::seam_h(ui.painter(), rect.x_range(), rect.center().y, s.border);
     ui.add_space(theme::SM);
+    let at = (ui.ctx().cumulative_pass_nr(), ui.cursor().min.y);
+    ui.data_mut(|d| d.insert_temp(last_seam_id(), at));
+}
+
+/// Where the last row's seam left the cursor, so a group gap right after it adds nothing.
+fn last_seam_id() -> egui::Id {
+    egui::Id::new("settings-last-row-seam")
 }
 
 /// Help or detail text under a row's title.
@@ -1971,15 +1978,10 @@ fn noted_row_layout(
                 if !detail.is_empty() {
                     HelpMark::new(title, detail).show(ui);
                 }
-                if let Some(note) = note {
-                    // Beside an explanation mark, the state remark is set apart from it.
-                    let mark = HelpMark::new(title, &note.text).notice(note.warn);
-                    if detail.is_empty() {
-                        mark.show(ui);
-                    } else {
-                        ui.add_space(theme::XS);
-                        mark.apart().show(ui);
-                    }
+                // One mark per row: beside an explanation mark, the state remark is a line
+                // under the help instead.
+                if let Some(note) = note.filter(|_| detail.is_empty()) {
+                    HelpMark::new(title, &note.text).notice(note.warn).show(ui);
                 }
                 if let Some(tag) = tag {
                     ui.add_space(theme::XS);
@@ -1991,6 +1993,16 @@ fn noted_row_layout(
             });
         });
         help(ui);
+        if let Some(note) = note.filter(|_| !detail.is_empty()) {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&note.text)
+                        .size(m.meta_size)
+                        .color(if note.warn { p.warning } else { p.text }),
+                )
+                .wrap(),
+            );
+        }
     };
     ui.push_id(title, |ui| {
         if width < 620.0 {
@@ -2014,18 +2026,26 @@ fn noted_row_layout(
                 crate::ui::kit::button::icon_button_side(Size::Sm) + ui.spacing().item_spacing.x;
             let text_width = (width - control_width - reset - theme::XL)
                 .clamp(width * 0.5, HELP_MAX_WIDTH.max(width * 0.5));
+            // A text shorter than its controls (a one-line title beside a keycap and a button)
+            // sits on their centre line; the heights are last frame's.
+            let heights = ui.id().with("row-heights");
+            let (text_h, control_h): (f32, f32) =
+                ui.data(|d| d.get_temp(heights)).unwrap_or_default();
+            let lift = ((control_h - text_h) / 2.0).max(0.0);
             ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(
+                let text = ui.allocate_ui_with_layout(
                     vec2(text_width, 0.0),
                     Layout::top_down(Align::Min),
                     |ui| {
                         // Without this the column is only as wide as its text, and the controls
                         // of rows with short help text sit at different distances from the edge.
                         ui.set_min_width(text_width);
+                        ui.add_space(lift);
                         label(ui);
                     },
                 );
-                ui.allocate_ui_with_layout(
+                let measured_text = text.response.rect.height() - lift;
+                let controls = ui.allocate_ui_with_layout(
                     vec2(width - text_width - 2.0 * theme::SM, 0.0),
                     Layout::right_to_left(Align::Center).with_main_wrap(true),
                     |ui| {
@@ -2048,6 +2068,11 @@ fn noted_row_layout(
                         }
                     },
                 );
+                let measured = (measured_text, controls.response.rect.height());
+                if (measured.0 - text_h).abs() > 0.5 || (measured.1 - control_h).abs() > 0.5 {
+                    ui.data_mut(|d| d.insert_temp(heights, measured));
+                    ui.ctx().request_discard("a settings row changed height");
+                }
             });
         }
     });
@@ -2075,9 +2100,15 @@ fn heading_now(ui: &mut Ui, text: &str) {
     ui.add_space(theme::MD);
 }
 
-/// Space before a group heading; none while searching, where the row above ends in a seam.
+/// Space before a group heading after something that is not a row: none right after a row,
+/// whose seam already parts it from the heading (every heading then stands the same distance
+/// below the divider), and none while searching, where the row above ends in a seam.
 fn group_gap(ui: &mut Ui, space: f32) {
-    if !Filter::searching(ui.ctx()) {
+    let pass = ui.ctx().cumulative_pass_nr();
+    let after_row = ui
+        .data(|d| d.get_temp::<(u64, f32)>(last_seam_id()))
+        .is_some_and(|(at, y)| at == pass && (y - ui.cursor().min.y).abs() < 0.5);
+    if !after_row && !Filter::searching(ui.ctx()) {
         ui.add_space(space);
     }
 }
@@ -2543,16 +2574,18 @@ fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
         },
     );
     let cards = n.cards;
-    for topic in crate::ui::toast::Topic::ALL {
-        let default = *DEFAULTS.notifications.clone().topic_mut(topic);
-        let on = n.topic_mut(topic);
-        ui.add_enabled_ui(cards, |ui| {
+    // One scope for every topic row: a scope per row added a gap between scopes, so these rows
+    // stood taller than the first.
+    ui.add_enabled_ui(cards, |ui| {
+        for topic in crate::ui::toast::Topic::ALL {
+            let default = *DEFAULTS.notifications.clone().topic_mut(topic);
+            let on = n.topic_mut(topic);
             row(ui, topic.label(), topic.help(), |ui| {
                 revert(ui, on, &default, topic.label());
                 switch(ui, on, topic.label());
             });
-        });
-    }
+        }
+    });
 }
 
 /// The theme cards, whole cards per row.
@@ -2719,23 +2752,28 @@ fn theme_card(
                 FontId::new(m.body_size, theme::medium()),
                 p.text,
             );
-            let (caption, _) = ui.allocate_exact_size(vec2(w, name.size().y), Sense::hover());
-            ui.painter().galley(caption.left_top(), name, p.text);
-            ui.painter().text(
-                caption.right_center(),
-                Align2::RIGHT_CENTER,
-                if id == DEFAULTS.theme {
-                    "Recommended"
-                } else if tp.dark {
-                    "Dark"
-                } else {
-                    "Light"
-                },
+            let (line, _) = ui.allocate_exact_size(vec2(w, name.size().y), Sense::hover());
+            ui.painter().galley(line.left_top(), name, p.text);
+            // Under the name, so "Dark (Recommended)" never meets a long name on a narrow card.
+            let caption = ui.painter().layout_no_wrap(
+                theme_caption(id == DEFAULTS.theme, tp.dark).to_owned(),
                 FontId::proportional(m.small_size),
                 p.text_faint,
             );
+            let (line, _) = ui.allocate_exact_size(vec2(w, caption.size().y), Sense::hover());
+            ui.painter().galley(line.left_top(), caption, p.text_faint);
         });
     card.response
+}
+
+/// A theme card's second label: Dark or Light on every card, the recommended theme's marked so.
+fn theme_caption(recommended: bool, dark: bool) -> &'static str {
+    match (recommended, dark) {
+        (true, true) => "Dark (Recommended)",
+        (true, false) => "Light (Recommended)",
+        (false, true) => "Dark",
+        (false, false) => "Light",
+    }
 }
 
 /// The window in miniature, as the approved preview draws it: the ground, the chrome column with
@@ -2864,37 +2902,6 @@ fn in_use(field: &Field) -> Option<Note> {
         },
         warn: false,
     })
-}
-
-/// `text` cut in its middle with an ellipsis until it fits in `max_width`.
-fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
-    let width = |t: &str| {
-        ui.painter()
-            .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
-            .size()
-            .x
-    };
-    if width(text) <= max_width {
-        return text.to_owned();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let build = |keep: usize| {
-        let head = keep.div_ceil(2);
-        let tail = keep / 2;
-        let start: String = chars[..head].iter().collect();
-        let end: String = chars[chars.len() - tail..].iter().collect();
-        format!("{start}…{end}")
-    };
-    let (mut low, mut high) = (0, chars.len());
-    while low < high {
-        let mid = (low + high).div_ceil(2);
-        if width(&build(mid)) <= max_width {
-            low = mid;
-        } else {
-            high = mid - 1;
-        }
-    }
-    build(low)
 }
 
 /// The width of a text field in a settings row.
@@ -3761,7 +3768,7 @@ fn git(
     row(
         ui,
         "Syntax highlighting",
-        "Colours code in diffs by language.",
+        "Colours code in diffs and blame by language.",
         |ui| {
             revert(
                 ui,
@@ -4853,7 +4860,6 @@ fn integrations(
 ) {
     heading(ui, "Cloning");
     row(ui, "Default clone folder", "Where new clones go.", |ui| {
-        let right = ui.cursor().max.x;
         if let Some(dir) = picker.show(
             ui,
             "default-clone-folder",
@@ -4861,14 +4867,19 @@ fn integrations(
         ) {
             s.clone_dir = dir.display().to_string();
         }
-        // The button and the field together are as wide as the other fields, so every
-        // field starts at the same edge.
-        let button = right - ui.cursor().max.x;
-        let default = clone_parent.to_owned();
-        let width = (FIELD_WIDTH - button).max(80.0);
+        // The field is as wide as the other fields, so a path has room; its tooltip and an
+        // empty field's placeholder keep the path's last folder.
+        let width = FIELD_WIDTH;
+        let shown = if s.clone_dir.trim().is_empty() {
+            clone_parent.to_owned()
+        } else {
+            s.clone_dir.clone()
+        };
+        let placeholder = field_placeholder(ui, clone_parent, width);
         fixed_width(ui, width, |ui| {
             TextField::new(&mut s.clone_dir)
-                .placeholder(default)
+                .placeholder(placeholder)
+                .tooltip(shown)
                 .width(width)
                 .name("Default clone folder")
                 .id_salt("clone-dir")
@@ -5861,16 +5872,14 @@ fn trusted_folder_list(ui: &mut Ui, s: &mut Settings) {
             {
                 remove = Some(i);
             }
-            ui.add(
-                egui::Label::new(
-                    RichText::new(folder.display().to_string())
-                        .font(FontId::new(m.small_size, FontFamily::Monospace))
-                        .color(p.text_dim),
-                )
-                .truncate(),
-            )
-            .kit_tooltip(folder.display().to_string())
-            .show();
+            // Cut in the middle: a path's last folder is the part that names it.
+            let shown = folder.display().to_string();
+            let font = FontId::new(m.small_size, FontFamily::Monospace);
+            let cut = elide_middle(ui, &shown, &font, ui.available_width());
+            let response = ui.label(RichText::new(&cut).font(font).color(p.text_dim));
+            if cut != shown {
+                response.kit_tooltip(shown).show();
+            }
         });
     }
     if let Some(i) = remove {
@@ -6053,7 +6062,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row_explained(
         ui,
         "Export settings",
-        "Saves your preferences to a file, without consent.",
+        "Saves your preferences to a file.",
         "Left out: consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Export…" })
@@ -7956,6 +7965,65 @@ mod tests {
         assert!(after.width() <= 0.0, "no button at the default: {after:?}");
     }
 
+    /// J8: the second label means the same thing on every card, the recommended one too.
+    #[test]
+    fn every_theme_card_says_dark_or_light() {
+        assert_eq!(theme_caption(true, true), "Dark (Recommended)");
+        assert_eq!(theme_caption(false, true), "Dark");
+        assert_eq!(theme_caption(false, false), "Light");
+        let default = DEFAULTS.theme;
+        assert!(
+            ThemeId::ALL.contains(&default),
+            "the recommended theme is a card"
+        );
+    }
+
+    /// J3: a row with both an explanation and a state remark carries one mark: the remark is a
+    /// line under its help instead of a second mark beside the first.
+    #[test]
+    fn a_row_carries_one_mark() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let note = Note {
+            text: "No sign-in for github.com. Sign in under Accounts.".to_owned(),
+            warn: false,
+        };
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    noted_row_layout(
+                        ui,
+                        "Download profile pictures",
+                        None,
+                        "Shows pictures.",
+                        &|ui: &mut Ui| help_label(ui, "Shows pictures."),
+                        "Sends commit IDs to GitHub.",
+                        Some(&note),
+                        |_| {},
+                    );
+                });
+            });
+        }
+        let marks = nodes
+            .iter()
+            .filter(|n| {
+                n.label.as_deref().is_some_and(|l| {
+                    l == "About Download profile pictures"
+                        || l == "Note on Download profile pictures"
+                })
+            })
+            .count();
+        assert_eq!(marks, 1, "{nodes:?}");
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref().or(n.value.as_deref()) == Some(note.text.as_str())),
+            "the remark is shown as text: {nodes:?}"
+        );
+    }
+
     #[test]
     fn privacy_draws_why_pictures_are_missing() {
         let mut settings = Settings::default();
@@ -8656,29 +8724,6 @@ mod tests {
         );
         assert_eq!(label(&Source::Guessed), "guessed by Git from this computer");
         assert_eq!(source_label_in(None, home), "not set");
-    }
-
-    #[test]
-    fn a_long_path_is_cut_in_the_middle_to_the_width() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        let path = "From global: /home/ada/projects/scratch/canopy-polish/tmpdir/gitconfig";
-        let font = FontId::proportional(theme::metrics().small_size);
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                assert_eq!(elide_middle(ui, path, &font, 10_000.0), path);
-                let cut = elide_middle(ui, path, &font, 200.0);
-                assert!(cut.contains('…') && cut.starts_with("From") && cut.ends_with("gitconfig"));
-                let width = ui
-                    .painter()
-                    .layout_no_wrap(cut, font.clone(), Color32::WHITE)
-                    .size()
-                    .x;
-                assert!(width <= 200.0, "{width}");
-                assert_eq!(elide_middle(ui, path, &font, 0.0), "…");
-            });
-        });
-        output.textures_delta.clear();
     }
 
     #[test]

@@ -16,7 +16,7 @@ CONSTRUCTOR = re.compile(
 )
 NAMED = re.compile(r"\bColor32\s*::\s*([A-Z][A-Z0-9_]*)\b")
 # Exact non-design expressions: texture/alpha channels, black-or-white contrast selection, gallery
-# opacity/blur samples and text measurement. One complete, unique expression keeps every other use a violation.
+# opacity/blur samples. One complete, unique expression keeps every other use a violation.
 ALLOWED_CONSTANTS = {
     (LIBRARY + "contrast.rs", "BLACK"): [
         (
@@ -60,12 +60,6 @@ ALLOWED_CONSTANTS = {
         (
             "let c = if k % 2 == 0 {\n            Color32::WHITE\n        } else {\n            Color32::BLACK\n        };",
             "the glass gallery uses white as opacity/blur test content",
-        )
-    ],
-    (PREFIX + "views/settings_screen.rs", "WHITE"): [
-        (
-            ".layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)",
-            "text measurement does not paint the measured text",
         )
     ],
 }

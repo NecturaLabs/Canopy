@@ -529,6 +529,8 @@ pub enum Job {
         serial: u64,
         path: String,
         rev: Option<Oid>,
+        /// Colour the code by language too (Settings → Git → Syntax highlighting).
+        highlight: bool,
     },
     /// `HEAD`'s message (to prefill an amend).
     HeadMessage,
@@ -673,6 +675,12 @@ pub enum Event {
     Blame {
         serial: u64,
         result: Result<Arc<canopy_core::Blame>, String>,
+    },
+    /// Syntax highlighting for the blame with this serial (sent before), from the highlighter
+    /// threads: `lines[0][i]` colours its line `i`.
+    BlameHighlight {
+        serial: u64,
+        highlights: Arc<crate::highlight::Highlights>,
     },
     /// The diff failed only because a partial clone has not downloaded what it needs, and a
     /// retry could fetch it: the tab remembers that until the user asks again.
@@ -1274,6 +1282,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     let mut limit = 2000;
     // Bumped for every diff request; a highlight request made for an older one is stale.
     let diff_generation = Arc::new(AtomicU64::new(0));
+    // The newest blame asked for; a highlight request made for an older one is stale.
+    let blame_wanted = Arc::new(AtomicU64::new(0));
     // The last diff sent. A refresh that finds the same content sends the same `Arc` again, so
     // the view keeps its layout and highlighting instead of rebuilding them on the UI thread.
     let mut last_diff: Option<(DiffKey, Arc<FileDiff>)> = None;
@@ -1442,7 +1452,13 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             .map_err(|e| e.to_string()),
                     });
                 }
-                Job::Blame { serial, path, rev } => {
+                Job::Blame {
+                    serial,
+                    path,
+                    rev,
+                    highlight,
+                } => {
+                    blame_wanted.store(serial, Ordering::Relaxed);
                     let trusted = allowed();
                     let result = read_downloading(&emit, &allowed, |missing| {
                         repo.blame(&path, rev, missing, trusted)
@@ -1450,10 +1466,30 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     if let Err(error) = &result {
                         tracing::warn!(error = %redacted(error), "blame failed");
                     }
-                    emit(Event::Blame {
-                        serial,
-                        result: result.map(Arc::new).map_err(|e| e.to_string()),
-                    });
+                    let result = result.map(Arc::new).map_err(|e| e.to_string());
+                    let code = match &result {
+                        Ok(blame) if highlight => Some(Arc::new(crate::highlight::whole_file(
+                            &path,
+                            blame.lines.iter().map(|l| l.text.as_str()),
+                        ))),
+                        _ => None,
+                    };
+                    emit(Event::Blame { serial, result });
+                    // After the blame, so it shows at once as plain text; the highlighter
+                    // threads colour it later, as they do a diff.
+                    if let Some(diff) = code {
+                        let wanted = Arc::clone(&blame_wanted);
+                        let events = events.clone();
+                        let ctx = ctx.clone();
+                        crate::highlight::request(crate::highlight::Request {
+                            diff,
+                            stale: Box::new(move || wanted.load(Ordering::Relaxed) != serial),
+                            deliver: Box::new(move |highlights| {
+                                let _ = events.send(Event::BlameHighlight { serial, highlights });
+                                ctx.request_repaint();
+                            }),
+                        });
+                    }
                 }
                 Job::Signature(oid) => {
                     let status = if allowed() {
@@ -3430,6 +3466,7 @@ mod read_tests {
             serial,
             path: path.into(),
             rev: None,
+            highlight: false,
         };
         let kept = coalesce_reads(vec![blame(1, "a"), Job::HeadMessage, blame(2, "b")]);
         assert!(matches!(
