@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, search_words, unix};
 use crate::error::{Error, Result, head_changed, map_head_conflict};
-use crate::http::{Http, Method, encode, shorten};
+use crate::http::{Http, Method, encode, shorten, without_hidden_chars};
 use crate::model::{
     Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
     RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
@@ -87,8 +87,8 @@ impl Mr {
         };
         RequestSummary {
             number: self.iid,
-            title: self.title.clone(),
-            author: username(self.author.as_ref()),
+            title: without_hidden_chars(&self.title).collect(),
+            author: without_hidden_chars(&username(self.author.as_ref())).collect(),
             state,
             draft: self.draft || self.work_in_progress,
             source_branch: self.source_branch.clone(),
@@ -641,6 +641,20 @@ pub(crate) fn approve(http: &Http, project: &str, iid: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_request_summary_drops_the_braille_blank() {
+        let mr = Mr {
+            title: "Fix  A\u{2800}B".into(),
+            author: Some(User {
+                username: "a\u{2800}da".into(),
+            }),
+            ..Mr::default()
+        };
+        let summary = mr.summary();
+        assert_eq!(summary.title, "Fix  AB");
+        assert_eq!(summary.author, "ada");
+    }
 
     #[test]
     fn project_ids_are_url_encoded() {

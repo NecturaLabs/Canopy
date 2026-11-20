@@ -689,9 +689,10 @@ const MIN_TOKEN_LEN: usize = 8;
 ///
 /// Control characters become spaces, characters that reorder or hide text are dropped
 /// (bidirectional controls and every other default-ignorable code point, such as zero-width
-/// spaces, variation selectors and tags), GitHub and GitLab tokens ([`TOKEN_PREFIXES`]) and the
-/// user name and password in URLs are replaced, whitespace collapses to single spaces, and the
-/// result is at most `max` characters, ending in an ellipsis when it was cut.
+/// spaces, variation selectors and tags, as well as the Braille blank), GitHub and GitLab
+/// tokens ([`TOKEN_PREFIXES`]) and the user name and password in URLs are replaced, whitespace
+/// collapses to single spaces, and the result is at most `max` characters, ending in an ellipsis
+/// when it was cut.
 pub fn plain_text(text: &str, max: usize) -> String {
     let visible: String = text
         .chars()
@@ -729,8 +730,21 @@ fn hide_tokens(text: &str) -> String {
     }
 }
 
-/// Unicode 16's `Default_Ignorable_Code_Point` characters (which include every bidirectional
-/// control) and the interlinear annotation controls: none of them shows, and some reorder text.
+/// A title or author name without the characters that hide or reorder text, otherwise as the
+/// host sent it. The zero-width joiner and the emoji variation selector stay: they only join or
+/// style emoji (`👩‍💻`, `❤️`) and neither hides nor reorders text.
+pub(crate) fn without_hidden_chars(text: &str) -> impl Iterator<Item = char> {
+    text.chars()
+        .filter(|&c| matches!(c, ZERO_WIDTH_JOINER | EMOJI_PRESENTATION) || !hides_text(c))
+}
+
+/// Joins emoji into one picture.
+const ZERO_WIDTH_JOINER: char = '\u{200D}';
+/// Asks for the emoji form of the character before it.
+const EMOJI_PRESENTATION: char = '\u{FE0F}';
+
+/// Unicode 16's `Default_Ignorable_Code_Point` characters (including bidirectional controls),
+/// the interlinear annotation controls and the Braille blank.
 fn hides_text(c: char) -> bool {
     matches!(
         c,
@@ -743,6 +757,7 @@ fn hides_text(c: char) -> bool {
             | '\u{200B}'..='\u{200F}'
             | '\u{202A}'..='\u{202E}'
             | '\u{2060}'..='\u{206F}'
+            | '\u{2800}'
             | '\u{3164}'
             | '\u{FE00}'..='\u{FE0F}'
             | '\u{FEFF}'
@@ -910,6 +925,12 @@ mod tests {
             "see https://<redacted>@host/x"
         );
         assert_eq!(plain_text("xghp_word", 100), "xghp_word", "not a token");
+    }
+
+    #[test]
+    fn plain_text_drops_the_braille_blank() {
+        assert_eq!(plain_text("a\u{2800}b", 10), "ab");
+        assert_eq!(plain_text("\u{2800}", 10), "");
     }
 
     #[test]

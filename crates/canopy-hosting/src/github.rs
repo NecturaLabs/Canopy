@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, is_login, optional, search_words, unix};
 use crate::error::{Error, Result, map_head_conflict};
-use crate::http::{Http, Method, encode};
+use crate::http::{Http, Method, encode, without_hidden_chars};
 use crate::model::{
     Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
     RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
@@ -96,8 +96,8 @@ impl Pull {
         };
         RequestSummary {
             number: self.number,
-            title: self.title.clone(),
-            author: login(self.user.as_ref()),
+            title: without_hidden_chars(&self.title).collect(),
+            author: without_hidden_chars(&login(self.user.as_ref())).collect(),
             state,
             draft: self.draft,
             source_branch: self.head.name.clone(),
@@ -332,8 +332,8 @@ impl SearchPull {
     fn summary(&self) -> Option<RequestSummary> {
         (self.number != 0).then(|| RequestSummary {
             number: self.number,
-            title: self.title.clone(),
-            author: login(self.author.as_ref()),
+            title: without_hidden_chars(&self.title).collect(),
+            author: without_hidden_chars(&login(self.author.as_ref())).collect(),
             state: match self.state.as_str() {
                 "MERGED" => RequestState::Merged,
                 "CLOSED" => RequestState::Closed,
@@ -670,6 +670,35 @@ pub(crate) fn approve(http: &Http, repo: &str, number: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pull_summary_drops_what_hides_text_and_keeps_emoji() {
+        let pull = Pull {
+            title: "Fix\u{202E}  A\u{2800}\u{115F}\u{1160}\u{3164}\u{FFA0}\u{200B}B 👩\u{200D}💻 ❤\u{FE0F}".into(),
+            user: Some(User {
+                login: "a\u{2800}da".into(),
+            }),
+            ..Pull::default()
+        };
+        let summary = pull.summary();
+        assert_eq!(summary.title, "Fix  AB 👩\u{200D}💻 ❤\u{FE0F}");
+        assert_eq!(summary.author, "ada");
+    }
+
+    #[test]
+    fn search_summary_drops_the_braille_blank() {
+        let pull = SearchPull {
+            number: 1,
+            title: "Fix  A\u{2800}B".into(),
+            author: Some(User {
+                login: "a\u{2800}da".into(),
+            }),
+            ..SearchPull::default()
+        };
+        let summary = pull.summary().expect("search result with a pull number");
+        assert_eq!(summary.title, "Fix  AB");
+        assert_eq!(summary.author, "ada");
+    }
 
     fn review(user: &str, state: &str) -> ReviewJson {
         ReviewJson {
