@@ -458,7 +458,7 @@ impl Repo {
             ))
         } else if !unreadable.is_empty() && unknown.is_empty() {
             Some(format!(
-                "Canopy cannot read the HEAD or the refs of {} in the repository's worktrees folder, so it cannot say which commits forgetting would lose. Run git worktree prune -n -v to see them.",
+                "Canopy cannot read the HEAD or own refs of {} in the repository's worktrees folder, so it cannot say which commits forgetting would lose. Run git worktree prune -n -v to see them.",
                 unreadable.join(", ")
             ))
         } else if unknown.is_empty() {
