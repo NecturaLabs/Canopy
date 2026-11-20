@@ -819,14 +819,10 @@ pub fn is_remappable(binding: &Binding) -> bool {
     binding.command != Command::JumpTab
 }
 
-/// Takes the keys the settings hold: `saved` maps a row ([`binding_id`]) to a chord's text.
-/// An entry that is not a row, does not read as a chord, breaks a rule of
-/// [`shape_problem`] or would share its key with another row is ignored, so a saved or
-/// imported file can never leave a key doing two things.
-pub fn apply_saved(saved: &BTreeMap<String, String>) {
-    if CUSTOM.with_borrow(|c| &c.saved == saved) {
-        return;
-    }
+/// The keys `saved` maps to that stand: `saved` maps a row ([`binding_id`]) to a chord's text.
+/// An entry that is not a row, does not read as a chord, breaks a rule of [`shape_problem`] or
+/// would share its key with another row does not.
+fn usable(saved: &BTreeMap<String, String>) -> Vec<(Command, Section, Chord)> {
     let mut chords: Vec<(Command, Section, Chord)> = BINDINGS
         .iter()
         .filter(|b| is_remappable(b))
@@ -849,10 +845,34 @@ pub fn apply_saved(saved: &BTreeMap<String, String>) {
     }) {
         chords.remove(clash);
     }
+    chords
+}
+
+/// Takes the keys the settings hold ([`usable`] says which stand). An entry that does not is
+/// ignored, so a saved or imported file can never leave a key doing two things.
+pub fn apply_saved(saved: &BTreeMap<String, String>) {
+    if CUSTOM.with_borrow(|c| &c.saved == saved) {
+        return;
+    }
     CUSTOM.set(Custom {
         saved: saved.clone(),
-        chords,
+        chords: usable(saved),
     });
+}
+
+/// Removes the entries of `saved` that [`apply_saved`] ignores, so they are not saved or
+/// exported again, and says how many went. The keys that stand are left as they are.
+pub fn drop_ignored(saved: &mut BTreeMap<String, String>) -> usize {
+    let standing = usable(saved);
+    let before = saved.len();
+    saved.retain(|id, _| {
+        binding_by_id(id).is_some_and(|b| {
+            standing
+                .iter()
+                .any(|(command, section, _)| (*command, *section) == (b.command, b.section))
+        })
+    });
+    before - saved.len()
 }
 
 /// `binding`'s chords given `chords` as the user's changes.
@@ -1554,6 +1574,61 @@ mod tests {
             ("Pull.Repository".to_owned(), text(bare(Key::V))),
         ]));
         assert_eq!(ours(), [bare(Key::F)]);
+        apply_saved(&BTreeMap::new());
+    }
+
+    /// What `apply_saved` ignores is also dropped from the saved text, so it is not saved or
+    /// exported again; a valid key, a swap and a key equal to the table's stay as they are.
+    #[test]
+    fn dropping_ignored_keys_keeps_the_valid_ones() {
+        let text = |c: Chord| c.to_text();
+        let entry = |id: &str, c: Chord| (id.to_owned(), text(c));
+        let valid = [
+            entry("Fetch.Repository", bare(Key::P)),
+            entry("Pull.Repository", bare(Key::F)),
+            entry("NewBranch.Repository", bare(Key::W)),
+            entry("Stash.Repository", bare(Key::S)),
+        ];
+        let mut saved: BTreeMap<String, String> = valid.iter().cloned().collect();
+        assert_eq!(drop_ignored(&mut saved), 0, "nothing to drop");
+        assert_eq!(saved, valid.iter().cloned().collect(), "untouched");
+
+        let broken = [
+            entry("Push.Repository", bare(Key::SuperLeft)),
+            entry("MergeDialog.Repository", bare(Key::F9)),
+            entry("Discard.Changes", bare(Key::Tab)),
+            entry("PopStash.Repository", ctrl(Key::V)),
+            ("Nothing.Anywhere".to_owned(), text(bare(Key::V))),
+            ("Tag.History".to_owned(), "nonsense".to_owned()),
+            // The tab jumps are positions: a key for them is never taken.
+            entry("JumpTab.Anywhere", ctrl(Key::V)),
+            // Another row's key.
+            entry("Up.Navigate", bare(Key::J)),
+        ];
+        saved.extend(broken.iter().cloned());
+        // Two rows asking for one free key: one of them gets it, the other does not.
+        saved.extend([
+            entry("First.Navigate", bare(Key::V)),
+            entry("Last.Navigate", bare(Key::V)),
+        ]);
+        let dropped = drop_ignored(&mut saved);
+        assert_eq!(dropped, broken.len() + 1, "{saved:?}");
+        let (first, last) = (
+            saved.remove("First.Navigate").is_some(),
+            saved.remove("Last.Navigate").is_some(),
+        );
+        assert!(first != last, "exactly one of the two keeps the key");
+        assert_eq!(
+            saved,
+            valid.iter().cloned().collect(),
+            "only the valid remain"
+        );
+        // What stays is what applies.
+        apply_saved(&saved);
+        assert_eq!(
+            binding_by_id("Fetch.Repository").map(Binding::current_chords),
+            Some(vec![bare(Key::P)])
+        );
         apply_saved(&BTreeMap::new());
     }
 
