@@ -12,7 +12,7 @@ of verdicts: give the reason with a request ("Right now Linux only picks it up w
 gets the focus back"), say "please" when asking someone else for work, and close a reply to a
 contributor with one short, specific thanks. Cut padding, not courtesy (owner, 2026-11-20).
 
-Example of the register (owner, 2026-11-20), the top of a review:
+Always write in this register, whatever the text (owner, 2026-11-20). The top of a review, for example:
 
 > Nearly there: one change is needed before this can merge. I've approved the workflow run.
 > - **Blocking:** Match system should switch live when the system's mode changes, on Linux, macOS
