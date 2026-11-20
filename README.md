@@ -153,8 +153,9 @@ Windows x86_64. Details:
 
 Requirements:
 
-- A stable Rust toolchain (1.95 or newer) from [rustup](https://rustup.rs), with rustfmt and
-  clippy. Canopy builds with the latest stable release; no exact release is pinned.
+- [rustup](https://rustup.rs) 1.28.1 or newer. The first `cargo` command in the checkout installs
+  the Rust version, rustfmt and clippy pinned in [rust-toolchain.toml](rust-toolchain.toml).
+  Building with a distribution's own `rustc` (which ignores that file) needs Rust 1.95 or newer.
 - `git` 2.30 or newer on `PATH` at runtime.
 - A C compiler (libgit2 is built from source by the `git2` crate). No OpenSSL or libssh2 is needed.
 - Linux: a Wayland or X11 session with OpenGL 3.3 or OpenGL ES 3.0, plus an XDG desktop portal for

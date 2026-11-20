@@ -10,9 +10,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::ops::HunkAction;
 use canopy_core::{DiffSource, Error, Hunk, HunkKey, LineKind, MissingObjects, Repo, Whitespace};
@@ -25,7 +29,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("git runs");
     assert!(
@@ -118,6 +121,7 @@ fn apply(repo: &Repo, action: HunkAction, path: &str, h: &Hunk, lines: &[usize])
 
 #[test]
 fn stages_two_of_five_added_lines() {
+    isolate_git!(stages_two_of_five_added_lines);
     let (dir, repo) = fixture("one\ntwo\nthree\n");
     let p = dir.path();
     fs::write(p.join("a.txt"), "one\ntwo\nthree\nA\nB\nC\nD\nE\n").expect("write");
@@ -150,6 +154,7 @@ fn stages_two_of_five_added_lines() {
 
 #[test]
 fn stages_a_subset_of_removals() {
+    isolate_git!(stages_a_subset_of_removals);
     let (dir, repo) = fixture("one\ntwo\nthree\nfour\nfive\nsix\n");
     let p = dir.path();
     fs::write(p.join("a.txt"), "one\nsix\n").expect("write");
@@ -170,6 +175,7 @@ fn stages_a_subset_of_removals() {
 
 #[test]
 fn stages_only_the_addition_of_a_modified_line() {
+    isolate_git!(stages_only_the_addition_of_a_modified_line);
     let (dir, repo) = fixture("one\ntwo\nthree\n");
     let p = dir.path();
     fs::write(p.join("a.txt"), "one\nTWO\nthree\n").expect("write");
@@ -192,6 +198,7 @@ fn stages_only_the_addition_of_a_modified_line() {
 
 #[test]
 fn unstages_a_subset_of_a_staged_hunk() {
+    isolate_git!(unstages_a_subset_of_a_staged_hunk);
     let (dir, repo) = fixture("one\ntwo\nthree\nfour\n");
     let p = dir.path();
     fs::write(p.join("a.txt"), "one\nTWO\nTHREE\nfour\n").expect("write");
@@ -225,6 +232,7 @@ fn unstages_a_subset_of_a_staged_hunk() {
 
 #[test]
 fn discards_a_subset_in_the_working_tree() {
+    isolate_git!(discards_a_subset_in_the_working_tree);
     let (dir, repo) = fixture("one\ntwo\nthree\n");
     let p = dir.path();
     fs::write(p.join("a.txt"), "one\nA\nB\nthree\n").expect("write");
@@ -242,6 +250,7 @@ fn discards_a_subset_in_the_working_tree() {
 
 #[test]
 fn keeps_no_newline_markers_with_their_line() {
+    isolate_git!(keeps_no_newline_markers_with_their_line);
     // "x\ny\n" -> "x\nY" (no newline): stage only the new last line.
     let (dir, repo) = fixture("x\ny\n");
     let p = dir.path();
@@ -289,6 +298,7 @@ fn keeps_no_newline_markers_with_their_line() {
 
 #[test]
 fn refuses_to_glue_a_line_without_newline_to_the_next() {
+    isolate_git!(refuses_to_glue_a_line_without_newline_to_the_next);
     // "a\nb" -> "a\nb\nc\n". Staging only "+c" through git's edit mode stages "a\nbc\n".
     let (dir, repo) = fixture("a\nb");
     let p = dir.path();
@@ -316,6 +326,7 @@ fn refuses_to_glue_a_line_without_newline_to_the_next() {
 
 #[test]
 fn refuses_empty_context_only_and_stale_selections() {
+    isolate_git!(refuses_empty_context_only_and_stale_selections);
     let (dir, repo) = fixture("one\ntwo\nthree\n");
     let p = dir.path();
     fs::write(p.join("a.txt"), "one\nTWO\nthree\n").expect("write");
@@ -344,6 +355,7 @@ fn refuses_empty_context_only_and_stale_selections() {
 
 #[test]
 fn untracked_file_lines_can_be_staged_and_discarded() {
+    isolate_git!(untracked_file_lines_can_be_staged_and_discarded);
     let (dir, repo) = fixture("one\n");
     let p = dir.path();
     fs::write(p.join("n.txt"), "a\nb\nc\n").expect("write");
@@ -373,6 +385,7 @@ fn untracked_file_lines_can_be_staged_and_discarded() {
 
 #[test]
 fn partly_unstaging_a_new_file_keeps_it_in_the_index() {
+    isolate_git!(partly_unstaging_a_new_file_keeps_it_in_the_index);
     let (dir, repo) = fixture("one\n");
     let p = dir.path();
     fs::write(p.join("n.txt"), "a\nb\nc\n").expect("write");
@@ -398,6 +411,7 @@ fn partly_unstaging_a_new_file_keeps_it_in_the_index() {
 
 #[test]
 fn partly_staging_a_deletion_keeps_the_rest() {
+    isolate_git!(partly_staging_a_deletion_keeps_the_rest);
     let (dir, repo) = fixture("one\ntwo\nthree\n");
     let p = dir.path();
     fs::remove_file(p.join("a.txt")).expect("delete");
@@ -427,6 +441,7 @@ fn partly_staging_a_deletion_keeps_the_rest() {
 
 #[test]
 fn handles_paths_with_spaces_and_non_ascii() {
+    isolate_git!(handles_paths_with_spaces_and_non_ascii);
     let (dir, repo) = fixture("one\n");
     let p = dir.path();
     let mut names = vec!["my notes.txt", "caf\u{e9} \u{2014} n\u{f6}tes.txt"];
@@ -454,6 +469,7 @@ fn handles_paths_with_spaces_and_non_ascii() {
 
 #[test]
 fn stages_unstages_and_discards_lines_without_context() {
+    isolate_git!(stages_unstages_and_discards_lines_without_context);
     // Context 0: the hunk sits in the middle of the file with nothing around it. Expected states
     // from `git diff -U0` edited by hand as `git add -p` would, applied with
     // `git apply --cached --unidiff-zero` (git 2.43).
@@ -520,6 +536,7 @@ fn stages_unstages_and_discards_lines_without_context() {
 
 #[test]
 fn crlf_with_autocrlf_matches_git() {
+    isolate_git!(crlf_with_autocrlf_matches_git);
     let (dir, _) = fixture("one\ntwo\n");
     let p = dir.path();
     git(p, &["config", "core.autocrlf", "true"]);
@@ -551,6 +568,7 @@ fn crlf_with_autocrlf_matches_git() {
 #[test]
 fn staging_lines_leaves_the_executable_bit_alone() {
     use std::os::unix::fs::PermissionsExt;
+    isolate_git!(staging_lines_leaves_the_executable_bit_alone);
 
     let (dir, repo) = fixture("one\n");
     let p = dir.path();

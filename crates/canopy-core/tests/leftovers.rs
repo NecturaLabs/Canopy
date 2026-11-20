@@ -9,10 +9,14 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
+
+use support::isolate_git;
 
 use canopy_core::leftovers::sweep_temp_dirs;
 use canopy_core::{Oid, Repo};
@@ -89,6 +93,7 @@ fn staging(dir: &Path, name: &str, pid: u32) -> PathBuf {
 
 #[test]
 fn a_killed_write_is_reported_and_never_deleted() {
+    isolate_git!(a_killed_write_is_reported_and_never_deleted);
     let dir = tempfile::tempdir().expect("tempdir");
     init(dir.path());
     fs::create_dir(dir.path().join("src")).expect("mkdir");
@@ -115,6 +120,7 @@ fn a_killed_write_is_reported_and_never_deleted() {
 
 #[test]
 fn a_file_being_written_now_and_other_files_are_not_reported() {
+    isolate_git!(a_file_being_written_now_and_other_files_are_not_reported);
     let dir = tempfile::tempdir().expect("tempdir");
     init(dir.path());
     // This process is writing it, however old it looks; so is process 1 (always running on
@@ -140,6 +146,7 @@ fn a_file_being_written_now_and_other_files_are_not_reported() {
 
 #[test]
 fn a_clean_repository_reports_nothing() {
+    isolate_git!(a_clean_repository_reports_nothing);
     let dir = tempfile::tempdir().expect("tempdir");
     init(dir.path());
     let repo = Repo::open(dir.path()).expect("open");
@@ -151,6 +158,7 @@ fn a_clean_repository_reports_nothing() {
 
 #[test]
 fn swept_temp_folders_are_only_canopys_own_and_abandoned() {
+    isolate_git!(swept_temp_folders_are_only_canopys_own_and_abandoned);
     let temp = tempfile::tempdir().expect("tempdir");
     let make = |name: &str| {
         let dir = temp.path().join(name);
@@ -214,6 +222,7 @@ fn head(p: &Path) -> Oid {
 
 #[test]
 fn a_patch_export_stages_outside_the_users_folder_and_cleans_up_on_failure() {
+    isolate_git!(a_patch_export_stages_outside_the_users_folder_and_cleans_up_on_failure);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     let repo = Repo::open(source.path()).expect("open");
@@ -288,6 +297,7 @@ fn kill_git_mid_add(repo: &Path, file: &str) {
 #[cfg(unix)]
 #[test]
 fn a_git_killed_mid_add_leaves_its_lock_and_the_next_error_names_it() {
+    isolate_git!(a_git_killed_mid_add_leaves_its_lock_and_the_next_error_names_it);
     let dir = tempfile::tempdir().expect("tempdir");
     init(dir.path());
     fs::write(dir.path().join("b.txt"), "two\n").expect("write");

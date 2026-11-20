@@ -6,9 +6,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::Repo;
 
@@ -18,11 +22,7 @@ use canopy_core::Repo;
 )]
 fn run(dir: &Path, args: &[&str], editor: Option<&str>) -> std::process::Output {
     let mut command = Command::new("git");
-    command
-        .current_dir(dir)
-        .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    command.current_dir(dir).args(args);
     if let Some(editor) = editor {
         command.env("GIT_EDITOR", editor);
     }
@@ -50,12 +50,14 @@ fn repository() -> (tempfile::TempDir, Repo) {
 
 #[test]
 fn no_template_means_none() {
+    isolate_git!(no_template_means_none);
     let (_dir, repo) = repository();
     assert_eq!(repo.commit_template().expect("template"), None);
 }
 
 #[test]
 fn a_relative_template_matches_what_the_editor_gets_without_its_comments() {
+    isolate_git!(a_relative_template_matches_what_the_editor_gets_without_its_comments);
     let (dir, repo) = repository();
     let template = "feat(scope): summary\n\nWhy:\n\n# Please explain the change.\n# Lines starting with # are removed.\n";
     fs::write(dir.path().join("TEMPLATE"), template).expect("write");
@@ -89,6 +91,7 @@ fn a_relative_template_matches_what_the_editor_gets_without_its_comments() {
 
 #[test]
 fn a_missing_template_file_says_so() {
+    isolate_git!(a_missing_template_file_says_so);
     let (dir, repo) = repository();
     git(
         dir.path(),
@@ -102,6 +105,7 @@ fn a_missing_template_file_says_so() {
 #[cfg(unix)]
 #[test]
 fn a_template_that_is_not_a_regular_file_is_refused_not_read() {
+    isolate_git!(a_template_that_is_not_a_regular_file_is_refused_not_read);
     let (_dir, repo) = repository();
     git(
         repo.workdir(),
@@ -116,6 +120,7 @@ fn a_template_that_is_not_a_regular_file_is_refused_not_read() {
 
 #[test]
 fn a_huge_template_is_refused() {
+    isolate_git!(a_huge_template_is_refused);
     let (dir, repo) = repository();
     fs::write(dir.path().join("big"), vec![b'x'; 300 * 1024]).expect("write");
     git(repo.workdir(), &["config", "commit.template", "big"], None);
@@ -125,6 +130,7 @@ fn a_huge_template_is_refused() {
 
 #[test]
 fn the_configured_comment_character_decides_what_the_template_drops() {
+    isolate_git!(the_configured_comment_character_decides_what_the_template_drops);
     let (dir, repo) = repository();
     fs::write(
         dir.path().join("TEMPLATE"),

@@ -6,9 +6,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{Repo, RepoState};
 
@@ -80,6 +84,7 @@ fn exporting_patches_preserves_preexisting_staging_content() {
         }
     }
     const NUMBERS: u64 = 64;
+    isolate_git!(exporting_patches_preserves_preexisting_staging_content);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     let out = tempfile::tempdir().expect("tempdir");
@@ -115,6 +120,7 @@ fn exporting_patches_preserves_preexisting_staging_content() {
 
 #[test]
 fn concurrent_patch_exports_never_replace_each_others_files() {
+    isolate_git!(concurrent_patch_exports_never_replace_each_others_files);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     let out = tempfile::tempdir().expect("tempdir");
@@ -157,6 +163,7 @@ fn concurrent_patch_exports_never_replace_each_others_files() {
 
 #[test]
 fn exported_commits_apply_in_order_and_keep_their_authors() {
+    isolate_git!(exported_commits_apply_in_order_and_keep_their_authors);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     commit_file(source.path(), "b.txt", "b\n", "feat: add b");
@@ -199,6 +206,7 @@ fn exported_commits_apply_in_order_and_keep_their_authors() {
 
 #[test]
 fn a_patch_that_does_not_apply_can_be_checked_and_the_apply_aborted() {
+    isolate_git!(a_patch_that_does_not_apply_can_be_checked_and_the_apply_aborted);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     commit_file(
@@ -239,6 +247,7 @@ fn a_patch_that_does_not_apply_can_be_checked_and_the_apply_aborted() {
 
 #[test]
 fn a_series_stopped_by_a_conflict_continues_with_the_rest_after_it_is_resolved() {
+    isolate_git!(a_series_stopped_by_a_conflict_continues_with_the_rest_after_it_is_resolved);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     commit_file(source.path(), "b.txt", "b\n", "feat: add b");
@@ -300,6 +309,7 @@ fn a_series_stopped_by_a_conflict_continues_with_the_rest_after_it_is_resolved()
 
 #[test]
 fn a_patch_folder_must_be_a_full_path() {
+    isolate_git!(a_patch_folder_must_be_a_full_path);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     let repo = Repo::open(source.path()).expect("open");
@@ -311,6 +321,7 @@ fn a_patch_folder_must_be_a_full_path() {
 
 #[test]
 fn export_never_replaces_a_patch_file_already_in_the_folder() {
+    isolate_git!(export_never_replaces_a_patch_file_already_in_the_folder);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     commit_file(source.path(), "b.txt", "b\n", "feat: add b");
@@ -349,6 +360,7 @@ fn history_with_a_merge(p: &Path) -> git2::Oid {
 
 #[test]
 fn the_first_parent_chain_is_newest_first_and_stops_at_the_root() {
+    isolate_git!(the_first_parent_chain_is_newest_first_and_stops_at_the_root);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     commit_file(source.path(), "b.txt", "b\n", "feat: add b");
@@ -387,6 +399,7 @@ fn the_first_parent_chain_is_newest_first_and_stops_at_the_root() {
 
 #[test]
 fn the_chain_is_capped_and_follows_the_first_parent_through_a_merge() {
+    isolate_git!(the_chain_is_capped_and_follows_the_first_parent_through_a_merge);
     let source = tempfile::tempdir().expect("tempdir");
     let merge = history_with_a_merge(source.path());
     let repo = Repo::open(source.path()).expect("open");
@@ -426,6 +439,7 @@ fn the_chain_is_capped_and_follows_the_first_parent_through_a_merge() {
 
 #[test]
 fn a_merge_in_the_series_is_set_apart_and_exporting_it_is_refused() {
+    isolate_git!(a_merge_in_the_series_is_set_apart_and_exporting_it_is_refused);
     let source = tempfile::tempdir().expect("tempdir");
     let merge = history_with_a_merge(source.path());
     let repo = Repo::open(source.path()).expect("open");
@@ -490,6 +504,7 @@ fn a_merge_in_the_series_is_set_apart_and_exporting_it_is_refused() {
 /// commit.
 #[test]
 fn a_merge_is_never_exported_as_the_commit_before_it() {
+    isolate_git!(a_merge_is_never_exported_as_the_commit_before_it);
     let p = tempfile::tempdir().expect("tempdir");
     init(p.path());
     git(p.path(), &["checkout", "-q", "-b", "f"]);
@@ -529,6 +544,7 @@ fn a_merge_is_never_exported_as_the_commit_before_it() {
 
 #[test]
 fn a_configured_cover_letter_is_not_exported_with_the_patches() {
+    isolate_git!(a_configured_cover_letter_is_not_exported_with_the_patches);
     let source = tempfile::tempdir().expect("tempdir");
     init(source.path());
     commit_file(source.path(), "b.txt", "b\n", "feat: add b");
