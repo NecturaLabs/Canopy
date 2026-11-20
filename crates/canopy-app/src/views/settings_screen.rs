@@ -361,8 +361,8 @@ impl SettingsScreen {
         }
     }
 
-    /// Keyboard with its first row's last key refused: `j`, a single key, which an Anywhere row
-    /// cannot take (the settings-keyboard-refused screenshot).
+    /// Keyboard after the first row was given `j`, a single key, which an Anywhere row cannot
+    /// take (the settings-keyboard-refused screenshot).
     pub fn refused_a_key() -> Self {
         let first = crate::keymap::BINDINGS
             .iter()
@@ -10244,7 +10244,7 @@ mod tests {
         );
     }
 
-    /// Three frames of `page`, so widths measured last frame have settled: what it speaks.
+    /// What `page` speaks after three frames, so widths measured the frame before have settled.
     fn settled(
         ctx: &egui::Context,
         mut page: impl FnMut(&mut Ui),

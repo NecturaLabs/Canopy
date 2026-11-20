@@ -372,7 +372,7 @@ A response with the wrong JSON shape reports its failure location without quotin
 | Keyboard-only use: one Tab stop per list with the arrows inside, Shift+F10 context menus, modal palette, cheatsheet and dialogs that give focus back | Done | ? | ? | ? |
 | A right-click on a commit or file row selects it before its menu opens (several marked files stay marked) | Done | Yes | ? | ? |
 | Native folder chooser without blocking the app | Done | ? | ? | ? |
-| Configurable keybindings: Settings → Keyboard changes any row's key (a key another row uses is refused, naming it, and the reason shows under the row), resets one or all (Reset all shortcuts is the page's first row), and keeps them in settings export and import; Change takes the shortcut as pressed (Ctrl+Shift+G), never a modifier alone; keys of a loaded or imported file that Canopy cannot use (no such row, or against a rule) are dropped, and an import says how many, below the page's buttons so they do not move | Done | ? | ? | ? |
+| Configurable keybindings: Settings → Keyboard changes any row's key (a key another row uses is refused, naming it, and the reason shows under the row), resets one or all (Reset all shortcuts is the page's first row), and keeps them in settings export and import; Change takes the shortcut as pressed (Ctrl+Shift+G), never a modifier alone; keys of a loaded or imported file that Canopy cannot use (no such row, or against a rule) are dropped, and an import says how many | Done | ? | ? | ? |
 | Dark and light themes (Midnight and Daylight) | Done | Yes | Yes | ? |
 | Observatory theme (the previous Midnight) | Done | ? | ? | ? |
 | High contrast switch for every theme (keeps the theme's backgrounds and colours, raises text, outlines and focus) | Done | ? | ? | ? |
