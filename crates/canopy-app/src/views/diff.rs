@@ -590,7 +590,7 @@ fn header(
     let parts_id = ui.id().with((
         "diff-header-parts",
         &sel.entry.path,
-        format!("{:?}", sel.source),
+        sel.source,
         sel.conflicted,
         tab.diff.as_deref().map(|d| (d.additions, d.deletions)),
     ));
@@ -1745,7 +1745,11 @@ mod tests {
         for (source, stage, unstage) in [
             (DiffSource::Unstaged, true, false),
             (DiffSource::Staged, false, true),
-            (DiffSource::Commit(canopy_core::Oid::ZERO_SHA1), false, false),
+            (
+                DiffSource::Commit(canopy_core::Oid::ZERO_SHA1),
+                false,
+                false,
+            ),
         ] {
             let sel = crate::tab::FileSelection {
                 source,
