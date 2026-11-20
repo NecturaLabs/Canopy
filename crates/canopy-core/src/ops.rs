@@ -1587,7 +1587,9 @@ impl Repo {
             {
                 String::new()
             } else {
-                format!(" {branch} has no upstream yet, so a plain Push or Publish needs no force.")
+                format!(
+                    " {branch} has no upstream yet; if the remote does not have it, Push or Publish sends it without force."
+                )
             };
             Error::invalid(format!(
                 "Canopy cannot tell what {remote} has at {dest_ref}, because none of its fetch \

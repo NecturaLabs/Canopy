@@ -1196,7 +1196,7 @@ mod tests {
             "Force push feature/dark-mode to origin/feature/dark-mode?"
         );
         assert!(
-            body.contains("Your last fetch saw origin/feature/dark-mode at 0707070"),
+            body.contains("origin/feature/dark-mode, which your last fetch saw at 0707070"),
             "{body}"
         );
         let Op::ForcePush(expect) = op else {

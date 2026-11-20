@@ -3489,7 +3489,8 @@ fn a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination
         !text.contains("Push or Publish"),
         "main has an upstream: {text}"
     );
-    // A branch without an upstream is told a plain push needs no force.
+    // A branch without an upstream is told Push or Publish sends it without force, unless the
+    // remote already has it.
     git(p, &["checkout", "-q", "--no-track", "-b", "topic"]);
     let text = copy
         .force_push_target()
@@ -3498,7 +3499,9 @@ fn a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination
     assert!(
         text.contains("remote.origin.fetch +refs/heads/topic:refs/remotes/origin/topic")
             && text
-                .contains("topic has no upstream yet, so a plain Push or Publish needs no force"),
+                .contains(
+                "topic has no upstream yet; if the remote does not have it, Push or Publish sends it without force"
+            ),
         "{text}"
     );
 }

@@ -146,11 +146,11 @@ pub(super) fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) ->
     } = &target;
     let body = match seen {
         Some(oid) => format!(
-            "This replaces {remote}/{dest} with your local {branch}. Your last fetch saw {remote}/{dest} at {}; if it has moved since, Git refuses and nothing changes.",
+            "This replaces {remote}/{dest}, which your last fetch saw at {}, with your local {branch}. If it has moved since, Git refuses and nothing changes.",
             canopy_core::short_id(*oid)
         ),
         None => format!(
-            "{remote}/{dest} is not in your last fetch, so Canopy cannot show what it would replace. If the remote has it, Git refuses."
+            "Your last fetch did not see {remote}/{dest}. If the remote has it, Git refuses and nothing changes."
         ),
     };
     Dialog::Confirm {
@@ -1627,11 +1627,11 @@ mod tests {
             canopy_core::Oid::from_str("0123456789abcdef0123456789abcdef01234567").expect("an oid");
         assert_eq!(
             body(Some(oid)),
-            "This replaces origin/topic with your local topic. Your last fetch saw origin/topic at 0123456; if it has moved since, Git refuses and nothing changes."
+            "This replaces origin/topic, which your last fetch saw at 0123456, with your local topic. If it has moved since, Git refuses and nothing changes."
         );
         assert_eq!(
             body(None),
-            "origin/topic is not in your last fetch, so Canopy cannot show what it would replace. If the remote has it, Git refuses."
+            "Your last fetch did not see origin/topic. If the remote has it, Git refuses and nothing changes."
         );
     }
 }
