@@ -95,6 +95,38 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
     }
 }
 
+/// `text` cut in its middle with an ellipsis until it fits in `max_width` when drawn in
+/// `font`: a path or branch name keeps its start and its end, the parts that name it.
+pub fn elide_middle(ui: &egui::Ui, text: &str, font: &egui::FontId, max_width: f32) -> String {
+    let width = |t: &str| {
+        ui.painter()
+            .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
+            .size()
+            .x
+    };
+    if width(text) <= max_width {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let build = |keep: usize| {
+        let head = keep.div_ceil(2);
+        let tail = keep / 2;
+        let start: String = chars[..head].iter().collect();
+        let end: String = chars[chars.len() - tail..].iter().collect();
+        format!("{start}…{end}")
+    };
+    let (mut low, mut high) = (0, chars.len());
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        if width(&build(mid)) <= max_width {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    build(low)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +161,28 @@ mod tests {
         assert_eq!(relative_time(0, 120), "2 minutes ago");
         assert_eq!(relative_time(0, 3600), "1 hour ago");
         assert_eq!(relative_time(0, 86_400 * 3), "3 days ago");
+    }
+
+    #[test]
+    fn a_long_path_is_cut_in_the_middle_to_the_width() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let path = "From global: /home/ada/projects/scratch/canopy-polish/tmpdir/gitconfig";
+        let font = egui::FontId::proportional(crate::ui::theme::metrics().small_size);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                assert_eq!(elide_middle(ui, path, &font, 10_000.0), path);
+                let cut = elide_middle(ui, path, &font, 200.0);
+                assert!(cut.contains('…') && cut.starts_with("From") && cut.ends_with("gitconfig"));
+                let width = ui
+                    .painter()
+                    .layout_no_wrap(cut, font.clone(), Color32::WHITE)
+                    .size()
+                    .x;
+                assert!(width <= 200.0, "{width}");
+                assert_eq!(elide_middle(ui, path, &font, 0.0), "…");
+            });
+        });
+        output.textures_delta.clear();
     }
 }
