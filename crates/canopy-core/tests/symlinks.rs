@@ -9,10 +9,14 @@
 )]
 #![cfg(unix)]
 
+mod support;
+
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{ChangeKind, DiffSource, LineKind, MissingObjects, Repo, Whitespace};
 
@@ -30,7 +34,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("git runs");
     assert!(
@@ -122,6 +125,7 @@ fn never_the_secret(what: &dyn std::fmt::Debug) {
 
 #[test]
 fn a_file_replaced_by_a_link_outside_the_repository_shows_its_target_not_the_secret() {
+    isolate_git!(a_file_replaced_by_a_link_outside_the_repository_shows_its_target_not_the_secret);
     let (root, p, repo) = fixture();
     let target = root.path().join("outside").join("secret.txt");
     fs::remove_file(p.join("file.txt")).unwrap();
@@ -168,6 +172,7 @@ fn a_file_replaced_by_a_link_outside_the_repository_shows_its_target_not_the_sec
 
 #[test]
 fn a_link_replaced_by_a_file_shows_the_old_target_and_the_new_text() {
+    isolate_git!(a_link_replaced_by_a_file_shows_the_old_target_and_the_new_text);
     let (_root, p, repo) = fixture();
     fs::remove_file(p.join("link")).unwrap();
     fs::write(p.join("link"), "now a file\nof two lines\n").unwrap();
@@ -186,6 +191,7 @@ fn a_link_replaced_by_a_file_shows_the_old_target_and_the_new_text() {
 
 #[test]
 fn a_retargeted_link_shows_both_targets_and_never_follows_either() {
+    isolate_git!(a_retargeted_link_shows_both_targets_and_never_follows_either);
     let (root, p, repo) = fixture();
     let target = root.path().join("outside").join("secret.txt");
     fs::remove_file(p.join("link")).unwrap();
@@ -202,6 +208,7 @@ fn a_retargeted_link_shows_both_targets_and_never_follows_either() {
 
 #[test]
 fn a_link_to_a_folder_is_one_entry_whose_content_is_never_listed() {
+    isolate_git!(a_link_to_a_folder_is_one_entry_whose_content_is_never_listed);
     let (_root, p, repo) = fixture();
     symlink("dir", p.join("dirlink")).unwrap();
     let st = repo.status(MissingObjects::Fail).unwrap();
@@ -215,6 +222,7 @@ fn a_link_to_a_folder_is_one_entry_whose_content_is_never_listed() {
 
 #[test]
 fn a_binary_file_replaced_by_a_link_is_not_shown_as_text() {
+    isolate_git!(a_binary_file_replaced_by_a_link_is_not_shown_as_text);
     let (root, p, repo) = fixture();
     fs::write(p.join("blob.bin"), [0_u8, 1, 2, 3, 0]).unwrap();
     git(&p, &["add", "blob.bin"]);
@@ -233,6 +241,7 @@ fn a_binary_file_replaced_by_a_link_is_not_shown_as_text() {
 
 #[test]
 fn oversized_text_typechanges_are_not_binary() {
+    isolate_git!(oversized_text_typechanges_are_not_binary);
     let (_root, p, repo) = fixture();
     fs::write(p.join("file.txt"), "a long line of text\n".repeat(20_000)).unwrap();
     git(&p, &["add", "file.txt"]);
@@ -260,6 +269,7 @@ fn oversized_text_typechanges_are_not_binary() {
 #[test]
 fn typechange_preview_limit_checks_the_replacement_file() {
     const LIMIT: usize = 256 * 1024;
+    isolate_git!(typechange_preview_limit_checks_the_replacement_file);
     for size in [LIMIT, LIMIT + 1] {
         let (_root, p, repo) = fixture();
         fs::remove_file(p.join("link")).unwrap();
@@ -280,6 +290,7 @@ fn typechange_preview_limit_checks_the_replacement_file() {
 /// be readable, not an error about a missing blob.
 #[test]
 fn a_file_replaced_by_a_submodule_entry_still_diffs() {
+    isolate_git!(a_file_replaced_by_a_submodule_entry_still_diffs);
     let (_root, p, repo) = fixture();
     let head = git(&p, &["rev-parse", "HEAD"]);
     git(&p, &["rm", "-q", "--cached", "file.txt"]);
