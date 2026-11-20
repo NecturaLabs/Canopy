@@ -6,9 +6,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{ChangeKind, DiffSource, MissingObjects, Repo, Whitespace};
 
@@ -80,6 +84,7 @@ fn oracle(p: &Path, path: &str) -> Vec<String> {
 
 #[test]
 fn history_follows_a_file_through_renames_like_git() {
+    isolate_git!(history_follows_a_file_through_renames_like_git);
     let dir = tempfile::tempdir().expect("tmp");
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
@@ -130,6 +135,7 @@ fn history_follows_a_file_through_renames_like_git() {
 
 #[test]
 fn a_historical_diff_opens_without_touching_the_working_tree() {
+    isolate_git!(a_historical_diff_opens_without_touching_the_working_tree);
     let dir = tempfile::tempdir().expect("tmp");
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
@@ -167,6 +173,7 @@ fn a_historical_diff_opens_without_touching_the_working_tree() {
 
 #[test]
 fn a_limit_keeps_the_newest_commits_and_says_there_are_more() {
+    isolate_git!(a_limit_keeps_the_newest_commits_and_says_there_are_more);
     let dir = tempfile::tempdir().expect("tmp");
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
@@ -183,6 +190,7 @@ fn a_limit_keeps_the_newest_commits_and_says_there_are_more() {
 
 #[test]
 fn a_path_is_literal_and_an_unknown_file_has_no_history() {
+    isolate_git!(a_path_is_literal_and_an_unknown_file_has_no_history);
     let dir = tempfile::tempdir().expect("tmp");
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
@@ -194,6 +202,7 @@ fn a_path_is_literal_and_an_unknown_file_has_no_history() {
 
 #[test]
 fn an_unborn_branch_reports_gits_message() {
+    isolate_git!(an_unborn_branch_reports_gits_message);
     let dir = tempfile::tempdir().expect("tmp");
     git(dir.path(), &["init", "-q", "-b", "main"]);
     let repo = Repo::open(dir.path()).expect("repo");
@@ -205,6 +214,7 @@ fn an_unborn_branch_reports_gits_message() {
 
 #[test]
 fn history_can_start_at_an_older_commit_under_its_old_name() {
+    isolate_git!(history_can_start_at_an_older_commit_under_its_old_name);
     let dir = tempfile::tempdir().expect("tmp");
     renamed_twice(dir.path());
     let repo = Repo::open(dir.path()).expect("repo");
@@ -229,6 +239,7 @@ fn missing_objects(p: &Path) -> usize {
 
 #[test]
 fn a_partial_clone_downloads_nothing_to_follow_a_rename() {
+    isolate_git!(a_partial_clone_downloads_nothing_to_follow_a_rename);
     let dir = tempfile::tempdir().expect("tmp");
     let source = dir.path().join("source");
     fs::create_dir(&source).expect("dir");
@@ -272,6 +283,7 @@ fn a_partial_clone_downloads_nothing_to_follow_a_rename() {
 
 #[test]
 fn a_deleted_file_lists_its_deletion_first() {
+    isolate_git!(a_deleted_file_lists_its_deletion_first);
     let dir = tempfile::tempdir().expect("tmp");
     renamed_twice(dir.path());
     git(dir.path(), &["rm", "-q", "docs/c d.txt"]);

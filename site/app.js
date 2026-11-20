@@ -264,7 +264,7 @@ const foot = $("[data-pal-foot]");
 const body = $("[data-pal-body]");
 const tourToggle = $("[data-tour-toggle]");
 const tourIcon = $(".ph", tourToggle);
-const sectionLinks = $$("a", list).map((a) => ({ href: a.getAttribute("href"), label: a.textContent.trim(), icon: $(".ph", a).textContent, view: a.dataset.view }));
+const sectionLinks = $$("a", list).map((a) => ({ href: a.getAttribute("href"), label: $("span", a).textContent.trim(), icon: $(".ph", a).textContent, view: a.dataset.view }));
 const staticList = list.innerHTML;
 const go = (href) => () => {
   const target = $(href);
