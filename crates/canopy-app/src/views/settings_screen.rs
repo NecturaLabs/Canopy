@@ -1753,12 +1753,15 @@ fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Not
         "pulls, rebases and merges",
     )?;
     if let (true, [only]) = (follow, values.as_slice()) {
-        let rest = if only.key.eq_ignore_ascii_case("rebase.autoStash") {
-            "merges"
+        let (git, rest) = if only.key.eq_ignore_ascii_case("rebase.autoStash") {
+            ("rebases", "merges")
         } else {
-            "rebases"
+            ("merges", "rebases")
         };
-        note.text = format!("{} Canopy's switch decides {rest}.", note.text);
+        note.text = format!(
+            "{} Git decides {git}; Canopy's switch decides {rest}.",
+            note.text
+        );
     }
     Some(note)
 }
@@ -8287,10 +8290,29 @@ mod tests {
             ..GitFacts::default()
         };
         let note = autostash_note(&facts, true, true).expect("a note");
-        assert!(note.text.ends_with("decides merges."), "{}", note.text);
-        facts.autostash = vec![fact("merge.autoStash", "true")];
+        assert!(
+            note.text
+                .ends_with("Git decides rebases; Canopy's switch decides merges."),
+            "{}",
+            note.text
+        );
+        facts.autostash = vec![fact("merge.autoStash", "false")];
         let note = autostash_note(&facts, true, true).expect("a note");
-        assert!(note.text.ends_with("decides rebases."), "{}", note.text);
+        assert!(
+            note.text
+                .ends_with("Git decides merges; Canopy's switch decides rebases."),
+            "{}",
+            note.text
+        );
+        // The notification center drops the "Your git configuration decides" lead-in, so the
+        // sentence itself has to say which side git's value decides.
+        let lines = against_recommendation(&facts, &Settings::default(), Path::new("fixture"));
+        assert!(
+            lines.iter().any(|l| l
+                .contains("Git decides merges; Canopy's switch decides rebases. Recommended: On.")),
+            "{lines:?}"
+        );
+        facts.autostash = vec![fact("merge.autoStash", "true")];
         facts.autostash.push(fact("rebase.autoStash", "true"));
         let note = autostash_note(&facts, true, true).expect("a note");
         assert!(!note.text.contains("switch"), "{}", note.text);
