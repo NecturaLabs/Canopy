@@ -2,8 +2,13 @@
 """Check that tagging and publishing require tests of the exact release commit, that the feed and
 site tokens live only in environments, and that releases are complete before they are published."""
 
+import hashlib
+import os
 from pathlib import Path
 import re
+import subprocess
+import tempfile
+from textwrap import dedent
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,6 +23,68 @@ def job(workflow, name):
 
 
 class ReleaseGateTests(unittest.TestCase):
+    def test_setup_rust_uses_an_exact_toolchain(self):
+        setup = (ROOT / ".github/actions/setup-rust/action.yml").read_text()
+        self.assertNotRegex(setup, r"(?m)^\s*toolchain:\s*['\"]?stable\b")
+        action = setup.split("dtolnay/rust-toolchain@", 1)[1].split("    - ", 1)[0]
+        self.assertIn(
+            "toolchain: ${{ steps.pin-unix.outputs.channel || steps.pin-windows.outputs.channel }}",
+            action,
+        )
+        pin = (ROOT / "rust-toolchain.toml").read_text()
+        channels = re.findall(r"(?m)^[ \t]*channel[ \t]*=[ \t]*(.+)$", pin)
+        self.assertEqual(len(channels), 1)
+        self.assertRegex(channels[0], r'^"1\.[0-9]+\.[0-9]+"\s*(?:#.*)?$')
+
+    def test_release_ships_toolchain_report_before_checksums_and_attestation(self):
+        build = job("release.yml", "build")
+        for command in ("rustc -Vv", "cargo -V", "rustup show"):
+            self.assertIn(command, build)
+        release = job("release.yml", "release")
+        self.assertLess(release.index("name: Assemble the toolchain report"), release.index("name: Checksums"))
+        self.assertIn("dist/toolchain.txt", release.split("subject-path: |", 1)[1].split("      #", 1)[0])
+        self.assertIn("dist/toolchain.txt", release.split("name: release-files", 1)[1].split("      - ", 1)[0])
+
+    def test_a_published_release_downloads_its_report_when_checksummed(self):
+        release = job("release.yml", "release")
+        step = release.split("name: Take the published files\n", 1)[1].split("      - ", 1)[0]
+        script = dedent(step.split("        run: |\n", 1)[1])
+        gh = dedent("""\
+            gh() {
+              case "$7" in
+                'canopy-build-*') mkdir -p "$9" && cp published/canopy-build-* "$9/" ;;
+                SHA256SUMS) cp published/SHA256SUMS "$9" ;;
+                toolchain.txt) cp published/toolchain.txt "$9/" ;;
+                *) return 1 ;;
+              esac
+            }
+            """)
+        for has_report in (False, True):
+            with self.subTest(has_report=has_report), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                published = root / "published"
+                published.mkdir()
+                assets = {"canopy-build-1-x86_64-unknown-linux-gnu.tar.gz": b"archive"}
+                if has_report:
+                    assets["toolchain.txt"] = b"rustc 1.100.0\n"
+                for name, contents in assets.items():
+                    (published / name).write_bytes(contents)
+                sums = "".join(
+                    f"{hashlib.sha256(contents).hexdigest()}  {name}\n"
+                    for name, contents in assets.items()
+                )
+                (published / "SHA256SUMS").write_bytes(sums.encode())
+                subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", gh + script], cwd=root, check=True,
+                    env={
+                        "PATH": os.environ["PATH"],
+                        "RUNNER_TEMP": tmp,
+                        "TAG": "build-1",
+                        "GITHUB_REPOSITORY": "test/repo",
+                    },
+                )
+                self.assertEqual({p.name: p.read_bytes() for p in (root / "dist").iterdir()}, assets)
+
     def test_tagging_waits_for_tests_of_dispatch_commit(self):
         tests = job("create-release.yml", "test")
         self.assertIn("uses: ./.github/workflows/test-release.yml", tests)

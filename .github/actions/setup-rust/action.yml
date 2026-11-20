@@ -1,15 +1,11 @@
 name: Setup Rust
 description: >-
-  Installs the latest stable Rust toolchain and, when asked, restores the build
+  Installs the repository's pinned Rust toolchain and, when asked, restores the build
   cache (Swatinem/rust-cache). With `isolated`, the job instead gets fresh rustup
   and cargo homes of its own under RUNNER_TEMP and no cache, so a release build
   takes nothing from a cache an earlier run wrote.
 
 inputs:
-  components:
-    description: Comma-separated rustup components, e.g. clippy
-    required: false
-    default: ""
   targets:
     description: Comma-separated compilation targets
     required: false
@@ -107,12 +103,49 @@ runs:
         "RUSTUP_HOME=$env:RUSTUP_HOME" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
-    # CI and releases build with the latest stable Rust, as local builds do.
+    - name: Read the Rust pin
+      id: pin-unix
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        channel=$(sed -nE 's/^[[:blank:]]*channel[[:blank:]]*=[[:blank:]]*"(1\.[0-9]+\.[0-9]+)"[[:space:]]*(#.*)?$/\1/p' rust-toolchain.toml)
+        if [[ ! $channel =~ ^1\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::error::Expected one exact Rust channel (1.x.y) in rust-toolchain.toml."
+          exit 1
+        fi
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
+        echo "RUSTUP_AUTO_INSTALL=0" >> "$GITHUB_ENV"
+
+    - name: Read the Rust pin
+      id: pin-windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $pin = @(Select-String -Path rust-toolchain.toml -CaseSensitive -Pattern '^\s*channel\s*=\s*"(1\.[0-9]+\.[0-9]+)"\s*(#.*)?$')
+        if ($pin.Count -ne 1) { throw 'Expected one exact Rust channel (1.x.y) in rust-toolchain.toml.' }
+        "channel=$($pin[0].Matches[0].Groups[1].Value)" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+        'RUSTUP_AUTO_INSTALL=0' | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+    # CI and releases use the same pin and components as local builds.
     - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
       with:
-        toolchain: stable
-        components: ${{ inputs.components }}
+        toolchain: ${{ steps.pin-unix.outputs.channel || steps.pin-windows.outputs.channel }}
+        components: clippy,rustfmt
         targets: ${{ inputs.targets }}
+
+    - name: Verify and log the active Rust toolchain
+      shell: bash
+      env:
+        RUST_CHANNEL: ${{ steps.pin-unix.outputs.channel || steps.pin-windows.outputs.channel }}
+      run: |
+        version=$(rustc --version)
+        if [[ $version != "rustc $RUST_CHANNEL "* ]]; then
+          echo "::error::Expected Rust $RUST_CHANNEL from rust-toolchain.toml, got $version."
+          exit 1
+        fi
+        rustc -Vv
+        cargo -V
+        rustup show
 
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       if: inputs.cache == 'true' && inputs.isolated != 'true'
