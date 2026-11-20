@@ -285,7 +285,8 @@ let shown = [];
 let active = 0;
 
 /* The window under the headline shows the view of the palette's active row, one real render per
-   section. */
+   section. It steps through them by itself until the visitor pauses it with the button below
+   the palette or reaches for the palette. */
 const stage = $("[data-stage]");
 const views = $$(".view", stage);
 let shownView = "history";
@@ -311,6 +312,7 @@ function tourStep() {
 }
 function tourSync() {
   const available = !calm.matches && !search.hidden && !input.value;
+  if (!available && document.activeElement === tourToggle) (search.hidden ? list : input).focus();
   tourToggle.hidden = !available;
   tourToggle.setAttribute("aria-pressed", String(tourPaused));
   tourIcon.textContent = tourPaused ? "\uE3D0" : "\uE39E";
@@ -319,7 +321,7 @@ function tourSync() {
   if (run && !tourTimer) tourTimer = setInterval(tourStep, TOUR_MS);
   if (!run && tourTimer) { clearInterval(tourTimer); tourTimer = 0; }
 }
-function stopTour() {
+function pauseTour() {
   if (tourPaused) return;
   tourPaused = true;
   tourSync();
@@ -457,8 +459,8 @@ paletteMode();
 desktop.addEventListener("change", () => { paletteMode(); tourSync(); });
 
 list.addEventListener("scroll", () => edgeFade(list), { passive: true });
-palette.addEventListener("pointerenter", stopTour);
-palette.addEventListener("focusin", stopTour);
+palette.addEventListener("pointerenter", pauseTour);
+palette.addEventListener("focusin", pauseTour);
 tourToggle.addEventListener("click", () => { tourPaused = !tourPaused; tourSync(); });
 calm.addEventListener("change", tourSync);
 document.addEventListener("visibilitychange", tourSync);
