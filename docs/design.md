@@ -771,7 +771,8 @@ strength, where more content lies beyond, so a cut row reads as "more" (`kit::pa
 their scrollbar stands 2 points in from the card's edge; and once they overflow, 8 points of room
 follow the last line so it scrolls clear of the edge. The ground is `kit::overlay::ground`, the fill
 the layer really has (the translucent overlay over glass, else the opaque overlay), so the fades and
-row washes match the card in both. The palette opens on whole entries, its group headings counted.
+row washes match the card in both. When more entries follow than fit, the palette's list ends half
+way into one (a group heading stays whole), so the fade has a cut entry to fade.
 A scrollbar's handle is never shorter than 32 points, so a long document's stays easy to see and
 grab. Scroll bars are a 4-point handle in the text colour: floating ones appear at 45% while the
 area is hovered; code, diff and detail boxes and the pull and merge request list (`theme::solid_scroll`)
