@@ -1120,6 +1120,7 @@ fn preview_of_thousands_of_long_paths_does_not_deadlock() {
     const PATHS: usize = 4_000;
     /// Generous for a slow machine; a hung git never answers.
     const LIMIT: Duration = Duration::from_secs(60);
+    isolate_git!(preview_of_thousands_of_long_paths_does_not_deadlock);
 
     let (_dir, repo) = fixture();
     let long = "x".repeat(150);
