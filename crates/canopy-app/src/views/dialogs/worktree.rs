@@ -220,6 +220,20 @@ impl ForgetWorktreesForm {
     }
 }
 
+/// What holds a forgotten worktree's lonely commits, with its verb: "its HEAD is", or "its HEAD
+/// and refs/worktree/wip are" when its own refs hold some too.
+fn holders(held_by: &[String]) -> String {
+    let names: Vec<&str> = held_by
+        .iter()
+        .map(|name| if name == "HEAD" { "its HEAD" } else { name })
+        .collect();
+    match names.as_slice() {
+        [] => "it is".to_owned(),
+        [one] => format!("{one} is"),
+        [rest @ .., last] => format!("{} and {last} are", rest.join(", ")),
+    }
+}
+
 /// What forgetting one worktree deletes besides the working folder it no longer has.
 fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
     let p = palette(ui.ctx());
@@ -238,13 +252,14 @@ fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
         note(
             ui,
             format!(
-                "    {} that no branch, remote branch or tag contains: nothing points to {} once its HEAD is deleted",
+                "    {} that no branch, remote branch or tag contains: nothing points to {} once {} deleted",
                 plural(entry.unreachable_commits, "commit", "commits"),
                 if entry.unreachable_commits == 1 {
                     "it"
                 } else {
                     "them"
-                }
+                },
+                holders(&entry.held_by),
             ),
             p.danger,
         );
@@ -447,6 +462,7 @@ mod tests {
             branch: None,
             head: None,
             unreachable_commits: 0,
+            held_by: Vec::new(),
             submodule_repositories: false,
             operation: None,
         }
@@ -483,6 +499,7 @@ mod tests {
         let ctx = setup();
         let mut lonely = entry("lonely");
         lonely.unreachable_commits = 2;
+        lonely.held_by = vec!["HEAD".into(), "refs/worktree/wip".into()];
         lonely.operation = Some("rebase".into());
         lonely.submodule_repositories = true;
         let forget = canopy_core::WorktreeForget {
@@ -510,6 +527,11 @@ mod tests {
         assert!(said(
             "2 commits that no branch, remote branch or tag contains"
         ));
+        // #285: what holds them, its detached HEAD or its own refs.
+        assert!(
+            said("once its HEAD and refs/worktree/wip are deleted"),
+            "{nodes:?}"
+        );
         assert!(said("a rebase in progress is lost"));
         assert!(said(
             "its submodule repositories are deleted, with any commits in them that were never pushed"
