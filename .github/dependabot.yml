@@ -16,6 +16,17 @@ updates:
     commit-message:
       prefix: "build(deps)"
 
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    # A compiler bump changes the shipped binaries, so it is a releasable commit like cargo's
+    # (tools/release.py).
+    commit-message:
+      prefix: "build(deps)"
+
   # Actions are pinned to full commit SHAs with the version in a trailing comment
   # (`uses: owner/repo@<sha> # v1.2.3`); Dependabot updates both.
   - package-ecosystem: github-actions

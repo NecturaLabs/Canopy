@@ -2,8 +2,16 @@
 """Check that tagging and publishing require tests of the exact release commit, that the feed and
 site tokens live only in environments, and that releases are complete before they are published."""
 
+import hashlib
+import json
+import os
 from pathlib import Path
 import re
+import shutil
+import stat
+import subprocess
+import tempfile
+from textwrap import dedent
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,7 +25,489 @@ def job(workflow, name):
     return match[1]
 
 
+def run_block(step):
+    """The dedented body of a step's `run: |` block, without comments that follow the step."""
+    if "run: |\n" not in step:
+        return re.search(r"(?m)^\s*run: (.+)$", step)[1] + "\n"
+    script = step.split("run: |\n", 1)[1].splitlines()
+    indent = len(script[0]) - len(script[0].lstrip())
+    kept = [line for line in script if not line.strip() or line.startswith(" " * indent)]
+    return dedent("\n".join(kept)) + "\n"
+
+
+def step_script(body, name):
+    """The `run:` script of the step called `name` in a job's text."""
+    steps = [s for s in re.split(r"(?m)^      - ", body) if s.startswith(f"name: {name}\n")]
+    if len(steps) != 1:
+        raise AssertionError(f"expected one step called {name}")
+    return run_block(steps[0])
+
+
+def action_pin_step(identifier):
+    action = (ROOT / ".github/actions/setup-rust/action.yml").read_text()
+    steps = [s for s in re.split(r"(?m)^    - ", action) if f"id: {identifier}\n" in s]
+    if len(steps) != 1:
+        raise AssertionError(f"setup-rust has no step {identifier}")
+    return steps[0]
+
+
+def action_step_named(name):
+    action = (ROOT / ".github/actions/setup-rust/action.yml").read_text()
+    steps = [s for s in re.split(r"(?m)^    - ", action) if s.startswith(f"name: {name}\n")]
+    if len(steps) != 1:
+        raise AssertionError(f"setup-rust has no step called {name}")
+    return steps[0]
+
+
+def fake_programs(directory, programs):
+    """Executables named `programs` in `directory`, each a /bin/sh script."""
+    directory.mkdir(exist_ok=True)
+    for name, body in programs.items():
+        path = directory / name
+        path.write_text("#!/bin/sh\n" + body)
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+PIN_ACCEPTED = {
+    "plain": b'[toolchain]\nchannel = "1.100.0"\n',
+    "crlf": b'[toolchain]\r\nchannel = "1.100.0"\r\nprofile = "minimal"\r\n',
+    "trailing comment": b'[toolchain]\nchannel = "1.100.0" # the pin\n',
+    "commented-out second channel": b'[toolchain]\nchannel = "1.100.0"\n# channel = "1.99.0"\n',
+    "indented, tight": b'[toolchain]\n\tchannel="1.100.0"\n',
+}
+PIN_REJECTED = {
+    "duplicate channel lines": b'[toolchain]\nchannel = "1.100.0"\nchannel = "1.100.0"\n',
+    "prerelease": b'[toolchain]\nchannel = "1.100.0-beta"\n',
+    "two components": b'[toolchain]\nchannel = "1.100"\n',
+    "stable": b'[toolchain]\nchannel = "stable"\n',
+    "no channel": b'[toolchain]\nprofile = "minimal"\n',
+    "only a comment": b'[toolchain]\n# channel = "1.100.0"\n',
+}
+
+# What needs the pinned toolchain, or the files a pinned toolchain builds: cargo, rustc and rustup
+# directly, and the scripts that run them.
+NEEDS_RUST = re.compile(r"\b(?:cargo|rustc|rustup)\b|vendor-eframe|notices\.py|stall-check|glass-check")
+SETUP_RUST = re.compile(r"(?m)^\s*uses: \./\.github/actions/setup-rust\s*$")
+
+
+def run_text(step):
+    """The script of a workflow step, without comment lines, or None for a step with no `run:`."""
+    if re.search(r"(?m)^\s*run: [|>]", step):
+        script = run_block(step)
+    elif match := re.search(r"(?m)^\s*run: (.+)$", step):
+        script = match[1]
+    else:
+        return None
+    return "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+
+
 class ReleaseGateTests(unittest.TestCase):
+    def test_setup_rust_uses_an_exact_toolchain(self):
+        setup = (ROOT / ".github/actions/setup-rust/action.yml").read_text()
+        self.assertNotRegex(setup, r"(?m)^\s*toolchain:\s*['\"]?stable\b")
+        action = setup.split("dtolnay/rust-toolchain@", 1)[1].split("    - ", 1)[0]
+        self.assertIn(
+            "toolchain: ${{ steps.pin-unix.outputs.channel || steps.pin-windows.outputs.channel }}",
+            action,
+        )
+        pin = (ROOT / "rust-toolchain.toml").read_text()
+        channels = re.findall(r"(?m)^[ \t]*channel[ \t]*=[ \t]*(.+)$", pin)
+        self.assertEqual(len(channels), 1)
+        self.assertRegex(channels[0], r'^"1\.[0-9]+\.[0-9]+"\s*(?:#.*)?$')
+
+    def test_release_ships_toolchain_report_before_checksums_and_attestation(self):
+        package = step_script(job("release.yml", "build"), "Package")
+        report = re.search(r"\{\n(.*?)\n\s*\} > \"dist/\$name\.toolchain\.txt\"", package, re.S)
+        self.assertIsNotNone(report, "the Package step writes dist/$name.toolchain.txt")
+        for command in ("rustc -Vv", "cargo -V", "rustup show"):
+            self.assertIn(command, report[1])
+        self.assertLess(report.start(), package.index("tar -czf"))
+        release = job("release.yml", "release")
+        self.assertLess(release.index("name: Assemble the toolchain report"), release.index("name: Checksums"))
+        self.assertIn("dist/toolchain.txt", release.split("subject-path: |", 1)[1].split("      #", 1)[0])
+        self.assertIn("dist/toolchain.txt", release.split("name: release-files", 1)[1].split("      - ", 1)[0])
+
+    def test_a_published_release_downloads_its_report_when_checksummed(self):
+        release = job("release.yml", "release")
+        step = release.split("name: Take the published files\n", 1)[1].split("      - ", 1)[0]
+        script = dedent(step.split("        run: |\n", 1)[1])
+        # A stand-in for `gh release download` that reads its options by name.
+        gh = dedent("""\
+            gh() {
+              local pattern='' dir='' output=''
+              shift 2
+              while (( $# )); do
+                case $1 in
+                  --pattern) pattern=$2; shift ;;
+                  --dir) dir=$2; shift ;;
+                  --output) output=$2; shift ;;
+                esac
+                shift
+              done
+              case $pattern in
+                'canopy-build-*') mkdir -p "$dir" && cp published/canopy-build-* "$dir/" ;;
+                SHA256SUMS) cp published/SHA256SUMS "$output" ;;
+                toolchain.txt) mkdir -p "$dir" && cp published/toolchain.txt "$dir/" ;;
+                *) return 1 ;;
+              esac
+            }
+            """)
+        for has_report in (False, True):
+            with self.subTest(has_report=has_report), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                published = root / "published"
+                published.mkdir()
+                assets = {"canopy-build-1-x86_64-unknown-linux-gnu.tar.gz": b"archive"}
+                if has_report:
+                    assets["toolchain.txt"] = b"rustc 1.100.0\n"
+                for name, contents in assets.items():
+                    (published / name).write_bytes(contents)
+                sums = "".join(
+                    f"{hashlib.sha256(contents).hexdigest()}  {name}\n"
+                    for name, contents in assets.items()
+                )
+                (published / "SHA256SUMS").write_bytes(sums.encode())
+                subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", gh + script], cwd=root, check=True,
+                    env={
+                        "PATH": os.environ["PATH"],
+                        "RUNNER_TEMP": tmp,
+                        "TAG": "build-1",
+                        "GITHUB_REPOSITORY": "test/repo",
+                    },
+                )
+                self.assertEqual({p.name: p.read_bytes() for p in (root / "dist").iterdir()}, assets)
+
+    def test_the_checkout_is_checked_before_anything_from_it_runs(self):
+        # setup-rust is a local action and reads rust-toolchain.toml from the checkout, so the
+        # check that the checkout is the tagged commit comes first.
+        build = job("release.yml", "build")
+        self.assertLess(
+            build.index("name: Check the checkout is the tagged commit"),
+            build.index("uses: ./.github/actions/setup-rust"),
+        )
+
+    def test_new_releases_require_a_rust_pin_from_the_identity_job(self):
+        identity = job("release.yml", "identity")
+        script = step_script(identity, "Require a Rust pin for new releases")
+        self.assertIn("rust-toolchain.toml", script)
+        self.assertIn("exit 1", script)
+        self.assertIn("gh release view", script)
+
+    def test_the_tests_check_depends_on_the_msrv_job(self):
+        tests = job("ci.yml", "tests")
+        self.assertIn("msrv", re.search(r"needs: \[(.*?)\]", tests)[1].split(", "))
+        self.assertIn("MSRV: ${{ needs.msrv.result }}", tests)
+        self.assertIn('for r in "$CHANGES" "$RESULT" "$MSRV"; do', tests)
+        self.assertIn("if: always()", tests)
+
+    def test_every_step_that_needs_rust_comes_after_the_pin_is_installed(self):
+        # cargo and rustup read rust-toolchain.toml and would install the toolchain unverified and
+        # unlogged, so setup-rust (which installs, checks and logs it) comes first in each job.
+        scanned = needing = 0
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            text = path.read_text()
+            if "\njobs:\n" not in text:
+                continue
+            for name in re.findall(r"(?m)^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[1]):
+                steps = re.split(r"(?m)^      - ", job(path.name, name))[1:]
+                setup = next((i for i, step in enumerate(steps) if SETUP_RUST.search(step)), None)
+                for i, step in enumerate(steps):
+                    scanned += 1
+                    script = run_text(step)
+                    if script is None or not NEEDS_RUST.search(script):
+                        continue
+                    needing += 1
+                    where = f"{path.name} {name}: {script.strip().splitlines()[0]}"
+                    self.assertIsNotNone(setup, where)
+                    self.assertLess(setup, i, where)
+        self.assertGreater(scanned, 50)
+        self.assertGreaterEqual(needing, 10)
+
+    def test_the_msrv_job_checks_the_workspace_rust_version(self):
+        manifest = (ROOT / "Cargo.toml").read_text()
+        rust_version = re.search(r'(?m)^rust-version\s*=\s*"([^"]+)"', manifest)[1]
+        msrv = job("ci.yml", "msrv")
+        versions = re.findall(r"(?:\+|toolchain install |RUSTUP_TOOLCHAIN=|on Rust )(\d+\.\d+(?:\.\d+)?)", msrv)
+        self.assertGreaterEqual(len(versions), 5, versions)
+        self.assertEqual(set(versions), {rust_version})
+
+    def test_dependabot_commit_prefixes_decide_which_updates_are_releasable(self):
+        # tools/release.py releases build(deps) (a new compiler changes the shipped binaries, as a
+        # new crate does) and does not release ci.
+        text = (ROOT / ".github/dependabot.yml").read_text()
+        prefixes = {}
+        for entry in re.split(r"(?m)^  - package-ecosystem: ", text)[1:]:
+            prefixes[entry.split("\n", 1)[0]] = re.search(r'prefix: "([^"]+)"', entry)[1]
+        self.assertEqual(
+            prefixes, {"cargo": "build(deps)", "rust-toolchain": "build(deps)", "github-actions": "ci"}
+        )
+
+    def test_a_new_release_requires_a_pin_unless_it_is_already_published(self):
+        script = step_script(job("release.yml", "identity"), "Require a Rust pin for new releases")
+        cases = [
+            # (has pin, what gh prints, expected status, whether gh is called)
+            ("pin present", True, "false", 0, False),
+            ("pin present, release is a draft", True, "true", 0, False),
+            ("no pin, published release", False, "false", 0, True),
+            ("no pin, draft release", False, "true", 1, True),
+            ("no pin, no such release", False, "fail", 1, True),
+        ]
+        for label, has_pin, mode, status, calls_gh in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                if has_pin:
+                    (root / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "1.100.0"\n')
+                fake_programs(root / "bin", {
+                    "gh": 'echo "$@" >> "$GH_LOG"\n[ "$GH_MODE" = fail ] && { echo "release not found" >&2; exit 1; }\necho "$GH_MODE"\n',
+                })
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, capture_output=True, text=True,
+                    env={
+                        "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}", "GH_MODE": mode,
+                        "GH_LOG": str(root / "gh.log"), "TAG": "build-1", "GITHUB_REPOSITORY": "test/repo",
+                        "GH_TOKEN": "token",
+                    },
+                )
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertEqual((root / "gh.log").exists(), calls_gh)
+                if calls_gh:
+                    self.assertIn("release view build-1 --repo test/repo", (root / "gh.log").read_text())
+                if status:
+                    self.assertIn("::error::", result.stdout)
+
+    def run_verify_step(self, reported, expected="1.100.0"):
+        script = run_block(action_step_named("Verify and log the active Rust toolchain"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_programs(root, {
+                "rustc": 'if [ "$1" = --version ]; then echo "$FAKE_RUSTC"; else echo "rustc verbose details"; fi\n',
+                "cargo": 'echo "cargo 1.100.0 (fake)"\n',
+                "rustup": 'echo "rustup show output"\n',
+            })
+            return subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, capture_output=True, text=True,
+                env={
+                    "PATH": f"{root}{os.pathsep}{os.environ['PATH']}", "RUST_CHANNEL": expected,
+                    "FAKE_RUSTC": reported,
+                },
+            )
+
+    def test_the_active_toolchain_must_be_the_pin_and_is_logged(self):
+        ok = self.run_verify_step("rustc 1.100.0 (abcdef 2026-11-20)")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        for line in ("rustc verbose details", "cargo 1.100.0 (fake)", "rustup show output"):
+            self.assertIn(line, ok.stdout)
+        for reported in (
+            "rustc 1.99.0 (abcdef 2026-11-20)",
+            "rustc 1.100.0-beta.1 (abcdef 2026-11-20)",
+            "rustc 1.100.01 (abcdef 2026-11-20)",
+            "rustc 1.1.0 (abcdef 2026-11-20)",
+            "",
+        ):
+            with self.subTest(reported=reported):
+                bad = self.run_verify_step(reported)
+                self.assertEqual(bad.returncode, 1)
+                self.assertIn("::error::Expected Rust 1.100.0", bad.stdout)
+                self.assertNotIn("rustc verbose details", bad.stdout)
+
+    def run_pin_step(self, contents):
+        """Run setup-rust's Unix pin step on a rust-toolchain.toml (None: no file); return the
+        channel, or None when the step fails. self.pin_output holds what it printed."""
+        script = run_block(action_pin_step("pin-unix"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            if contents is not None:
+                (root / "rust-toolchain.toml").write_bytes(contents)
+            out, env_file = root / "output", root / "env"
+            out.touch()
+            env_file.touch()
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, capture_output=True,
+                env={"PATH": os.environ["PATH"], "GITHUB_OUTPUT": str(out), "GITHUB_ENV": str(env_file)},
+            )
+            self.pin_output = result.stdout.decode() + result.stderr.decode()
+            if result.returncode != 0:
+                self.assertEqual(out.read_text(), "")
+                return None
+            self.assertEqual(env_file.read_text(), "RUSTUP_AUTO_INSTALL=0\n")
+            return out.read_text()
+
+    def pin_pwsh_channel(self, contents):
+        """The Windows pin step's pattern applied as Select-String does, or None when rejected.
+
+        PowerShell is not available here, so this translates the .NET pattern to Python's `re`.
+        That is equivalent for this pattern: it uses only literals, `\\s`, `[0-9]`, `.`, groups and
+        anchors, which .NET and Python read the same on ASCII input (they differ on exotic
+        Unicode whitespace, which the cases below do not use), and Select-String matches line by
+        line (StreamReader splits on CRLF, LF and CR, so no line keeps its `\\r`) and is made
+        case-sensitive by -CaseSensitive.
+        """
+        step = action_pin_step("pin-windows")
+        pattern = re.search(r"-CaseSensitive -Pattern '([^']+)'", step)[1]
+        self.assertIn("$pin.Count -ne 1", step)
+        matches = [m for line in re.split(r"\r\n|\r|\n", contents.decode()) if (m := re.search(pattern, line))]
+        return matches[0][1] if len(matches) == 1 else None
+
+    def test_the_rust_pin_is_read_strictly_on_every_platform(self):
+        for label, contents in PIN_ACCEPTED.items():
+            with self.subTest(label=label):
+                self.assertEqual(self.run_pin_step(contents), "channel=1.100.0\n")
+                self.assertEqual(self.pin_pwsh_channel(contents), "1.100.0")
+        for label, contents in PIN_REJECTED.items():
+            with self.subTest(label=label):
+                self.assertIsNone(self.run_pin_step(contents))
+                self.assertIsNone(self.pin_pwsh_channel(contents))
+
+    def test_a_missing_pin_file_fails_with_a_message(self):
+        self.assertIsNone(self.run_pin_step(None))
+        self.assertIn("::error::rust-toolchain.toml is missing", self.pin_output)
+        self.assertNotIn("sed:", self.pin_output)
+        self.assertIn("rust-toolchain.toml is missing", action_pin_step("pin-windows"))
+
+    @unittest.skipUnless(shutil.which("pwsh"), "pwsh is not installed: the Windows pin step is only checked as a Python translation")
+    def test_the_windows_pin_step_under_powershell(self):
+        script = "$ErrorActionPreference = 'stop'\n" + run_block(action_pin_step("pin-windows"))
+        cases = [(label, contents, "1.100.0") for label, contents in PIN_ACCEPTED.items()]
+        cases += [(label, contents, None) for label, contents in PIN_REJECTED.items()] + [("no file", None, None)]
+        for label, contents, channel in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                if contents is not None:
+                    (root / "rust-toolchain.toml").write_bytes(contents)
+                (root / "step.ps1").write_text(script)
+                out, env_file = root / "output", root / "env"
+                out.touch()
+                env_file.touch()
+                result = subprocess.run(
+                    ["pwsh", "-NoProfile", "-NonInteractive", "-File", "step.ps1"], cwd=root, capture_output=True,
+                    text=True, env=os.environ | {"GITHUB_OUTPUT": str(out), "GITHUB_ENV": str(env_file)},
+                )
+                read = lambda p: p.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+                if channel is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(read(out), "")
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(read(out), f"channel={channel}\n")
+                    self.assertEqual(read(env_file), "RUSTUP_AUTO_INSTALL=0\n")
+
+    def run_steps(self, root, body, names, env):
+        for name in names:
+            script = step_script(body, name)
+            subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, check=True,
+                env={"PATH": os.environ["PATH"]} | env, capture_output=True,
+            )
+
+    def test_the_experimental_copy_takes_either_archive_and_names_what_is_missing(self):
+        release = job("release.yml", "release")
+        cases = {
+            "linux-gnu": ("canopy-build-7-aarch64-unknown-linux-gnu", ".tar.gz", True),
+            "windows": ("canopy-build-7-aarch64-pc-windows-msvc", ".zip", True),
+            "no archive": ("canopy-build-7-x86_64-apple-darwin", None, True),
+            "no report": ("canopy-build-7-riscv64gc-unknown-linux-gnu", ".tar.gz", False),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "late").mkdir()
+            (root / "dist").mkdir()
+            targets = []
+            for name, extension, has_report in cases.values():
+                targets.append({"target": name.removeprefix("canopy-build-7-")})
+                if extension:
+                    (root / "late" / f"{name}{extension}").write_bytes(b"archive")
+                if has_report:
+                    (root / "late" / f"{name}.toolchain.txt").write_bytes(b"report")
+            script = step_script(release, "Add the experimental archives")
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, capture_output=True, text=True,
+                env={"PATH": os.environ["PATH"], "BUILD": "7", "EXPECTED": json.dumps(targets)},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                sorted(p.name for p in (root / "dist").iterdir()),
+                sorted([
+                    "canopy-build-7-aarch64-unknown-linux-gnu.tar.gz",
+                    "canopy-build-7-aarch64-unknown-linux-gnu.toolchain.txt",
+                    "canopy-build-7-aarch64-pc-windows-msvc.zip",
+                    "canopy-build-7-aarch64-pc-windows-msvc.toolchain.txt",
+                ]),
+            )
+            warnings = [l for l in result.stdout.splitlines() if l.startswith("::warning::")]
+            self.assertEqual(len(warnings), 2, warnings)
+            self.assertIn("No experimental x86_64-apple-darwin archive was found", warnings[0])
+            self.assertIn("riscv64gc-unknown-linux-gnu archive has no toolchain report", warnings[1])
+
+    def test_per_target_reports_are_merged_and_removed_before_checksums_and_the_manifest(self):
+        # tools/update-manifest.sh finds a platform's archive by the target triple in a file name,
+        # so a leftover canopy-build-N-<triple>.toolchain.txt must never reach SHA256SUMS.
+        release = job("release.yml", "release")
+        self.assertLess(release.index("name: Assemble the toolchain report"), release.index("name: Checksums"))
+        archives = {
+            "canopy-build-7-x86_64-unknown-linux-gnu.tar.gz": "linux-x86_64",
+            "canopy-build-7-aarch64-apple-darwin.tar.gz": "darwin-aarch64",
+            "canopy-build-7-x86_64-pc-windows-msvc.zip": "windows-x86_64",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "dist").mkdir()
+            (root / "packaging").mkdir()
+            (root / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "1.100.0"\n')
+            (root / "packaging/install.sh").write_text("#!/bin/sh\n")
+            (root / "packaging/install.ps1").write_text("# installer\n")
+            for name in archives:
+                (root / "dist" / name).write_bytes(b"archive")
+                stem = name.removesuffix(".tar.gz").removesuffix(".zip")
+                (root / "dist" / f"{stem}.toolchain.txt").write_text(f"Target: {stem}\nrustc 1.100.0\n")
+            self.run_steps(
+                root, release,
+                ["Assemble the toolchain report", "Add the installers", "Checksums"], {},
+            )
+            names = sorted(p.name for p in (root / "dist").iterdir())
+            self.assertEqual(names, sorted([*archives, "install.sh", "install.ps1", "toolchain.txt", "SHA256SUMS"]))
+            self.assertEqual((root / "dist/toolchain.txt").read_text().count("rustc 1.100.0"), 3)
+            self.assertFalse([l for l in (root / "dist/SHA256SUMS").read_text().splitlines() if "canopy-build-7-" in l and "toolchain" in l])
+            (root / "notes.md").write_text("notes")
+            manifest = subprocess.run(
+                ["bash", str(ROOT / "tools/update-manifest.sh"), str(root / "dist"), "7", "https://example.invalid/page",
+                 "https://example.invalid/dl", str(root / "notes.md")],
+                check=True, capture_output=True, text=True, env={"PATH": os.environ["PATH"]},
+            )
+            platforms = json.loads(manifest.stdout)["platforms"]
+            self.assertEqual({k: v["url"].rsplit("/", 1)[1] for k, v in platforms.items()},
+                             {key: name for name, key in archives.items()})
+
+    def test_the_manifest_ignores_files_that_only_mention_a_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = "canopy-build-7-x86_64-unknown-linux-gnu.tar.gz"
+            files = {
+                archive: b"archive",
+                # Sorts after the archive, so it would overwrite the entry if it were matched.
+                "canopy-build-7-x86_64-unknown-linux-gnu.toolchain.txt": b"report",
+                "install.sh": b"#!/bin/sh\n",
+                "install.ps1": b"# installer\n",
+            }
+            for name, contents in files.items():
+                (root / name).write_bytes(contents)
+            (root / "SHA256SUMS").write_text(
+                "".join(f"{hashlib.sha256(c).hexdigest()}  {n}\n" for n, c in files.items())
+            )
+            (root / "notes.md").write_text("notes")
+            result = subprocess.run(
+                ["bash", str(ROOT / "tools/update-manifest.sh"), str(root), "7", "https://example.invalid/page",
+                 "https://example.invalid/dl", str(root / "notes.md")],
+                check=True, capture_output=True, text=True, env={"PATH": os.environ["PATH"]},
+            )
+            platforms = json.loads(result.stdout)["platforms"]
+            self.assertEqual(platforms, {
+                "linux-x86_64": {
+                    "url": f"https://example.invalid/dl/{archive}",
+                    "sha256": hashlib.sha256(b"archive").hexdigest(),
+                },
+            })
+
     def test_tagging_waits_for_tests_of_dispatch_commit(self):
         tests = job("create-release.yml", "test")
         self.assertIn("uses: ./.github/workflows/test-release.yml", tests)

@@ -24,6 +24,11 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-deny
-      # The runner image's Rust is enough to read the lock file; nothing is built.
+      # Nothing is built, but cargo deny runs `cargo metadata`, which resolves rust-toolchain.toml
+      # through rustup. Install the pin here, verified and logged, rather than letting rustup
+      # fetch it implicitly.
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
       - name: cargo deny check advisories
         run: cargo deny check advisories
