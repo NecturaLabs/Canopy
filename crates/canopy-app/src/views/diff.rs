@@ -761,8 +761,17 @@ fn header(
                 });
             } else {
                 ui.vertical(|ui| {
-                    let identity = ui.horizontal_wrapped(identity).response.rect.width();
-                    let controls = ui.horizontal_wrapped(controls).response.rect.width();
+                    // A part that wraps even on a row of its own can never share one: its
+                    // widest line is not its width.
+                    let one_line = |r: Rect| {
+                        if r.height() > m.control_sm * 1.5 {
+                            f32::INFINITY
+                        } else {
+                            r.width()
+                        }
+                    };
+                    let identity = one_line(ui.horizontal_wrapped(identity).response.rect);
+                    let controls = one_line(ui.horizontal_wrapped(controls).response.rect);
                     // What one row would need: when it fits, the next pass lays it out so.
                     if parts != Some((identity, controls)) {
                         ui.data_mut(|d| d.insert_temp(parts_id, (identity, controls)));
@@ -1832,6 +1841,50 @@ mod tests {
             blame > name + 8.0,
             "two rows when the name does not fit: {name} {blame}"
         );
+    }
+
+    /// The header settles at every width: once laid out it asks for no more frames, also where
+    /// its controls wrap on their own (a narrow pane and a short file name).
+    #[test]
+    fn the_header_settles_at_every_width() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let sel = crate::tab::FileSelection {
+            source: DiffSource::Unstaged,
+            entry: canopy_core::FileEntry {
+                path: "a.rs".into(),
+                old_path: None,
+                kind: ChangeKind::Modified,
+                additions: 2,
+                deletions: 1,
+                lfs: false,
+                old_mode: Some(0o100_644),
+                new_mode: Some(0o100_644),
+            },
+            conflicted: false,
+        };
+        for width in (160..=700).step_by(20) {
+            let width = crate::ui::count_f32(width);
+            let mut asks = true;
+            for _ in 0..10 {
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.set_width(width);
+                    header(ui, &mut tab, &sel, &mut Vec::new());
+                });
+                out.textures_delta.clear();
+                asks = out
+                    .viewport_output
+                    .values()
+                    .any(|v| v.repaint_delay.is_zero());
+            }
+            assert!(!asks, "the header keeps asking for frames at {width}");
+        }
     }
 
     /// The header's Stage file is a different button for each file: a press that began on one
