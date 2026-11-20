@@ -112,6 +112,8 @@ pub const OVERLAYS: &[&str] = &[
     "toasts",
     "force-push-stopped",
     "conflict-notice",
+    "git-errors",
+    "git-errors-center",
     "notifications",
     "branch-selected",
     "long-message",
@@ -645,6 +647,37 @@ impl CanopyApp {
                     "Canopy 812 is available",
                     "",
                     Offer::ReviewUpdate,
+                );
+            }
+            Some("git-errors" | "git-errors-center") => {
+                // Git's refusals that say more than one line (#268): files after a colon, the
+                // identity it cannot find, and one very long line. The center variant opens the
+                // notification center over them.
+                let ctx = &cc.egui_ctx;
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Merge failed",
+                    "git merge failed: error: Your local changes to the following files would be overwritten by merge:\n\tsrc/auth.rs\n\tsrc/main.rs\nPlease commit your changes or stash them before you merge.\nAborting",
+                );
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Commit failed",
+                    "Author identity unknown\n\n*** Please tell me who you are.\n\nRun\n\n  git config --global user.email \"you@example.com\"\n  git config --global user.name \"Your Name\"\n\nto set your account's default identity.\nOmit --global to set the identity only in this repository.\n\nfatal: unable to auto-detect email address (got 'ada@workstation.(none)')",
+                );
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Push failed",
+                    format!(
+                        "remote: error: GH013: Repository rule violations found for refs/heads/main. {}",
+                        "Commits must have verified signatures; found unsigned commit 3f9a2c1e8b. "
+                            .repeat(40)
+                    ),
                 );
             }
             Some("conflict-notice") => {

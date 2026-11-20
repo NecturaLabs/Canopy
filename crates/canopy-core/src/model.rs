@@ -201,9 +201,13 @@ pub struct ForgottenWorktree {
     pub branch: Option<String>,
     /// The commit its `HEAD` is at.
     pub head: Option<Oid>,
-    /// Commits only this folder's detached `HEAD` reaches: no branch, remote branch or tag
-    /// contains them, and forgetting it deletes the `HEAD`.
+    /// Commits only this folder's detached `HEAD` or its own refs (`refs/worktree/*`, a
+    /// bisect's refs) reach: no branch, remote branch or tag contains them, and forgetting it
+    /// deletes those.
     pub unreachable_commits: usize,
+    /// What holds those commits: `HEAD` when detached, then the names of its own refs that reach
+    /// one of them. Empty when there are none.
+    pub held_by: Vec<String>,
     /// It has submodule repositories under `.git/worktrees/<id>/modules`.
     pub submodule_repositories: bool,
     /// A rebase, bisect, merge, cherry-pick or revert is in progress there, and is lost.

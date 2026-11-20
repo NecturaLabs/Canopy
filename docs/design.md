@@ -887,8 +887,12 @@ points from the one before, so a notice that lists several things reads as a lis
 when the notification asks for a decision, a row of two buttons 10 points lower. A card has no close button: it goes on a click
 (when it asks for nothing), on its buttons or on its timer. A finished operation says what happened in words (the commit's subject and id, the refs created,
 updated or removed, what a pull did to the branch); git's own text is kept for failures. Known
-failures lead with a plain explanation, any other error shows git's first line under its title, and git's full output is in
-the notification center (its tooltip and Copy). Screen readers hear an error as an alert with its
+failures lead with a plain explanation (a missing identity offers Open Git settings / Later), any
+other error shows git's message under its title from its reason on, with the lines that continue
+it (the files a refusal names after its colon), and git's output is in the notification
+center (its tooltip, up to 1,200 characters, and Copy, all of it). A card and a center row show
+at most 4 lines and 280 characters of a body (`BODY_LINES`, `BODY_CHARS`), with "…" where a
+sentence is cut. Screen readers hear an error as an alert with its
 message. A stop that waits on the user (a conflict to resolve) is not a failure: its card takes
 the `warning` tone and `WARNING` glyph instead of `danger` and `WARNING_CIRCLE`, lasts as long as
 an error, and is announced politely.
@@ -897,7 +901,7 @@ A decision (`ui::toast::Offer`) is labelled for what it does, with a tonal Prima
 Ghost Sm one beside it: a rejected push offers Pull / Not now for its repository, a force push
 Git stopped as stale Fetch / Not now, the hosting API refusing the GitHub or GitLab CLI's sign-in
 Open Accounts / Not now (git's own refused sign-in offers nothing: Settings does not hold git's
-credentials), a new build Review update / Later, an installed one Restart now / Later. Taking it closes the card and removes it from the center;
+credentials), git's missing identity Open Git settings / Later, a new build Review update / Later, an installed one Restart now / Later. Taking it closes the card and removes it from the center;
 declining only closes the card, and the center offers it until it is taken or cleared.
 
 A card lasts as long as its words take to read: two seconds to notice it plus a quarter second a

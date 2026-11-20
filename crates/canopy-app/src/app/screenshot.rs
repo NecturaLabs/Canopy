@@ -93,7 +93,9 @@ impl MenuShot {
             "menu-file" => ("src/main.rs", View::Changes, secondary),
             "menu-lfs-file" => ("art/hero.psd", View::Changes, secondary),
             "blame" => ("Blame", View::Changes, egui::PointerButton::Primary),
-            "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
+            "notifications" | "git-errors-center" => {
+                ("Notifications", View::History, egui::PointerButton::Primary)
+            }
             "amend-commit" => (
                 "Amend last commit",
                 View::Changes,
