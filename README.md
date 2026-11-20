@@ -310,7 +310,8 @@ The repository is set up for coding agents. [AGENTS.md](AGENTS.md) (loaded by Cl
 
 - **Agents** (`.claude/agents/`): `canopy-review` (read-only diff review), `canopy-git` (Git
   semantics and canopy-core operations), `canopy-visual-qa` (renders the app headlessly and
-  reports visual defects), `canopy-ux-research` (how other Git clients solve a UX question).
+  reports visual defects), `canopy-ux-research` (how other Git clients solve a UX question), `canopy-slop-check`
+  (a pull request's wording, before it is opened and before it is merged).
 - **Skills** (`.claude/skills/`): project recipes (`screenshot`, `fixture-repo`, `add-git-operation`,
   `hosting-api`, `add-theme`, `add-keybinding`, `release`) and working-method skills
   (`independent-review`, `testing`, `project-docs`, `memory-hygiene`, `agent-instructions`,
