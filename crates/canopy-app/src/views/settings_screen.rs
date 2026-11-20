@@ -153,7 +153,8 @@ pub struct SettingsScreen {
     remote_saved: Option<(String, String, Instant)>,
     /// An export or import waiting on its file chooser.
     file_task: Option<crate::settings_file::FileTask>,
-    /// What the last export, import or reset did: `(failed, message)`.
+    /// What the last export, import or reset did: `(warn, message)`, where `warn` is set for a
+    /// failure or an import that ignored shortcuts.
     file_status: Option<(bool, String)>,
     /// Stay on This repository until a repository is open (the screenshot overlay opens
     /// Settings before its repository's tab); cleared once one is.
@@ -5999,9 +6000,10 @@ fn poll_file_task(screen: &mut SettingsScreen, s: &mut Settings, actions: &mut V
         Outcome::Read(path, text) => match crate::settings_file::import(s, &text) {
             Ok(imported) => {
                 let message = imported.message(&path);
+                let ignored = imported.ignored_shortcuts > 0;
                 *s = imported.settings;
                 actions.push(Action::SettingsReplaced);
-                Some((false, message))
+                Some((ignored, message))
             }
             Err(e) => Some((true, e)),
         },
@@ -6011,15 +6013,11 @@ fn poll_file_task(screen: &mut SettingsScreen, s: &mut Settings, actions: &mut V
 /// Backup and reset: settings to and from a file, and every preference back to its default.
 fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &mut Vec<Action>) {
     let busy = screen.file_task.is_some();
-    if let Some((failed, message)) = &screen.file_status
+    if let Some((warn, message)) = &screen.file_status
         && !Filter::searching(ui.ctx())
     {
         Callout::new(
-            if *failed {
-                Tone::Warning
-            } else {
-                Tone::Success
-            },
+            if *warn { Tone::Warning } else { Tone::Success },
             message.as_str(),
         )
         .show(ui);
