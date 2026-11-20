@@ -133,7 +133,7 @@ thread.
 | `build_info.rs` | The build number and short commit hash embedded by `build.rs`, and the release notes the release workflow embeds. |
 | `crash_reports.rs` | Opt-in, scrubbed crash reports to Sentry, and what a report may carry (`DATA_VERSION`). |
 | `logging.rs` | Structured per-run JSON-lines logs, timed spans, local crash files and the diagnostics Settings copies. |
-| `highlight.rs` | Diff syntax highlighting (`syntect`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
+| `highlight.rs` | Syntax highlighting of diffs and blame (`syntect`; a blamed file is one hunk of added lines, `whole_file`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
 | `hostile.rs` | Test only (Unix): one hostile repository per program source (hooks, filters, merge driver, submodule update command, `core.sshCommand`, credential helper, `gpg.program`). Ordinary git runs the program, the repository thread of an untrusted repository refuses the action and starts nothing, a trusted one runs it as in a terminal. |
 | `keymap.rs` | Every keyboard shortcut in one table (`BINDINGS`) that dispatches keys and renders the cheatsheet and Settings → Keyboard; the keys the user changed (`Settings::keybindings`) are applied on top of it each frame (`apply_saved`) and Settings → Keyboard listens for a new key with `capture_key`; see `docs/keybindings.md`. |
 | `settings.rs` | Settings persisted through `settings_store.rs`: appearance, Git, integrations, updates, privacy answers, trusted folders and the trust safety switch, per-repository choices (`repos`, keyed by working directory), recent and open repositories. A saved theme or option this build no longer has reads as its default (`known`, `known_option`) and a setting it no longer has is ignored; the next save writes the file without either. |
@@ -163,7 +163,7 @@ thread.
 | `views/history.rs` | Virtualised commit-graph table. |
 | `views/commit_detail.rs` | Selected commit: metadata, parents, changed files, diff. Also the views' shared file rows and screen-reader helpers: `without_icons` (keeps icon glyphs out of a label's spoken name) and `say_unavailable` (a disabled button says ", unavailable" and why, which the Linux AT-SPI adapter does not). |
 | `views/changes.rs` | Staging area and commit composer. |
-| `views/blame.rs` | The blame of the selected file, drawn in place of its diff (`RepoTab::blame`, read by `Job::Blame`): virtualised rows with commit id, author, date, line number and text; a click on a line's commit sends `Action::Reveal`. |
+| `views/blame.rs` | The blame of the selected file, drawn in place of its diff (`RepoTab::blame`, read by `Job::Blame`): virtualised rows with commit id, author, date, line number and the code, coloured by language like the diff once `Event::BlameHighlight` arrives; a click on a line's commit sends `Action::Reveal`. |
 | `views/diff.rs` | Unified and side-by-side diff viewer with line numbers, hunk and line actions; row layout cached per diff. |
 | `views/resolve.rs` | Conflict resolver; off-screen cards skipped by measured height. |
 | `views/requests.rs` | Pull and merge requests: list, details, checks, reviews and actions. |
@@ -536,8 +536,8 @@ overwriting. Repository state is never cached on disk; it is always read from th
 - The conflict resolver paints only the visible lines of each block and skips cards out of view,
   using their measured heights (estimates until first drawn).
 - Syntax highlighting runs on two highlighter threads shared by all tabs (`highlight.rs`), never
-  on the UI thread (only if neither thread could start does it run on the repository thread); the diff shows as plain text until the colours arrive, and a
-  request superseded by a newer diff stops early. Results are cached per file revision.
+  on the UI thread (only if neither thread could start does it run on the repository thread); a diff or blame shows as plain text until the colours arrive, and a
+  request superseded by a newer diff or blame stops early. Results are cached per file revision.
 - The command palette builds its entries when it opens (or when a snapshot or request list
   arrives while it is open) and ranks them only when the query changes.
 - No per-frame allocation of large collections and no repository access per frame.

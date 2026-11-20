@@ -1,4 +1,4 @@
-//! Syntax highlighting for diffs with `syntect` (grammars from syntect and bat, through
+//! Syntax highlighting for diffs and blame with `syntect` (grammars from syntect and bat, through
 //! `two-face`), computed on a small pool of highlighter threads shared by every tab, so neither
 //! the UI nor a repository thread waits for it. The diff shows as plain text until the result
 //! arrives; a request that a newer diff of the same tab superseded is abandoned.
@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
-use canopy_core::{FileDiff, LineKind};
+use canopy_core::{DiffLine, FileDiff, Hunk, LineKind};
 
 /// What a span of code is, for colouring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +176,33 @@ impl Side {
             push(pos, text.len(), classify(&self.stack));
         }
         spans
+    }
+}
+
+/// A whole file (`lines` of `path`, top to bottom) as one hunk of added lines, so the
+/// highlighter parses it with one parser state from the first line to the last, under the same
+/// limits as a diff. The blame view colours its code with it.
+pub fn whole_file<'a>(path: &str, lines: impl IntoIterator<Item = &'a str>) -> FileDiff {
+    let lines: Vec<DiffLine> = lines
+        .into_iter()
+        .map(|text| DiffLine {
+            kind: LineKind::Added,
+            old_no: None,
+            new_no: None,
+            text: text.to_owned(),
+        })
+        .collect();
+    FileDiff {
+        path: path.to_owned(),
+        hunks: vec![Hunk {
+            header: String::new(),
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: u32::try_from(lines.len()).unwrap_or(u32::MAX),
+            lines,
+        }],
+        ..FileDiff::default()
     }
 }
 
@@ -359,7 +386,6 @@ pub fn request(req: Request) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use canopy_core::diff::{DiffLine, Hunk};
 
     fn diff(path: &str, lines: &[(LineKind, &str)]) -> FileDiff {
         FileDiff {

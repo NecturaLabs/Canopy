@@ -144,7 +144,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Line-level staging | Done | Yes | Yes | Yes |
 | Diff with old and new line numbers | Done | Yes | Yes | Yes |
 | Side-by-side diff (a new or deleted file stays one column) | Done | Yes | Yes | No |
-| Syntax highlighting in diffs | Done | Yes | Yes | ? |
+| Syntax highlighting in diffs and blame | Done | Yes | Yes | ? |
 | Image diff | Planned | Yes | Yes | ? |
 | Ignore whitespace, context lines setting | Done | Yes | Yes | Yes |
 | Commit composer with Subject and Body fields and a subject counter (Enter in the subject moves to the body; Ctrl+Enter commits and leaves the boxes); pinned to the bottom of the file column, says why Commit is disabled in its tooltip | Done | Yes | Yes | Partial |

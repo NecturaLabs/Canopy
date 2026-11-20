@@ -217,7 +217,7 @@ fn token_color(s: &Syntax, t: Token) -> Color32 {
 }
 
 /// The line's text as a layout job, coloured by `spans` (byte ranges), tabs as four spaces.
-fn code_job(
+pub(crate) fn code_job(
     text: &str,
     spans: &[Span],
     base: Color32,

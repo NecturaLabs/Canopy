@@ -3768,7 +3768,7 @@ fn git(
     row(
         ui,
         "Syntax highlighting",
-        "Colours code in diffs by language.",
+        "Colours code in diffs and blame by language.",
         |ui| {
             revert(
                 ui,
