@@ -6,9 +6,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{MissingObjects, Repo};
 
@@ -20,8 +24,6 @@ fn git_as(dir: &Path, who: &str, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_AUTHOR_NAME", who)
         .env(
             "GIT_AUTHOR_EMAIL",
@@ -76,6 +78,7 @@ fn ids(blame: &canopy_core::Blame) -> Vec<String> {
 
 #[test]
 fn every_line_names_the_commit_and_author_git_blames() {
+    isolate_git!(every_line_names_the_commit_and_author_git_blames);
     let (dir, repo) = repository();
     let p = dir.path();
     commit(p, "Ada", "f.txt", "one\ntwo\nthree\n", "add f");
@@ -112,6 +115,7 @@ fn every_line_names_the_commit_and_author_git_blames() {
 
 #[test]
 fn a_revision_blames_the_file_as_it_was_then() {
+    isolate_git!(a_revision_blames_the_file_as_it_was_then);
     let (dir, repo) = repository();
     let p = dir.path();
     commit(p, "Ada", "f.txt", "one\ntwo\n", "add f");
@@ -140,6 +144,7 @@ fn a_revision_blames_the_file_as_it_was_then() {
 
 #[test]
 fn renames_are_followed_and_odd_names_are_safe() {
+    isolate_git!(renames_are_followed_and_odd_names_are_safe);
     let (dir, repo) = repository();
     let p = dir.path();
     commit(p, "Ada", "-old name.txt", "one\ntwo\n", "add");
@@ -158,6 +163,7 @@ fn renames_are_followed_and_odd_names_are_safe() {
 
 #[test]
 fn uncommitted_lines_are_marked_and_a_missing_file_is_git_s_error() {
+    isolate_git!(uncommitted_lines_are_marked_and_a_missing_file_is_git_s_error);
     let (dir, repo) = repository();
     let p = dir.path();
     commit(p, "Ada", "f.txt", "one\n", "add f");
@@ -181,6 +187,7 @@ fn uncommitted_lines_are_marked_and_a_missing_file_is_git_s_error() {
 
 #[test]
 fn an_untrusted_folder_never_runs_the_repository_s_programs() {
+    isolate_git!(an_untrusted_folder_never_runs_the_repository_s_programs);
     let (dir, repo) = repository();
     let p = dir.path();
     fs::write(p.join(".gitattributes"), "f.txt filter=x diff=y\n").expect("write");

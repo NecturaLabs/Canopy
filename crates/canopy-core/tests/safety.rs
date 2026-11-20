@@ -8,9 +8,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{Error, MissingObjects, Repo};
 
@@ -36,7 +40,6 @@ fn run_git(dir: &Path, args: &[&str]) -> std::process::Output {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("git runs")
 }
@@ -67,6 +70,7 @@ fn fixture() -> (tempfile::TempDir, Repo) {
 #[test]
 fn ignore_templates_preserve_existing_rules_and_are_idempotent() {
     use canopy_core::IgnoreTemplate;
+    isolate_git!(ignore_templates_preserve_existing_rules_and_are_idempotent);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::write(p.join(".gitignore"), "# keep my rules\nprivate/").unwrap();
@@ -83,6 +87,7 @@ fn ignore_templates_preserve_existing_rules_and_are_idempotent() {
 
 #[test]
 fn ignored_paths_match_git_and_collapse_ignored_directories() {
+    isolate_git!(ignored_paths_match_git_and_collapse_ignored_directories);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::write(p.join(".gitignore"), "build/\n*.log\n!keep.log\n").unwrap();
@@ -114,6 +119,7 @@ fn ignored_paths_match_git_and_collapse_ignored_directories() {
 #[cfg(unix)]
 #[test]
 fn ignore_templates_refuse_a_symlink_destination() {
+    isolate_git!(ignore_templates_refuse_a_symlink_destination);
     let (dir, repo) = fixture();
     let victim = tempfile::NamedTempFile::new().unwrap();
     fs::write(victim.path(), "preserve").unwrap();
@@ -131,6 +137,7 @@ fn commit_file(p: &Path, name: &str, content: &str) {
 
 #[test]
 fn an_option_shaped_checkout_cannot_reset_another_branch() {
+    isolate_git!(an_option_shaped_checkout_cannot_reset_another_branch);
     let (dir, repo) = fixture();
     let p = dir.path();
     let first = git(p, &["rev-parse", "HEAD"]).trim().to_owned();
@@ -150,6 +157,7 @@ fn an_option_shaped_checkout_cannot_reset_another_branch() {
 #[cfg(unix)]
 #[test]
 fn an_option_shaped_rebase_target_cannot_execute_a_shell_command() {
+    isolate_git!(an_option_shaped_rebase_target_cannot_execute_a_shell_command);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "base"]);
@@ -168,6 +176,7 @@ fn an_option_shaped_rebase_target_cannot_execute_a_shell_command() {
 
 #[test]
 fn an_option_shaped_merge_target_is_treated_as_a_reference() {
+    isolate_git!(an_option_shaped_merge_target_is_treated_as_a_reference);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "base"]);
@@ -194,6 +203,7 @@ fn ref_exists(p: &Path, name: &str) -> bool {
 
 #[test]
 fn merged_branch_deletes_with_dash_d() {
+    isolate_git!(merged_branch_deletes_with_dash_d);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "done"]);
@@ -204,6 +214,7 @@ fn merged_branch_deletes_with_dash_d() {
 
 #[test]
 fn unmerged_branch_refuses_with_gits_message() {
+    isolate_git!(unmerged_branch_refuses_with_gits_message);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "-c", "wip"]);
@@ -228,6 +239,7 @@ fn unmerged_branch_refuses_with_gits_message() {
 
 #[test]
 fn branch_delete_does_not_read_a_name_as_an_option() {
+    isolate_git!(branch_delete_does_not_read_a_name_as_an_option);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "keep"]);
@@ -238,6 +250,7 @@ fn branch_delete_does_not_read_a_name_as_an_option() {
 
 #[test]
 fn create_branch_does_not_read_a_name_or_start_as_an_option() {
+    isolate_git!(create_branch_does_not_read_a_name_or_start_as_an_option);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "other"]);
@@ -289,6 +302,7 @@ fn upstream_of(p: &Path, branch: &str) -> Option<String> {
 
 #[test]
 fn branch_from_a_remote_tracking_ref_has_no_upstream() {
+    isolate_git!(branch_from_a_remote_tracking_ref_has_no_upstream);
     let (_origin, work, repo) = upstream_and_clone();
     let p = work.path();
     // Even with the setting that tracks every start point.
@@ -310,6 +324,7 @@ fn rev(p: &Path, r: &str) -> String {
 
 #[test]
 fn publish_branch_pushes_a_branch_that_is_not_checked_out() {
+    isolate_git!(publish_branch_pushes_a_branch_that_is_not_checked_out);
     let (origin, work, repo) = upstream_and_clone();
     let p = work.path();
     repo.create_branch("feature/x", Some("origin/main"), true)
@@ -336,6 +351,7 @@ fn publish_branch_pushes_a_branch_that_is_not_checked_out() {
 
 #[test]
 fn publish_branch_rejects_unknown_remotes_and_branches() {
+    isolate_git!(publish_branch_rejects_unknown_remotes_and_branches);
     let (_origin, _work, repo) = upstream_and_clone();
     assert!(matches!(
         repo.publish_branch("main", "nowhere", |_| {}),
@@ -353,6 +369,7 @@ fn publish_branch_rejects_unknown_remotes_and_branches() {
 
 #[test]
 fn push_arguments_do_not_treat_remote_names_or_refs_as_options() {
+    isolate_git!(push_arguments_do_not_treat_remote_names_or_refs_as_options);
     let (origin, work, repo) = upstream_and_clone();
     let p = work.path();
     git(p, &["tag", "v1"]);
@@ -383,6 +400,7 @@ fn push_arguments_do_not_treat_remote_names_or_refs_as_options() {
 
 #[test]
 fn rename_and_checkout_refuse_option_shaped_names() {
+    isolate_git!(rename_and_checkout_refuse_option_shaped_names);
     let (_origin, work, repo) = upstream_and_clone();
     assert!(repo.rename_branch("main", "--delete").is_err());
     assert!(repo.checkout_remote_branch("origin", "--orphan").is_err());
@@ -396,6 +414,7 @@ fn rename_and_checkout_refuse_option_shaped_names() {
 #[test]
 fn real_symlinks_never_read_the_target_when_core_symlinks_is_false() {
     use canopy_core::{DiffSource, HunkAction, LineKind, Whitespace};
+    isolate_git!(real_symlinks_never_read_the_target_when_core_symlinks_is_false);
     let (dir, _) = fixture();
     let p = dir.path();
     let outside = tempfile::tempdir().unwrap();
@@ -507,6 +526,7 @@ fn real_symlinks_never_read_the_target_when_core_symlinks_is_false() {
 #[test]
 fn emulated_symlinks_keep_their_mode_and_diff_target_text() {
     use canopy_core::{DiffSource, LineKind, Whitespace};
+    isolate_git!(emulated_symlinks_keep_their_mode_and_diff_target_text);
     let (dir, _) = fixture();
     let p = dir.path();
     fs::write(p.join("link"), "first-target").unwrap();
@@ -559,6 +579,7 @@ fn chmod(p: &Path, mode: u32) {
 #[test]
 fn mode_only_change_shows_in_status_and_diff() {
     use canopy_core::{ChangeKind, DiffSource, Whitespace};
+    isolate_git!(mode_only_change_shows_in_status_and_diff);
     let (dir, repo) = fixture();
     let p = dir.path();
     chmod(&p.join("a.txt"), 0o755);
@@ -620,6 +641,7 @@ fn mode_only_change_shows_in_status_and_diff() {
 #[cfg(unix)]
 #[test]
 fn core_filemode_false_hides_mode_only_changes() {
+    isolate_git!(core_filemode_false_hides_mode_only_changes);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["config", "core.fileMode", "false"]);
@@ -634,6 +656,7 @@ fn core_filemode_false_hides_mode_only_changes() {
 #[test]
 fn file_to_symlink_is_one_typechange_entry_with_both_modes() {
     use canopy_core::{ChangeKind, DiffSource, Whitespace};
+    isolate_git!(file_to_symlink_is_one_typechange_entry_with_both_modes);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::remove_file(p.join("a.txt")).unwrap();
@@ -701,6 +724,7 @@ fn write_files(root: &Path, dir: &str, n: usize) {
 
 #[test]
 fn small_untracked_folders_list_every_file() {
+    isolate_git!(small_untracked_folders_list_every_file);
     let (dir, repo) = fixture();
     let p = dir.path();
     write_files(p, "new/deep", 3);
@@ -722,6 +746,7 @@ fn small_untracked_folders_list_every_file() {
 
 #[test]
 fn many_untracked_files_collapse_to_folders_and_expand_one_level() {
+    isolate_git!(many_untracked_files_collapse_to_folders_and_expand_one_level);
     let (dir, repo) = fixture();
     let p = dir.path();
     write_files(p, "node_modules/a", 6);
@@ -775,6 +800,7 @@ fn nested_repository(root: &Path, dir: &str) {
 
 #[test]
 fn embedded_repositories_are_listed_and_not_staged_by_stage_all() {
+    isolate_git!(embedded_repositories_are_listed_and_not_staged_by_stage_all);
     let (dir, repo) = fixture();
     let p = dir.path();
     nested_repository(p, "vendored");
@@ -828,6 +854,7 @@ fn assert_same_file(actual: &Path, expected: &Path) {
 
 #[test]
 fn ignore_a_file_at_the_root_and_ask_why() {
+    isolate_git!(ignore_a_file_at_the_root_and_ask_why);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::create_dir_all(p.join("dir")).unwrap();
@@ -866,6 +893,7 @@ fn ignore_a_file_at_the_root_and_ask_why() {
 
 #[test]
 fn nearest_gitignore_gets_a_pattern_relative_to_its_folder() {
+    isolate_git!(nearest_gitignore_gets_a_pattern_relative_to_its_folder);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::create_dir_all(p.join("sub").join("deep")).unwrap();
@@ -895,6 +923,7 @@ fn nearest_gitignore_gets_a_pattern_relative_to_its_folder() {
 
 #[test]
 fn repository_exclude_and_global_files() {
+    isolate_git!(repository_exclude_and_global_files);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::write(p.join("local.tmp"), "x\n").unwrap();
@@ -934,6 +963,7 @@ fn repository_exclude_and_global_files() {
 #[cfg(unix)]
 #[test]
 fn ignore_files_that_are_symlinks_are_refused() {
+    isolate_git!(ignore_files_that_are_symlinks_are_refused);
     let (dir, repo) = fixture();
     let p = dir.path();
     let outside = tempfile::tempdir().unwrap();
@@ -972,6 +1002,7 @@ fn ignore_files_that_are_symlinks_are_refused() {
 
 #[test]
 fn why_ignored_covers_tracked_files_and_negation() {
+    isolate_git!(why_ignored_covers_tracked_files_and_negation);
     let (dir, repo) = fixture();
     let p = dir.path();
     assert_eq!(repo.why_ignored("a.txt").unwrap(), None);
@@ -990,6 +1021,7 @@ fn why_ignored_covers_tracked_files_and_negation() {
 
 #[test]
 fn stop_tracking_keeps_the_file() {
+    isolate_git!(stop_tracking_keeps_the_file);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::create_dir_all(p.join("gen")).unwrap();
@@ -1010,6 +1042,7 @@ fn stop_tracking_keeps_the_file() {
 
 #[test]
 fn preview_reports_what_a_rule_would_change_without_writing() {
+    isolate_git!(preview_reports_what_a_rule_would_change_without_writing);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::create_dir_all(p.join("sub").join("deep")).unwrap();
@@ -1055,6 +1088,7 @@ fn preview_reports_what_a_rule_would_change_without_writing() {
 
 #[test]
 fn preview_of_a_negation_follows_git_for_case_and_unfinished_classes() {
+    isolate_git!(preview_of_a_negation_follows_git_for_case_and_unfinished_classes);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::write(p.join(".gitignore"), "*.log\n").unwrap();
@@ -1086,6 +1120,7 @@ fn preview_of_thousands_of_long_paths_does_not_deadlock() {
     const PATHS: usize = 4_000;
     /// Generous for a slow machine; a hung git never answers.
     const LIMIT: Duration = Duration::from_secs(60);
+    isolate_git!(preview_of_thousands_of_long_paths_does_not_deadlock);
 
     let (_dir, repo) = fixture();
     let long = "x".repeat(150);
@@ -1109,6 +1144,7 @@ fn preview_of_thousands_of_long_paths_does_not_deadlock() {
 
 #[test]
 fn ignore_case_setting_decides_duplicates() {
+    isolate_git!(ignore_case_setting_decides_duplicates);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::write(p.join(".gitignore"), "/README.MD\n").unwrap();
@@ -1129,6 +1165,7 @@ fn ignore_case_setting_decides_duplicates() {
 #[cfg(unix)]
 #[test]
 fn conflict_view_refuses_a_path_through_a_symlink() {
+    isolate_git!(conflict_view_refuses_a_path_through_a_symlink);
     let (dir, repo) = fixture();
     let p = dir.path();
     let outside = tempfile::tempdir().unwrap();
@@ -1146,6 +1183,7 @@ fn conflict_view_refuses_a_path_through_a_symlink() {
 
 #[test]
 fn preview_follows_gits_precedence() {
+    isolate_git!(preview_follows_gits_precedence);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::create_dir_all(p.join("build")).unwrap();
@@ -1184,6 +1222,7 @@ fn preview_follows_gits_precedence() {
 
 #[test]
 fn preview_of_a_root_negation_lists_the_file_it_makes_visible() {
+    isolate_git!(preview_of_a_root_negation_lists_the_file_it_makes_visible);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::write(p.join(".gitignore"), "*.log\n").unwrap();
@@ -1201,6 +1240,7 @@ fn preview_of_a_root_negation_lists_the_file_it_makes_visible() {
 
 #[test]
 fn literal_negation_previews_agree_with_git_for_punctuation_and_case() {
+    isolate_git!(literal_negation_previews_agree_with_git_for_punctuation_and_case);
     for (pattern, path, ignore_case) in [("!foo@", "foo@", false), ("!keep.log", "keep.LOG", true)]
     {
         let (dir, repo) = fixture();
@@ -1239,6 +1279,7 @@ fn literal_negation_previews_agree_with_git_for_punctuation_and_case() {
 
 #[test]
 fn negation_previews_preserve_gits_trailing_space_rules() {
+    isolate_git!(negation_previews_preserve_gits_trailing_space_rules);
     for (pattern, included) in [("!foo ", false), ("!foo\\ ", true)] {
         let (dir, repo) = fixture();
         let p = dir.path();
@@ -1268,6 +1309,7 @@ fn negation_previews_preserve_gits_trailing_space_rules() {
 
 #[test]
 fn preview_escapes_the_nearest_folder() {
+    isolate_git!(preview_escapes_the_nearest_folder);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::create_dir_all(p.join("app[1]").join("x")).unwrap();
@@ -1281,6 +1323,7 @@ fn preview_escapes_the_nearest_folder() {
 
 #[test]
 fn ignore_rule_with_a_bad_path_writes_nothing() {
+    isolate_git!(ignore_rule_with_a_bad_path_writes_nothing);
     let (dir, repo) = fixture();
     let p = dir.path();
     for near in ["", "../x", "."] {
@@ -1300,6 +1343,7 @@ fn ignore_rule_with_a_bad_path_writes_nothing() {
 
 #[test]
 fn stop_tracking_refuses_the_whole_tree() {
+    isolate_git!(stop_tracking_refuses_the_whole_tree);
     let (dir, repo) = fixture();
     let p = dir.path();
     for root in [".", "./", ""] {
@@ -1310,6 +1354,7 @@ fn stop_tracking_refuses_the_whole_tree() {
 
 #[test]
 fn collapsed_folders_flag_repositories_inside() {
+    isolate_git!(collapsed_folders_flag_repositories_inside);
     let (dir, repo) = fixture();
     let p = dir.path();
     write_files(p, "top/files", 4);
@@ -1348,6 +1393,7 @@ fn collapsed_folders_flag_repositories_inside() {
 fn non_utf8_folders_are_listed_and_never_staged_as_gitlinks() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
+    isolate_git!(non_utf8_folders_are_listed_and_never_staged_as_gitlinks);
 
     let create_non_utf8_dir = |path: &Path| {
         fs::create_dir(path).unwrap_or_else(|error| {
@@ -1391,6 +1437,7 @@ fn non_utf8_folders_are_listed_and_never_staged_as_gitlinks() {
 /// opening such a repository says so plainly instead of naming a libgit2 extension (#186).
 #[test]
 fn a_reftable_repository_is_refused_with_a_plain_message() {
+    isolate_git!(a_reftable_repository_is_refused_with_a_plain_message);
     let dir = tempfile::tempdir().expect("tempdir");
     if !run_git(dir.path(), &["init", "-q", "--ref-format=reftable", "repo"])
         .status

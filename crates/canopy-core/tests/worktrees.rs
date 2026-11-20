@@ -7,11 +7,15 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{OpenFolder, Repo, WorktreeInfo, WorktreeState};
 
@@ -27,11 +31,6 @@ fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if cfg!(windows) { "NUL" } else { "/dev/null" },
-        )
         .output()
         .expect("git runs")
 }
@@ -138,6 +137,7 @@ fn exists(path: &Path) -> bool {
 
 #[test]
 fn a_clean_worktree_is_removed_and_its_branch_stays() {
+    isolate_git!(a_clean_worktree_is_removed_and_its_branch_stays);
     let f = fixture();
     let wt = f.linked("topic");
     let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
@@ -159,6 +159,7 @@ fn a_clean_worktree_is_removed_and_its_branch_stays() {
 
 #[test]
 fn each_kind_of_dirt_is_counted_and_git_refuses_it_without_force() {
+    isolate_git!(each_kind_of_dirt_is_counted_and_git_refuses_it_without_force);
     let f = fixture();
     let wt = f.linked("dirty");
     fs::write(wt.join("a.txt"), "changed\n").expect("modify");
@@ -201,6 +202,7 @@ fn each_kind_of_dirt_is_counted_and_git_refuses_it_without_force() {
 
 #[test]
 fn ignored_files_alone_need_no_force_and_are_deleted() {
+    isolate_git!(ignored_files_alone_need_no_force_and_are_deleted);
     let f = fixture();
     let wt = f.linked("cache");
     fs::write(wt.join("debug.log"), "x").expect("ignored");
@@ -214,6 +216,7 @@ fn ignored_files_alone_need_no_force_and_are_deleted() {
 
 #[test]
 fn commits_only_a_detached_head_reaches_are_listed() {
+    isolate_git!(commits_only_a_detached_head_reaches_are_listed);
     let f = fixture();
     let wt = f.beside.join("loose");
     git(
@@ -256,6 +259,7 @@ fn commits_only_a_detached_head_reaches_are_listed() {
 
 #[test]
 fn a_locked_worktree_is_listed_with_git_reason_and_never_removed() {
+    isolate_git!(a_locked_worktree_is_listed_with_git_reason_and_never_removed);
     let f = fixture();
     let wt = f.linked("usb");
     git(
@@ -295,6 +299,7 @@ fn a_locked_worktree_is_listed_with_git_reason_and_never_removed() {
 
 #[test]
 fn the_main_and_the_open_folder_and_strangers_are_not_removable() {
+    isolate_git!(the_main_and_the_open_folder_and_strangers_are_not_removable);
     let f = fixture();
     let wt = f.linked("other");
     let error = f.repo.worktree_removal(&f.main, &[]).expect_err("main");
@@ -326,6 +331,7 @@ fn the_main_and_the_open_folder_and_strangers_are_not_removable() {
 
 #[test]
 fn a_worktree_that_changed_after_the_confirmation_is_refused() {
+    isolate_git!(a_worktree_that_changed_after_the_confirmation_is_refused);
     let f = fixture();
 
     // A file edited after the preview.
@@ -378,6 +384,7 @@ fn a_worktree_that_changed_after_the_confirmation_is_refused() {
 
 #[test]
 fn assume_unchanged_flags_block_removal_as_they_do_stale_cleanup() {
+    isolate_git!(assume_unchanged_flags_block_removal_as_they_do_stale_cleanup);
     let f = fixture();
     let wt = f.linked("hidden");
     git(&wt, &["update-index", "--assume-unchanged", "a.txt"]);
@@ -394,6 +401,7 @@ fn assume_unchanged_flags_block_removal_as_they_do_stale_cleanup() {
 
 #[test]
 fn missing_worktrees_are_listed_and_forgetting_matches_git_prune() {
+    isolate_git!(missing_worktrees_are_listed_and_forgetting_matches_git_prune);
     let f = fixture();
     let gone = f.linked("gone");
     let also = f.linked("also");
@@ -504,6 +512,7 @@ fn missing_worktrees_are_listed_and_forgetting_matches_git_prune() {
 
 #[test]
 fn removing_a_missing_worktree_is_refused_with_the_way_out() {
+    isolate_git!(removing_a_missing_worktree_is_refused_with_the_way_out);
     let f = fixture();
     let wt = f.linked("vanished");
     fs::remove_dir_all(&wt).expect("delete by hand");
@@ -519,6 +528,7 @@ fn removing_a_missing_worktree_is_refused_with_the_way_out() {
 #[cfg(unix)]
 #[test]
 fn a_missing_worktree_named_through_a_linked_parent_is_found() {
+    isolate_git!(a_missing_worktree_named_through_a_linked_parent_is_found);
     let f = fixture();
     let wt = f.linked("vanished");
     fs::remove_dir_all(&wt).expect("delete by hand");
@@ -540,6 +550,7 @@ fn a_missing_worktree_named_through_a_linked_parent_is_found() {
 #[cfg(unix)]
 #[test]
 fn a_folder_that_cannot_be_read_is_listed_as_unreadable_not_missing() {
+    isolate_git!(a_folder_that_cannot_be_read_is_listed_as_unreadable_not_missing);
     let f = fixture();
     let wt = f.linked("locked-out");
     fs::set_permissions(&wt, fs::Permissions::from_mode(0o000)).expect("chmod");
@@ -565,6 +576,7 @@ fn a_folder_that_cannot_be_read_is_listed_as_unreadable_not_missing() {
 #[cfg(unix)]
 #[test]
 fn forgetting_does_not_prune_an_unreadable_folder_next_to_a_missing_one() {
+    isolate_git!(forgetting_does_not_prune_an_unreadable_folder_next_to_a_missing_one);
     let f = fixture();
     let gone = f.linked("gone");
     let lo = f.linked("lo");
@@ -592,6 +604,7 @@ fn forgetting_does_not_prune_an_unreadable_folder_next_to_a_missing_one() {
 /// reaches, a tag keeping one, a submodule repository, an operation in progress.
 #[test]
 fn the_forget_preview_names_what_forgetting_loses() {
+    isolate_git!(the_forget_preview_names_what_forgetting_loses);
     let f = fixture();
     let lonely = f.beside.join("lonely");
     git(
@@ -709,6 +722,7 @@ impl Fixture {
 /// was never pushed. Canopy says so up front and removes nothing, whatever the submodule holds.
 #[test]
 fn a_worktree_with_an_initialized_submodule_is_never_removed() {
+    isolate_git!(a_worktree_with_an_initialized_submodule_is_never_removed);
     let f = fixture();
     let admin_modules = |name: &str| f.main.join(".git/worktrees").join(name).join("modules");
 
@@ -760,6 +774,7 @@ fn a_worktree_with_an_initialized_submodule_is_never_removed() {
 /// the commits in it.
 #[test]
 fn a_deinitialized_submodule_whose_repository_is_kept_blocks_removal() {
+    isolate_git!(a_deinitialized_submodule_whose_repository_is_kept_blocks_removal);
     let f = fixture();
     let wt = f.with_submodule("deinit", true);
     fs::write(wt.join("deps/sub/new.txt"), "work\n").expect("file");
@@ -791,6 +806,7 @@ fn a_deinitialized_submodule_whose_repository_is_kept_blocks_removal() {
 /// is counted, and one that cannot be read blocks instead of reporting nothing.
 #[test]
 fn a_forgotten_worktree_with_an_unusual_id_still_shows_its_head() {
+    isolate_git!(a_forgotten_worktree_with_an_unusual_id_still_shows_its_head);
     let f = fixture();
     let lonely = f.beside.join("lonely");
     git(
@@ -846,6 +862,7 @@ fn a_forgotten_worktree_with_an_unusual_id_still_shows_its_head() {
 #[cfg(unix)]
 #[test]
 fn an_ambiguous_worktree_id_blocks_forgetting() {
+    isolate_git!(an_ambiguous_worktree_id_blocks_forgetting);
     let f = fixture();
     let worktrees = f.main.join(".git/worktrees");
     for (name, id) in [("first", "a"), ("second", "a:b")] {
@@ -877,6 +894,7 @@ fn an_ambiguous_worktree_id_blocks_forgetting() {
 /// does Canopy.
 #[test]
 fn a_worktree_with_an_uninitialized_submodule_is_removed() {
+    isolate_git!(a_worktree_with_an_uninitialized_submodule_is_removed);
     let f = fixture();
     let wt = f.with_submodule("fresh", false);
     let removal = f.repo.worktree_removal(&wt, &[]).expect("inspect");
@@ -889,6 +907,7 @@ fn a_worktree_with_an_uninitialized_submodule_is_removed() {
 /// untracked file; `--force` would delete it (and leave the inner worktree registered).
 #[test]
 fn a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it() {
+    isolate_git!(a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it);
     let f = fixture();
 
     // An unrelated repository with a commit, in an untracked folder.
@@ -956,6 +975,7 @@ fn a_repository_or_worktree_inside_the_folder_is_never_deleted_with_it() {
 #[cfg(unix)]
 #[test]
 fn a_folder_open_in_another_tab_is_refused_however_it_is_spelled() {
+    isolate_git!(a_folder_open_in_another_tab_is_refused_however_it_is_spelled);
     let f = fixture();
     let shared = f.linked("shared");
     let sibling = f.linked("shared2");
@@ -1000,6 +1020,7 @@ fn a_folder_open_in_another_tab_is_refused_however_it_is_spelled() {
 /// as one ignored item, is a change since the confirmation.
 #[test]
 fn a_change_past_the_first_shown_names_is_a_change_since_the_confirmation() {
+    isolate_git!(a_change_past_the_first_shown_names_is_a_change_since_the_confirmation);
     let f = fixture();
 
     // Twelve untracked files; one past the eighth is swapped for another, the count unchanged.
@@ -1048,6 +1069,7 @@ fn a_change_past_the_first_shown_names_is_a_change_since_the_confirmation() {
 /// ignored folder is a repository too, and blocks the removal.
 #[test]
 fn a_bare_repository_inside_an_ignored_folder_is_never_deleted_with_it() {
+    isolate_git!(a_bare_repository_inside_an_ignored_folder_is_never_deleted_with_it);
     let f = fixture();
     let outer = f.linked("bare-inside");
     fs::write(outer.join(".gitignore"), "*.bare/\n").expect("file");
@@ -1070,6 +1092,7 @@ fn a_bare_repository_inside_an_ignored_folder_is_never_deleted_with_it() {
 /// seen as one: it is looked for inside, and blocks the removal like any other nested repository.
 #[test]
 fn a_repository_inside_an_ignored_folder_is_never_deleted_with_it() {
+    isolate_git!(a_repository_inside_an_ignored_folder_is_never_deleted_with_it);
     let f = fixture();
     let outer = f.linked("ignoring");
     fs::write(outer.join(".gitignore"), "repos/\n").expect("file");
@@ -1113,6 +1136,7 @@ fn a_repository_inside_an_ignored_folder_is_never_deleted_with_it() {
 fn a_repository_in_a_folder_that_is_not_utf8_is_never_deleted_with_it() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
+    isolate_git!(a_repository_in_a_folder_that_is_not_utf8_is_never_deleted_with_it);
     let f = fixture();
     let outer = f.linked("odd-inside");
     let inner = outer.join(OsString::from_vec(b"odd-\xff-repo".to_vec()));
@@ -1145,6 +1169,7 @@ fn a_repository_in_a_folder_that_is_not_utf8_is_never_deleted_with_it() {
 fn a_folder_with_a_name_that_is_not_utf8_is_neither_removed_nor_forgotten() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
+    isolate_git!(a_folder_with_a_name_that_is_not_utf8_is_neither_removed_nor_forgotten);
     let f = fixture();
     let name = OsString::from_vec(b"odd-\xff-name".to_vec());
     let bad = f.beside.join(name);
@@ -1153,7 +1178,6 @@ fn a_folder_with_a_name_that_is_not_utf8_is_neither_removed_nor_forgotten() {
         .args(["worktree", "add", "-q", "-b", "odd"])
         .arg("--")
         .arg(&bad)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
         .expect("git runs");
     assert!(
@@ -1190,6 +1214,7 @@ fn a_folder_with_a_name_that_is_not_utf8_is_neither_removed_nor_forgotten() {
 /// folder; one whose name only starts the same is another.
 #[test]
 fn the_same_folder_is_found_however_it_is_spelled_and_a_name_prefix_is_not_it() {
+    isolate_git!(the_same_folder_is_found_however_it_is_spelled_and_a_name_prefix_is_not_it);
     let f = fixture();
     let alpha = f.linked("alpha");
     let alpha2 = f.linked("alpha2");
@@ -1232,6 +1257,7 @@ fn the_same_folder_is_found_however_it_is_spelled_and_a_name_prefix_is_not_it() 
 /// Forgetting `wt` must not be confused by `wt2` existing, and the other way round.
 #[test]
 fn forgetting_one_folder_leaves_a_neighbour_with_the_same_prefix() {
+    isolate_git!(forgetting_one_folder_leaves_a_neighbour_with_the_same_prefix);
     let f = fixture();
     let wt = f.linked("wt");
     let wt2 = f.linked("wt2");
@@ -1250,6 +1276,7 @@ fn forgetting_one_folder_leaves_a_neighbour_with_the_same_prefix() {
 /// it: the reading says so.
 #[test]
 fn an_operation_in_progress_in_the_folder_is_reported() {
+    isolate_git!(an_operation_in_progress_in_the_folder_is_reported);
     let f = fixture();
     let wt = f.linked("busy");
     assert_eq!(
@@ -1275,6 +1302,7 @@ fn an_operation_in_progress_in_the_folder_is_reported() {
 /// The refusal says how to get out of it.
 #[test]
 fn checking_out_a_branch_of_a_missing_worktree_points_to_forgetting_it() {
+    isolate_git!(checking_out_a_branch_of_a_missing_worktree_points_to_forgetting_it);
     let f = fixture();
     let wt = f.linked("topic");
     fs::remove_dir_all(&wt).expect("delete by hand");

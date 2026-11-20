@@ -6,9 +6,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{Repo, SignatureStatus};
 
@@ -20,8 +24,6 @@ fn run(program: &str, dir: &Path, args: &[&str]) -> String {
     let out = Command::new(program)
         .current_dir(dir)
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
         .expect("program runs");
     assert!(
@@ -92,6 +94,7 @@ fn commit(p: &Path, file: &str, sign: bool) {
 
 #[test]
 fn an_unsigned_commit_is_unsigned() {
+    isolate_git!(an_unsigned_commit_is_unsigned);
     let (dir, repo) = repository(true);
     commit(dir.path(), "a", false);
     assert_eq!(letter(dir.path(), "HEAD"), "N");
@@ -104,6 +107,7 @@ fn an_unsigned_commit_is_unsigned() {
 
 #[test]
 fn a_signature_from_a_listed_key_is_verified() {
+    isolate_git!(a_signature_from_a_listed_key_is_verified);
     let (dir, repo) = repository(true);
     commit(dir.path(), "a", true);
     assert_eq!(letter(dir.path(), "HEAD"), "G");
@@ -115,6 +119,7 @@ fn a_signature_from_a_listed_key_is_verified() {
 
 #[test]
 fn a_signature_from_an_unlisted_key_is_never_shown_as_trusted() {
+    isolate_git!(a_signature_from_an_unlisted_key_is_never_shown_as_trusted);
     let (dir, repo) = repository(false);
     commit(dir.path(), "a", true);
     let expected = letter(dir.path(), "HEAD");
@@ -128,6 +133,7 @@ fn a_signature_from_an_unlisted_key_is_never_shown_as_trusted() {
 
 #[test]
 fn a_signed_commit_git_cannot_check_is_not_shown_as_unsigned() {
+    isolate_git!(a_signed_commit_git_cannot_check_is_not_shown_as_unsigned);
     let (dir, repo) = repository(true);
     commit(dir.path(), "a", true);
     git(
@@ -230,6 +236,7 @@ fn gpg_repository() -> Option<(Keyring, Repo)> {
 #[cfg(unix)]
 #[test]
 fn a_gpg_signature_from_a_trusted_key_is_verified() {
+    isolate_git!(a_gpg_signature_from_a_trusted_key_is_verified);
     let Some((dir, repo)) = gpg_repository() else {
         return;
     };
@@ -248,6 +255,7 @@ fn a_gpg_signature_from_a_trusted_key_is_verified() {
 #[cfg(unix)]
 #[test]
 fn a_gpg_signature_from_a_key_you_do_not_trust_is_never_shown_as_verified() {
+    isolate_git!(a_gpg_signature_from_a_key_you_do_not_trust_is_never_shown_as_verified);
     let Some((dir, repo)) = gpg_repository() else {
         return;
     };
