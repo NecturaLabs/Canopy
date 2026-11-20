@@ -445,7 +445,7 @@ in the density's metrics:
   before the first tab is opened.
 - The status bar's right end (the bell, an update) always keeps its room. The branch name takes
   at most 32% of the bar (320 points at most) and the upstream's name 24% (240 points at most);
-  a longer name is cut in its middle with "…", with the full name in its tooltip and spoken name.
+  a longer name is cut in its middle with "…", with the full name in its tooltip and accessible name.
   An item that does not fit whole in what is left is left out, never cut.
 - Welcome action cards explain Open, Clone and Init in two short lines without requiring hover;
   the shortcut stays in each card's top corner.
