@@ -276,7 +276,7 @@
         <div class="text" data-reveal>
           <h2 id="h-requests">Pull and merge requests</h2>
           <p>Review, check out and merge GitHub pull requests and GitLab merge requests, self-hosted GitLab included. Signed in with the GitHub or GitLab CLI, each row shows its checks and reviews.</p>
-          <p>Filter by checks, review, draft or author. When a project has more than 100, the search goes to GitLab, or to GitHub when signed in with the GitHub CLI.</p>
+          <p>Filter by checks, review, draft or author. With more than 100 requests, the search text, draft and author filters run on GitLab, or on GitHub when you are signed in with the GitHub CLI.</p>
           <p>Canopy stores no token: it uses the <code translate="no">gh</code> or <code translate="no">glab</code> sign-in and keeps it in memory only.</p>
         </div>
         <ul class="keys" aria-label="Request shortcuts" data-reveal>
@@ -426,7 +426,7 @@
           <h3>It has no</h3>
           <ul>
             <li>Telemetry or analytics.</li>
-            <li>A Canopy account, or a sign-in of its own.</li>
+            <li>Canopy account or sign-in of its own.</li>
             <li>Server of its own between you and your code.</li>
           </ul>
         </div>
@@ -461,7 +461,7 @@
           </div>
           <ul class="install-facts">
             <li>The address redirects to the installer script in the public <a href="https://github.com/NecturaLabs/app-updates/tree/main/canopy">NecturaLabs/app-updates</a> repository on GitHub, so you can read it before you run it.</li>
-            <li>Installs for your user only, without <code translate="no">sudo</code> or administrator rights: into <code translate="no">~/.local/opt/canopy</code> on Linux and <code translate="no">%LOCALAPPDATA%\Programs\Canopy</code> on Windows.</li>
+            <li>Installs for your user only, without <code translate="no">sudo</code> or administrator rights: into <code translate="no">~/.local/opt/canopy</code> on Linux, <code translate="no">~/Applications/Canopy.app</code> on macOS and <code translate="no">%LOCALAPPDATA%\Programs\Canopy</code> on Windows.</li>
             <li>Checks the archive's SHA-256 against the published checksum and stops if they differ.</li>
             <li>Run it again to upgrade. It leaves an uninstaller in the install folder, and uninstalling keeps your settings.</li>
             <li>Canopy needs <code translate="no">git</code> 2.30 or newer on your <code translate="no">PATH</code>. The installer never installs it for you.</li>

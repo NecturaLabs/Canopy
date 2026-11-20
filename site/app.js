@@ -68,7 +68,7 @@ const system = detect();
 $$(system === "macos" ? '[data-platform^="darwin-"]' : '[data-platform="' + system + '"]').forEach((row) => row.classList.add("is-suggested"));
 
 const NOTES = {
-  phone: ["\uE560", "It runs on Linux (x86_64 and arm64), macOS (Apple silicon and Intel) and Windows (x86_64). There is no mobile app yet; open this page on your computer to install it.", "Canopy is a desktop app"],
+  phone: ["\uE560", "It runs on Linux (x86_64 and arm64), macOS (Apple silicon and Intel) and Windows (x86_64). There is no mobile app; open this page on your computer to install it.", "Canopy is a desktop app"],
   unknown: ["", "Canopy runs on Linux, macOS and Windows. Choose your system below."],
 };
 if (NOTES[system]) {
