@@ -91,7 +91,7 @@ link previews do not read WebP.
   background fills from left to right until the next step. The button below the palette pauses or
   plays the tour. Hovering over or focusing the palette pauses it until the visitor selects Play.
   The tour waits while less than a third of the first screen (the palette and the window) is in view
-  or the tab is hidden. The button is hidden when the search field has text, when reduced motion is
+  or the tab is hidden, and never runs with reduced motion. The button is hidden when the search field has text, when reduced motion is
   on or when the palette is a list of links. Where the palette is the plain list of links, only the
   History render is in the page (the others are `hidden`, so they are never downloaded), under the
   title On this page. When the list is longer than its box, it fades out at the bottom until
