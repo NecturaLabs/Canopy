@@ -754,8 +754,10 @@ pub(crate) fn has_merge_tree_write_tree() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::isolate_git;
     #[test]
     fn msys_never_expands_wildcards_and_keeps_the_users_options() {
+        isolate_git!(msys_never_expands_wildcards_and_keeps_the_users_options);
         assert_eq!(msys_without_glob(None), "noglob");
         assert_eq!(msys_without_glob(Some(OsString::new())), "noglob");
         assert_eq!(
@@ -766,6 +768,7 @@ mod tests {
 
     #[test]
     fn only_git_submodule_runs_with_msys_wildcards_off() {
+        isolate_git!(only_git_submodule_runs_with_msys_wildcards_off);
         let msys = |args: &[&str]| {
             let mut cmd = command(None);
             with_args(&mut cmd, args);
@@ -794,6 +797,7 @@ mod tests {
     /// Output that is parsed is asked for in the C locale, whatever the user's language is.
     #[test]
     fn english_output_pins_the_locale() {
+        isolate_git!(english_output_pins_the_locale);
         let mut cmd = command(None);
         english(&mut cmd);
         let value = |key: &str| {
@@ -813,6 +817,7 @@ mod tests {
     )]
     fn repository_fsmonitor_command_is_not_executed() {
         use std::os::unix::fs::PermissionsExt;
+        isolate_git!(repository_fsmonitor_command_is_not_executed);
 
         let dir = tempfile::tempdir().expect("temporary repository");
         run(dir.path(), &["init", "-q"]).expect("initialize repository");
@@ -889,6 +894,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn repository_editors_are_not_executed() {
+        isolate_git!(repository_editors_are_not_executed);
         for (key, args) in [
             ("core.editor", vec!["commit", "-q", "--allow-empty"]),
             ("sequence.editor", vec!["rebase", "-i", "HEAD~1"]),
@@ -907,6 +913,7 @@ mod tests {
     #[test]
     fn repository_pager_command_is_not_executed() {
         use std::os::unix::fs::PermissionsExt;
+        isolate_git!(repository_pager_command_is_not_executed);
 
         let dir = tempfile::tempdir().expect("temporary repository");
         let path = dir.path();
@@ -929,6 +936,7 @@ mod tests {
 
     #[test]
     fn a_git_that_exits_before_reading_its_input_reports_its_own_error() {
+        isolate_git!(a_git_that_exits_before_reading_its_input_reports_its_own_error);
         let dir = tempfile::tempdir().expect("tmp");
         run(dir.path(), &["init", "-q"]).expect("init");
         // More than a pipe buffer, so writing it fails once git has exited.
@@ -941,6 +949,7 @@ mod tests {
 
     #[test]
     fn logged_arguments_hide_secrets_and_messages() {
+        isolate_git!(logged_arguments_hide_secrets_and_messages);
         assert_eq!(
             loggable(&[
                 "clone",
@@ -1015,6 +1024,7 @@ mod tests {
 
     #[test]
     fn parses_git_versions() {
+        isolate_git!(parses_git_versions);
         assert_eq!(parse_version("git version 2.43.0"), Some((2, 43)));
         assert_eq!(
             parse_version("git version 2.39.3 (Apple Git-146)"),
@@ -1027,6 +1037,7 @@ mod tests {
 
     #[test]
     fn unchecked_runs_return_the_exit_code() {
+        isolate_git!(unchecked_runs_return_the_exit_code);
         let dir = tempfile::tempdir().expect("tempdir");
         let out = run_unchecked(dir.path(), &["rev-parse", "--git-dir"]).expect("git runs");
         assert_ne!(out.code, Some(0));
@@ -1039,6 +1050,7 @@ mod tests {
     /// an answer rather than a failure; a configuration git cannot read still fails loudly.
     #[test]
     fn an_unset_config_key_is_an_answer_not_a_failure() {
+        isolate_git!(an_unset_config_key_is_an_answer_not_a_failure);
         let dir = tempfile::tempdir().expect("tempdir");
         run(dir.path(), &["init", "-q"]).expect("init");
         let get = ["config", "--get", "--", "canopy.unsetKey"];
@@ -1062,6 +1074,7 @@ mod tests {
 
     #[test]
     fn subcommand_skips_option_values() {
+        isolate_git!(subcommand_skips_option_values);
         assert_eq!(subcommand(&["fetch", "origin"]), "fetch");
         assert_eq!(subcommand(&["--no-pager", "log"]), "log");
         assert_eq!(
@@ -1078,6 +1091,7 @@ mod tests {
 
     #[test]
     fn reports_stderr_on_failure() {
+        isolate_git!(reports_stderr_on_failure);
         let dir = tempfile::tempdir().expect("tempdir");
         let err = run(dir.path(), &["log"]).expect_err("not a repository");
         match err {
@@ -1094,6 +1108,7 @@ mod tests {
 
     #[test]
     fn streams_progress_lines() {
+        isolate_git!(streams_progress_lines);
         let dir = tempfile::tempdir().expect("tempdir");
         run_streaming(Some(dir.path()), &["init", "-q", "streamed"], |_| {}).expect("init");
         assert!(dir.path().join("streamed/.git").is_dir());
@@ -1174,6 +1189,7 @@ mod tests {
         reason = "tests drive git directly to build and check repositories"
     )]
     fn a_repository_chosen_by_the_environment_does_not_reach_git() {
+        isolate_git!(a_repository_chosen_by_the_environment_does_not_reach_git);
         let git = |dir: &Path, args: &[&str]| {
             let out = Command::new("git")
                 .current_dir(dir)
@@ -1224,6 +1240,7 @@ mod tests {
 
     #[test]
     fn askpass_sets_git_and_ssh_variables() {
+        isolate_git!(askpass_sets_git_and_ssh_variables);
         let _hook = HookGuard::set(Some(askpass("/opt/canopy")));
         let cmd = user_command(&[]);
         assert_eq!(env_of(&cmd, "GIT_ASKPASS").as_deref(), Some("/opt/canopy"));
@@ -1238,6 +1255,7 @@ mod tests {
 
     #[test]
     fn askpass_respects_the_users_own_programs() {
+        isolate_git!(askpass_respects_the_users_own_programs);
         let _hook = HookGuard::set(Some(askpass("/opt/canopy")));
         let cmd = user_command(&[("GIT_ASKPASS", "/usr/bin/mine")]);
         assert_eq!(
@@ -1265,6 +1283,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_git_that_never_answers_is_killed_at_the_limit() {
+        isolate_git!(a_git_that_never_answers_is_killed_at_the_limit);
         let mut cmd = command(None);
         cmd.args(["-c", "alias.nap=!sleep 3"]);
         let started = Instant::now();
@@ -1281,6 +1300,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_git_given_input_is_killed_at_the_limit() {
+        isolate_git!(a_git_given_input_is_killed_at_the_limit);
         let dir = tempfile::tempdir().expect("tmp");
         run(dir.path(), &["init", "-q"]).expect("init");
         run(dir.path(), &["config", "alias.nap", "!sleep 3"]).expect("alias");
@@ -1306,6 +1326,7 @@ mod tests {
 
     #[test]
     fn no_askpass_leaves_the_environment_alone() {
+        isolate_git!(no_askpass_leaves_the_environment_alone);
         let _hook = HookGuard::set(None);
         let cmd = user_command(&[]);
         for key in ["GIT_ASKPASS", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"] {
@@ -1316,6 +1337,7 @@ mod tests {
 
     #[test]
     fn askpass_survives_a_poisoned_lock() {
+        isolate_git!(askpass_survives_a_poisoned_lock);
         let _hook = HookGuard::set(None);
         let _ = std::thread::spawn(|| {
             let _held = askpass_slot().write();
@@ -1335,6 +1357,7 @@ mod tests {
     #[test]
     fn git_reads_credentials_from_the_askpass_program() {
         use std::os::unix::fs::PermissionsExt;
+        isolate_git!(git_reads_credentials_from_the_askpass_program);
 
         let dir = tempfile::tempdir().expect("tempdir");
         let script = dir.path().join("askpass.sh");
@@ -1390,6 +1413,7 @@ mod tests {
     /// passed this too: it guards the `BrokenPipe` path of the shared one.
     #[test]
     fn a_git_that_ignores_its_input_still_answers() {
+        isolate_git!(a_git_that_ignores_its_input_still_answers);
         let dir = tempfile::tempdir().expect("tempdir");
         let input = vec![b'x'; UNREAD_INPUT];
         let version = run_with_input(dir.path(), &["version"], &input).expect("git version");
@@ -1411,9 +1435,10 @@ mod tests {
     #[test]
     fn run_with_input_reads_the_answer_while_it_writes() {
         use std::sync::mpsc;
-
         /// Generous for a slow machine; a hung git never answers.
         const LIMIT: Duration = Duration::from_secs(60);
+        isolate_git!(run_with_input_reads_the_answer_while_it_writes);
+
         let dir = tempfile::tempdir().expect("tempdir");
         run(dir.path(), &["init", "-q"]).expect("git init");
         // git check-ignore exits 1 when it ignores nothing, which `run_with_input` reports.

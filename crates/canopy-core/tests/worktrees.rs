@@ -674,6 +674,57 @@ fn the_forget_preview_names_what_forgetting_loses() {
     assert!(contains.trim().is_empty(), "{contains}");
 }
 
+/// #285: forgetting deletes a worktree's own refs (`refs/worktree/*`, a bisect's refs) with
+/// its entry, so the commits only they reach are counted too, on a branch as well as detached,
+/// and the row can say what holds them.
+#[test]
+fn the_forget_preview_counts_commits_only_a_worktree_s_own_refs_hold() {
+    isolate_git!(the_forget_preview_counts_commits_only_a_worktree_s_own_refs_hold);
+    let f = fixture();
+    let parked = f.linked("parked");
+    fs::write(parked.join("a.txt"), "parked\n").expect("edit");
+    git(&parked, &["commit", "-q", "-am", "parked work"]);
+    git(&parked, &["update-ref", "refs/worktree/wip", "HEAD"]);
+    git(&parked, &["reset", "-q", "--hard", "HEAD~1"]);
+    let both = f.beside.join("both");
+    git(
+        &f.main,
+        &["worktree", "add", "-q", "--detach", &both.to_string_lossy()],
+    );
+    fs::write(both.join("a.txt"), "ref\n").expect("edit");
+    git(&both, &["commit", "-q", "-am", "under a ref"]);
+    git(&both, &["update-ref", "refs/bisect/bad", "HEAD"]);
+    git(&both, &["reset", "-q", "--hard", "HEAD~1"]);
+    fs::write(both.join("a.txt"), "head\n").expect("edit");
+    git(&both, &["commit", "-q", "-am", "at head"]);
+    // A ref of its own that only points where a branch does holds nothing extra.
+    let plain = f.linked("plain");
+    git(&plain, &["update-ref", "refs/worktree/same", "HEAD"]);
+    for folder in [&parked, &both, &plain] {
+        fs::remove_dir_all(folder).expect("delete by hand");
+    }
+
+    let preview = f.repo.forget_preview().expect("preview");
+    assert_eq!(preview.blocked, None);
+    let by_id = |id: &str| preview.entries.iter().find(|e| e.id == id).expect("entry");
+    assert_eq!(by_id("parked").branch.as_deref(), Some("parked"));
+    assert_eq!(by_id("parked").unreachable_commits, 1, "{preview:?}");
+    assert_eq!(by_id("parked").held_by, ["refs/worktree/wip"]);
+    assert_eq!(by_id("both").unreachable_commits, 2, "{preview:?}");
+    assert_eq!(by_id("both").held_by, ["HEAD", "refs/bisect/bad"]);
+    assert_eq!(by_id("plain").unreachable_commits, 0);
+    assert_eq!(by_id("plain").held_by, Vec::<String>::new());
+
+    // As git sees it: after the prune nothing reaches the parked commit.
+    let wip = git(
+        &f.main,
+        &["rev-parse", "worktrees/parked/refs/worktree/wip"],
+    );
+    f.repo.forget_worktrees(&preview).expect("forget");
+    let refs = git(&f.main, &["for-each-ref", "--contains", wip.trim()]);
+    assert!(refs.trim().is_empty(), "{refs}");
+}
+
 impl Fixture {
     /// A repository `deps/sub` as a submodule of the main one, committed, and a linked folder
     /// `name` where it is initialized (`init`) or not.

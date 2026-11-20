@@ -472,6 +472,7 @@ pub(crate) fn missing_head_tree(repo: &Repository) -> Option<Oid> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::isolate_git;
     /// A download that outlasted its limit can be retried; other errors pass through.
     #[test]
     #[expect(
@@ -479,6 +480,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn a_download_that_timed_out_can_be_retried() {
+        isolate_git!(a_download_that_timed_out_can_be_retried);
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(dir.path()).expect("init");
         repo.remote("origin", "https://example.com/r.git")
@@ -503,6 +505,7 @@ mod tests {
     #[test]
     #[expect(clippy::string_slice, reason = "object IDs are ASCII hex")]
     fn only_a_full_object_id_in_a_message_is_taken() {
+        isolate_git!(only_a_full_object_id_in_a_message_is_taken);
         let full = "0123456789abcdef0123456789abcdef01234567";
         let named = |id: &str| {
             oid_in_message(&not_found(&format!(
@@ -524,6 +527,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn promisor_remotes_follow_gits_order_with_the_extension_last() {
+        isolate_git!(promisor_remotes_follow_gits_order_with_the_extension_last);
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(dir.path()).expect("init");
         let mut config = repo.config().expect("config");
@@ -545,6 +549,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn a_repository_is_trusted_only_inside_a_trusted_folder() {
+        isolate_git!(a_repository_is_trusted_only_inside_a_trusted_folder);
         let root = tempfile::tempdir().expect("tempdir");
         let work = root.path().join("work");
         let repo_dir = work.join("repo");
@@ -590,6 +595,9 @@ mod tests {
     /// volume, so it holds on Linux, macOS and Windows alike.
     #[test]
     fn a_folder_spelled_in_other_capitals_is_trusted_only_where_the_volume_says_it_is_the_same() {
+        isolate_git!(
+            a_folder_spelled_in_other_capitals_is_trusted_only_where_the_volume_says_it_is_the_same
+        );
         let root = tempfile::tempdir().expect("tempdir");
         let work = root.path().join("Work");
         let repo = work.join("repo");
@@ -607,6 +615,7 @@ mod tests {
     /// trusted folder, and one that leaves it does not.
     #[test]
     fn spellings_of_a_trusted_folder_that_resolve_to_it_trust_the_same() {
+        isolate_git!(spellings_of_a_trusted_folder_that_resolve_to_it_trust_the_same);
         let root = tempfile::tempdir().expect("tempdir");
         let work = root.path().join("work");
         let repo = work.join("repo");
@@ -627,6 +636,7 @@ mod tests {
 
     #[test]
     fn a_private_git_directory_outside_trust_refuses_downloads() {
+        isolate_git!(a_private_git_directory_outside_trust_refuses_downloads);
         let root = tempfile::tempdir().expect("tempdir");
         let trusted = root.path().join("trusted");
         let common = trusted.join("main.git");
@@ -657,6 +667,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn a_trusted_folder_that_is_a_link_to_the_root_trusts_nothing() {
+        isolate_git!(a_trusted_folder_that_is_a_link_to_the_root_trusts_nothing);
         let dir = tempfile::tempdir().expect("tempdir");
         let repo_dir = dir.path().join("repo");
         std::fs::create_dir_all(&repo_dir).unwrap();
@@ -673,6 +684,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn trust_follows_where_the_repository_really_lives() {
+        isolate_git!(trust_follows_where_the_repository_really_lives);
         let root = tempfile::tempdir().expect("tempdir");
         let trusted = root.path().join("trusted");
         let elsewhere = root.path().join("elsewhere");
@@ -712,6 +724,7 @@ mod tests {
 
     #[test]
     fn option_like_remote_names_are_not_usable() {
+        isolate_git!(option_like_remote_names_are_not_usable);
         let names = [
             "--upload-pack=x".to_owned(),
             "origin".to_owned(),

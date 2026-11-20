@@ -527,6 +527,43 @@ impl Repo {
         Ok((out, truncated))
     }
 
+    /// Whether `git branch -d` refuses the local branch `name` as not fully merged: it exists, is
+    /// checked out in no working folder (git refuses that first), and its commit is not in its
+    /// upstream, or in `HEAD` when the upstream does not resolve (git's own rule). Read from the
+    /// repository, so it holds whatever language git answers in.
+    pub fn branch_unmerged(&self, name: &str) -> Result<bool> {
+        let branch = match self.git.find_branch(name, BranchType::Local) {
+            Ok(branch) => branch,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        if self
+            .worktrees()
+            .iter()
+            .any(|w| w.branch.as_deref() == Some(name))
+        {
+            return Ok(false);
+        }
+        let tip = branch.get().peel_to_commit()?.id();
+        let upstream = branch
+            .upstream()
+            .ok()
+            .and_then(|u| u.get().peel_to_commit().ok())
+            .map(|c| c.id());
+        let head = || {
+            self.git
+                .head()
+                .ok()
+                .and_then(|h| h.peel_to_commit().ok())
+                .map(|c| c.id())
+        };
+        Ok(match upstream.or_else(head) {
+            Some(reference) => reference != tip && !self.git.graph_descendant_of(reference, tip)?,
+            // No upstream and no commit checked out: git keeps the branch.
+            None => true,
+        })
+    }
+
     /// The first line of `oid`'s message (what the history list shows for it).
     pub fn subject(&self, oid: Oid) -> Result<String> {
         let commit = self.git.find_commit(oid)?;
