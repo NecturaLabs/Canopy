@@ -223,10 +223,7 @@ fn error_help(
         || lower.contains("unable to auto-detect email address")
     {
         // Git's own text explains `git config` in a terminal; Canopy sets these in Settings.
-        Some((
-            "Set your name and email for Git first.",
-            Some(Offer::GitSettings),
-        ))
+        Some(("Git needs your name and email.", Some(Offer::GitSettings)))
     } else {
         None
     }
@@ -264,7 +261,7 @@ fn recovery(
 struct CardText<'a> {
     body: Option<Cow<'a, str>>,
     /// Git's full output when the body says less than it (a hint, or part of it): the
-    /// center's tooltip and Copy give it.
+    /// center's tooltip gives its first 1,200 characters and Copy all of it.
     details: Option<&'a str>,
 }
 
@@ -3646,7 +3643,7 @@ mod tests {
         assert_eq!(said.details, Some(raw));
     }
 
-    /// #268: one very long line is cut, so the card stays a card.
+    /// #268: one very long line is cut to a few lines.
     #[test]
     fn a_failure_card_cuts_a_very_long_line() {
         let raw = format!("error: {}", "word ".repeat(700));

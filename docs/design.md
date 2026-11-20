@@ -889,10 +889,10 @@ when the notification asks for a decision, a row of two buttons 10 points lower.
 updated or removed, what a pull did to the branch); git's own text is kept for failures. Known
 failures lead with a plain explanation (a missing identity offers Open Git settings / Later), any
 other error shows git's message under its title from its reason on, with the lines that continue
-it (the files a refusal names after its colon), and git's full output is in the notification
-center (its tooltip and Copy). A card and a center row show at most 4 lines and 280 characters of
-a body (`BODY_LINES`, `BODY_CHARS`), with "…" where a sentence is cut, so one long line of output
-cannot make a card taller than a few lines. Screen readers hear an error as an alert with its
+it (the files a refusal names after its colon), and git's output is in the notification
+center (its tooltip, up to 1,200 characters, and Copy, all of it). A card and a center row show
+at most 4 lines and 280 characters of a body (`BODY_LINES`, `BODY_CHARS`), with "…" where a
+sentence is cut. Screen readers hear an error as an alert with its
 message. A stop that waits on the user (a conflict to resolve) is not a failure: its card takes
 the `warning` tone and `WARNING` glyph instead of `danger` and `WARNING_CIRCLE`, lasts as long as
 an error, and is announced politely.
