@@ -13,6 +13,7 @@ use egui::CornerRadius;
 use egui::emath::TSTransform;
 use egui::{Align2, Id, Order, vec2};
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -218,6 +219,14 @@ fn error_help(
             "SSH did not accept your key. Check the key's access to this repository.",
             None,
         ))
+    } else if lower.contains("please tell me who you are")
+        || lower.contains("unable to auto-detect email address")
+    {
+        // Git's own text explains `git config` in a terminal; Canopy sets these in Settings.
+        Some((
+            "Set your name and email for Git first.",
+            Some(Offer::GitSettings),
+        ))
     } else {
         None
     }
@@ -251,64 +260,133 @@ fn recovery(
 }
 
 /// What a toast's card says under its title.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CardText<'a> {
-    body: Option<&'a str>,
-    /// Git's full output when the body says less than it (a hint, or its first line): the
-    /// center's tooltip shows it.
+    body: Option<Cow<'a, str>>,
+    /// Git's full output when the body says less than it (a hint, or part of it): the
+    /// center's tooltip and Copy give it.
     details: Option<&'a str>,
 }
 
 /// What a notification of `kind` with `body` (and, for an error, its `help`) says under its
-/// title, on its card and in the center alike.
+/// title, on its card and in the center alike: at most [`BODY_LINES`] lines and [`BODY_CHARS`]
+/// characters.
 fn card_text<'a>(kind: ToastKind, body: &'a str, help: Option<&'static str>) -> CardText<'a> {
     if kind != ToastKind::Error {
+        let text = body.trim();
+        if text.is_empty() {
+            return CardText {
+                body: None,
+                details: None,
+            };
+        }
+        let (shown, cut) = clamp(text);
         return CardText {
-            body: Some(body).filter(|b| !b.is_empty()),
-            details: None,
+            body: Some(shown),
+            details: cut.then_some(body),
         };
     }
     if help.is_some() {
         return CardText {
-            body: help,
+            body: help.map(Cow::Borrowed),
             details: Some(body),
         };
     }
     // No hint: git's own words say why, and the details hold the rest. Git opens some commands
     // with progress. A remote hook's explanation is more useful than git's generic push error.
-    let lines = || body.lines().map(str::trim);
-    let first = lines()
-        .find(|l| {
-            l.starts_with("fatal:")
-                || l.starts_with("remote: fatal:")
-                || l.starts_with("remote: error:")
-        })
-        .or_else(|| {
-            lines().find(|l| {
-                l.strip_prefix("remote:").is_some_and(|text| {
-                    let text = text.trim();
-                    !text.is_empty()
-                        && ![
-                            "Enumerating objects:",
-                            "Counting objects:",
-                            "Compressing objects:",
-                            "Total ",
-                            "Resolving deltas:",
-                            "Receiving objects:",
-                            "Writing objects:",
-                        ]
-                        .iter()
-                        .any(|prefix| text.starts_with(prefix))
-                })
-            })
-        })
-        .or_else(|| lines().find(|l| l.starts_with("error:")))
-        .or_else(|| lines().find(|l| !l.is_empty()));
-    let more = first.is_some_and(|f| body.trim() != f);
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let find = |test: &dyn Fn(&str) -> bool| lines.iter().position(|l| test(l));
+    let start = find(&|l| {
+        l.starts_with("fatal:")
+            || l.starts_with("remote: fatal:")
+            || l.starts_with("remote: error:")
+    })
+    .or_else(|| find(&|l| remote_says(l)))
+    .or_else(|| find(&|l| l.starts_with("error:")))
+    .or_else(|| find(&|l| !l.is_empty()));
+    let Some(start) = start else {
+        return CardText {
+            body: None,
+            details: None,
+        };
+    };
+    // The lines after it that go on with the same message: the files a refusal ending in a
+    // colon names, or the rest of a remote's explanation. Git's next message starts with its
+    // own prefix.
+    let remote = lines[start].starts_with("remote:");
+    let rest = lines[start + 1..].iter().take_while(|l| {
+        if remote {
+            remote_says(l)
+        } else {
+            !l.is_empty()
+                && ![
+                    "error:", "fatal:", "warning:", "hint:", "remote:", "! [", "To ",
+                ]
+                .iter()
+                .any(|prefix| l.starts_with(prefix))
+        }
+    });
+    let message = std::iter::once(&lines[start])
+        .chain(rest)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (shown, _) = clamp(&message);
+    let more = shown != body.trim();
     CardText {
-        body: first,
+        body: Some(Cow::Owned(shown.into_owned())),
         details: more.then_some(body),
     }
+}
+
+/// Whether `line` is a remote's own words rather than its progress.
+fn remote_says(line: &str) -> bool {
+    line.strip_prefix("remote:").is_some_and(|text| {
+        let text = text.trim();
+        !text.is_empty()
+            && ![
+                "Enumerating objects:",
+                "Counting objects:",
+                "Compressing objects:",
+                "Total ",
+                "Resolving deltas:",
+                "Receiving objects:",
+                "Writing objects:",
+            ]
+            .iter()
+            .any(|prefix| text.starts_with(prefix))
+    })
+}
+
+/// `text` cut to [`BODY_LINES`] lines that say something and [`BODY_CHARS`] characters, and
+/// whether it was. A cut inside a sentence ends in "…"; one after a whole sentence needs none.
+fn clamp(text: &str) -> (Cow<'_, str>, bool) {
+    let (lines, cut) = first_lines(text, BODY_LINES);
+    let (shown, cut_short) = cut_chars(&lines, BODY_CHARS);
+    if !cut && !cut_short {
+        return (Cow::Borrowed(text), false);
+    }
+    let mut shown = shown.trim_end().to_owned();
+    if cut_short || !shown.ends_with(['.', '!', '?']) {
+        shown.push('…');
+    }
+    (Cow::Owned(shown), true)
+}
+
+/// The first `limit` characters of `text`, back to the last space when that keeps most of
+/// them, and whether any were left out.
+fn cut_chars(text: &str, limit: usize) -> (&str, bool) {
+    let Some((at, _)) = text.char_indices().nth(limit) else {
+        return (text, false);
+    };
+    // Both are character boundaries: one from `char_indices`, one where a space starts.
+    let kept = text.get(..at).unwrap_or(text);
+    let word = kept
+        .rfind(char::is_whitespace)
+        .filter(|&space| space > at / 2)
+        .and_then(|space| kept.get(..space))
+        .unwrap_or(kept);
+    (word, true)
 }
 
 /// How long a card stays, in seconds of unpaused time (the center keeps every notification).
@@ -378,8 +456,14 @@ fn center_list_height(ctx: &egui::Context, used: f32) -> f32 {
 fn room_above_status_bar(screen_height: f32) -> f32 {
     screen_height - theme::metrics().status_bar_height - 2.0 * theme::LG
 }
-/// The lines of a notification's text the center shows; the rest is in its tooltip.
-const CENTER_BODY_LINES: usize = 4;
+/// The lines of a notification's text a card and the center show; the rest is in the center's
+/// tooltip and its Copy.
+const BODY_LINES: usize = 4;
+/// The characters of a notification's text a card and the center show, so one long line of
+/// git's output cannot make a card taller than a few lines.
+const BODY_CHARS: usize = 280;
+/// The characters of git's output the center's tooltip shows; Copy gives all of it.
+const TOOLTIP_CHARS: usize = 1200;
 
 /// A notification as the notification center lists it.
 #[derive(Debug, Clone)]
@@ -816,7 +900,7 @@ impl Toasts {
             kind,
             offer.is_some(),
             &title,
-            card_text(kind, &body, help).body,
+            card_text(kind, &body, help).body.as_deref(),
         );
         self.next += 1;
         let at = jiff::Timestamp::now().as_second();
@@ -1014,7 +1098,7 @@ impl Toasts {
                                     .stagger(u8::try_from(stagger).unwrap_or(u8::MAX))
                                     .clickable(offer.is_none());
                             let text = card_text(t.kind, &t.body, t.help);
-                            if let Some(body) = text.body {
+                            if let Some(body) = text.body.as_deref() {
                                 card = card.body(body);
                             }
                             if let Some(offer) = offer {
@@ -1379,12 +1463,17 @@ impl Toasts {
                                 // What the card says (a hint before git's own words), the full
                                 // output in the tooltip.
                                 let said = card_text(e.kind, &e.body, e.help);
-                                let text = said.body.map_or("", str::trim);
-                                if !text.is_empty() {
-                                    let (shown, cut) = first_lines(text, CENTER_BODY_LINES);
-                                    let label = body_text(ui, &shown);
-                                    if cut || said.details.is_some() {
-                                        label.kit_tooltip(body).show();
+                                if let Some(text) = said.body.as_deref() {
+                                    let label = body_text(ui, text);
+                                    if said.details.is_some() {
+                                        // Copy gives all of it; the tooltip a screenful.
+                                        let (tip, cut) = cut_chars(body, TOOLTIP_CHARS);
+                                        let tip = if cut {
+                                            format!("{tip}…")
+                                        } else {
+                                            tip.to_owned()
+                                        };
+                                        label.kit_tooltip(tip).show();
                                     }
                                 }
                                 // Only what can be done about it: the decision it asks for, and a
@@ -1811,10 +1900,11 @@ mod tests {
         );
     }
 
-    /// REVIEW-KIT-7: an error Canopy has no hint for still shows git's own first line on the
-    /// card, with the whole output in the center's tooltip when there is more.
+    /// REVIEW-KIT-7: an error Canopy has no hint for still shows git's own words on the card,
+    /// with the whole output in the center's tooltip when there is more. #268: the words go on
+    /// past the colon to the file the refusal is about.
     #[test]
-    fn an_error_without_a_hint_shows_gits_first_line() {
+    fn an_error_without_a_hint_shows_gits_message() {
         let ctx = egui::Context::default();
         let mut toasts = Toasts::default();
         let first =
@@ -1846,19 +1936,28 @@ mod tests {
         assert_eq!(
             text[0],
             CardText {
-                body: Some(first),
+                body: Some(
+                    format!(
+                        "{first}\nsrc/main.rs\nPlease commit your changes or stash them.\nAborting"
+                    )
+                    .into()
+                ),
                 details: Some(stderr.as_str()),
             }
         );
         assert_eq!(
             text[1],
             CardText {
-                body: Some(one),
+                body: Some(one.into()),
                 details: None,
             },
             "one line has nothing more to show"
         );
-        assert_eq!(text[2].body, toasts.items[2].help, "a hint still leads");
+        assert_eq!(
+            text[2].body.as_deref(),
+            toasts.items[2].help,
+            "a hint still leads"
+        );
         assert_eq!(text[2].details, Some(rejected));
     }
 
@@ -3446,13 +3545,13 @@ mod tests {
         let raw = "Enumerating objects: 27, done.\nremote: Counting objects: 100% (27/27), done.\nremote: error: Changes must be made through a pull request.\n! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs";
         let said = card_text(ToastKind::Error, raw, None);
         assert_eq!(
-            said.body,
+            said.body.as_deref(),
             Some("remote: error: Changes must be made through a pull request.")
         );
         assert_eq!(said.details, Some(raw));
         let raw = "Enumerating objects: 27, done.\nremote: Push denied by policy\nerror: failed to push some refs";
         assert_eq!(
-            card_text(ToastKind::Error, raw, None).body,
+            card_text(ToastKind::Error, raw, None).body.as_deref(),
             Some("remote: Push denied by policy")
         );
     }
@@ -3463,13 +3562,108 @@ mod tests {
                    fatal: unable to access 'https://127.0.0.1:9/o/r.git/': Failed to connect";
         let said = card_text(ToastKind::Error, raw, None);
         assert_eq!(
-            said.body,
+            said.body.as_deref(),
             Some("fatal: unable to access 'https://127.0.0.1:9/o/r.git/': Failed to connect")
         );
         assert_eq!(said.details, Some(raw), "the tooltip keeps all of it");
 
+        // #268: the lines that continue git's message are part of it.
         let plain = card_text(ToastKind::Error, "something went wrong\nand more", None);
-        assert_eq!(plain.body, Some("something went wrong"));
+        assert_eq!(
+            plain.body.as_deref(),
+            Some("something went wrong\nand more")
+        );
+    }
+
+    /// #268: a refusal that ends in a colon goes on to say what it is about (the files), and
+    /// the card shows that part too, a few lines of it.
+    #[test]
+    fn a_failure_card_keeps_the_lines_after_gits_colon() {
+        let raw = "git merge failed: error: Your local changes to the following files would be overwritten by merge:\n\tstaged.txt\nPlease commit your changes or stash them before you merge.\nAborting";
+        let said = card_text(ToastKind::Error, raw, None);
+        assert_eq!(
+            said.body.as_deref(),
+            Some(
+                "git merge failed: error: Your local changes to the following files would be overwritten by merge:\nstaged.txt\nPlease commit your changes or stash them before you merge.\nAborting"
+            )
+        );
+        let many = format!(
+            "error: Your local changes to the following files would be overwritten by merge:\n{}\nAborting",
+            (1..=9)
+                .map(|n| format!("\tfile{n}.txt"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let said = card_text(ToastKind::Error, &many, None);
+        assert_eq!(
+            said.body.as_deref(),
+            Some(
+                "error: Your local changes to the following files would be overwritten by merge:\nfile1.txt\nfile2.txt\nfile3.txt…"
+            )
+        );
+        assert_eq!(
+            said.details,
+            Some(many.as_str()),
+            "the rest is in the details"
+        );
+        let two = "error: Your local changes to the following files would be overwritten by merge:\n\ta.txt\n\tb.txt\nPlease commit your changes or stash them before you merge.\nAborting";
+        assert_eq!(
+            card_text(ToastKind::Error, two, None).body.as_deref(),
+            Some(
+                "error: Your local changes to the following files would be overwritten by merge:\na.txt\nb.txt\nPlease commit your changes or stash them before you merge."
+            ),
+            "a cut after a whole sentence gets no ellipsis"
+        );
+        // A remote's reason is followed by git's own lines about the refused ref; those are not
+        // part of it.
+        let raw = "remote: error: Changes must be made through a pull request.\nremote: error: See the branch rules.\n! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs";
+        assert_eq!(
+            card_text(ToastKind::Error, raw, None).body.as_deref(),
+            Some(
+                "remote: error: Changes must be made through a pull request.\nremote: error: See the branch rules."
+            )
+        );
+    }
+
+    /// #268: git's identity refusal is a page of instructions for a terminal, ending in its
+    /// reason; the card says what is missing and opens the settings that set it.
+    #[test]
+    fn a_failure_for_a_missing_identity_says_where_to_set_it() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        let raw = "git merge failed: Committer identity unknown\n\n*** Please tell me who you are.\n\nRun\n\n  git config --global user.email \"you@example.com\"\n  git config --global user.name \"Your Name\"\n\nto set your account's default identity.\nOmit --global to set the identity only in this repository.\n\nfatal: unable to auto-detect email address (got 'ada@pc.(none)')";
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Merge failed", raw);
+        let t = &toasts.items[0];
+        assert_eq!(t.offer, Some(Offer::GitSettings));
+        let said = card_text(t.kind, &t.body, t.help);
+        assert_eq!(said.body.as_deref(), t.help);
+        assert!(
+            said.body
+                .as_deref()
+                .is_some_and(|b| b.contains("name and email")),
+            "{said:?}"
+        );
+        assert_eq!(said.details, Some(raw));
+    }
+
+    /// #268: one very long line is cut, so the card stays a card.
+    #[test]
+    fn a_failure_card_cuts_a_very_long_line() {
+        let raw = format!("error: {}", "word ".repeat(700));
+        let said = card_text(ToastKind::Error, &raw, None);
+        let body = said.body.expect("a body");
+        assert!(body.chars().count() <= BODY_CHARS + 1, "{}", body.len());
+        assert!(body.ends_with('…'), "{body}");
+        assert_eq!(said.details, Some(raw.as_str()));
+
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Merge failed", &raw);
+        frame_keeping_clear(&ctx, &mut toasts, 0.1, None);
+        let stack = frame_keeping_clear(&ctx, &mut toasts, 0.15, None);
+        assert!(stack.height() < 200.0, "{stack:?}");
     }
 
     /// The center says what the card says: a known git failure as its hint, git's own output in
@@ -3487,7 +3681,7 @@ mod tests {
         let hint = card_text(e.kind, &e.body, e.help)
             .body
             .expect("a hint")
-            .to_owned();
+            .into_owned();
         assert_ne!(hint, raw.lines().next().unwrap_or_default());
         let mut labels = Vec::new();
         for _ in 0..3 {
