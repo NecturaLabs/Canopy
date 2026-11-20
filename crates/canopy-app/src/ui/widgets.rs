@@ -103,7 +103,7 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
 /// How wide `text` is on one line in `font`.
 pub fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
     ui.painter()
-        .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+        .layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER)
         .size()
         .x
 }
