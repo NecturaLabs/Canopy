@@ -236,8 +236,8 @@ remote its upstream is on. It compares with the base as last fetched, so fetch f
 | A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Done | ? | ? | ? |
 | Push, setting upstream when missing | Done | Yes | Yes | Yes |
 | A push (branch, new branch, tag, Flow finish) that would record a submodule commit no remote has stops before sending anything and names the submodules, whether Update submodules is on or off; a `push.recurseSubmodules` in your git configuration decides instead; a submodule with no remote of its own is not checked (git skips it) | Done | ? | ? | ? |
-| Force push with lease | Done | Yes | ? | ? |
-| The force push confirmation names the branch and the remote branch it overwrites | Done | ? | ? | ? |
+| Force push with lease: overwrites only the remote tip your last fetch saw, which the confirmation shows (`--force-with-lease=<ref>:<oid>`, empty when nothing was fetched). A commit someone else pushed is refused with git's message, titled "Force push stopped", with a hint to fetch and look and a Fetch button (the hint says so when the branch was never fetched), even when a fetch (the automatic one too) brought it in after the question. When no fetch setting of the remote tracks the destination, the force push is refused before the question, with the `git config` command that adds one | Done | Yes | ? | ? |
+| The force push confirmation names the branch, the remote branch it overwrites and the tip it was at | Done | ? | ? | ? |
 | A pull asks again when the remote changed while you decided | Done | ? | ? | ? |
 | The status bar says when a branch is not tracking a remote branch of the same name that exists | Done | ? | ? | ? |
 | In-app credential and SSH passphrase prompts | Done | Yes | Yes | Yes |

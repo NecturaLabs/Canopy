@@ -489,6 +489,8 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "confirm-host",
     "convert-partial-clone",
     "confirm-merge-risky",
+    "force-push",
+    "force-push-new",
     "diverged",
     "pull-conflicts",
     "pull-moved",
@@ -714,6 +716,17 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             repo: PathBuf::new(),
             op: Op::Checkout("38b14e7".into()),
         },
+        // The real question, for an illustrative target.
+        "force-push" | "force-push-new" => background::force_push_dialog(
+            &PathBuf::new(),
+            canopy_core::PushTarget {
+                branch: "topic".into(),
+                remote: "origin".into(),
+                dest: "topic".into(),
+                dest_ref: "refs/heads/topic".into(),
+                seen: (name == "force-push").then_some(commit),
+            },
+        ),
         "diverged" => Dialog::Diverged {
             repo: PathBuf::new(),
             mode: settings::PullMode::RECOMMENDED_WHEN_DIVERGED,
@@ -1008,6 +1021,25 @@ mod tests {
             builder.problem()
         );
         assert!(OVERLAYS.contains(&"add-remote-refused"));
+    }
+
+    /// The force push overlays are the real question: with and without a tip the push is pinned to.
+    #[test]
+    fn the_force_push_overlays_build_the_real_question() {
+        let settings = Settings::default();
+        let body = |name| match dialog_overlay(name, &settings) {
+            Some(Dialog::Confirm {
+                body,
+                op: Op::ForcePush(_),
+                ..
+            }) => body,
+            other => panic!("--overlay {name} opens {other:?}"),
+        };
+        assert!(
+            body("force-push")
+                .starts_with("This replaces origin/topic, which your last fetch saw at")
+        );
+        assert!(body("force-push-new").starts_with("Your last fetch did not see origin/topic."));
     }
 
     #[test]

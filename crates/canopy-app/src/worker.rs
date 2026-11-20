@@ -235,12 +235,12 @@ pub enum Op {
         prune: bool,
         checked: Option<Oid>,
     },
-    /// A push of the current branch. A force push carries `expect`, what the user was asked
-    /// about: the worker refuses if the branch or its destination is no longer that.
-    Push {
-        force: bool,
-        expect: Option<canopy_core::PushTarget>,
-    },
+    /// A push of the current branch, never forced.
+    Push,
+    /// A force push of the current branch to what the user was asked about, with the remote tip
+    /// they were shown: the worker refuses if the branch or its destination is no longer that,
+    /// and git refuses if the remote moved since.
+    ForcePush(canopy_core::PushTarget),
     AddRemote {
         name: String,
         url: String,
@@ -285,7 +285,12 @@ impl Op {
             Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
             Self::Fetch { .. } => OpKind::Fetch,
             Self::Pull { .. } => OpKind::Pull,
-            Self::Push { .. } | Self::PublishBranch { .. } => OpKind::Push,
+            Self::ForcePush(target) => OpKind::ForcePush(if target.seen.is_some() {
+                Pin::Tip
+            } else {
+                Pin::Absent
+            }),
+            Self::Push | Self::PublishBranch { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             Self::Merge(..) | Self::Rebase(_) | Self::UpdateFromBase { .. } => OpKind::Merge,
             Self::StashSave { .. } => OpKind::Stash,
@@ -414,8 +419,8 @@ impl Op {
             Self::StashDrop(_) => "Dropping stash".into(),
             Self::Fetch { .. } => "Fetching".into(),
             Self::Pull { .. } => "Pulling".into(),
-            Self::Push { force: true, .. } => "Force pushing".into(),
-            Self::Push { .. } => "Pushing".into(),
+            Self::ForcePush(_) => "Force pushing".into(),
+            Self::Push => "Pushing".into(),
             Self::AddRemote { name, .. } => format!("Adding remote {name}"),
             Self::RemoveRemote(r) => format!("Removing remote {r}"),
             Self::SetRemoteUrl { name, .. } => format!("Changing the URL of {name}"),
@@ -880,6 +885,16 @@ impl Drop for ThreadEnd {
     }
 }
 
+/// What a force push is pinned to: the remote branch's tip as the last fetch saw it, or, when
+/// that fetch had no such branch, its absence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pin {
+    /// The last fetch saw the remote branch at a tip.
+    Tip,
+    /// The last fetch saw no such remote branch.
+    Absent,
+}
+
 /// What a finished operation means for the tab, independent of its label's wording.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpKind {
@@ -893,6 +908,9 @@ pub enum OpKind {
     Pull,
     /// A push: it can open, update or close a request.
     Push,
+    /// A force push, pinned to what the question showed: Git's refusal as stale says what to do
+    /// about it.
+    ForcePush(Pin),
     /// `git branch -d`: when Git refuses an unmerged branch, offer to force the delete.
     SafeDelete(String),
     /// A merge, squash or rebase invoked from the toolbar.
@@ -912,7 +930,10 @@ impl OpKind {
     /// Whether finishing this operation means the forge's pull or merge requests may have
     /// changed (it talked to the remote).
     pub fn syncs_remote(&self) -> bool {
-        matches!(self, Self::Fetch | Self::Pull | Self::Push)
+        matches!(
+            self,
+            Self::Fetch | Self::Pull | Self::Push | Self::ForcePush(_)
+        )
     }
 }
 
@@ -2452,12 +2473,8 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
                 repo.pull(strategy, progress)
             }
         }
-        Op::Push { force, expect } => {
-            if let Some(asked) = expect.filter(|_| force) {
-                repo.ensure_force_push_target(&asked)?;
-            }
-            repo.push(force, progress)
-        }
+        Op::Push => repo.push(progress),
+        Op::ForcePush(asked) => repo.force_push(&asked, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
         Op::SetRemoteUrl { name, url } => done(repo.set_remote_url(&name, &url)),
@@ -4159,10 +4176,7 @@ mod read_tests {
         };
         assert_eq!(asked.branch, "main");
         let force = |expect: &canopy_core::PushTarget| {
-            worker.send(Job::Op(Op::Push {
-                force: true,
-                expect: Some(expect.clone()),
-            }));
+            worker.send(Job::Op(Op::ForcePush(expect.clone())));
             events_until(&worker, |e| matches!(e, Event::OpFinished { .. }))
         };
 
@@ -4197,6 +4211,61 @@ mod read_tests {
             git(&up, &["rev-parse", "main"]),
             git(&copy, &["rev-parse", "main"])
         );
+    }
+
+    /// The force push the user confirmed overwrites what the question saw and nothing newer: a
+    /// commit pushed by someone else and fetched since the question is refused, and the toast's
+    /// text is git's own.
+    #[test]
+    fn a_force_push_is_refused_when_the_remote_moved_after_the_question() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let src = root.path().join("src");
+        std::fs::create_dir(&src).expect("src");
+        git(&src, &["init", "-q", "-b", "main"]);
+        git(&src, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(root.path(), &["clone", "-q", "--bare", "src", "up.git"]);
+        git(root.path(), &["clone", "-q", "up.git", "copy"]);
+        git(root.path(), &["clone", "-q", "up.git", "other"]);
+        let copy = root.path().join("copy");
+        let other = root.path().join("other");
+        let up = root.path().join("up.git");
+        git(
+            &copy,
+            &[
+                "commit",
+                "-q",
+                "--amend",
+                "--allow-empty",
+                "-m",
+                "rewritten",
+            ],
+        );
+        let worker = worker_with_canopys_choices(trusted(copy.clone()));
+        worker.send(Job::PushTarget);
+        let events = events_until(&worker, |e| matches!(e, Event::PushTarget(_)));
+        let Some(Event::PushTarget(Ok(asked))) = events.last() else {
+            panic!("{events:?}");
+        };
+        assert!(asked.seen.is_some(), "the question saw the remote's tip");
+
+        // Someone pushes, and a fetch (the automatic one) lands before the confirmation is used.
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "theirs"]);
+        git(&other, &["push", "-q", "origin", "main"]);
+        let theirs = git(&up, &["rev-parse", "main"]);
+        git(&copy, &["fetch", "-q", "origin"]);
+
+        worker.send(Job::Op(Op::ForcePush(asked.clone())));
+        let events = events_until(&worker, |e| matches!(e, Event::OpFinished { .. }));
+        let Some(Event::OpFinished {
+            result: Err(error), ..
+        }) = events.last()
+        else {
+            panic!("an unseen commit must not be overwritten: {events:?}");
+        };
+        assert!(error.contains("stale info"), "git's message: {error}");
+        assert_eq!(git(&up, &["rev-parse", "main"]), theirs, "theirs is intact");
     }
 
     /// A rebase that stops on conflicts is not a failure: like a pull, it says so and the tab
@@ -4949,6 +5018,24 @@ mod read_tests {
             matches!(events.last(), Some(Event::Diff(_, Ok(_)))),
             "{events:?}"
         );
+    }
+
+    /// A force push finishes as the kind that says what it was pinned to.
+    #[test]
+    fn a_force_push_kind_says_what_it_was_pinned_to() {
+        let target = |seen| {
+            Op::ForcePush(canopy_core::PushTarget {
+                branch: "topic".into(),
+                remote: "origin".into(),
+                dest: "topic".into(),
+                dest_ref: "refs/heads/topic".into(),
+                seen,
+            })
+        };
+        let oid = Oid::from_bytes(&[7; 20]).expect("an oid");
+        assert_eq!(target(Some(oid)).kind(), OpKind::ForcePush(Pin::Tip));
+        assert_eq!(target(None).kind(), OpKind::ForcePush(Pin::Absent));
+        assert!(OpKind::ForcePush(Pin::Tip).syncs_remote());
     }
 
     /// #43: Publish works on any local branch, not only the checked-out one, and makes the remote
