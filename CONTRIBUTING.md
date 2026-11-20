@@ -206,6 +206,10 @@ Keep independently reviewable work in atomic commits. Contribute to the existing
 - Security fixes: a releasable type (`fix`, `feat`, `perf`, `revert`, `build(deps)`) with the
   `security` scope or a `Security:` footer naming the advisory (`Security: GHSA-...`), so the
   release notes list them under Security. Other types never reach the notes.
+- Credit: each line of the release notes ends `by @login` for its outside contributors, from the
+  commit's author and `Co-authored-by:` trailers (`@login` for a GitHub no-reply address, else the
+  author's name, never the address), and a New contributors section names first-time contributors
+  with their pull request. Maintainers and bots are left out.
 
 Example: `feat(changes): stage individual lines from the diff viewer`.
 
