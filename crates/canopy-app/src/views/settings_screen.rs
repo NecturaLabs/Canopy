@@ -2752,23 +2752,28 @@ fn theme_card(
                 FontId::new(m.body_size, theme::medium()),
                 p.text,
             );
-            let (caption, _) = ui.allocate_exact_size(vec2(w, name.size().y), Sense::hover());
-            ui.painter().galley(caption.left_top(), name, p.text);
-            ui.painter().text(
-                caption.right_center(),
-                Align2::RIGHT_CENTER,
-                if id == DEFAULTS.theme {
-                    "Recommended"
-                } else if tp.dark {
-                    "Dark"
-                } else {
-                    "Light"
-                },
+            let (line, _) = ui.allocate_exact_size(vec2(w, name.size().y), Sense::hover());
+            ui.painter().galley(line.left_top(), name, p.text);
+            // Under the name, so "Dark (Recommended)" never meets a long name on a narrow card.
+            let caption = ui.painter().layout_no_wrap(
+                theme_caption(id == DEFAULTS.theme, tp.dark).to_owned(),
                 FontId::proportional(m.small_size),
                 p.text_faint,
             );
+            let (line, _) = ui.allocate_exact_size(vec2(w, caption.size().y), Sense::hover());
+            ui.painter().galley(line.left_top(), caption, p.text_faint);
         });
     card.response
+}
+
+/// A theme card's second label: Dark or Light on every card, the recommended theme's marked so.
+fn theme_caption(recommended: bool, dark: bool) -> &'static str {
+    match (recommended, dark) {
+        (true, true) => "Dark (Recommended)",
+        (true, false) => "Light (Recommended)",
+        (false, true) => "Dark",
+        (false, false) => "Light",
+    }
 }
 
 /// The window in miniature, as the approved preview draws it: the ground, the chrome column with
@@ -7958,6 +7963,19 @@ mod tests {
         // At the default there is nothing to go back to.
         let (_, after) = frame(Vec::new(), &mut value);
         assert!(after.width() <= 0.0, "no button at the default: {after:?}");
+    }
+
+    /// J8: the second label means the same thing on every card, the recommended one too.
+    #[test]
+    fn every_theme_card_says_dark_or_light() {
+        assert_eq!(theme_caption(true, true), "Dark (Recommended)");
+        assert_eq!(theme_caption(false, true), "Dark");
+        assert_eq!(theme_caption(false, false), "Light");
+        let default = DEFAULTS.theme;
+        assert!(
+            ThemeId::ALL.contains(&default),
+            "the recommended theme is a card"
+        );
     }
 
     /// J3: a row with both an explanation and a state remark carries one mark: the remark is a
