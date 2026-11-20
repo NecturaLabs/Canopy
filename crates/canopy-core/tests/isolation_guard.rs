@@ -1,4 +1,5 @@
-//! Require the Git isolation wrapper before an integration test runs any code.
+//! Require the Git isolation wrapper before an integration test, or a library unit test that
+//! makes temporary directories, runs any code.
 
 use std::fs;
 use std::iter::Peekable;
@@ -9,6 +10,32 @@ fn integration_tests_start_with_git_isolation() -> std::io::Result<()> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let mut problems = Vec::new();
     check_dir(&dir, &dir, &mut problems)?;
+    problems.sort();
+    let problems = problems.join("\n");
+    assert!(problems.is_empty(), "\n{problems}");
+    Ok(())
+}
+
+/// #256: a unit test in a library file that makes temporary directories (where the tests that
+/// run Git live) starts with the same wrapper, so the developer's global Git configuration cannot
+/// change its result.
+#[test]
+fn unit_tests_that_make_temporary_directories_start_with_git_isolation() -> std::io::Result<()> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut problems = Vec::new();
+    let mut checked = 0;
+    for entry in fs::read_dir(&dir)? {
+        let path = entry?.path();
+        // The wrapper's own module makes the private homes.
+        if path.extension().is_some_and(|ext| ext == "rs") && path != dir.join("test_support.rs") {
+            let source = fs::read_to_string(&path)?;
+            if source.contains("tempfile::") {
+                checked += 1;
+                check_tests(&source, &path, &mut problems);
+            }
+        }
+    }
+    assert!(checked > 0, "no library file makes temporary directories");
     problems.sort();
     let problems = problems.join("\n");
     assert!(problems.is_empty(), "\n{problems}");

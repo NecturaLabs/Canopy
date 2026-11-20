@@ -205,6 +205,7 @@ fn runs_a_program(name: &str, value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::isolate_git;
 
     #[test]
     #[expect(
@@ -212,6 +213,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn a_repository_names_the_programs_its_own_files_run() {
+        isolate_git!(a_repository_names_the_programs_its_own_files_run);
         let root = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(root.path()).expect("init");
         assert!(programs(&repo).is_empty(), "a plain repository");
@@ -274,6 +276,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn an_include_only_git_evaluates_and_the_hooks_are_named() {
+        isolate_git!(an_include_only_git_evaluates_and_the_hooks_are_named);
         let root = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(root.path()).expect("init");
         let config_file = repo.path().join("config");
@@ -323,6 +326,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn only_files_git_runs_as_hooks_are_named() {
+        isolate_git!(only_files_git_runs_as_hooks_are_named);
         let root = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(root.path()).expect("init");
         if repo
@@ -353,6 +357,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn a_hooks_path_replaces_the_hooks_directory() {
+        isolate_git!(a_hooks_path_replaces_the_hooks_directory);
         let root = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(root.path()).expect("init");
         let default = repo.path().join("hooks");
@@ -391,6 +396,7 @@ mod tests {
         reason = "the test builds its repository with libgit2"
     )]
     fn a_credential_url_is_named_without_its_password() {
+        isolate_git!(a_credential_url_is_named_without_its_password);
         let root = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(root.path()).expect("init");
         repo.config()
@@ -410,6 +416,7 @@ mod tests {
 #[cfg(test)]
 #[cfg(unix)]
 mod reads {
+    use crate::test_support::isolate_git;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
 
@@ -512,6 +519,7 @@ mod reads {
 
     #[test]
     fn blame_runs_no_textconv() {
+        isolate_git!(blame_runs_no_textconv);
         let f = Fixture::new();
         let repo = f.armed(
             "textconv blame",
@@ -527,6 +535,7 @@ mod reads {
 
     #[test]
     fn a_working_tree_blame_runs_no_clean_filter_while_untrusted() {
+        isolate_git!(a_working_tree_blame_runs_no_clean_filter_while_untrusted);
         let f = Fixture::new();
         let repo = f.armed(
             "clean blame",
@@ -542,6 +551,7 @@ mod reads {
 
     #[test]
     fn the_change_search_runs_no_textconv() {
+        isolate_git!(the_change_search_runs_no_textconv);
         let f = Fixture::new();
         let repo = f.armed(
             "textconv search",
@@ -568,6 +578,7 @@ mod reads {
     /// print patches or otherwise run a diff program.
     #[test]
     fn a_files_history_keeps_running_neither_external_diff_nor_textconv() {
+        isolate_git!(a_files_history_keeps_running_neither_external_diff_nor_textconv);
         for (label, key, control) in [
             (
                 "textconv history",
@@ -590,6 +601,7 @@ mod reads {
 
     #[test]
     fn the_insights_run_no_program() {
+        isolate_git!(the_insights_run_no_program);
         let f = Fixture::new();
         let repo = f.armed(
             "fsmonitor insights",
