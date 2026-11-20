@@ -796,8 +796,8 @@ cherry-pick in progress): the tone's tint over the chrome, a seam in the tone, i
 left, and up to two `Sm` ghost actions right. Each action is a `NoticeAction`: a label, an optional
 glyph and its tone (Abort's `danger` circle), and, when unavailable, disabled with the reason on
 hover ("Resolve the 2 conflicts first"), so History, Changes and Requests share one layout.
-`Callout` is the inline note: tint, icon, optional title, wrapped text and up to two actions under
-it, their labels in line with the text (`Callout::show_actions` reports a click). Screen readers
+`Callout` is the inline note, as wide as its room: tint, icon, optional title, wrapped text and up
+to two actions under it, their labels in line with the text (`Callout::show_actions` reports a click). Screen readers
 hear it as a group named for its tone (Note, Success, Warning, Error) holding the title, text and
 actions once each; the icon is painted, never spoken. `Card::compact`
 gives picture-led cards (the settings theme cards) `SM` padding instead of `card_pad`.
