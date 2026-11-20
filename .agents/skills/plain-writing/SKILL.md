@@ -7,6 +7,11 @@ description: How to write Canopy's words for people and agents — pull request 
 
 Every line has to earn its place. Write the outcome first, then only what the reader needs to act.
 
+Plain is not curt. Write whole, friendly sentences in the voice of a colleague, not a terse list
+of verdicts: give the reason with a request ("Right now Linux only picks it up when the window
+gets the focus back"), say "please" when asking someone else for work, and close a reply to a
+contributor with one short, specific thanks. Cut padding, not courtesy (owner, 2026-11-20).
+
 ## Pull request bodies, reviews and comments
 
 Two readers, in this order: a human reviewer who reads the top and stops, then an engineering
@@ -48,7 +53,7 @@ From [Wikipedia's Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:S
 - **Reflex threes** and lists padded to look complete.
 - **Hedges and fillers:** please note, it's worth noting, simply, just, great question, happy to.
 - **Praise and thanks as padding:** "Thanks for this", "solid work", "saved us a lot of digging",
-  "great catch". One short thanks at the very end is allowed when the brief asks for warmth.
+  "great catch". One short, specific thanks at the end of a reply to a contributor is expected.
 - **Chat leftovers:** "Certainly", "I hope this helps", "let me know if", emoji, stray `**`,
   "🤖 Generated with…" footers.
 - **Two sentences where one says it**, and explaining the mechanism when the reader needs only
