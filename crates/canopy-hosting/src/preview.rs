@@ -231,29 +231,43 @@ fn bracketed(c: &[char], open: usize) -> Option<(String, usize)> {
             .iter()
             .position(|&ch| ch == ']' || ch == '[')
             .filter(|&at| c[start + at] == ']')?;
-    let closer = match c.get(close + 1)? {
-        '(' => ')',
-        '[' if !badge => ']',
-        _ => return None,
-    };
-    let mut end = target_end(c, close + 1, closer)?;
+    let mut end = target_end(c, close + 1)?;
     if badge {
-        // The inner target must be followed immediately by the enclosing link's target.
-        if !c[end..].starts_with(&[']', '(']) {
+        // The inner target must be followed immediately by the enclosing link's target, an
+        // address or a reference.
+        if c.get(end) != Some(&']') {
             return None;
         }
-        end = target_end(c, end + 1, ')')?;
+        end = target_end(c, end + 1)?;
     }
     Some((c[start..close].iter().collect(), end))
 }
 
-/// The index after a link or reference target, within the bounded scan from its opener.
-fn target_end(c: &[char], open: usize, closer: char) -> Option<usize> {
-    c[open..]
+/// The index after the link target (`(…)`) or reference (`[…]`) that opens at `open`, within
+/// the bounded scan from its opener. An address may hold balanced parentheses, as the Markdown
+/// specification allows (`https://en.wikipedia.org/wiki/A_(b)`).
+fn target_end(c: &[char], open: usize) -> Option<usize> {
+    let closer = match c.get(open)? {
+        '(' => ')',
+        '[' => ']',
+        _ => return None,
+    };
+    let mut depth = 0_usize;
+    c[open + 1..]
         .iter()
         .take(TARGET_CHARS)
-        .position(|&ch| ch == closer)
-        .map(|offset| open + offset + 1)
+        .position(|&ch| {
+            if closer == ')' && ch == '(' {
+                depth += 1;
+            } else if ch == closer {
+                if depth == 0 {
+                    return true;
+                }
+                depth -= 1;
+            }
+            false
+        })
+        .map(|offset| open + 1 + offset + 1)
 }
 
 #[cfg(test)]
@@ -277,6 +291,27 @@ mod tests {
         for input in ["[[alt](img)](url)", "[![alt](img)](url)"] {
             assert_eq!(description_preview(input), "alt", "{input}");
         }
+    }
+
+    /// #258: a badge whose link or image is a reference, and a target with parentheses in it,
+    /// flatten to the label like the inline forms.
+    #[test]
+    fn reference_badges_and_parenthesised_targets_keep_only_their_label() {
+        for input in [
+            "[![alt](img)][ref]",
+            "[![alt][img]][ref]",
+            "[![alt][img]](url)",
+        ] {
+            assert_eq!(description_preview(input), "alt", "{input}");
+        }
+        assert_eq!(
+            description_preview("[![a](https://x/y_(z).svg)](u) passed"),
+            "a passed"
+        );
+        assert_eq!(
+            description_preview("see [docs](https://x/wiki/A_(b)) and [c](d)"),
+            "see docs and c"
+        );
     }
 
     #[test]
@@ -396,6 +431,10 @@ mod tests {
             "[[a](b)](c".repeat(n / 4),
             "![[".repeat(n / 4),
             "[[a]](".repeat(n / 4),
+            "[![a][".repeat(n / 4),
+            "[![a](b)][".repeat(n / 4),
+            "[![a][b]](".repeat(n / 4),
+            format!("[a]({}", "(".repeat(n)),
         ] {
             let flat = inline(&hostile);
             assert_ne!(flat, "");
