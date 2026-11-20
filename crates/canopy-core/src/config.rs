@@ -477,9 +477,11 @@ pub fn parse(out: &[u8], query: Query<'_>, with_scope: bool, root: &Path) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::isolate_git;
 
     #[test]
     fn matching_values_keep_order_empty_implicit_and_multiline_values() {
+        isolate_git!(matching_values_keep_order_empty_implicit_and_multiline_values);
         let entries = parse(
             b"local\0file:.git/config\0a.b\0local\0file:.git/config\0a.b\n\0command\0command line:\0a.b\nfirst\nsecond\0",
             Query::Matching("a.b"), true, Path::new("/repo"),
@@ -505,6 +507,7 @@ mod tests {
 
     #[test]
     fn a_single_value_without_scope_keeps_an_empty_value() {
+        isolate_git!(a_single_value_without_scope_keeps_an_empty_value);
         let entries = parse(
             b"file:.git/config\0\0",
             Query::Get("a.b"),
@@ -517,6 +520,7 @@ mod tests {
 
     #[test]
     fn reading_from_a_subdirectory_uses_the_repository_root() {
+        isolate_git!(reading_from_a_subdirectory_uses_the_repository_root);
         let root = tempfile::tempdir().expect("tempdir");
         cli::run(root.path(), &["init", "-q", "-b", "main"]).expect("init");
         cli::run(root.path(), &["config", "a.b", "value"]).expect("config");
