@@ -1065,10 +1065,10 @@ impl Repo {
     }
 }
 
-/// Pushes onto `walk` the commit each ref under one of `prefixes` leads to, as
-/// [`Revwalk::push_glob`] does, but from the ref itself: `push_glob` looks every ref up again by
-/// name, and one name longer than libgit2's limit (git accepts those) failed the whole walk
-/// (#270). A ref that leads to no commit (a tag of a tree, a missing object) is passed over.
+/// Pushes onto `walk` the commit each ref under one of `prefixes` leads to. Unlike
+/// [`Revwalk::push_glob`], it reads the commit from the ref itself, not by looking the name up
+/// again, which fails for a name over libgit2's length limit (#270). As with `push_glob`, a ref
+/// that leads to no commit (a tag of a tree, a missing object) is passed over.
 pub(crate) fn push_refs(git: &Repository, walk: &mut Revwalk<'_>, prefixes: &[&str]) -> Result<()> {
     for reference in git.references()? {
         let reference = reference?;

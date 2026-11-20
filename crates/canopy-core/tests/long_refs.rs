@@ -59,8 +59,9 @@ fn commit_on(p: &Path, branch: &str, message: &str) -> String {
     id
 }
 
-/// Git takes a ref name longer than libgit2's 1024-byte limit, loose or packed; the history,
-/// branches and insights still read, with the commits only such refs reach included.
+/// With a packed branch, a loose branch and a tag, each over libgit2's 1024-byte limit and the
+/// only ref to its commit, the history, snapshot, branches and Insights read and include those
+/// commits.
 #[test]
 fn a_ref_name_over_libgit2s_limit_leaves_the_repository_readable() {
     isolate_git!(a_ref_name_over_libgit2s_limit_leaves_the_repository_readable);
