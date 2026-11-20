@@ -122,9 +122,11 @@ impl Repo {
             .collect();
         let mut walk = self.git().revwalk()?;
         // Stashes, notes and Canopy's own request refs are not activity.
-        for glob in ["refs/heads/*", "refs/tags/*", "refs/remotes/*"] {
-            walk.push_glob(glob)?;
-        }
+        crate::repo::push_refs(
+            self.git(),
+            &mut walk,
+            &["refs/heads/", "refs/tags/", "refs/remotes/"],
+        )?;
         walk.set_sorting(git2::Sort::TIME)?;
         if let Ok(head) = self.git().head() {
             walk.push(head.peel_to_commit()?.id())?;

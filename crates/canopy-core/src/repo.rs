@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use git2::{BranchType, Oid, Repository, Sort};
+use git2::{BranchType, Oid, Repository, Revwalk, Sort};
 
 use crate::diff::{self, DiffSource, FileDiff, Whitespace};
 use crate::graph;
@@ -504,9 +504,11 @@ impl Repo {
         let mut walk = self.git.revwalk()?;
         walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
         let _ = walk.push_head();
-        walk.push_glob("refs/heads")?;
-        walk.push_glob("refs/remotes")?;
-        walk.push_glob("refs/tags")?;
+        push_refs(
+            &self.git,
+            &mut walk,
+            &["refs/heads/", "refs/remotes/", "refs/tags/"],
+        )?;
         let mut out = Vec::with_capacity(max_commits.min(MAX_PREALLOCATED_COMMITS));
         let mut truncated = false;
         for oid in walk {
@@ -1061,4 +1063,22 @@ impl Repo {
     pub fn config_string(&self, key: &str) -> Option<String> {
         self.git.config().ok()?.get_string(key).ok()
     }
+}
+
+/// Pushes onto `walk` the commit each ref under one of `prefixes` leads to, as
+/// [`Revwalk::push_glob`] does, but from the ref itself: `push_glob` looks every ref up again by
+/// name, and one name longer than libgit2's limit (git accepts those) failed the whole walk
+/// (#270). A ref that leads to no commit (a tag of a tree, a missing object) is passed over.
+pub(crate) fn push_refs(git: &Repository, walk: &mut Revwalk<'_>, prefixes: &[&str]) -> Result<()> {
+    for reference in git.references()? {
+        let reference = reference?;
+        let name = reference.name_bytes();
+        if !prefixes.iter().any(|p| name.starts_with(p.as_bytes())) {
+            continue;
+        }
+        if let Ok(commit) = reference.peel_to_commit() {
+            walk.push(commit.id())?;
+        }
+    }
+    Ok(())
 }
