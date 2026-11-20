@@ -138,9 +138,62 @@ pub fn field_placeholder(ui: &egui::Ui, path: &str, width: f32) -> String {
     elide_middle(ui, path, &font, width - 2.0 * m.field_pad_x)
 }
 
+/// Adds `text` to a `horizontal_wrapped` row after a "·" separator, as one unit: whole on the
+/// current line when it fits there, else at the start of the next line without the separator,
+/// so no separator is left hanging at a line's end.
+pub fn wrapped_fact(ui: &mut egui::Ui, text: &str, size: f32, color: Color32) {
+    let joined = format!("· {text}");
+    let room = ui.available_size_before_wrap().x - ui.spacing().item_spacing.x;
+    if text_width(ui, &joined, &egui::FontId::proportional(size)) <= room {
+        ui.add(egui::Label::new(egui::RichText::new(joined).size(size).color(color)).extend());
+    } else {
+        ui.end_row();
+        ui.add(egui::Label::new(egui::RichText::new(text).size(size).color(color)).wrap());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F12: "· updated …" moves to the next line as one unit and drops its separator there.
+    #[test]
+    fn a_fact_wraps_whole_and_drops_its_separator() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let place = |width: f32| {
+            let nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                ui.set_width(width);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("lucia-ortega wants to merge feature into main");
+                    wrapped_fact(ui, "updated 18 minutes ago", 12.0, Color32::GRAY);
+                });
+            });
+            let rect = |label: &str| {
+                nodes
+                    .iter()
+                    .find(|n| n.label.as_deref().or(n.value.as_deref()) == Some(label))
+                    .and_then(|n| n.bounds)
+            };
+            let lead = rect("lucia-ortega wants to merge feature into main").expect("lead");
+            (
+                lead,
+                rect("· updated 18 minutes ago"),
+                rect("updated 18 minutes ago"),
+            )
+        };
+        let (lead, joined, alone) = place(600.0);
+        assert!(alone.is_none(), "whole, with its separator");
+        assert!(
+            joined.is_some_and(|r| lead.y_range().contains(r.center().y)),
+            "on the lead's line when it fits: {lead:?} {joined:?}"
+        );
+        let (lead, joined, alone) = place(320.0);
+        assert!(joined.is_none(), "no separator after a wrap");
+        assert!(
+            alone.is_some_and(|r| r.top() >= lead.bottom()),
+            "on the next line: {lead:?} {alone:?}"
+        );
+    }
 
     #[test]
     fn dates_keep_their_formats() {

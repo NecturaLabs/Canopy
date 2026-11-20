@@ -1543,13 +1543,14 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                         branch_pill(ui, &summary.source_branch);
                         ui.label(RichText::new("into").size(m.body_size).color(p.text_dim));
                         branch_pill(ui, &summary.target_branch);
-                        ui.label(
-                            RichText::new(format!(
-                                "· updated {}",
+                        widgets::wrapped_fact(
+                            ui,
+                            &format!(
+                                "updated {}",
                                 widgets::relative_time(summary.updated_at, now)
-                            ))
-                            .color(p.fields.time)
-                            .size(m.meta_size),
+                            ),
+                            m.meta_size,
+                            p.fields.time,
                         );
                     });
                     if !summary.labels.is_empty() {
