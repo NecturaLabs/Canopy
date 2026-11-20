@@ -5,9 +5,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::Repo;
 
@@ -61,6 +65,7 @@ fn fixture() -> tempfile::TempDir {
 
 #[test]
 fn a_search_lists_each_matching_commit_and_file_newest_first() {
+    isolate_git!(a_search_lists_each_matching_commit_and_file_newest_first);
     let dir = fixture();
     let repo = Repo::open(dir.path()).expect("repo");
     let found = repo
@@ -90,6 +95,7 @@ fn a_search_lists_each_matching_commit_and_file_newest_first() {
 
 #[test]
 fn a_regular_expression_matches_changed_lines_and_a_limit_truncates() {
+    isolate_git!(a_regular_expression_matches_changed_lines_and_a_limit_truncates);
     let dir = fixture();
     let repo = Repo::open(dir.path()).expect("repo");
     let found = repo
@@ -105,6 +111,7 @@ fn a_regular_expression_matches_changed_lines_and_a_limit_truncates() {
 
 #[test]
 fn text_that_looks_like_an_option_is_searched_for_not_run() {
+    isolate_git!(text_that_looks_like_an_option_is_searched_for_not_run);
     let dir = fixture();
     let repo = Repo::open(dir.path()).expect("repo");
     let found = repo
@@ -119,6 +126,7 @@ fn text_that_looks_like_an_option_is_searched_for_not_run() {
 #[cfg(unix)]
 #[test]
 fn a_repositorys_textconv_program_does_not_run() {
+    isolate_git!(a_repositorys_textconv_program_does_not_run);
     let dir = fixture();
     let p = dir.path();
     let marker = p.join("textconv-ran");

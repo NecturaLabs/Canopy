@@ -58,7 +58,7 @@ GitHub uses the same GraphQL endpoint and token as the rollup: `search(type: ISS
 backslashes so it cannot become a qualifier, at most eight words, the author only when it can be a
 login. Without a token GitHub is not searched (GraphQL refuses anonymous calls); the loaded rows
 are filtered locally as before. GitLab's list endpoint takes `search`, `in`, `author_username`,
-`wip`, `order_by` and `sort` directly.
+`draft` (`wip` before GitLab 19.0), `order_by` and `sort` directly.
 
 Cost: one request per search page, none per keystroke (the list waits 400 ms after the last key),
 and a result for an older text is dropped by comparing the list's key. GitHub's search has its own

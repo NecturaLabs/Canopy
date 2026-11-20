@@ -5,9 +5,14 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
+use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::identity::{self, Scope, Source};
 use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
@@ -29,7 +34,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("git runs");
     assert!(
@@ -74,7 +78,111 @@ fn fixture() -> (tempfile::TempDir, Repo) {
 }
 
 #[test]
+fn commits_ignore_inherited_global_hooks() {
+    isolate_git!(
+        commits_ignore_inherited_global_hooks,
+        before_isolation = check_inherited_global_hooks
+    );
+    let dir = hook_fixture();
+    let p = dir.path();
+    let repo = canopys_choices(Repo::open(p).expect("open"));
+    repo.stage(&["a.txt".into()]).expect("stage");
+    repo.commit("first", false, false).expect("commit");
+    assert_eq!(git(p, &["log", "-1", "--format=%s"]).trim(), "first");
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the command only carries an environment to inspect"
+)]
+fn isolation_removes_every_inherited_git_variable() {
+    isolate_git!(isolation_removes_every_inherited_git_variable);
+    let hostile = [
+        "GIT_TEMPLATE_DIR",
+        "GIT_NAMESPACE",
+        "GIT_DIFF_OPTS",
+        "GIT_ATTR_SOURCE",
+        "GIT_SOME_FUTURE_SETTING",
+        "git_lowercase",
+        "EMAIL",
+    ];
+    let kept = ["HOME", "PATH", "NOT_GIT_SETTING", "GITHUB_TOKEN"];
+    let mut child = Command::new("git");
+    support::remove_inherited_git_variables(
+        &mut child,
+        hostile.iter().chain(&kept).map(OsString::from),
+    );
+    let mut removed: Vec<_> = child
+        .get_envs()
+        .filter(|(_, value)| value.is_none())
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .collect();
+    removed.sort();
+    let mut expected = hostile.map(String::from);
+    expected.sort();
+    assert_eq!(removed, expected);
+}
+
+/// Run the control in the intermediate child before launching the isolated child.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the control drives plain git with the inherited global config"
+)]
+fn check_inherited_global_hooks(test: &str) -> bool {
+    const HOSTILE_CONFIG: &str = "CANOPY_TEST_HOSTILE_CONFIG";
+    if std::env::var_os(HOSTILE_CONFIG).is_none() {
+        let home = tempfile::tempdir().expect("private home");
+        let global = home.path().join("gitconfig");
+        fs::write(&global, "[core]\n\thooksPath = hooks\n").expect("global config");
+        support::assert_test_passed(
+            test,
+            support::test_command(test, home.path()).env(HOSTILE_CONFIG, "1"),
+        );
+        return false;
+    }
+
+    let dir = hook_fixture();
+    git(dir.path(), &["add", "a.txt"]);
+    let out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["commit", "-m", "control"])
+        .output()
+        .expect("git commit runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("inherited pre-commit hook ran"),
+        "the control commit did not fail on the inherited pre-commit hook: either the hook could not run (a temp directory mounted noexec?) or git ignored core.hooksPath. Got {}:\n{stderr}",
+        out.status,
+    );
+    true
+}
+
+fn hook_fixture() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("repository");
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+    configure(p);
+    let hooks = p.join("hooks");
+    fs::create_dir(&hooks).expect("hooks directory");
+    let hook = hooks.join("pre-commit");
+    fs::write(
+        &hook,
+        "#!/bin/sh\necho 'inherited pre-commit hook ran' >&2\nexit 1\n",
+    )
+    .expect("write hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("chmod hook");
+    }
+    fs::write(p.join("a.txt"), "first\n").expect("write file");
+    dir
+}
+
+#[test]
 fn snapshot_reads_head_branches_and_graph() {
+    isolate_git!(snapshot_reads_head_branches_and_graph);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "-c", "feature"]);
@@ -113,6 +221,7 @@ fn snapshot_reads_head_branches_and_graph() {
 
 #[test]
 fn stage_unstage_discard_and_commit() {
+    isolate_git!(stage_unstage_discard_and_commit);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::write(p.join("a.txt"), "changed\n").expect("write");
@@ -161,6 +270,7 @@ fn stage_unstage_discard_and_commit() {
 
 #[test]
 fn hunk_staging_stages_only_the_chosen_hunk() {
+    isolate_git!(hunk_staging_stages_only_the_chosen_hunk);
     let (dir, repo) = fixture();
     let p = dir.path();
     fs::write(
@@ -260,6 +370,7 @@ fn index_blob(dir: &Path, path: &str) -> String {
 
 #[test]
 fn hunk_staging_works_without_context_lines() {
+    isolate_git!(hunk_staging_works_without_context_lines);
     // With context 0 every hunk sits in the middle of the file with nothing around it to anchor
     // it; git apply needs --unidiff-zero for that (recorded with git 2.43: `git diff -U0 >p;
     // git apply --cached p` fails with "patch failed", `--unidiff-zero` applies it).
@@ -366,6 +477,7 @@ fn hunk_staging_works_without_context_lines() {
 
 #[test]
 fn hunk_staging_handles_unusual_paths() {
+    isolate_git!(hunk_staging_handles_unusual_paths);
     // `git diff` C-quotes names with quotes, control characters or non-ASCII bytes and ends a
     // name containing a space with a tab on the ---/+++ lines; the hunk patch must do the same.
     let (dir, repo) = fixture();
@@ -455,6 +567,7 @@ fn hunk_staging_handles_unusual_paths() {
 /// choice onto another.
 #[test]
 fn the_stash_chosen_is_the_one_dropped_or_applied() {
+    isolate_git!(the_stash_chosen_is_the_one_dropped_or_applied);
     let (dir, repo) = fixture();
     let p = dir.path();
     let stash = |text: &str| {
@@ -502,6 +615,7 @@ fn the_stash_chosen_is_the_one_dropped_or_applied() {
 
 #[test]
 fn branches_tags_stash_reset() {
+    isolate_git!(branches_tags_stash_reset);
     let (dir, repo) = fixture();
     let p = dir.path();
     repo.create_branch("topic", None, true).expect("branch");
@@ -541,6 +655,7 @@ fn branches_tags_stash_reset() {
 
 #[test]
 fn merge_conflict_is_reported_and_abortable() {
+    isolate_git!(merge_conflict_is_reported_and_abortable);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "-c", "other"]);
@@ -571,6 +686,7 @@ fn merge_conflict_is_reported_and_abortable() {
 
 #[test]
 fn cherry_pick_and_revert() {
+    isolate_git!(cherry_pick_and_revert);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "-c", "side"]);
@@ -589,6 +705,7 @@ fn cherry_pick_and_revert() {
 
 #[test]
 fn push_and_fetch_against_a_local_remote() {
+    isolate_git!(push_and_fetch_against_a_local_remote);
     let (dir, repo) = fixture();
     let remote = tempfile::tempdir().expect("tempdir");
     git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
@@ -652,64 +769,17 @@ fn upstream_and_clone() -> (tempfile::TempDir, Repo, tempfile::TempDir, Repo) {
     let dest = clone_dir.path().join("clone");
     canopy_core::ops::clone(&up_dir.path().to_string_lossy(), &dest, false, |_| {}).expect("clone");
     configure(&dest);
-    // The clone checked its files out under the system-wide core.autocrlf=true of Git for
-    // Windows, as CRLF; with it now false they would read as edited, and a pull's autostash would
-    // carry that edit into the next commit.
+    // If Git for Windows checked the clone's files out as CRLF under system-wide
+    // core.autocrlf=true, turning it off makes those files look edited. A pull's autostash
+    // would carry that edit into the next commit.
     git(&dest, &["checkout-index", "--all", "--force", "-u"]);
     let copy = canopys_choices(Repo::open(&dest).expect("open clone"));
     (up_dir, up, clone_dir, copy)
 }
 
-/// Runs the calling test again in a child process whose git sees no global or system
-/// configuration and whose libgit2 sees no global one, so a developer's own settings
-/// (`pull.rebase`, for one) cannot decide the result.
-/// Returns true in the child, where the test body runs, and false in the parent once the child
-/// has passed.
-fn in_isolated_git_env(test: &str) -> bool {
-    in_isolated_git_env_with_home_config(test, "")
-}
-
-/// [`in_isolated_git_env`], with `home_config` written to `$HOME/.gitconfig`: libgit2 reads that
-/// file as global configuration while git, told to use an empty `GIT_CONFIG_GLOBAL`, does not.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the test runs itself again in a child process"
-)]
-fn in_isolated_git_env_with_home_config(test: &str, home_config: &str) -> bool {
-    if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
-        return true;
-    }
-    let home = tempfile::tempdir().expect("tempdir");
-    fs::write(home.path().join(".gitconfig"), home_config).expect("write");
-    let out = Command::new(std::env::current_exe().expect("test binary"))
-        .args([test, "--exact", "--test-threads=1"])
-        .env("CANOPY_TEST_ISOLATED_GIT", "1")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"))
-        .env("HOME", home.path())
-        .env("USERPROFILE", home.path())
-        .env("XDG_CONFIG_HOME", home.path())
-        .env_remove("GIT_AUTHOR_NAME")
-        .env_remove("GIT_AUTHOR_EMAIL")
-        .env_remove("GIT_COMMITTER_NAME")
-        .env_remove("GIT_COMMITTER_EMAIL")
-        .env_remove("EMAIL")
-        .output()
-        .expect("test binary runs");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success() && stdout.contains("1 passed"),
-        "{test} in an isolated git environment:\n{stdout}{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    false
-}
-
 #[test]
 fn identity_uses_git_scope_and_keeps_stored_history_authors() {
-    if !in_isolated_git_env("identity_uses_git_scope_and_keeps_stored_history_authors") {
-        return;
-    }
+    isolate_git!(identity_uses_git_scope_and_keeps_stored_history_authors);
     let global = std::env::var("GIT_CONFIG_GLOBAL").expect("global path");
     fs::write(
         &global,
@@ -775,57 +845,13 @@ fn identity_uses_git_scope_and_keeps_stored_history_authors() {
     );
 }
 
-/// Runs the calling test again in a child process whose git sees a throw-away global
-/// configuration and none of the identity variables except those in `env`. Returns true in the
-/// child, where the test body runs, and false in the parent once the child has passed.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the test runs itself again in a child process"
-)]
-fn in_identity_child(test: &str, env: &[(&str, &str)]) -> bool {
-    if std::env::var_os("CANOPY_IDENTITY_CHILD").is_some() {
-        return true;
-    }
-    let home = tempfile::tempdir().expect("home");
-    let mut child = Command::new(std::env::current_exe().expect("test binary"));
-    child
-        .args([test, "--exact", "--test-threads=1"])
-        .env("CANOPY_IDENTITY_CHILD", "1")
-        .env("HOME", home.path())
-        .env("USERPROFILE", home.path())
-        .env("XDG_CONFIG_HOME", home.path())
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", home.path().join("global"));
-    for key in [
-        "GIT_AUTHOR_NAME",
-        "GIT_AUTHOR_EMAIL",
-        "GIT_COMMITTER_NAME",
-        "GIT_COMMITTER_EMAIL",
-        "EMAIL",
-    ] {
-        child.env_remove(key);
-    }
-    for (key, value) in env {
-        child.env(key, value);
-    }
-    let out = child.output().expect("test binary runs");
-    assert!(
-        out.status.success(),
-        "{test}:\n{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    false
-}
-
 #[test]
 fn identity_follows_author_overrides_and_git_environment() {
-    if !in_identity_child(
-        "identity_follows_author_overrides_and_git_environment",
-        &[("GIT_AUTHOR_NAME", "Environment Author")],
-    ) {
-        return;
-    }
+    isolate_git!(
+        identity_follows_author_overrides_and_git_environment,
+        "",
+        &[("GIT_AUTHOR_NAME", "Environment Author")]
+    );
     let dir = tempfile::tempdir().expect("repo");
     let p = dir.path();
     git(p, &["init", "-q", "-b", "main"]);
@@ -851,9 +877,7 @@ fn identity_follows_author_overrides_and_git_environment() {
 
 #[test]
 fn identity_flags_missing_and_unusable_identities() {
-    if !in_isolated_git_env("identity_flags_missing_and_unusable_identities") {
-        return;
-    }
+    isolate_git!(identity_flags_missing_and_unusable_identities);
     let dir = tempfile::tempdir().expect("tempdir");
     let p = dir.path();
     git(p, &["init", "-q", "-b", "main"]);
@@ -904,9 +928,7 @@ fn identity_flags_missing_and_unusable_identities() {
 
 #[test]
 fn identity_writes_awkward_values_and_reads_every_scope() {
-    if !in_isolated_git_env("identity_writes_awkward_values_and_reads_every_scope") {
-        return;
-    }
+    isolate_git!(identity_writes_awkward_values_and_reads_every_scope);
     let global_file = std::path::PathBuf::from(std::env::var("GIT_CONFIG_GLOBAL").expect("global"));
     let dir = tempfile::tempdir().expect("tempdir");
     let p = dir.path();
@@ -1001,12 +1023,11 @@ fn identity_writes_awkward_values_and_reads_every_scope() {
 
 #[test]
 fn identity_takes_the_email_variable_when_nothing_else_names_an_address() {
-    if !in_identity_child(
-        "identity_takes_the_email_variable_when_nothing_else_names_an_address",
-        &[("EMAIL", "from-env@example.com")],
-    ) {
-        return;
-    }
+    isolate_git!(
+        identity_takes_the_email_variable_when_nothing_else_names_an_address,
+        "",
+        &[("EMAIL", "from-env@example.com")]
+    );
     let dir = tempfile::tempdir().expect("repo");
     let p = dir.path();
     git(p, &["init", "-q", "-b", "main"]);
@@ -1020,9 +1041,11 @@ fn identity_takes_the_email_variable_when_nothing_else_names_an_address() {
 
 #[test]
 fn identity_ignores_an_empty_email_variable() {
-    if !in_identity_child("identity_ignores_an_empty_email_variable", &[("EMAIL", "")]) {
-        return;
-    }
+    isolate_git!(
+        identity_ignores_an_empty_email_variable,
+        "",
+        &[("EMAIL", "")]
+    );
     let dir = tempfile::tempdir().expect("repo");
     let p = dir.path();
     git(p, &["init", "-q", "-b", "main"]);
@@ -1054,6 +1077,7 @@ fn head_parents(repo: &Repo) -> usize {
 
 #[test]
 fn commit_signoff_adds_a_trailer() {
+    isolate_git!(commit_signoff_adds_a_trailer);
     let (dir, repo) = fixture();
     fs::write(dir.path().join("a.txt"), "signed\n").expect("write");
     repo.stage_all_except_repositories().expect("stage");
@@ -1086,6 +1110,7 @@ fn commit_signoff_adds_a_trailer() {
 
 #[test]
 fn whitespace_modes_hide_whitespace_only_changes() {
+    isolate_git!(whitespace_modes_hide_whitespace_only_changes);
     let (dir, repo) = fixture();
     let p = dir.path();
     // Trailing spaces on line 2, new indentation on line 9.
@@ -1186,6 +1211,7 @@ fn whitespace_modes_hide_whitespace_only_changes() {
 
 #[test]
 fn whitespace_labels() {
+    isolate_git!(whitespace_labels);
     assert_eq!(Whitespace::default(), Whitespace::Show);
     let labels: Vec<&str> = Whitespace::ALL.iter().map(|w| w.label()).collect();
     assert_eq!(
@@ -1196,6 +1222,7 @@ fn whitespace_labels() {
 
 #[test]
 fn pull_strategy_labels() {
+    isolate_git!(pull_strategy_labels);
     assert_eq!(PullStrategy::default(), PullStrategy::Merge);
     let labels: Vec<&str> = PullStrategy::ALL.iter().map(|s| s.label()).collect();
     assert_eq!(
@@ -1212,9 +1239,7 @@ fn pull_strategy_labels() {
 
 #[test]
 fn pull_fast_forward_only_refuses_diverged_branches() {
-    if !in_isolated_git_env("pull_fast_forward_only_refuses_diverged_branches") {
-        return;
-    }
+    isolate_git!(pull_fast_forward_only_refuses_diverged_branches);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     diverge(up_dir.path(), &copy);
     let before = copy.head().expect("head").oid;
@@ -1236,9 +1261,7 @@ fn pull_fast_forward_only_refuses_diverged_branches() {
 
 #[test]
 fn pull_fast_forward_only_fast_forwards() {
-    if !in_isolated_git_env("pull_fast_forward_only_fast_forwards") {
-        return;
-    }
+    isolate_git!(pull_fast_forward_only_fast_forwards);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     let up = up_dir.path();
     fs::write(up.join("up.txt"), "upstream\n").expect("write");
@@ -1256,9 +1279,7 @@ fn pull_fast_forward_only_fast_forwards() {
 
 #[test]
 fn pull_rebase_replays_local_commits() {
-    if !in_isolated_git_env("pull_rebase_replays_local_commits") {
-        return;
-    }
+    isolate_git!(pull_rebase_replays_local_commits);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     diverge(up_dir.path(), &copy);
     copy.pull(PullStrategy::Rebase, |_| {}).expect("pull");
@@ -1273,9 +1294,7 @@ fn pull_rebase_replays_local_commits() {
 
 #[test]
 fn a_rebase_pull_reports_git_s_last_word_not_its_progress_glued_to_it() {
-    if !in_isolated_git_env("a_rebase_pull_reports_git_s_last_word_not_its_progress_glued_to_it") {
-        return;
-    }
+    isolate_git!(a_rebase_pull_reports_git_s_last_word_not_its_progress_glued_to_it);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     diverge(up_dir.path(), &copy);
     let mut progress = Vec::new();
@@ -1298,9 +1317,7 @@ fn a_rebase_pull_reports_git_s_last_word_not_its_progress_glued_to_it() {
 
 #[test]
 fn a_fetch_reports_every_ref_it_updated() {
-    if !in_isolated_git_env("a_fetch_reports_every_ref_it_updated") {
-        return;
-    }
+    isolate_git!(a_fetch_reports_every_ref_it_updated);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     for branch in ["one", "two", "three", "four"] {
         git(up_dir.path(), &["branch", branch]);
@@ -1317,9 +1334,7 @@ fn a_fetch_reports_every_ref_it_updated() {
 
 #[test]
 fn a_force_push_says_where_it_will_push() {
-    if !in_isolated_git_env("a_force_push_says_where_it_will_push") {
-        return;
-    }
+    isolate_git!(a_force_push_says_where_it_will_push);
     let (_up_dir, _up, _c, copy) = upstream_and_clone();
     let target = |repo: &Repo| repo.force_push_target().expect("a target");
     let found = target(&copy);
@@ -1389,9 +1404,7 @@ fn a_force_push_says_where_it_will_push() {
 
 #[test]
 fn pull_merge_creates_a_merge_commit() {
-    if !in_isolated_git_env("pull_merge_creates_a_merge_commit") {
-        return;
-    }
+    isolate_git!(pull_merge_creates_a_merge_commit);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     diverge(up_dir.path(), &copy);
     copy.pull(PullStrategy::Merge, |_| {}).expect("pull");
@@ -1401,6 +1414,7 @@ fn pull_merge_creates_a_merge_commit() {
 
 #[test]
 fn pull_passes_the_strategy_whatever_the_configuration_says() {
+    isolate_git!(pull_passes_the_strategy_whatever_the_configuration_says);
     // The strategy Canopy was given decides: neither pull.rebase nor branch.<name>.rebase may
     // turn a Merge into a rebase, nor the other way round.
     for (key, value, strategy, parents) in [
@@ -1588,9 +1602,7 @@ fn pull_config_matches_what_git_pull_does() {
     // For every combination of settings: a pull with the strategy the configuration asks for
     // does what a bare `git pull` does, refusals included; and where it asks for nothing, git
     // itself refuses diverged branches.
-    if !in_isolated_git_env("pull_config_matches_what_git_pull_does") {
-        return;
-    }
+    isolate_git!(pull_config_matches_what_git_pull_does);
     let templates = pull_templates();
     for_each_pull_setting(|settings| {
         for &(diverged, ref up_dir, ref clone_dir, _) in &templates {
@@ -1630,9 +1642,7 @@ fn pull_config_matches_what_git_pull_does() {
 
 #[test]
 fn pull_passes_every_strategy_whatever_the_configuration_says() {
-    if !in_isolated_git_env("pull_passes_every_strategy_whatever_the_configuration_says") {
-        return;
-    }
+    isolate_git!(pull_passes_every_strategy_whatever_the_configuration_says);
     // What each strategy does on a diverged and on a fast-forwardable clone.
     let expected = [
         (
@@ -1696,9 +1706,7 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
 
 #[test]
 fn pull_ignores_a_value_git_rejects_when_the_strategy_is_given() {
-    if !in_isolated_git_env("pull_ignores_a_value_git_rejects_when_the_strategy_is_given") {
-        return;
-    }
+    isolate_git!(pull_ignores_a_value_git_rejects_when_the_strategy_is_given);
     // A bare `git pull` dies on pull.rebase=sometimes; a pull with a strategy does not read it,
     // and the resolver reports it instead of guessing.
     let (up_dir, _clone, copy) = pull_scenario(&["pull.rebase=sometimes"], true);
@@ -1716,9 +1724,7 @@ fn pull_ignores_a_value_git_rejects_when_the_strategy_is_given() {
 
 #[test]
 fn pull_config_names_the_setting_its_value_and_where_it_is_set() {
-    if !in_isolated_git_env("pull_config_names_the_setting_its_value_and_where_it_is_set") {
-        return;
-    }
+    isolate_git!(pull_config_names_the_setting_its_value_and_where_it_is_set);
     let (_up, _clone, copy) = pull_scenario(&[], true);
     let workdir = copy.workdir();
 
@@ -1778,9 +1784,7 @@ fn pull_config_names_the_setting_its_value_and_where_it_is_set() {
 
 #[test]
 fn pull_config_follows_the_branch_it_is_asked_about() {
-    if !in_isolated_git_env("pull_config_follows_the_branch_it_is_asked_about") {
-        return;
-    }
+    isolate_git!(pull_config_follows_the_branch_it_is_asked_about);
     let (_up, _clone, copy) = pull_scenario(&["pull.rebase=false"], true);
     let workdir = copy.workdir();
     // Branch names with slashes and dots are subsections of the key as they are.
@@ -1805,9 +1809,7 @@ fn pull_config_follows_the_branch_it_is_asked_about() {
 
 #[test]
 fn pull_config_reads_a_key_without_a_value_and_included_files() {
-    if !in_isolated_git_env("pull_config_reads_a_key_without_a_value_and_included_files") {
-        return;
-    }
+    isolate_git!(pull_config_reads_a_key_without_a_value_and_included_files);
     let (_up, _clone, copy) = pull_scenario(&[], true);
     let git_dir = copy.workdir().join(".git");
     let mut config = fs::read_to_string(git_dir.join("config")).expect("read");
@@ -1840,9 +1842,7 @@ fn pull_config_reads_a_key_without_a_value_and_included_files() {
 fn pull_config_names_a_file_that_is_not_utf8() {
     use std::os::unix::ffi::OsStrExt;
 
-    if !in_isolated_git_env("pull_config_names_a_file_that_is_not_utf8") {
-        return;
-    }
+    isolate_git!(pull_config_names_a_file_that_is_not_utf8);
 
     let (_up, _clone, copy) = pull_scenario(&[], true);
     let git_dir = copy.workdir().join(".git");
@@ -1862,21 +1862,18 @@ fn pull_config_names_a_file_that_is_not_utf8() {
 #[test]
 fn pull_config_reads_through_git_not_libgit2() {
     // libgit2 sees pull.rebase=true in $HOME, git (told to use another global file) does not.
-    if !in_isolated_git_env_with_home_config(
-        "pull_config_reads_through_git_not_libgit2",
+    isolate_git!(
+        pull_config_reads_through_git_not_libgit2,
         "[pull]\n\trebase = true\n",
-    ) {
-        return;
-    }
+        &[]
+    );
     let (_up, _clone, copy) = pull_scenario(&[], true);
     assert_eq!(copy.pull_config().expect("pull_config").strategy, None);
 }
 
 #[test]
 fn pull_strategy_follows_the_configuration_else_the_fallback() {
-    if !in_isolated_git_env("pull_strategy_follows_the_configuration_else_the_fallback") {
-        return;
-    }
+    isolate_git!(pull_strategy_follows_the_configuration_else_the_fallback);
     // pull.rebase=true asks for a rebase, whatever the fallback is ...
     let (_up, _clone, copy) = pull_scenario(&["pull.rebase=true"], true);
     copy.pull(copy.pull_strategy(PullStrategy::Merge), |_| {})
@@ -1897,6 +1894,7 @@ fn pull_strategy_follows_the_configuration_else_the_fallback() {
 
 #[test]
 fn a_pull_reports_git_s_own_error_for_a_broken_configuration() {
+    isolate_git!(a_pull_reports_git_s_own_error_for_a_broken_configuration);
     let (_up, _clone, copy) = pull_scenario(&[], true);
     let path = copy.workdir().join(".git/config");
     let mut config = fs::read_to_string(&path).expect("read");
@@ -1914,6 +1912,7 @@ fn a_pull_reports_git_s_own_error_for_a_broken_configuration() {
 
 #[test]
 fn fetch_prunes_only_when_asked() {
+    isolate_git!(fetch_prunes_only_when_asked);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     let up = up_dir.path();
     git(up, &["branch", "doomed"]);
@@ -1935,6 +1934,7 @@ fn fetch_prunes_only_when_asked() {
 /// in the user's configuration do not prune anyway.
 #[test]
 fn fetch_without_prune_keeps_branches_even_when_the_config_prunes() {
+    isolate_git!(fetch_without_prune_keeps_branches_even_when_the_config_prunes);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     let up = up_dir.path();
     let p = copy.workdir().to_path_buf();
@@ -1960,6 +1960,7 @@ fn fetch_without_prune_keeps_branches_even_when_the_config_prunes() {
 /// A remote name that looks like an option stays a name: it cannot turn pruning back on.
 #[test]
 fn fetch_takes_the_remote_as_a_name_never_an_option() {
+    isolate_git!(fetch_takes_the_remote_as_a_name_never_an_option);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     let up = up_dir.path();
     git(up, &["branch", "doomed"]);
@@ -1975,6 +1976,7 @@ fn fetch_takes_the_remote_as_a_name_never_an_option() {
 
 #[test]
 fn remotes_report_the_default_branch() {
+    isolate_git!(remotes_report_the_default_branch);
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     let origin = |repo: &Repo| {
         repo.snapshot(10)
@@ -2008,6 +2010,7 @@ fn remotes_report_the_default_branch() {
 
 #[test]
 fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
+    isolate_git!(checkout_request_fetches_and_fast_forwards_the_request_branch);
     // A working repository pushes `main` and a request head to a bare "server".
     let (work_dir, _work) = fixture();
     let work = work_dir.path();
@@ -2108,6 +2111,7 @@ fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
 
 #[test]
 fn checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone() {
+    isolate_git!(checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone);
     // The server has a real branch `pr/1` and, separately, the request head refs/pull/1/head.
     let (work_dir, _work) = fixture();
     let work = work_dir.path();
@@ -2192,6 +2196,7 @@ fn checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone() {
 
 #[test]
 fn checkout_request_rejects_bad_names_without_fetching() {
+    isolate_git!(checkout_request_rejects_bad_names_without_fetching);
     let (_dir, repo) = fixture();
     let before = repo.head().expect("head");
     for (remote, remote_ref, branch) in [
@@ -2265,6 +2270,7 @@ fn both_modified(dir: &Path) {
 
 #[test]
 fn diff3_conflict_resolved_in_the_editor_completes_the_merge() {
+    isolate_git!(diff3_conflict_resolved_in_the_editor_completes_the_merge);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["config", "merge.conflictStyle", "diff3"]);
@@ -2326,6 +2332,7 @@ fn diff3_conflict_resolved_in_the_editor_completes_the_merge() {
 
 #[test]
 fn mark_resolved_stages_a_hand_edited_file() {
+    isolate_git!(mark_resolved_stages_a_hand_edited_file);
     let (dir, repo) = fixture();
     let p = dir.path();
     both_modified(p);
@@ -2340,6 +2347,7 @@ fn mark_resolved_stages_a_hand_edited_file() {
 
 #[test]
 fn write_resolution_with_the_parsed_fingerprint_resolves() {
+    isolate_git!(write_resolution_with_the_parsed_fingerprint_resolves);
     let (dir, repo) = fixture();
     let p = dir.path();
     both_modified(p);
@@ -2359,6 +2367,7 @@ fn write_resolution_with_the_parsed_fingerprint_resolves() {
 /// resolved" before Canopy re-reads it. The stale rendering must not replace the hand edit.
 #[test]
 fn write_resolution_refuses_a_file_changed_since_it_was_parsed() {
+    isolate_git!(write_resolution_refuses_a_file_changed_since_it_was_parsed);
     let (dir, repo) = fixture();
     let p = dir.path();
     both_modified(p);
@@ -2415,6 +2424,7 @@ fn write_resolution_refuses_a_file_changed_since_it_was_parsed() {
 
 #[test]
 fn conflict_fingerprint_is_stable_across_parses() {
+    isolate_git!(conflict_fingerprint_is_stable_across_parses);
     let (dir, repo) = fixture();
     let p = dir.path();
     both_modified(p);
@@ -2439,6 +2449,7 @@ fn conflict_fingerprint_is_stable_across_parses() {
 
 #[test]
 fn resolve_with_side_takes_the_sides_mode_without_core_filemode() {
+    isolate_git!(resolve_with_side_takes_the_sides_mode_without_core_filemode);
     // With core.fileMode off (Git for Windows' default) `git add` cannot see the executable bit
     // and stages the mode of our side: taking their side must still take their mode, whether
     // that adds the bit or removes it.
@@ -2470,6 +2481,7 @@ fn resolve_with_side_takes_the_sides_mode_without_core_filemode() {
 
 #[test]
 fn resolve_with_side_matches_git_checkout_ours_and_theirs() {
+    isolate_git!(resolve_with_side_matches_git_checkout_ours_and_theirs);
     let (dir, repo) = fixture();
     let p = dir.path();
     // A path with spaces and glob characters, next to a file the glob would match.
@@ -2540,6 +2552,7 @@ fn resolve_with_side_matches_git_checkout_ours_and_theirs() {
 
 #[test]
 fn modify_delete_conflicts_resolve_by_keeping_or_removing() {
+    isolate_git!(modify_delete_conflicts_resolve_by_keeping_or_removing);
     let (dir, repo) = fixture();
     let p = dir.path();
     for f in ["d1.txt", "d2.txt", "e1.txt", "e2.txt"] {
@@ -2604,6 +2617,7 @@ fn modify_delete_conflicts_resolve_by_keeping_or_removing() {
 
 #[test]
 fn conflict_file_refuses_binary_content() {
+    isolate_git!(conflict_file_refuses_binary_content);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "-c", "other"]);
@@ -2633,6 +2647,7 @@ fn conflict_file_refuses_binary_content() {
 #[test]
 fn write_resolution_keeps_the_executable_bit() {
     use std::os::unix::fs::PermissionsExt;
+    isolate_git!(write_resolution_keeps_the_executable_bit);
     let (dir, repo) = fixture();
     let p = dir.path();
     let file = p.join("a.txt");
@@ -2671,6 +2686,7 @@ fn feature_branch(dir: &Path, diverge: bool) -> String {
 
 #[test]
 fn merge_mode_default_fast_forwards_or_merges() {
+    isolate_git!(merge_mode_default_fast_forwards_or_merges);
     let (dir, repo) = fixture();
     let p = dir.path();
     // `merge.ff=false` would make a plain `git merge` create a commit; the mode wins.
@@ -2689,6 +2705,7 @@ fn merge_mode_default_fast_forwards_or_merges() {
 
 #[test]
 fn merge_mode_no_ff_creates_a_merge_commit_even_when_ff_is_possible() {
+    isolate_git!(merge_mode_no_ff_creates_a_merge_commit_even_when_ff_is_possible);
     let (dir, repo) = fixture();
     let p = dir.path();
     let main = rev(p, "HEAD");
@@ -2701,6 +2718,7 @@ fn merge_mode_no_ff_creates_a_merge_commit_even_when_ff_is_possible() {
 
 #[test]
 fn merge_mode_ff_only_fails_on_diverged_history_without_changes() {
+    isolate_git!(merge_mode_ff_only_fails_on_diverged_history_without_changes);
     let (dir, repo) = fixture();
     let p = dir.path();
     feature_branch(p, true);
@@ -2724,6 +2742,7 @@ fn merge_mode_ff_only_fails_on_diverged_history_without_changes() {
 
 #[test]
 fn merge_mode_squash_stages_changes_without_committing_or_merge_head() {
+    isolate_git!(merge_mode_squash_stages_changes_without_committing_or_merge_head);
     for diverge in [false, true] {
         let (dir, repo) = fixture();
         let p = dir.path();
@@ -2751,6 +2770,7 @@ fn merge_mode_squash_stages_changes_without_committing_or_merge_head() {
 /// one and a file already staged in part.
 #[test]
 fn staging_a_mixed_selection_matches_the_git_cli() {
+    isolate_git!(staging_a_mixed_selection_matches_the_git_cli);
     let prepare = |p: &Path| {
         fs::write(p.join("gone.txt"), "gone\n").unwrap();
         fs::write(p.join("kept.txt"), "kept\n").unwrap();
@@ -2813,6 +2833,7 @@ fn staging_a_mixed_selection_matches_the_git_cli() {
 
 #[test]
 fn stage_unstage_and_discard_treat_paths_literally() {
+    isolate_git!(stage_unstage_and_discard_treat_paths_literally);
     let (dir, repo) = fixture();
     let p = dir.path();
     // `[ab].txt` as a glob also matches b.txt.
@@ -2841,6 +2862,7 @@ fn stage_unstage_and_discard_treat_paths_literally() {
 
 #[test]
 fn branches_checked_out_in_another_worktree_name_its_folder() {
+    isolate_git!(branches_checked_out_in_another_worktree_name_its_folder);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "feature"]);
@@ -2895,6 +2917,7 @@ fn branches_checked_out_in_another_worktree_name_its_folder() {
 
 #[test]
 fn worktrees_list_every_working_folder_main_first() {
+    isolate_git!(worktrees_list_every_working_folder_main_first);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "feature"]);
@@ -2979,6 +3002,7 @@ fn worktrees_list_every_working_folder_main_first() {
 /// local tag the remote lacks, including ones not pushed yet. Canopy's fetch never does.
 #[test]
 fn fetch_keeps_local_tags_whatever_fetch_prune_tags_says() {
+    isolate_git!(fetch_keeps_local_tags_whatever_fetch_prune_tags_says);
     let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir().to_path_buf();
     git(&p, &["config", "fetch.pruneTags", "true"]);
@@ -2993,6 +3017,7 @@ fn fetch_keeps_local_tags_whatever_fetch_prune_tags_says() {
 /// message (an issue number, a Markdown heading) and must survive the commit.
 #[test]
 fn commit_keeps_lines_that_start_with_a_hash() {
+    isolate_git!(commit_keeps_lines_that_start_with_a_hash);
     let (dir, repo) = fixture();
     fs::write(dir.path().join("a.txt"), "hash\n").expect("write");
     repo.stage_all_except_repositories().expect("stage");
@@ -3022,6 +3047,7 @@ fn conflicting_branches(p: &Path) {
 /// Canopy's conflict style is the one written into files, whatever `merge.conflictStyle` says.
 #[test]
 fn conflicts_are_written_in_canopys_style() {
+    isolate_git!(conflicts_are_written_in_canopys_style);
     for (style, base_shown) in [
         (ConflictStyle::Zdiff3, true),
         (ConflictStyle::Diff3, true),
@@ -3047,9 +3073,7 @@ fn conflicts_are_written_in_canopys_style() {
 /// passes nothing for it, and its own choice applies only to what the configuration leaves unset.
 #[test]
 fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
-    if !in_isolated_git_env("the_git_configuration_decides_what_it_sets_while_canopy_follows_it") {
-        return;
-    }
+    isolate_git!(the_git_configuration_decides_what_it_sets_while_canopy_follows_it);
     let follow = |repo: &Repo| {
         repo.set_options(GitOptions {
             follow_config: true,
@@ -3262,6 +3286,7 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
 /// does.
 #[test]
 fn a_force_push_goes_where_a_push_would() {
+    isolate_git!(a_force_push_goes_where_a_push_would);
     for (mode, dest) in [
         (PushDefault::Upstream, Some("main")),
         (PushDefault::Current, Some("topic")),
@@ -3299,6 +3324,7 @@ fn a_force_push_goes_where_a_push_would() {
 /// back afterwards; with it off git refuses, as without Canopy.
 #[test]
 fn autostash_lets_rebase_and_pull_run_over_local_changes() {
+    isolate_git!(autostash_lets_rebase_and_pull_run_over_local_changes);
     for autostash in [true, false] {
         let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
         let p = copy.workdir().to_path_buf();
@@ -3346,6 +3372,7 @@ fn autostash_lets_rebase_and_pull_run_over_local_changes() {
 /// and works whatever `push.default` says.
 #[test]
 fn push_follows_tags_and_ignores_push_default() {
+    isolate_git!(push_follows_tags_and_ignores_push_default);
     for follow_tags in [true, false] {
         let (dir, repo) = fixture();
         let p = dir.path();
@@ -3390,9 +3417,7 @@ fn push_follows_tags_and_ignores_push_default() {
 /// configuration and `init.defaultBranch` names one.
 #[test]
 fn init_starts_on_the_branch_canopy_names_or_the_configured_one() {
-    if !in_isolated_git_env("init_starts_on_the_branch_canopy_names_or_the_configured_one") {
-        return;
-    }
+    isolate_git!(init_starts_on_the_branch_canopy_names_or_the_configured_one);
     let dir = tempfile::tempdir().expect("tempdir");
     let head = |follow: bool, name: &str| {
         let repo = Repo::init(&dir.path().join(name), "trunk", follow).expect("init");
@@ -3411,6 +3436,7 @@ fn init_starts_on_the_branch_canopy_names_or_the_configured_one() {
 /// own message: on a git older than 2.28 the name would otherwise go to `symbolic-ref HEAD`.
 #[test]
 fn init_refuses_an_invalid_branch_name_and_creates_nothing() {
+    isolate_git!(init_refuses_an_invalid_branch_name_and_creates_nothing);
     let dir = tempfile::tempdir().expect("tempdir");
     for bad in ["../../x", "a b", "-x", "a..b", "@{-1}", "", "x.lock"] {
         let target = dir.path().join("repo");
@@ -3435,6 +3461,7 @@ fn init_refuses_an_invalid_branch_name_and_creates_nothing() {
 /// still no branch name, and nothing is created (no `sub/.git` left behind by a failed init).
 #[test]
 fn init_inside_a_repository_refuses_names_that_git_expands() {
+    isolate_git!(init_inside_a_repository_refuses_names_that_git_expands);
     let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let outer = copy.workdir();
     git(outer, &["checkout", "-q", "-b", "other"]);
@@ -3457,6 +3484,7 @@ fn init_inside_a_repository_refuses_names_that_git_expands() {
 /// leaves conflicted files with nothing in progress; a merge stopped on conflicts is not that.
 #[test]
 fn an_autostash_that_conflicts_is_recognised() {
+    isolate_git!(an_autostash_that_conflicts_is_recognised);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let up = up_dir.path();
     fs::write(up.join("a.txt"), "upstream\n").expect("write");
@@ -3481,6 +3509,7 @@ fn an_autostash_that_conflicts_is_recognised() {
 /// whatever `fetch.prune`, `fetch.pruneTags` and `remote.<name>.pruneTags` say.
 #[test]
 fn a_pull_never_prunes_local_tags() {
+    isolate_git!(a_pull_never_prunes_local_tags);
     for fetched in [false, true] {
         let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
         for setting in ["fetch.prune", "fetch.pruneTags", "remote.origin.pruneTags"] {
@@ -3516,6 +3545,7 @@ fn a_pull_never_prunes_local_tags() {
 /// The second step brings in what the preview fetched and does not ask the remote again.
 #[test]
 fn a_fetched_pull_does_not_fetch_again() {
+    isolate_git!(a_fetched_pull_does_not_fetch_again);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     diverge(up_dir.path(), &copy);
     let p = copy
@@ -3547,6 +3577,7 @@ fn a_fetched_pull_does_not_fetch_again() {
 /// fetch` moved the upstream between the check and the pull.
 #[test]
 fn a_fetched_pull_brings_in_the_commit_that_was_checked() {
+    isolate_git!(a_fetched_pull_brings_in_the_commit_that_was_checked);
     for strategy in [PullStrategy::Merge, PullStrategy::Rebase] {
         let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
         diverge(up_dir.path(), &copy);
@@ -3591,6 +3622,7 @@ fn a_fetched_pull_brings_in_the_commit_that_was_checked() {
 /// --rebase` does with its fork point: the local commit is replayed alone.
 #[test]
 fn a_pinned_rebase_drops_commits_the_upstream_rewrote_like_git_pull() {
+    isolate_git!(a_pinned_rebase_drops_commits_the_upstream_rewrote_like_git_pull);
     let (up_dir, _up, clone_dir, copy) = upstream_and_clone();
     let up = up_dir.path();
     let write =
@@ -3639,6 +3671,7 @@ fn a_pinned_rebase_drops_commits_the_upstream_rewrote_like_git_pull() {
 /// without changing the branch or any file.
 #[test]
 fn a_pull_preview_finds_conflicts_before_the_pull() {
+    isolate_git!(a_pull_preview_finds_conflicts_before_the_pull);
     // Up to date: nothing to bring.
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy
@@ -3747,6 +3780,7 @@ fn stale_fixture() -> (tempfile::TempDir, Repo) {
 
 #[test]
 fn stale_candidates_preview_age_and_unique_commit_protection() {
+    isolate_git!(stale_candidates_preview_age_and_unique_commit_protection);
     let (dir, repo) = stale_fixture();
     let p = dir.path();
     git(p, &["branch", "old-merged"]);
@@ -3814,6 +3848,7 @@ fn stale_candidates_preview_age_and_unique_commit_protection() {
 
 #[test]
 fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
+    isolate_git!(stale_candidates_worktrees_protect_dirty_locked_current_and_unique);
     let (dir, repo) = stale_fixture();
     let p = dir.path();
     let clean = p.join("clean folder");
@@ -3885,6 +3920,7 @@ fn stale_candidates_worktrees_protect_dirty_locked_current_and_unique() {
 
 #[test]
 fn stale_removal_rechecks_dirty_worktree_and_branch_tip() {
+    isolate_git!(stale_removal_rechecks_dirty_worktree_and_branch_tip);
     let (dir, repo) = stale_fixture();
     let p = dir.path();
     let linked = p.join("linked");
@@ -3928,6 +3964,7 @@ fn stale_removal_rechecks_dirty_worktree_and_branch_tip() {
 
 #[test]
 fn stale_candidates_exclude_ahead_upstream_and_remote_default_branch() {
+    isolate_git!(stale_candidates_exclude_ahead_upstream_and_remote_default_branch);
     let (dir, repo) = stale_fixture();
     let p = dir.path();
     git(p, &["branch", "trunk"]);
@@ -3965,6 +4002,7 @@ fn stale_candidates_exclude_ahead_upstream_and_remote_default_branch() {
 
 #[test]
 fn stale_candidates_detached_worktree_and_unknown_default_fail_safe() {
+    isolate_git!(stale_candidates_detached_worktree_and_unknown_default_fail_safe);
     let (dir, repo) = stale_fixture();
     let p = dir.path();
     let detached = p.join("detached");
@@ -3995,6 +4033,7 @@ fn stale_candidates_detached_worktree_and_unknown_default_fail_safe() {
 
 #[test]
 fn stale_candidates_unborn_repository_has_nothing_to_remove() {
+    isolate_git!(stale_candidates_unborn_repository_has_nothing_to_remove);
     let dir = tempfile::tempdir().expect("tempdir");
     git(dir.path(), &["init", "-q", "-b", "main"]);
     let repo = Repo::open(dir.path()).expect("open");
@@ -4006,6 +4045,7 @@ fn stale_candidates_unborn_repository_has_nothing_to_remove() {
 
 #[test]
 fn stale_removal_rejects_mutually_retained_branch_selection_before_deleting() {
+    isolate_git!(stale_removal_rejects_mutually_retained_branch_selection_before_deleting);
     let (dir, repo) = stale_fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "-c", "one"]);
@@ -4042,6 +4082,7 @@ fn stale_removal_rejects_mutually_retained_branch_selection_before_deleting() {
 
 #[test]
 fn stale_candidates_period_uses_strict_committer_time_cutoff() {
+    isolate_git!(stale_candidates_period_uses_strict_committer_time_cutoff);
     let (dir, repo) = stale_fixture();
     let p = dir.path();
     git(p, &["branch", "old"]);
@@ -4072,11 +4113,10 @@ fn stale_candidates_period_uses_strict_committer_time_cutoff() {
 #[test]
 fn stale_candidates_non_utf8_worktree_path_is_protected_without_lossy_removal() {
     use std::os::unix::ffi::OsStringExt as _;
+    isolate_git!(stale_candidates_non_utf8_worktree_path_is_protected_without_lossy_removal);
 
     let (dir, repo) = stale_fixture();
-    let parent = dir
-        .path()
-        .join(std::ffi::OsString::from_vec(b"parent-\xff".to_vec()));
+    let parent = dir.path().join(OsString::from_vec(b"parent-\xff".to_vec()));
     fs::create_dir(&parent).expect("non-UTF8 parent");
     let path = parent.join("linked");
     let out = canopy_core::cli::command(Some(dir.path()))
@@ -4102,6 +4142,7 @@ fn stale_candidates_non_utf8_worktree_path_is_protected_without_lossy_removal() 
 
 #[test]
 fn stale_candidates_protect_index_flags_that_hide_worktree_edits() {
+    isolate_git!(stale_candidates_protect_index_flags_that_hide_worktree_edits);
     for flag in ["--assume-unchanged", "--skip-worktree"] {
         let (dir, repo) = stale_fixture();
         let p = dir.path();
@@ -4139,6 +4180,7 @@ fn stale_candidates_protect_index_flags_that_hide_worktree_edits() {
 
 #[test]
 fn stale_candidates_protect_clean_index_flags_and_revalidate_new_flags() {
+    isolate_git!(stale_candidates_protect_clean_index_flags_and_revalidate_new_flags);
     for flag in ["--assume-unchanged", "--skip-worktree"] {
         let (dir, repo) = stale_fixture();
         let p = dir.path();
@@ -4176,6 +4218,7 @@ fn stale_candidates_protect_clean_index_flags_and_revalidate_new_flags() {
 
 #[test]
 fn stale_candidates_skip_unavailable_locked_worktree_but_keep_its_branch_excluded() {
+    isolate_git!(stale_candidates_skip_unavailable_locked_worktree_but_keep_its_branch_excluded);
     let (dir, repo) = stale_fixture();
     let p = dir.path();
     let locked = p.join("locked");
@@ -4223,9 +4266,7 @@ fn stale_candidates_skip_unavailable_locked_worktree_but_keep_its_branch_exclude
 
 #[test]
 fn pull_autostash_overrides_strategy_settings_and_matches_fetched_pull() {
-    if !in_isolated_git_env("pull_autostash_overrides_strategy_settings_and_matches_fetched_pull") {
-        return;
-    }
+    isolate_git!(pull_autostash_overrides_strategy_settings_and_matches_fetched_pull);
     for fetched in [false, true] {
         for autostash in [false, true] {
             let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
@@ -4291,6 +4332,7 @@ fn listed_worktrees(dir: &Path) -> Vec<(std::path::PathBuf, Option<String>)> {
 
 #[test]
 fn a_worktree_on_a_new_branch_starts_where_asked_and_tracks_nothing() {
+    isolate_git!(a_worktree_on_a_new_branch_starts_where_asked_and_tracks_nothing);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "base"]);
@@ -4329,6 +4371,7 @@ fn a_worktree_on_a_new_branch_starts_where_asked_and_tracks_nothing() {
 
 #[test]
 fn a_worktree_on_an_existing_branch_checks_it_out() {
+    isolate_git!(a_worktree_on_an_existing_branch_checks_it_out);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "feature"]);
@@ -4346,6 +4389,7 @@ fn a_worktree_on_an_existing_branch_checks_it_out() {
 
 #[test]
 fn a_worktree_refuses_in_gits_words_what_git_refuses() {
+    isolate_git!(a_worktree_refuses_in_gits_words_what_git_refuses);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["branch", "feature"]);

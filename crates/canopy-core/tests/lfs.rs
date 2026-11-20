@@ -7,10 +7,14 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, SystemTime};
+
+use support::isolate_git;
 
 use canopy_core::{DiffSource, LfsOmitted, MissingObjects, Repo, Whitespace};
 
@@ -29,11 +33,6 @@ fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            std::env::temp_dir().join("canopy-tests-no-global-gitconfig"),
-        )
         .output()
         .expect("git runs")
 }
@@ -125,6 +124,7 @@ fn unstaged(repo: &Repo) -> Vec<String> {
 
 #[test]
 fn an_lfs_file_whose_content_is_its_pointer_is_not_listed_as_modified() {
+    isolate_git!(an_lfs_file_whose_content_is_its_pointer_is_not_listed_as_modified);
     let (dir, _scratch, repo) = hand_made();
     let p = dir.path();
     // libgit2 does not run the LFS filter: the file's stat is unknown to the index, so it hashes
@@ -155,6 +155,7 @@ fn an_lfs_file_whose_content_is_its_pointer_is_not_listed_as_modified() {
 
 #[test]
 fn a_mode_change_of_an_lfs_file_stays_listed() {
+    isolate_git!(a_mode_change_of_an_lfs_file_stays_listed);
     let (dir, _scratch, repo) = hand_made();
     let p = dir.path();
     git(p, &["update-index", "--chmod=+x", "big.bin"]);
@@ -170,6 +171,7 @@ fn a_mode_change_of_an_lfs_file_stays_listed() {
 
 #[test]
 fn an_lfs_file_agrees_with_git_status_with_the_real_filter() {
+    isolate_git!(an_lfs_file_agrees_with_git_status_with_the_real_filter);
     need_git_lfs!();
     let dir = tempfile::tempdir().expect("tempdir");
     let p = dir.path();
@@ -200,6 +202,7 @@ const NEW_OID: &str = "222222222222222222222222222222222222222222222222222222222
 
 #[test]
 fn the_diff_of_an_lfs_path_is_its_pointers_not_its_file() {
+    isolate_git!(the_diff_of_an_lfs_path_is_its_pointers_not_its_file);
     let (dir, scratch, repo) = hand_made();
     let p = dir.path();
     index_pointer(p, scratch.path(), "big.bin", &pointer(NEW_OID, 9_000_000));
@@ -228,6 +231,7 @@ fn the_diff_of_an_lfs_path_is_its_pointers_not_its_file() {
 
 #[test]
 fn the_content_of_an_lfs_path_is_diffed_only_when_it_is_local() {
+    isolate_git!(the_content_of_an_lfs_path_is_diffed_only_when_it_is_local);
     let (dir, _scratch, repo) = hand_made();
     let p = dir.path();
     // The working file is plain text over a pointer whose object is local.
@@ -268,6 +272,7 @@ fn the_content_of_an_lfs_path_is_diffed_only_when_it_is_local() {
 
 #[test]
 fn a_pointer_only_working_file_is_compared_as_a_pointer() {
+    isolate_git!(a_pointer_only_working_file_is_compared_as_a_pointer);
     let (dir, _scratch, repo) = hand_made();
     let p = dir.path();
     fs::write(p.join("big.bin"), pointer(NEW_OID, 77)).expect("write");
@@ -288,6 +293,7 @@ fn a_pointer_only_working_file_is_compared_as_a_pointer() {
 
 #[test]
 fn a_new_lfs_file_has_only_a_new_side_and_a_deleted_one_only_an_old_side() {
+    isolate_git!(a_new_lfs_file_has_only_a_new_side_and_a_deleted_one_only_an_old_side);
     let (dir, _scratch, repo) = hand_made();
     let p = dir.path();
     fs::write(p.join("fresh.bin"), "text\n").expect("write");
@@ -323,6 +329,7 @@ fn a_new_lfs_file_has_only_a_new_side_and_a_deleted_one_only_an_old_side() {
 
 #[test]
 fn hunks_and_lines_of_an_lfs_path_cannot_be_staged() {
+    isolate_git!(hunks_and_lines_of_an_lfs_path_cannot_be_staged);
     let (dir, _scratch, repo) = hand_made();
     let p = dir.path();
     store(&repo, HELLO_OID, b"one\ntwo\n");
@@ -410,11 +417,6 @@ fn clone_without_objects(origin: &Path, dest: &Path) {
             &dest.to_string_lossy(),
         ])
         .env("GIT_LFS_SKIP_SMUDGE", "1")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            std::env::temp_dir().join("canopy-tests-no-global-gitconfig"),
-        )
         .output()
         .expect("git runs");
     assert!(
@@ -427,6 +429,7 @@ fn clone_without_objects(origin: &Path, dest: &Path) {
 
 #[test]
 fn lfs_fetch_downloads_objects_and_lfs_pull_writes_them_into_the_files() {
+    isolate_git!(lfs_fetch_downloads_objects_and_lfs_pull_writes_them_into_the_files);
     need_git_lfs!();
     let (_root, clone, repo, content) = pointer_only_clone();
     let p = clone.path();
@@ -457,6 +460,7 @@ fn lfs_fetch_downloads_objects_and_lfs_pull_writes_them_into_the_files() {
 
 #[test]
 fn a_failed_lfs_pull_says_what_git_lfs_said() {
+    isolate_git!(a_failed_lfs_pull_says_what_git_lfs_said);
     need_git_lfs!();
     let (_root, clone, repo, _content) = pointer_only_clone();
     git(
@@ -472,6 +476,7 @@ fn a_failed_lfs_pull_says_what_git_lfs_said() {
 
 #[test]
 fn track_and_untrack_edit_gitattributes_like_the_git_lfs_cli() {
+    isolate_git!(track_and_untrack_edit_gitattributes_like_the_git_lfs_cli);
     need_git_lfs!();
     let ours = tempfile::tempdir().expect("tempdir");
     let theirs = tempfile::tempdir().expect("tempdir");
@@ -507,6 +512,7 @@ fn track_and_untrack_edit_gitattributes_like_the_git_lfs_cli() {
 
 #[test]
 fn track_refuses_what_is_not_a_pattern() {
+    isolate_git!(track_refuses_what_is_not_a_pattern);
     let dir = tempfile::tempdir().expect("tempdir");
     init(dir.path(), "main");
     let repo = Repo::open(dir.path()).expect("open");
@@ -619,6 +625,7 @@ fn lock_server() -> String {
 
 #[test]
 fn locks_are_listed_taken_and_released_through_git_lfs() {
+    isolate_git!(locks_are_listed_taken_and_released_through_git_lfs);
     need_git_lfs!();
     let dir = tempfile::tempdir().expect("tempdir");
     let p = dir.path();
@@ -662,6 +669,7 @@ fn locks_are_listed_taken_and_released_through_git_lfs() {
 
 #[test]
 fn a_lock_the_server_refuses_says_what_it_said() {
+    isolate_git!(a_lock_the_server_refuses_says_what_it_said);
     need_git_lfs!();
     let dir = tempfile::tempdir().expect("tempdir");
     init(dir.path(), "main");
