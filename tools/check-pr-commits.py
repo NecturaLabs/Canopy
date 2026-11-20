@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from release import SUBJECT, expect_eq
+
+SIGNER = re.compile(r"(?P<name>.*) <(?P<email>[^<>]*)>")
 
 
 def git(repo: Path, *args: str) -> str:
@@ -28,6 +31,15 @@ def git(repo: Path, *args: str) -> str:
     ).stdout
 
 
+def signed_off(name: str, email: str, trailers: str) -> bool:
+    """Whether a trailer names the author: the name exactly, the email ignoring letter case."""
+    for line in trailers.split("\n"):
+        signer = SIGNER.fullmatch(line)
+        if signer and signer["name"] == name and signer["email"].lower() == email.lower():
+            return True
+    return False
+
+
 def violations(repo: Path, base: str, head: str, require_signoff: bool) -> list[tuple[str, str]]:
     commits = git(
         repo, "rev-list", "--no-merges", "--reverse", "--end-of-options", f"{base}..{head}", "--",
@@ -36,12 +48,12 @@ def violations(repo: Path, base: str, head: str, require_signoff: bool) -> list[
     for sha in commits.splitlines():
         metadata = git(
             repo, "show", "--no-patch", "--no-show-signature", "--encoding=UTF-8",
-            "--format=%s%x00%an <%ae>%x00%(trailers:key=Signed-off-by,valueonly,unfold)", sha, "--",
+            "--format=%s%x00%an%x00%ae%x00%(trailers:key=Signed-off-by,valueonly,unfold)", sha, "--",
         )
-        subject, author, signoffs = metadata.split("\0", 2)
+        subject, name, email, signoffs = metadata.split("\0", 3)
         if SUBJECT.fullmatch(subject.strip()) is None:
             errors.append((sha, "subject"))
-        if require_signoff and author not in signoffs.split("\n"):
+        if require_signoff and not signed_off(name, email, signoffs):
             errors.append((sha, "signoff"))
     return errors
 
@@ -87,6 +99,14 @@ def selftest() -> None:
             "feat: sign as a non-ASCII author", "--author", "Zo\u00eb M\u00fcller <zoe@example.invalid>",
             "-m", "Signed-off-by: Zo\u00eb M\u00fcller <zoe@example.invalid>",
         )
+        email_case = commit(
+            "fix: sign with another letter case in the email", "-m",
+            "Signed-off-by: Test Author <AUTHOR@Example.Invalid>",
+        )
+        name_case = commit(
+            "fix: sign with another letter case in the name", "-m",
+            "Signed-off-by: test author <author@example.invalid>",
+        )
         git(repo, "switch", "-q", "main")
         base = commit("Base branch change")
         git(repo, "switch", "-q", "topic")
@@ -95,10 +115,10 @@ def selftest() -> None:
         expect_eq(violations(repo, base, signed, True), [])
         expect_eq(violations(repo, base, "HEAD", True), [
             (wrong_subject, "subject"), (unsigned, "signoff"),
-            (wrong_signer, "signoff"), (body_only, "signoff"),
+            (wrong_signer, "signoff"), (body_only, "signoff"), (name_case, "signoff"),
         ])
         expect_eq(violations(repo, base, "HEAD", False), [(wrong_subject, "subject")])
-        passing = [signed, lowercase_key, noreply, non_ascii]
+        passing = [signed, lowercase_key, noreply, non_ascii, email_case]
         flagged = {sha for sha, _ in violations(repo, base, "HEAD", True)}
         expect_eq(sorted(set(passing) & flagged), [])
 
@@ -119,8 +139,8 @@ def selftest() -> None:
         expect_eq(unsigned in result.stderr, False)
         result = cli(base, "HEAD", "--signoff", "required")
         expect_eq(result.returncode, 1)
-        expect_eq([sha in result.stderr for sha in (wrong_subject, unsigned, wrong_signer, body_only)], [True] * 4)
-        expect_eq([sha in result.stderr for sha in passing], [False] * 4)
+        expect_eq([sha in result.stderr for sha in (wrong_subject, unsigned, wrong_signer, body_only, name_case)], [True] * 5)
+        expect_eq([sha in result.stderr for sha in passing], [False] * len(passing))
         result = cli(base, "HEAD", "--signoff", "required", "--signoff", "exempt")
         expect_eq((result.returncode, unsigned in result.stderr), (1, False))
         result = cli(base, "HEAD", "--signoff", "sometimes")
