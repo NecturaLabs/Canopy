@@ -230,8 +230,15 @@ struct Version {
 /// which every release still accepts; it is settled when the instance answered (a version, text
 /// that is not one, or a 401, 403, 404 or other 4xx refusal) and not when the failure may pass
 /// (the network, a rate limit, a 5xx, an answer that is not JSON). Only [`Error::Stopped`] is
-/// returned, so a switched-off client sends nothing.
+/// returned, so a switched-off client sends nothing. Without a sign-in GitLab refuses `/version`,
+/// so nothing is sent and the choice is a settled [`DraftParam::Wip`].
 pub(crate) fn draft_param(http: &Http) -> Result<DraftChoice> {
+    if !http.has_token() {
+        return Ok(DraftChoice {
+            param: DraftParam::Wip,
+            settled: true,
+        });
+    }
     let (param, settled) = match http.json::<Version>(Method::Get, "/version", None) {
         Ok(v) => (DraftParam::for_version(&v.version), true),
         Err(Error::Stopped) => return Err(Error::Stopped),
@@ -757,6 +764,37 @@ mod tests {
                     .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
             })
             .expect("a port below 17 on 127.0.0.1 that refuses connections")
+    }
+
+    #[test]
+    fn a_switched_off_client_reads_no_version_and_says_so() {
+        let mut http = Http::new(
+            canopy_core::forge::ForgeKind::GitLab,
+            &format!("http://{}/api/v4", refused_address()),
+            Some("tok-SECRET".to_owned()),
+        );
+        http.set_switch(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            false,
+        )));
+        assert!(matches!(draft_param(&http), Err(Error::Stopped)));
+    }
+
+    #[test]
+    fn without_a_sign_in_the_version_is_not_asked_for() {
+        // The address refuses connections: a request would be a settled-false network failure.
+        let http = Http::new(
+            canopy_core::forge::ForgeKind::GitLab,
+            &format!("http://{}/api/v4", refused_address()),
+            None,
+        );
+        let choice = draft_param(&http).expect("no request, no failure");
+        assert_eq!(
+            choice,
+            DraftChoice {
+                param: DraftParam::Wip,
+                settled: true
+            }
+        );
     }
 
     #[test]

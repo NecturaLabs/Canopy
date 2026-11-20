@@ -305,13 +305,13 @@ carry up to twice as many rows. A reload drops the extra pages; the timed refres
 When the host holds more than the first page, the field's text, the draft choice, the author and
 the newest or oldest sort go to the host after a short pause in typing, so they reach requests that
 are not loaded (GitHub: its search, which needs a sign-in; GitLab: the list's own search, author and
-draft parameters; the draft one is `draft` on GitLab 19.0 and newer and `wip` before it or when
-the instance's version cannot be read, chosen from `GET /version` on the same host and kept once
-the host has answered). The text matches titles and descriptions of the first eight words, not
-authors or numbers, and GitHub's search holds at most 1,000 results. The checks and review filters
-and the number, title and author sorts the host cannot do, so they cover the rows loaded: the line
-under the field says "found" instead of "shown", and the note under the last row says the host
-holds more.
+draft parameters; the draft one is `draft` on GitLab 19.0 and newer and `wip` before it or when the
+instance's version cannot be read or there is no sign-in to read it with, chosen from `GET /version`
+on the same host and kept once the host has answered). The text matches titles and descriptions of
+the first eight words, not authors or numbers, and GitHub's search holds at most 1,000 results. The
+checks and review filters and the number, title and author sorts the host cannot do, so they cover
+the rows loaded: the line under the field says "found" instead of "shown", and the note under the
+last row says the host holds more.
 The list stays on screen while a search is on its way, and a result that comes after the text
 changed again is dropped. Without a sign-in (GitHub) everything stays on the loaded rows.
 

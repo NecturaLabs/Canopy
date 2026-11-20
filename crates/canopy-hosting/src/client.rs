@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 use canopy_core::forge::{Forge, ForgeKind};
 
 use crate::error::Result;
-use crate::http::{Http, redact_userinfo};
+use crate::http::{GITHUB_API_ROOT, Http, redact_userinfo};
 use crate::model::{
     ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery, RequestSummary, StateFilter,
 };
@@ -100,13 +100,13 @@ impl fmt::Debug for Client {
     }
 }
 
-/// The REST API root for `forge`: `https://api.github.com` for github.com (`/api/v3` on any
+/// The REST API root for `forge`: [`GITHUB_API_ROOT`] for github.com (`/api/v3` on any
 /// other GitHub host), `https://<host>[:<port>]/api/v4` for GitLab. The port is the forge's web
 /// port ([`Forge::port`]), so a self-hosted GitLab at `https://gitlab.corp:8443` is called on
 /// 8443.
 fn default_api_base(forge: &Forge) -> String {
     match forge.kind {
-        ForgeKind::GitHub if forge.host == "github.com" => "https://api.github.com".to_owned(),
+        ForgeKind::GitHub if forge.host == "github.com" => GITHUB_API_ROOT.to_owned(),
         ForgeKind::GitHub => format!("https://{}/api/v3", forge.authority()),
         ForgeKind::GitLab => format!("https://{}/api/v4", forge.authority()),
     }
@@ -372,10 +372,26 @@ mod tests {
     }
 
     #[test]
+    fn github_dot_com_is_asked_for_the_latest_api_version_and_other_hosts_the_old_one() {
+        let api_version = |forge: &Forge| {
+            let client = Client::new(forge, None);
+            crate::http::github_api_version(client.http.base())
+        };
+        assert_eq!(
+            api_version(&forge(ForgeKind::GitHub, "github.com", "o/r")),
+            "2026-03-10"
+        );
+        assert_eq!(
+            api_version(&forge(ForgeKind::GitHub, "ghe.example.com", "o/r")),
+            "2022-11-28"
+        );
+    }
+
+    #[test]
     fn api_bases() {
         assert_eq!(
             default_api_base(&forge(ForgeKind::GitHub, "github.com", "o/r")),
-            "https://api.github.com"
+            GITHUB_API_ROOT
         );
         assert_eq!(
             default_api_base(&forge(ForgeKind::GitLab, "gitlab.com", "g/r")),

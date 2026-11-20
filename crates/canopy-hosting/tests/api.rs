@@ -2686,7 +2686,7 @@ fn a_gitlab_search_uses_the_list_parameters_and_interleaves_closed_and_merged() 
         draft: Some(false),
         order: SearchOrder::Oldest,
     };
-    let page = gitlab(&server, None)
+    let page = gitlab(&server, Some(TOKEN))
         .search_page(StateFilter::Closed, &query, 1, None)
         .expect("page");
     let order: Vec<u64> = page.rows.iter().map(|r| r.number).collect();
@@ -2816,10 +2816,12 @@ fn two_draft_searches_after(
 
 #[test]
 fn gitlab_that_answers_without_a_version_uses_wip_and_is_not_asked_again() {
-    let answers: [(u16, &str); 5] = [
+    let answers: [(u16, &str); 7] = [
         (401, r#"{"message":"401 Unauthorized"}"#),
         (403, r#"{"message":"403 Forbidden"}"#),
         (404, r#"{"message":"404 Not Found"}"#),
+        (400, r#"{"message":"400 Bad request"}"#),
+        (422, r#"{"message":"422 Unprocessable"}"#),
         (200, r#"{"version":"soon","revision":"abc"}"#),
         (200, "{}"),
     ];
@@ -2905,7 +2907,32 @@ fn gitlab_reads_no_version_without_a_draft_filter() {
 }
 
 #[test]
-fn a_stopped_gitlab_client_reads_no_version() {
+fn a_gitlab_client_without_a_sign_in_filters_drafts_with_wip_and_reads_no_version() {
+    let server = Server::start();
+    server.route(
+        "GET",
+        "/api/v4/version",
+        200,
+        r#"{"version":"19.0.0","revision":"abc"}"#,
+    );
+    server.route("GET", &format!("{GL}/merge_requests"), 200, "[]");
+    let client = gitlab(&server, None);
+    for draft in [true, false] {
+        client
+            .search_page(StateFilter::Open, &draft_query(draft), 1, None)
+            .expect("the list is public");
+    }
+    let targets = gitlab_list_targets(&server);
+    assert!(targets[0].ends_with("&wip=yes"), "{targets:?}");
+    assert!(targets[1].ends_with("&wip=no"), "{targets:?}");
+    assert!(
+        version_requests(&server).is_empty(),
+        "GitLab refuses it without a sign-in"
+    );
+}
+
+#[test]
+fn a_stopped_gitlab_client_sends_no_search() {
     let server = Server::start();
     let switch = Arc::new(AtomicBool::new(false));
     let client = gitlab(&server, Some(TOKEN)).with_switch(Arc::clone(&switch));

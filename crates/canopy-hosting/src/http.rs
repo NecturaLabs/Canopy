@@ -55,10 +55,10 @@ const GITHUB_LEGACY_API_VERSION: &str = "2022-11-28";
 
 /// The API root of github.com itself; any other GitHub root is Enterprise Server (`/api/v3`) or a
 /// local test server.
-const GITHUB_API_ROOT: &str = "https://api.github.com";
+pub(crate) const GITHUB_API_ROOT: &str = "https://api.github.com";
 
 /// The `X-GitHub-Api-Version` for requests to the API at `base` (no trailing slash).
-fn github_api_version(base: &str) -> &'static str {
+pub(crate) fn github_api_version(base: &str) -> &'static str {
     if base.eq_ignore_ascii_case(GITHUB_API_ROOT) {
         GITHUB_API_VERSION
     } else {
@@ -810,10 +810,7 @@ mod tests {
 
     #[test]
     fn github_dot_com_gets_the_latest_api_version_and_enterprise_servers_the_old_one() {
-        assert_eq!(
-            sent_github_version("https://api.github.com"),
-            GITHUB_API_VERSION
-        );
+        assert_eq!(sent_github_version(GITHUB_API_ROOT), GITHUB_API_VERSION);
         assert_eq!(
             sent_github_version("https://api.github.com/"),
             GITHUB_API_VERSION,
