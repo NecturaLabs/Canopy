@@ -321,9 +321,9 @@ The list starts at 45% of the pane (320 to 560 points) and follows the window un
 dragged or set with the arrow keys; it can be dragged to 60% of the pane or 800 points, and
 double-clicking the handle makes it follow the window again.
 
-A request's header actions are one group of buttons of the same size: the primary for its state
-(Check out while it is open, Open on GitHub or GitLab otherwise), then the other, Copy link and
-More. Nothing says which sign-in is in use while it works (Settings → Hosting does); a missing
+A request's header actions are one group of buttons of the same size. While it is open they are
+all secondary, Check out first, because Merge… below is the one primary; otherwise Open on GitHub
+or GitLab leads as the primary. Copy link and More follow. Nothing says which sign-in is in use while it works (Settings → Hosting does); a missing
 sign-in, or one the host refused (expired, revoked or short of scope), shows as a warning under the
 actions with Open Accounts, which opens Settings → Accounts. The only credential is the signed-in GitHub CLI (`gh`) or GitLab CLI (`glab`); when it is not installed, signed out, short of the `repo` (GitHub) or `api` (GitLab) scope or failing, the warning says why, with the command that fixes it. The CLI's token is held in memory only (ADR 0017).
 

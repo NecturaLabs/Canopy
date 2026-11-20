@@ -1757,8 +1757,9 @@ fn action_bar(
     } else {
         (false, WAIT)
     };
-    // One primary for the state: Check out while the request is open, else Open on the host.
-    // The rest follow as one group of secondary buttons of the same size and spacing.
+    // One primary per task: while the request is open it is Merge… (in the merge box below), so
+    // these are all secondary; otherwise Open on the host leads. The rest follow as one group of
+    // secondary buttons of the same size and spacing.
     let open = r.state == RequestState::Open;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
@@ -1767,12 +1768,8 @@ fn action_bar(
                 .icon(icon::DOWNLOAD_SIMPLE)
                 .enabled(!checkout_off)
                 .tooltip("Fetch the request's branch and check it out locally")
-                .disabled_reason(checkout_reason);
-            let button = if open {
-                button.primary()
-            } else {
-                button.secondary()
-            };
+                .disabled_reason(checkout_reason)
+                .secondary();
             if button.show(ui).clicked() {
                 actions.push(Action::CheckoutRequest(r.clone()));
             }
@@ -2801,15 +2798,16 @@ mod tests {
             let (host_merged, _) = ink(&merged, "Open on GitHub");
             let (copy, _) = ink(&open, "Copy link");
             let (more, _) = ink(&open, "More");
+            // J6: an open request's primary is Merge… (in the merge box), so Check out is one
+            // of the secondary group; a closed one leads with Open on GitHub.
             assert_ne!(
-                check_out_open, host_open,
+                host_merged, check_out_merged,
                 "{theme_id:?}: a primary and a secondary"
             );
-            assert_eq!(check_out_open, host_merged, "{theme_id:?}: the primary");
             assert_eq!(host_open, check_out_merged, "{theme_id:?}: the secondary");
             assert_eq!(
-                [host_open, copy, more],
-                [host_open; 3],
+                [check_out_open, host_open, copy, more],
+                [host_open; 4],
                 "{theme_id:?}: one group"
             );
             // Left to right: the primary first.
