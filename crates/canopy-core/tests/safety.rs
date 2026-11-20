@@ -237,6 +237,97 @@ fn unmerged_branch_refuses_with_gits_message() {
     assert!(!ref_exists(p, "refs/heads/wip"));
 }
 
+/// #267: whether `git branch -d` would refuse a branch as unmerged, read from the repository's
+/// state rather than git's (translatable) message: compared with the branch's upstream when it
+/// resolves, else with HEAD, and checked against what git itself does in each case.
+#[test]
+fn an_unmerged_branch_is_known_by_state_as_git_judges_it() {
+    isolate_git!(an_unmerged_branch_is_known_by_state_as_git_judges_it);
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    // Not in HEAD, no upstream: unmerged.
+    git(p, &["switch", "-q", "-c", "wip"]);
+    commit_file(p, "w.txt", "w\n");
+    // In HEAD, no upstream: merged.
+    git(p, &["switch", "-q", "main"]);
+    git(p, &["branch", "done"]);
+    // In its upstream but not in HEAD: merged, as git deletes it (with a warning).
+    git(p, &["switch", "-q", "-c", "pushed"]);
+    commit_file(p, "p.txt", "p\n");
+    git(p, &["update-ref", "refs/remotes/origin/pushed", "HEAD"]);
+    git(
+        p,
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.invalid/r.git",
+        ],
+    );
+    git(
+        p,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    git(p, &["branch", "-q", "--set-upstream-to", "origin/pushed"]);
+    // In HEAD but behind nothing in its upstream: not merged into the upstream, which decides.
+    git(p, &["switch", "-q", "main"]);
+    git(p, &["branch", "local", "main"]);
+    git(p, &["update-ref", "refs/remotes/origin/local", "main~0"]);
+    git(
+        p,
+        &["branch", "-q", "--set-upstream-to", "origin/local", "local"],
+    );
+    git(p, &["switch", "-q", "local"]);
+    commit_file(p, "l.txt", "l\n");
+    git(p, &["switch", "-q", "main"]);
+    git(p, &["merge", "-q", "--ff-only", "local"]);
+
+    let cases = [
+        ("wip", true),
+        ("done", false),
+        ("pushed", false),
+        ("local", true),
+    ];
+    for (name, unmerged) in cases {
+        assert_eq!(
+            repo.branch_unmerged(name).expect("read"),
+            unmerged,
+            "{name}"
+        );
+    }
+    // The same answers git gives.
+    for (name, unmerged) in cases {
+        let deleted = run_git(p, &["branch", "-d", "--", name]).status.success();
+        assert_eq!(deleted, !unmerged, "git branch -d {name}");
+    }
+    // A branch that is gone is not an unmerged one, nor is one checked out elsewhere, which git
+    // refuses for that reason first.
+    assert!(!repo.branch_unmerged("wip-gone").expect("read"));
+    git(p, &["switch", "-q", "-c", "elsewhere"]);
+    commit_file(p, "e.txt", "e\n");
+    git(p, &["switch", "-q", "main"]);
+    let linked = dir.path().join("linked");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            &linked.to_string_lossy(),
+            "elsewhere",
+        ],
+    );
+    assert!(!repo.branch_unmerged("elsewhere").expect("read"));
+    assert!(
+        !run_git(p, &["branch", "-d", "--", "elsewhere"])
+            .status
+            .success()
+    );
+}
+
 #[test]
 fn branch_delete_does_not_read_a_name_as_an_option() {
     isolate_git!(branch_delete_does_not_read_a_name_as_an_option);

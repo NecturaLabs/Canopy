@@ -676,6 +676,7 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
         | OpKind::Worktree
         | OpKind::Squash(_)
         | OpKind::SafeDelete(_)
+        | OpKind::Unmerged(_)
         | OpKind::Merge
         | OpKind::Stash
         | OpKind::Pop
@@ -3160,7 +3161,7 @@ impl RepoTab {
                         }
                         Err(e) => match &kind {
                             // Git's own safety check, not a failure: ask before forcing.
-                            OpKind::SafeDelete(name) if e.contains("not fully merged") => {
+                            OpKind::Unmerged(name) => {
                                 self.force_delete_offer = Some(name.clone());
                             }
                             OpKind::Worktree => self.worktree_result = Some(Err(e)),
@@ -5719,15 +5720,18 @@ mod tests {
         let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
         let (worker, events, _jobs) = Worker::detached();
         tab.worker = worker;
-        let finished = |result| Event::OpFinished {
+        let finished = |kind, result| Event::OpFinished {
             label: "Deleting topic".into(),
-            kind: OpKind::SafeDelete("topic".into()),
+            kind,
             announce: true,
             result,
         };
-        events.send(finished(Err(
-            "error: the branch 'topic' is not fully merged".into(),
-        )))?;
+        // #267: the worker read the branch as unmerged; git's words (here a translated git's)
+        // decide nothing.
+        events.send(finished(
+            OpKind::Unmerged("topic".into()),
+            Err("Fehler: Der Branch 'topic' ist nicht vollständig zusammengeführt.".into()),
+        ))?;
         let notices = tab.poll(&[]);
         assert!(
             notices.is_empty(),
@@ -5735,10 +5739,22 @@ mod tests {
         );
         assert_eq!(tab.force_delete_offer.as_deref(), Some("topic"));
         tab.force_delete_offer = None;
-        events.send(finished(Err("fatal: branch 'topic' not found".into())))?;
-        let notices = tab.poll(&[]);
-        assert!(notices.iter().any(|n| !n.ok));
-        assert!(tab.force_delete_offer.is_none());
+        // Any other refusal is an error with git's message, even one that says "not fully merged".
+        for message in [
+            "fatal: branch 'topic' not found",
+            "error: the branch 'topic' is not fully merged",
+        ] {
+            events.send(finished(
+                OpKind::SafeDelete("topic".into()),
+                Err(message.into()),
+            ))?;
+            let notices = tab.poll(&[]);
+            assert!(
+                notices.iter().any(|n| !n.ok && n.body == message),
+                "{message}"
+            );
+            assert!(tab.force_delete_offer.is_none());
+        }
         Ok(())
     }
 

@@ -922,8 +922,11 @@ pub enum OpKind {
     /// A force push, pinned to what the question showed: Git's refusal as stale says what to do
     /// about it.
     ForcePush(Pin),
-    /// `git branch -d`: when Git refuses an unmerged branch, offer to force the delete.
+    /// `git branch -d`.
     SafeDelete(String),
+    /// `git branch -d` refused a branch the repository shows is not merged (#267): offer to force
+    /// the delete. Read from the repository, never from git's words, which may be translated.
+    Unmerged(String),
     /// A merge, squash or rebase invoked from the toolbar.
     Merge,
     Stash,
@@ -1931,6 +1934,18 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         // Frequent and quiet, unless it left folders out.
                         let announce =
                             announce || (stage_all && matches!(&result, Ok(m) if !m.is_empty()));
+                        let kind = match kind {
+                            OpKind::SafeDelete(name)
+                                if result.is_err()
+                                    && repo.branch_unmerged(&name).unwrap_or_else(|e| {
+                                        tracing::warn!(error = %redacted(&e), "merge state not read");
+                                        false
+                                    }) =>
+                            {
+                                OpKind::Unmerged(name)
+                            }
+                            kind => kind,
+                        };
                         emit(Event::OpFinished {
                             label,
                             kind,
@@ -4505,6 +4520,51 @@ mod read_tests {
             );
             assert_eq!(commit.as_deref(), Some("theirs"));
         }
+    }
+
+    /// #267: a branch `git branch -d` refused is offered for a forced delete when the repository
+    /// says it is unmerged, whatever git's message says; any other refusal (here a locked ref of a
+    /// merged branch) stays a failure with git's message.
+    #[test]
+    fn a_refused_safe_delete_is_read_as_unmerged_from_the_repository() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_refused_safe_delete_is_read_as_unmerged_from_the_repository",
+        ) {
+            return;
+        }
+        let root = tempfile::tempdir().expect("tempdir");
+        let (repo, _, _) = conflicting_repo(root.path());
+        git(&repo, &["branch", "done", "main"]);
+        let ended = run_op(
+            &repo,
+            Op::DeleteBranch {
+                name: "other".into(),
+                force: false,
+            },
+        );
+        assert!(
+            matches!(&ended, Event::OpFinished { kind: OpKind::Unmerged(name), result: Err(_), .. } if name == "other"),
+            "{ended:?}"
+        );
+        std::fs::write(
+            repo.join(".git")
+                .join("refs")
+                .join("heads")
+                .join("done.lock"),
+            "",
+        )
+        .expect("lock");
+        let ended = run_op(
+            &repo,
+            Op::DeleteBranch {
+                name: "done".into(),
+                force: false,
+            },
+        );
+        assert!(
+            matches!(&ended, Event::OpFinished { kind: OpKind::SafeDelete(name), result: Err(e), .. } if name == "done" && e.contains("lock")),
+            "{ended:?}"
+        );
     }
 
     /// #183: a stash applied or popped onto changes it conflicts with is the user's to resolve; the
