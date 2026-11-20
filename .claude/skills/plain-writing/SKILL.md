@@ -12,6 +12,18 @@ of verdicts: give the reason with a request ("Right now Linux only picks it up w
 gets the focus back"), say "please" when asking someone else for work, and close a reply to a
 contributor with one short, specific thanks. Cut padding, not courtesy (owner, 2026-11-20).
 
+Example of the register (owner, 2026-11-20), the top of a review:
+
+> Nearly there: one change is needed before this can merge. I've approved the workflow run.
+> - **Blocking:** Match system should switch live when the system's mode changes, on Linux, macOS
+>   and Windows, even with Canopy in the background. Linux currently catches the change only when
+>   the window regains focus.
+>
+> Thanks for the notes on where egui reports the mode; they saved us time.
+
+Too clipped: "Changes needed: one blocking point." Too padded: a sentence of praise before the
+outcome, or a reason restated twice.
+
 ## Pull request bodies, reviews and comments
 
 Two readers, in this order: a human reviewer who reads the top and stops, then an engineering

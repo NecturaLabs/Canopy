@@ -16,7 +16,9 @@ each changed line where a reader meets it, with the text around it: UI strings i
 
 Judge every line against the `plain-writing` skill (`.claude/skills/plain-writing/SKILL.md`):
 its structure for pull request text, the test for every line, the signs and what is fine. Flag
-what breaks it.
+what breaks it. Do not flag what the skill keeps: one specific closing thanks to a contributor,
+the reason given with a request, a promise to the contributor, or a constraint that answers
+their own stated reason.
 
 ## Report
 
