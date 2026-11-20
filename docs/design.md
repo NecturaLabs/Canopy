@@ -355,9 +355,10 @@ in the density's metrics:
   the toolbar's navigation menu, preserving room for repository content. It stays open for
   section toggles, double-click checkout and context menus. A section's items sit one
   `tree_indent` right of its header's icon (the header reads as their parent; a remote's branches
-  one level further) with their selection and hover fills at full width; a new tab opens only
-  Branches, and a section the user opened or closed keeps its state. The Remotes header carries no
-  button and no menu.
+  one level further). At each level of a tree a folder and a branch share one glyph column (the
+  folder's chevron where a branch's icon is) and one label column. Selection and hover fills
+  span the full width; a new tab opens only Branches, and a section the user opened or closed
+  keeps its state. The Remotes header carries no button and no menu.
 - History column widths follow the currently visible rows: graph lane spans, ref pills and
   messages, author names and formatted dates. One ref pill is at most 220 points wide (cut with
   "…", its tooltip the full name); a row's pills take at most 55% of the description column and
@@ -694,9 +695,10 @@ The rest of the kit, each with the states `--overlay gallery` shows:
 - `TreeRow` is a `ListRow` with an indent per level and a disclosure chevron (space is kept for it
   on leaves); Left collapses or asks for the parent, Right expands or asks for the first child.
   The sidebar's Branches are a tree of these: folders for the `/` prefixes (branches first, then
-  folders, each by name; a folder row has its chevron and no icon, the chevron in the accent when
-  the checked-out branch is inside, and shows the number of branches in it), leaf rows with the
-  last segment of the name, a merge icon in the success tone (merged), merging arrows in the warning tone (squash-merged) or a
+  folders, each by name; a folder row has its chevron and no icon (`TreeRow::glyph_chevron` puts
+  the chevron in the icon column), the chevron in the accent when the checked-out branch is
+  inside, and shows the number of branches in it), leaf rows with the last segment of the name
+  (shown whole on hover when cut), a merge icon in the success tone (merged), merging arrows in the warning tone (squash-merged) or a
   crossed-out cloud (upstream gone) for a merged branch, with the deciding check in its tooltip,
   and the ahead and behind counts as mono text. Screen readers hear the whole name, "current
   branch" and the marker. Each level is one `tree_indent` (14).
