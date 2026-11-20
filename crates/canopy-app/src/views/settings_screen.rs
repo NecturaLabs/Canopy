@@ -1978,15 +1978,10 @@ fn noted_row_layout(
                 if !detail.is_empty() {
                     HelpMark::new(title, detail).show(ui);
                 }
-                if let Some(note) = note {
-                    // Beside an explanation mark, the state remark is set apart from it.
-                    let mark = HelpMark::new(title, &note.text).notice(note.warn);
-                    if detail.is_empty() {
-                        mark.show(ui);
-                    } else {
-                        ui.add_space(theme::XS);
-                        mark.apart().show(ui);
-                    }
+                // One mark per row: beside an explanation mark, the state remark is a line
+                // under the help instead.
+                if let Some(note) = note.filter(|_| detail.is_empty()) {
+                    HelpMark::new(title, &note.text).notice(note.warn).show(ui);
                 }
                 if let Some(tag) = tag {
                     ui.add_space(theme::XS);
@@ -1998,6 +1993,16 @@ fn noted_row_layout(
             });
         });
         help(ui);
+        if let Some(note) = note.filter(|_| !detail.is_empty()) {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&note.text)
+                        .size(m.meta_size)
+                        .color(if note.warn { p.warning } else { p.text }),
+                )
+                .wrap(),
+            );
+        }
     };
     ui.push_id(title, |ui| {
         if width < 620.0 {
@@ -7953,6 +7958,52 @@ mod tests {
         // At the default there is nothing to go back to.
         let (_, after) = frame(Vec::new(), &mut value);
         assert!(after.width() <= 0.0, "no button at the default: {after:?}");
+    }
+
+    /// J3: a row with both an explanation and a state remark carries one mark: the remark is a
+    /// line under its help instead of a second mark beside the first.
+    #[test]
+    fn a_row_carries_one_mark() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let note = Note {
+            text: "No sign-in for github.com. Sign in under Accounts.".to_owned(),
+            warn: false,
+        };
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    noted_row_layout(
+                        ui,
+                        "Download profile pictures",
+                        None,
+                        "Shows pictures.",
+                        &|ui: &mut Ui| help_label(ui, "Shows pictures."),
+                        "Sends commit IDs to GitHub.",
+                        Some(&note),
+                        |_| {},
+                    );
+                });
+            });
+        }
+        let marks = nodes
+            .iter()
+            .filter(|n| {
+                n.label.as_deref().is_some_and(|l| {
+                    l == "About Download profile pictures"
+                        || l == "Note on Download profile pictures"
+                })
+            })
+            .count();
+        assert_eq!(marks, 1, "{nodes:?}");
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref().or(n.value.as_deref()) == Some(note.text.as_str())),
+            "the remark is shown as text: {nodes:?}"
+        );
     }
 
     #[test]
