@@ -27,17 +27,23 @@ fn notice_route(ok: bool, delivery: Delivery) -> (ToastKind, Topic) {
     match (ok, delivery) {
         (true, _) => (ToastKind::Success, Topic::Finished),
         (false, Delivery::Attention) => (ToastKind::Error, Topic::Attention),
-        (false, Delivery::Card | Delivery::Quiet) => (ToastKind::Error, Topic::Error),
+        (false, Delivery::Card | Delivery::Quiet | Delivery::ForcePushStopped(_)) => {
+            (ToastKind::Error, Topic::Error)
+        }
     }
 }
 
 /// Announces a repository notice under the topic and delivery it carries.
 fn announce_notice(toasts: &mut Toasts, ctx: &egui::Context, repo: &Path, n: Notice) {
     let (kind, topic) = notice_route(n.ok, n.delivery);
-    if n.delivery == Delivery::Quiet {
-        toasts.push_quiet_for(ctx, kind, topic, n.title, n.body, repo);
-    } else {
-        toasts.push_for(ctx, kind, topic, n.title, n.body, Some(repo));
+    match n.delivery {
+        Delivery::Quiet => toasts.push_quiet_for(ctx, kind, topic, n.title, n.body, repo),
+        Delivery::ForcePushStopped(pin) => {
+            toasts.push_force_push_stopped(ctx, n.title, n.body, repo, pin);
+        }
+        Delivery::Card | Delivery::Attention => {
+            toasts.push_for(ctx, kind, topic, n.title, n.body, Some(repo));
+        }
     }
 }
 
@@ -128,29 +134,32 @@ fn settle_identity_dialog(dialogs: &mut DialogStack, saved: bool) {
     }
 }
 
-/// The question before a force push: the branch and the remote branch it overwrites.
-fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
+/// The question before a force push: the branch and the remote branch it overwrites, and the
+/// commit the remote branch was at, which the push is pinned to.
+pub(super) fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
     let canopy_core::PushTarget {
         branch,
         remote,
         dest,
-    } = target;
+        seen,
+        ..
+    } = &target;
+    let body = match seen {
+        Some(oid) => format!(
+            "This replaces {remote}/{dest}, which your last fetch saw at {}, with your local {branch}. If it has moved since, Git refuses and nothing changes.",
+            canopy_core::short_id(*oid)
+        ),
+        None => format!(
+            "Your last fetch did not see {remote}/{dest}. If the remote has it, Git refuses and nothing changes."
+        ),
+    };
     Dialog::Confirm {
         title: format!("Force push {branch} to {remote}/{dest}?"),
-        body: format!(
-            "{remote}/{dest} is overwritten with your local {branch}. --force-with-lease refuses if someone else pushed in the meantime."
-        ),
-        confirm: "Force push branch".into(),
+        body,
+        confirm: format!("Force push {branch}"),
         danger: true,
         repo: repo.to_path_buf(),
-        op: Op::Push {
-            force: true,
-            expect: Some(canopy_core::PushTarget {
-                branch,
-                remote,
-                dest,
-            }),
-        },
+        op: Op::ForcePush(target),
     }
 }
 
@@ -814,7 +823,7 @@ mod tests {
 
     use super::*;
     use crate::settings::{DiffPrefs, NotificationPrefs};
-    use crate::worker::OpKind;
+    use crate::worker::{OpKind, Pin};
     use crossbeam_channel::Sender;
 
     fn identity(name: &str, email: &str, explicit: bool) -> Identity {
@@ -852,7 +861,11 @@ mod tests {
             notice_route(false, Delivery::Attention),
             (ToastKind::Error, Topic::Attention)
         );
-        for delivery in [Delivery::Card, Delivery::Quiet] {
+        for delivery in [
+            Delivery::Card,
+            Delivery::Quiet,
+            Delivery::ForcePushStopped(Pin::Tip),
+        ] {
             assert_eq!(
                 notice_route(false, delivery),
                 (ToastKind::Error, Topic::Error)
@@ -1593,5 +1606,32 @@ mod tests {
             IdentityStep::Ask
         );
         assert_eq!(step(false, false, false, None, true), IdentityStep::Ask);
+    }
+
+    /// The force push question says what the push is pinned to: the tip the last fetch saw, or
+    /// that nothing was fetched.
+    #[test]
+    fn the_force_push_question_shows_the_tip_it_pins_the_push_to() {
+        let target = |seen| canopy_core::PushTarget {
+            branch: "topic".into(),
+            remote: "origin".into(),
+            dest: "topic".into(),
+            dest_ref: "refs/heads/topic".into(),
+            seen,
+        };
+        let body = |seen| match force_push_dialog(Path::new("/work/mote"), target(seen)) {
+            Dialog::Confirm { body, .. } => body,
+            other => panic!("a confirmation: {other:?}"),
+        };
+        let oid =
+            canopy_core::Oid::from_str("0123456789abcdef0123456789abcdef01234567").expect("an oid");
+        assert_eq!(
+            body(Some(oid)),
+            "This replaces origin/topic, which your last fetch saw at 0123456, with your local topic. If it has moved since, Git refuses and nothing changes."
+        );
+        assert_eq!(
+            body(None),
+            "Your last fetch did not see origin/topic. If the remote has it, Git refuses and nothing changes."
+        );
     }
 }

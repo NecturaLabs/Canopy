@@ -1390,10 +1390,7 @@ pub fn show(
                         url,
                     })];
                     if *publish {
-                        run.push(Action::Op(Op::Push {
-                            force: false,
-                            expect: None,
-                        }));
+                        run.push(Action::Op(Op::Push));
                     } else if *fetch {
                         run.push(Action::Fetch);
                     }
