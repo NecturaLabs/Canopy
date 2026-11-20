@@ -28,7 +28,9 @@ notice unless "force" is chosen.
 
 The release notes are those commits grouped as Security (a `security` scope or a `Security:`
 footer), Breaking changes (`!` or a `BREAKING CHANGE:` footer), Added (`feat`), Fixed (`fix`,
-`revert`) and Changed (`perf`, `build`), so a releasable commit's subject is user-facing text. Before the first
+`revert`) and Changed (`perf`, `build`), so a releasable commit's subject is user-facing text. Each
+line ends `by @login` for its outside contributors and a New contributors section follows
+(`credits` and `new_contributors` in `tools/release.py`; `MAINTAINERS` and bots left out). Before the first
 `build-*` tag the notes are the `[Unreleased]` section of `CHANGELOG.md`. The Release workflow
 embeds them in the build for the "What's new" dialog and publishes them with the release and in
 the feed manifest.
