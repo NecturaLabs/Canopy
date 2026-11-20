@@ -5978,22 +5978,21 @@ mod tests {
                     .collect(),
             }))
         };
-        let read =
-            |tab: &mut RepoTab, texts: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
-                tab.read_blame("a.rs".into(), None);
-                let serial = std::iter::from_fn(|| jobs.try_recv().ok())
-                    .find_map(|job| match job {
-                        Job::Blame { serial, .. } => Some(serial),
-                        _ => None,
-                    })
-                    .expect("a blame job");
-                events.send(Event::Blame {
-                    serial,
-                    result: blame(texts),
-                })?;
-                tab.poll(&[]);
-                Ok(())
-            };
+        let read = |tab: &mut RepoTab, texts: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+            tab.read_blame("a.rs".into(), None);
+            let serial = std::iter::from_fn(|| jobs.try_recv().ok())
+                .find_map(|job| match job {
+                    Job::Blame { serial, .. } => Some(serial),
+                    _ => None,
+                })
+                .expect("a blame job");
+            events.send(Event::Blame {
+                serial,
+                result: blame(texts),
+            })?;
+            tab.poll(&[]);
+            Ok(())
+        };
         read(&mut tab, &["fn a() {}", "fn b() {}"])?;
         events.send(Event::BlameHighlight {
             serial: tab.blame_serial,
