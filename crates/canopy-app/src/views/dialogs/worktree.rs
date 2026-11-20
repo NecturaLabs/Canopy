@@ -310,10 +310,12 @@ pub(super) fn show_forget(
             }
         })
         .footer(|footer| {
-            footer.cancel().confirm(format!(
-                "Forget {}",
-                plural(count.max(1), "worktree", "worktrees")
-            ));
+            // A number only once git has named the worktrees it would forget.
+            footer.cancel().confirm(if count == 0 {
+                "Forget worktrees".to_owned()
+            } else {
+                format!("Forget {}", plural(count, "worktree", "worktrees"))
+            });
             if busy {
                 footer.confirm_disabled("Wait for repository operations to finish");
             } else if let Some(reason) = &blocked {
@@ -521,10 +523,15 @@ mod tests {
             confirm.description.as_deref(),
             Some("Git would also forget /work/lo.")
         );
+        // With nothing to forget, or no count, the button names no number: "Forget 1
+        // worktree" beside "none is missing now" contradicted itself.
         let nodes = forget_frames(&ctx, Some(Ok(Box::default())));
-        assert!(button(&nodes, "Forget 1 worktree").is_some_and(|n| n.disabled));
+        assert!(button(&nodes, "Forget worktrees").is_some_and(|n| n.disabled));
+        assert!(button(&nodes, "Forget 1 worktree").is_none(), "{nodes:?}");
+        let nodes = forget_frames(&ctx, None);
+        assert!(button(&nodes, "Forget worktrees").is_some_and(|n| n.disabled));
         let nodes = forget_frames(&ctx, Some(Err("git went away".into())));
-        let confirm = button(&nodes, "Forget 1 worktree").expect("confirm");
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
         assert!(confirm.disabled);
         assert_eq!(
             confirm.description.as_deref(),
