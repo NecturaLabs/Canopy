@@ -134,7 +134,8 @@ fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
         branch,
         remote,
         dest,
-    } = target;
+        ..
+    } = &target;
     Dialog::Confirm {
         title: format!("Force push {branch} to {remote}/{dest}?"),
         body: format!(
@@ -145,11 +146,7 @@ fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
         repo: repo.to_path_buf(),
         op: Op::Push {
             force: true,
-            expect: Some(canopy_core::PushTarget {
-                branch,
-                remote,
-                dest,
-            }),
+            expect: Some(target),
         },
     }
 }

@@ -3257,6 +3257,112 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
     }
 }
 
+/// The remote branch moves after the user confirmed the force push and a fetch (the background
+/// one, say) brings the new commit into the remote-tracking ref: a bare lease would then match
+/// and overwrite a commit nobody saw. The lease is pinned to what the question showed.
+#[test]
+fn a_force_push_is_refused_when_the_remote_moved_after_the_question() {
+    if !in_isolated_git_env("a_force_push_is_refused_when_the_remote_moved_after_the_question") {
+        return;
+    }
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(up_dir.path(), &["checkout", "-q", "--detach"]);
+    git(p, &["commit", "-q", "--amend", "-m", "feat: rewritten"]);
+    // What the confirmation dialog was built from.
+    let asked = copy.force_push_target().expect("a target");
+
+    // Someone else pushes, and an automatic fetch brings it in before the push runs.
+    git(
+        up_dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "feat: theirs"],
+    );
+    git(up_dir.path(), &["branch", "-q", "-f", "main", "HEAD"]);
+    let theirs = git(up_dir.path(), &["rev-parse", "main"]);
+    copy.fetch(None, false, |_| {}).expect("fetch");
+
+    let refused = copy
+        .force_push(&asked, |_| {})
+        .expect_err("the unseen commit must not be overwritten");
+    assert!(
+        refused.to_string().contains("stale info"),
+        "git's own message reaches the user: {refused}"
+    );
+    assert_eq!(git(up_dir.path(), &["rev-parse", "main"]), theirs);
+}
+
+/// Without a pinned expectation the bare lease still refuses a commit that a fetch brought in
+/// and that the local branch never integrated (`--force-if-includes`).
+#[test]
+fn an_unpinned_force_push_refuses_a_commit_it_never_integrated() {
+    if !in_isolated_git_env("an_unpinned_force_push_refuses_a_commit_it_never_integrated") {
+        return;
+    }
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(up_dir.path(), &["checkout", "-q", "--detach"]);
+    git(p, &["commit", "-q", "--amend", "-m", "feat: rewritten"]);
+    git(
+        up_dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "feat: theirs"],
+    );
+    git(up_dir.path(), &["branch", "-q", "-f", "main", "HEAD"]);
+    let theirs = git(up_dir.path(), &["rev-parse", "main"]);
+    copy.fetch(None, false, |_| {}).expect("fetch");
+    copy.push(true, |_| {}).unwrap_err();
+    assert_eq!(git(up_dir.path(), &["rev-parse", "main"]), theirs);
+}
+
+/// A branch the remote does not have yet is pinned as absent: if someone creates it before the
+/// push, the push is refused instead of replacing it.
+#[test]
+fn a_force_push_of_a_new_branch_is_refused_when_the_remote_created_it() {
+    if !in_isolated_git_env("a_force_push_of_a_new_branch_is_refused_when_the_remote_created_it") {
+        return;
+    }
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(up_dir.path(), &["checkout", "-q", "--detach"]);
+    git(p, &["checkout", "-q", "--no-track", "-b", "topic"]);
+    git(p, &["commit", "-q", "--allow-empty", "-m", "feat: mine"]);
+    let asked = copy.force_push_target().expect("a target");
+    assert_eq!(asked.seen, None, "the remote has no topic yet");
+
+    git(
+        up_dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "feat: theirs"],
+    );
+    git(up_dir.path(), &["branch", "-q", "topic", "HEAD"]);
+    let theirs = git(up_dir.path(), &["rev-parse", "topic"]);
+    copy.force_push(&asked, |_| {}).unwrap_err();
+    assert_eq!(git(up_dir.path(), &["rev-parse", "topic"]), theirs);
+}
+
+/// With the remote where the question saw it, the pinned force push goes through, and the
+/// target remembers the tip it saw.
+#[test]
+fn a_pinned_force_push_goes_through_when_the_remote_is_unchanged() {
+    if !in_isolated_git_env("a_pinned_force_push_goes_through_when_the_remote_is_unchanged") {
+        return;
+    }
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(up_dir.path(), &["checkout", "-q", "--detach"]);
+    let before = git(up_dir.path(), &["rev-parse", "main"]).trim().to_owned();
+    git(p, &["commit", "-q", "--amend", "-m", "feat: rewritten"]);
+    let asked = copy.force_push_target().expect("a target");
+    assert_eq!(
+        asked.seen.map(|oid| oid.to_string()),
+        Some(before),
+        "the question carries the remote-tracking tip"
+    );
+    copy.force_push(&asked, |_| {}).expect("force push");
+    assert_eq!(
+        git(up_dir.path(), &["rev-parse", "main"]),
+        git(p, &["rev-parse", "HEAD"])
+    );
+}
+
 /// A force push goes where a plain push of the branch would: to its upstream of another name
 /// under `upstream`, to the branch of the same name under `current`; `simple` refuses, as git
 /// does.

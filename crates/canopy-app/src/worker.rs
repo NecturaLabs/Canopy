@@ -2452,12 +2452,10 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
                 repo.pull(strategy, progress)
             }
         }
-        Op::Push { force, expect } => {
-            if let Some(asked) = expect.filter(|_| force) {
-                repo.ensure_force_push_target(&asked)?;
-            }
-            repo.push(force, progress)
-        }
+        Op::Push { force, expect } => match expect.filter(|_| force) {
+            Some(asked) => repo.force_push(&asked, progress),
+            None => repo.push(force, progress),
+        },
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
         Op::SetRemoteUrl { name, url } => done(repo.set_remote_url(&name, &url)),
@@ -4197,6 +4195,64 @@ mod read_tests {
             git(&up, &["rev-parse", "main"]),
             git(&copy, &["rev-parse", "main"])
         );
+    }
+
+    /// The force push the user confirmed overwrites what the question saw and nothing newer: a
+    /// commit pushed by someone else and fetched since the question is refused, and the toast's
+    /// text is git's own.
+    #[test]
+    fn a_force_push_is_refused_when_the_remote_moved_after_the_question() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let src = root.path().join("src");
+        std::fs::create_dir(&src).expect("src");
+        git(&src, &["init", "-q", "-b", "main"]);
+        git(&src, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(root.path(), &["clone", "-q", "--bare", "src", "up.git"]);
+        git(root.path(), &["clone", "-q", "up.git", "copy"]);
+        git(root.path(), &["clone", "-q", "up.git", "other"]);
+        let copy = root.path().join("copy");
+        let other = root.path().join("other");
+        let up = root.path().join("up.git");
+        git(
+            &copy,
+            &[
+                "commit",
+                "-q",
+                "--amend",
+                "--allow-empty",
+                "-m",
+                "rewritten",
+            ],
+        );
+        let worker = worker_with_canopys_choices(trusted(copy.clone()));
+        worker.send(Job::PushTarget);
+        let events = events_until(&worker, |e| matches!(e, Event::PushTarget(_)));
+        let Some(Event::PushTarget(Ok(asked))) = events.last() else {
+            panic!("{events:?}");
+        };
+        assert!(asked.seen.is_some(), "the question saw the remote's tip");
+
+        // Someone pushes, and a fetch (the automatic one) lands before the confirmation is used.
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "theirs"]);
+        git(&other, &["push", "-q", "origin", "main"]);
+        let theirs = git(&up, &["rev-parse", "main"]);
+        git(&copy, &["fetch", "-q", "origin"]);
+
+        worker.send(Job::Op(Op::Push {
+            force: true,
+            expect: Some(asked.clone()),
+        }));
+        let events = events_until(&worker, |e| matches!(e, Event::OpFinished { .. }));
+        let Some(Event::OpFinished {
+            result: Err(error), ..
+        }) = events.last()
+        else {
+            panic!("an unseen commit must not be overwritten: {events:?}");
+        };
+        assert!(error.contains("stale info"), "git's message: {error}");
+        assert_eq!(git(&up, &["rev-parse", "main"]), theirs, "theirs is intact");
     }
 
     /// A rebase that stops on conflicts is not a failure: like a pull, it says so and the tab

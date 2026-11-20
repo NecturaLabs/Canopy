@@ -315,6 +315,29 @@ pub struct PushTarget {
     pub remote: String,
     /// The branch on that remote that is overwritten, without `refs/heads/`.
     pub dest: String,
+    /// The tip of that branch as this repository last saw it (its remote-tracking ref) when the
+    /// target was worked out, or `None` when it has not seen the branch. The force push is
+    /// pinned to it ([`Repo::force_push`]): the remote must still be there, or must still not
+    /// have the branch, whatever a fetch brought in since.
+    pub seen: Option<Oid>,
+}
+
+/// How [`Repo::push_with_lease`] guards the remote.
+#[derive(Clone, Copy)]
+enum Lease<'a> {
+    /// A plain push.
+    None,
+    /// A force push whose lease compares with the remote-tracking ref.
+    Bare,
+    /// A force push pinned to the tip the target saw.
+    Pinned(&'a PushTarget),
+}
+
+/// `--force-with-lease=<ref>:<expect>` for a force push of `target`: the remote branch must be
+/// at the tip the user was shown, or, with an empty value, must not exist.
+fn lease_argument(target: &PushTarget) -> String {
+    let expect = target.seen.map(|oid| oid.to_string()).unwrap_or_default();
+    format!("--force-with-lease=refs/heads/{}:{expect}", target.dest)
 }
 
 /// Every blob and gitlink path in `tree`, without converting native names through UTF-8.
@@ -1437,9 +1460,29 @@ impl Repo {
     }
 
     /// Pushes the current branch. Without an upstream, pushes to `origin` (or the only remote)
-    /// and sets it as upstream. `force` uses `--force-with-lease`; annotated tags on the pushed
-    /// commits go along when [`crate::GitOptions::follow_tags`] says so.
+    /// and sets it as upstream. `force` uses `--force-with-lease` without an expected value,
+    /// which compares with the remote-tracking ref and so trusts every fetch since; with git 2.30
+    /// or later, `--force-if-includes` makes it refuse commits a fetch brought in that the branch
+    /// never integrated. Prefer [`Repo::force_push`], which pins the lease to what the user was
+    /// shown. Annotated tags on the pushed commits go along when
+    /// [`crate::GitOptions::follow_tags`] says so.
     pub fn push(&self, force: bool, progress: impl FnMut(&str)) -> Result<String> {
+        self.push_with_lease(if force { Lease::Bare } else { Lease::None }, progress)
+    }
+
+    /// Force pushes the current branch to `asked`, which [`Repo::force_push_target`] returned
+    /// when the user was asked. Refuses if the branch or destination changed since
+    /// ([`Repo::ensure_force_push_target`]); the lease is pinned to the remote branch tip the
+    /// question saw (`--force-with-lease=<ref>:<oid>`, or an empty value when it did not exist),
+    /// so a commit pushed by someone else is never overwritten, even after a fetch (the
+    /// background one included) updated the remote-tracking ref.
+    pub fn force_push(&self, asked: &PushTarget, progress: impl FnMut(&str)) -> Result<String> {
+        self.ensure_force_push_target(asked)?;
+        self.push_with_lease(Lease::Pinned(asked), progress)
+    }
+
+    fn push_with_lease(&self, lease: Lease<'_>, progress: impl FnMut(&str)) -> Result<String> {
+        let force = !matches!(lease, Lease::None);
         let head = self.head()?;
         let Some(branch) = head.branch else {
             return Err(Error::invalid("Check out a branch to push it."));
@@ -1456,8 +1499,15 @@ impl Repo {
         args.extend(["push".to_owned(), "--progress".to_owned()]);
         args.extend(self.follow_tags_flag().map(str::to_owned));
         args.extend(self.push_submodules_flag().map(str::to_owned));
-        if force {
-            args.push("--force-with-lease".to_owned());
+        match lease {
+            Lease::Pinned(pin) => args.push(lease_argument(pin)),
+            Lease::Bare => {
+                args.push("--force-with-lease".to_owned());
+                if cli::version_number().is_some_and(|v| v >= cli::FORCE_IF_INCLUDES_SINCE) {
+                    args.push("--force-if-includes".to_owned());
+                }
+            }
+            Lease::None => {}
         }
         if force && has_upstream {
             let (remote, dest) = self.push_destination(&branch)?;
@@ -1494,7 +1544,9 @@ impl Repo {
     /// what the user confirmed may be overwritten.
     pub fn ensure_force_push_target(&self, asked: &PushTarget) -> Result<()> {
         let now = self.force_push_target()?;
-        if now == *asked {
+        // `seen` is not compared: a remote that moved since is the lease's to refuse, with
+        // git's own message.
+        if (&now.branch, &now.remote, &now.dest) == (&asked.branch, &asked.remote, &asked.dest) {
             return Ok(());
         }
         Err(Error::invalid(format!(
@@ -1524,10 +1576,15 @@ impl Repo {
             )
         };
         let dest = dest.strip_prefix("refs/heads/").unwrap_or(&dest).to_owned();
+        let seen = self
+            .git()
+            .refname_to_id(&format!("refs/remotes/{remote}/{dest}"))
+            .ok();
         Ok(PushTarget {
             branch,
             remote,
             dest,
+            seen,
         })
     }
 

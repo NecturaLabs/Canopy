@@ -83,6 +83,8 @@ pub(crate) const PULL_AUTOSTASH_SINCE: (u32, u32) = (2, 51);
 pub(crate) const SSH_SIGNING_SINCE: (u32, u32) = (2, 34);
 pub(crate) const INITIAL_BRANCH_SINCE: (u32, u32) = (2, 28);
 pub(crate) const MERGE_TREE_WRITE_TREE_SINCE: (u32, u32) = (2, 38);
+/// `git push --force-if-includes` (git 2.30 release notes).
+pub(crate) const FORCE_IF_INCLUDES_SINCE: (u32, u32) = (2, 30);
 /// Git's exit status for a fatal error.
 pub(crate) const EXIT_FATAL: i32 = 128;
 /// `git config --unset-all` exits with this when the key was not set.

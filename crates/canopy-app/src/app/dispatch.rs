@@ -1182,6 +1182,7 @@ mod tests {
                     branch: "feature/dark-mode".into(),
                     remote: "origin".into(),
                     dest: "feature/dark-mode".into(),
+                    seen: Some(canopy_core::Oid::from_bytes(&[7; 20]).expect("an oid")),
                 },
             )))
             .expect("the tab listens");
@@ -1210,6 +1211,11 @@ mod tests {
         assert_eq!(
             (&*expect.branch, &*expect.remote, &*expect.dest),
             ("feature/dark-mode", "origin", "feature/dark-mode")
+        );
+        assert_eq!(
+            expect.seen,
+            Some(canopy_core::Oid::from_bytes(&[7; 20]).expect("an oid")),
+            "the tip the question saw travels with the confirmation"
         );
     }
 
