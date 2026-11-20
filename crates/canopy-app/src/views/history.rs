@@ -912,6 +912,10 @@ mod tests {
 
     use super::*;
 
+    /// The fixture commits' time, 2024-01-02T12:00:00Z: noon, so the date is never the epoch's
+    /// day boundary, and the tests take its text from the app's own formatter, in the local zone.
+    const FIXTURE_TIME: i64 = 1_704_196_800;
+
     /// The Date column grows to hold its longest text instead of cutting "10 minutes ago".
     #[test]
     fn the_date_column_holds_the_longest_relative_time() {
@@ -1219,9 +1223,7 @@ mod tests {
         let author = canopy_core::Signature {
             name: "Author".into(),
             email: "author@example.com".into(),
-            // 2024-01-02T12:00:00Z: noon keeps the date the same in every zone from UTC-12
-            // to UTC+11, so the date the table shows does not depend on the machine's zone.
-            time: 1_704_196_800,
+            time: FIXTURE_TIME,
             offset_minutes: 0,
         };
         let oid = Oid::from_bytes(&[1; 20]).expect("fixture oid");
@@ -1463,7 +1465,8 @@ mod tests {
                 diff.hunks[0].lines.truncate(7);
                 tab.diff = Some(std::sync::Arc::new(diff));
                 let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
-                for text in ["Author", "0101010", "Jan 2, 2024", "file.rs", "other.rs"] {
+                let date = widgets::absolute_date(FIXTURE_TIME);
+                for text in ["Author", "0101010", date.as_str(), "file.rs", "other.rs"] {
                     assert!(
                         visible.iter().any(|t| t == text),
                         "{style:?} {density:?}: {text} must show whole: {visible:?}"
