@@ -1219,7 +1219,9 @@ mod tests {
         let author = canopy_core::Signature {
             name: "Author".into(),
             email: "author@example.com".into(),
-            time: 0,
+            // 2024-01-02T12:00:00Z: noon keeps the date the same in every zone from UTC-12
+            // to UTC+11, so the date the table shows does not depend on the machine's zone.
+            time: 1_704_196_800,
             offset_minutes: 0,
         };
         let oid = Oid::from_bytes(&[1; 20]).expect("fixture oid");
@@ -1461,7 +1463,7 @@ mod tests {
                 diff.hunks[0].lines.truncate(7);
                 tab.diff = Some(std::sync::Arc::new(diff));
                 let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
-                for text in ["Author", "0101010", "Jan 1, 1970", "file.rs", "other.rs"] {
+                for text in ["Author", "0101010", "Jan 2, 2024", "file.rs", "other.rs"] {
                     assert!(
                         visible.iter().any(|t| t == text),
                         "{style:?} {density:?}: {text} must show whole: {visible:?}"
