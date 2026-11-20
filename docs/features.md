@@ -265,14 +265,15 @@ with the same state and busy guards as the buttons.
 Without a GitHub or GitLab remote, the requests view offers Publish… for a repository with no
 remote and Add remote… for one whose remotes are elsewhere.
 
-Request list icons show lifecycle and draft state. A row leads with the request's number and
-title (`#154 Title`, `!154` for a merge request), which wraps to a second line before it is cut,
-then the author and when it was last updated with the labels at the right, then the first
-lines of its description as plain text. The preview flattens Markdown, keeps badge alt text,
-and removes comments and tags. A middle dot separates paragraphs. Empty previews are omitted.
-Titles and author names drop characters that hide or reorder text (blank
-fillers, zero-width spaces, direction controls); emoji keep their joiners. The branches are in the request's
-header and the row's tooltip.
+Request list icons show lifecycle and draft state. A row leads with the request's number and title
+(`#154 Title`, `!154` for a merge request), which wraps to a second line before it is cut, then the
+author and when it was last updated with the labels at the right, then the first lines of its
+description as plain text. The preview flattens Markdown, drops comments and tags, and shows a
+linked image (a badge) as its alt text. A middle dot separates paragraphs, and a request without a
+description shows no preview. Titles, author names, label names and check names drop characters that
+do not show or that reorder text (zero-width spaces, blank fillers, text-direction controls), show a
+line break, tab or Braille blank as a space, and lose spaces at their ends. The branches are in the
+request's header and the row's tooltip.
 A button in the list's toolbar (or Settings, Appearance, Request list) switches the items to dense:
 one line per request with the number, title, labels and checks, and no author line or preview. The
 choice is remembered across restarts, defaults to Comfortable and is separate from the whole-app

@@ -4,7 +4,7 @@
 //! on GitLab), so a row needs no request of its own: the Markdown is flattened here, on the
 //! hosting thread, and only the first part is kept.
 
-use crate::http::plain_text;
+use crate::http::{BRAILLE_BLANK, plain_text};
 
 /// The most characters of a description kept for a list row.
 pub const PREVIEW_CHARS: usize = 600;
@@ -18,8 +18,6 @@ const DOUBLE_MARK: usize = 2;
 /// What stands between two paragraphs, so the end of one sentence does not run into the start of
 /// the next.
 const PARAGRAPH_BREAK: &str = " \u{B7} ";
-/// The Braille blank: a character that draws nothing and is neither whitespace nor ignorable.
-const BRAILLE_BLANK: char = '\u{2800}';
 /// The most characters a link's target (or a reference's name) is read over. A target longer than
 /// this is left as text, which bounds what a run of openers can cost.
 const TARGET_CHARS: usize = 512;
@@ -31,6 +29,7 @@ const TARGET_CHARS: usize = 512;
 /// links and images reduced to their text, paragraphs told apart by [`PARAGRAPH_BREAK`], and
 /// control and invisible characters removed ([`plain_text`]).
 pub fn description_preview(markdown: &str) -> String {
+    // The blank becomes a space before the parse, so it ends a heading or list mark like one.
     let source: String = markdown
         .chars()
         .take(SOURCE_CHARS)
@@ -392,6 +391,11 @@ mod tests {
             "[".repeat(n),
             "[a](".repeat(n / 4),
             "[a][".repeat(n / 4),
+            "[![a](".repeat(n / 4),
+            "[[a](".repeat(n / 4),
+            "[[a](b)](c".repeat(n / 4),
+            "![[".repeat(n / 4),
+            "[[a]](".repeat(n / 4),
         ] {
             let flat = inline(&hostile);
             assert_ne!(flat, "");

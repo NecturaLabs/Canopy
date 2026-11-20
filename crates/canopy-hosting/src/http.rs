@@ -689,15 +689,15 @@ const MIN_TOKEN_LEN: usize = 8;
 ///
 /// Control characters become spaces, characters that reorder or hide text are dropped
 /// (bidirectional controls and every other default-ignorable code point, such as zero-width
-/// spaces, variation selectors and tags, as well as the Braille blank), GitHub and GitLab
-/// tokens ([`TOKEN_PREFIXES`]) and the user name and password in URLs are replaced, whitespace
-/// collapses to single spaces, and the result is at most `max` characters, ending in an ellipsis
-/// when it was cut.
+/// spaces, variation selectors and tags), the Braille blank becomes a space like a control
+/// character, GitHub and GitLab tokens ([`TOKEN_PREFIXES`]) and the user name and password in
+/// URLs are replaced, whitespace collapses to single spaces, and the result is at most `max`
+/// characters, ending in an ellipsis when it was cut.
 pub fn plain_text(text: &str, max: usize) -> String {
     let visible: String = text
         .chars()
         .filter(|&c| !hides_text(c))
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(blank_as_space)
         .collect();
     let visible = canopy_core::cli::redact_url(&hide_tokens(&visible));
     let words = visible.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -730,21 +730,39 @@ fn hide_tokens(text: &str) -> String {
     }
 }
 
-/// A title or author name without the characters that hide or reorder text, otherwise as the
-/// host sent it. The zero-width joiner and the emoji variation selector stay: they only join or
-/// style emoji (`👩‍💻`, `❤️`) and neither hides nor reorders text.
-pub(crate) fn without_hidden_chars(text: &str) -> impl Iterator<Item = char> {
-    text.chars()
-        .filter(|&c| matches!(c, ZERO_WIDTH_JOINER | EMOJI_PRESENTATION) || !hides_text(c))
+/// A name or title a host sent, made fit to show: [`plain_text`]'s characters that hide or
+/// reorder text are dropped, controls, line and paragraph separators and the Braille blank
+/// become spaces, and the ends are trimmed. The inside keeps its spacing; unlike [`plain_text`]
+/// it neither collapses whitespace nor cuts the length. Empty when nothing visible is left.
+pub(crate) fn visible_name(text: &str) -> String {
+    let shown: String = text
+        .chars()
+        .filter(|&c| !hides_text(c))
+        .map(blank_as_space)
+        .collect();
+    shown.trim().to_owned()
 }
 
-/// Joins emoji into one picture.
-const ZERO_WIDTH_JOINER: char = '\u{200D}';
-/// Asks for the emoji form of the character before it.
-const EMOJI_PRESENTATION: char = '\u{FE0F}';
+/// The Braille blank: it draws a blank as wide as a letter but is neither whitespace nor
+/// ignorable, so it would otherwise stay in the text.
+pub(crate) const BRAILLE_BLANK: char = '\u{2800}';
+/// The line and paragraph separators: not control characters, but they break a line.
+const LINE_SEPARATOR: char = '\u{2028}';
+const PARAGRAPH_SEPARATOR: char = '\u{2029}';
 
-/// Unicode 16's `Default_Ignorable_Code_Point` characters (including bidirectional controls),
-/// the interlinear annotation controls and the Braille blank.
+/// `c`, or a space when it is a control character, a line or paragraph separator or the Braille
+/// blank.
+fn blank_as_space(c: char) -> char {
+    if c.is_control() || matches!(c, BRAILLE_BLANK | LINE_SEPARATOR | PARAGRAPH_SEPARATOR) {
+        ' '
+    } else {
+        c
+    }
+}
+
+/// Unicode 16's `Default_Ignorable_Code_Point` characters (which include every bidirectional
+/// control, the zero-width joiner and the variation selectors) and the interlinear annotation
+/// controls: none of them shows, and some reorder text.
 fn hides_text(c: char) -> bool {
     matches!(
         c,
@@ -757,7 +775,6 @@ fn hides_text(c: char) -> bool {
             | '\u{200B}'..='\u{200F}'
             | '\u{202A}'..='\u{202E}'
             | '\u{2060}'..='\u{206F}'
-            | '\u{2800}'
             | '\u{3164}'
             | '\u{FE00}'..='\u{FE0F}'
             | '\u{FEFF}'
@@ -928,8 +945,25 @@ mod tests {
     }
 
     #[test]
-    fn plain_text_drops_the_braille_blank() {
-        assert_eq!(plain_text("a\u{2800}b", 10), "ab");
+    fn a_visible_name_drops_what_hides_text_and_keeps_its_spacing() {
+        // The joiner and the emoji selector draw nothing in egui, so they go like the rest.
+        assert_eq!(visible_name("👩\u{200D}💻 ❤\u{FE0F}"), "👩💻 ❤");
+        assert_eq!(
+            visible_name("a\u{202E}b\u{2066}c\u{200B}d\u{E0041}e"),
+            "abcde"
+        );
+        assert_eq!(visible_name("a  b\t\tc"), "a  b  c");
+        assert_eq!(visible_name("\u{2028}a\u{2029}\n"), "a");
+        assert_eq!(visible_name("Fix\u{2800}bug"), "Fix bug");
+        for only_hidden in ["", "\u{2800}", "\u{200D}\u{200D}", "\u{202E} \u{2800}\n"] {
+            assert_eq!(visible_name(only_hidden), "", "{only_hidden:?}");
+        }
+    }
+
+    #[test]
+    fn plain_text_reads_the_braille_blank_as_a_space() {
+        assert_eq!(plain_text("a\u{2800}b", 10), "a b");
+        assert_eq!(plain_text("Fix\u{2800}bug", 20), "Fix bug");
         assert_eq!(plain_text("\u{2800}", 10), "");
     }
 
