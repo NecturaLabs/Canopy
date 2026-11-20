@@ -48,7 +48,9 @@ def violations(repo: Path, base: str, head: str, require_signoff: bool) -> list[
 
 def selftest() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        repo = Path(tmp)
+        root = Path(tmp)
+        repo = root / "repo"
+        repo.mkdir()
         git(repo, "init", "-q", "--template=", "-b", "main")
         git(repo, "config", "user.name", "Test Author")
         git(repo, "config", "user.email", "author@example.invalid")
@@ -74,6 +76,17 @@ def selftest() -> None:
             "test: cover the example", "-m",
             "Signed-off-by: Test Author <author@example.invalid>\n\nThis is the last paragraph.",
         )
+        lowercase_key = commit(
+            "chore: sign with a lowercase key", "-m", "signed-off-by: Test Author <author@example.invalid>",
+        )
+        noreply = commit(
+            "fix: sign as a no-reply address", "--author", "Plus Person <12345+plus@users.noreply.github.com>",
+            "-m", "Signed-off-by: Plus Person <12345+plus@users.noreply.github.com>",
+        )
+        non_ascii = commit(
+            "feat: sign as a non-ASCII author", "--author", "Zo\u00eb M\u00fcller <zoe@example.invalid>",
+            "-m", "Signed-off-by: Zo\u00eb M\u00fcller <zoe@example.invalid>",
+        )
         git(repo, "switch", "-q", "main")
         base = commit("Base branch change")
         git(repo, "switch", "-q", "topic")
@@ -85,6 +98,40 @@ def selftest() -> None:
             (wrong_signer, "signoff"), (body_only, "signoff"),
         ])
         expect_eq(violations(repo, base, "HEAD", False), [(wrong_subject, "subject")])
+        passing = [signed, lowercase_key, noreply, non_ascii]
+        flagged = {sha for sha, _ in violations(repo, base, "HEAD", True)}
+        expect_eq(sorted(set(passing) & flagged), [])
+
+        script = str(Path(__file__).resolve())
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+        def cli(*args: str, cwd: Path = repo) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, "-B", script, *args], cwd=cwd, env=env, check=False,
+                capture_output=True, encoding="utf-8", errors="surrogateescape",
+            )
+
+        result = cli(base, signed, "--signoff", "required")
+        expect_eq((result.returncode, result.stdout, result.stderr), (0, "PR commits passed.\n", ""))
+        result = cli(base, "HEAD")
+        expect_eq((result.returncode, result.stdout), (1, ""))
+        expect_eq(result.stderr.count(wrong_subject), 1)
+        expect_eq(unsigned in result.stderr, False)
+        result = cli(base, "HEAD", "--signoff", "required")
+        expect_eq(result.returncode, 1)
+        expect_eq([sha in result.stderr for sha in (wrong_subject, unsigned, wrong_signer, body_only)], [True] * 4)
+        expect_eq([sha in result.stderr for sha in passing], [False] * 4)
+        result = cli(base, "HEAD", "--signoff", "required", "--signoff", "exempt")
+        expect_eq((result.returncode, unsigned in result.stderr), (1, False))
+        result = cli(base, "HEAD", "--signoff", "sometimes")
+        expect_eq((result.returncode, "invalid choice" in result.stderr), (2, True))
+        result = cli("no-such-ref", "HEAD")
+        expect_eq((result.returncode, "Could not read the commits" in result.stderr), (2, True))
+
+        shallow = root / "shallow"
+        git(root, "clone", "-q", "--depth", "1", repo.as_uri(), str(shallow))
+        result = cli("HEAD", "HEAD", cwd=shallow)
+        expect_eq((result.returncode, "shallow" in result.stderr), (2, True))
     print("PR commit check selftest passed.")
 
 
