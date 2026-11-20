@@ -74,6 +74,8 @@ pub const OVERLAYS: &[&str] = &[
     "settings-notifications",
     "settings-keyboard",
     "settings-backup",
+    "settings-import-ignored",
+    "settings-keyboard-capture",
     "settings-repository",
     "settings-repository-pull",
     "settings-repository-diffs",
@@ -660,6 +662,12 @@ impl CanopyApp {
             }
             Some("settings-backup") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Data));
+            }
+            Some("settings-import-ignored") => {
+                app.settings_screen = Some(SettingsScreen::after_import_ignored());
+            }
+            Some("settings-keyboard-capture") => {
+                app.settings_screen = Some(SettingsScreen::capturing_a_key(&cc.egui_ctx));
             }
             Some("settings-repository") => {
                 app.settings_screen = Some(SettingsScreen::awaiting_repository());

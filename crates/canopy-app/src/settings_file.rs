@@ -141,20 +141,27 @@ pub struct Imported {
     /// What the file named but this computer keeps, in the words of [`THIS_COMPUTER`] and
     /// [`NETWORK_SWITCHES`], each once.
     pub kept: Vec<&'static str>,
+    /// How many saved shortcuts the file named that Canopy cannot use (not a row, or against a
+    /// keyboard rule), so were left out.
+    pub ignored_shortcuts: usize,
 }
 
 impl Imported {
     /// The message after an import from `path`.
     pub fn message(&self, path: &std::path::Path) -> String {
-        if self.kept.is_empty() {
-            format!("Imported from {}.", path.display())
-        } else {
-            format!(
-                "Imported from {}. Kept as they are on this computer: {}.",
-                path.display(),
+        let mut sentences = vec![format!("Imported from {}.", path.display())];
+        if !self.kept.is_empty() {
+            sentences.push(format!(
+                "Kept as they are on this computer: {}.",
                 self.kept.join(", ")
-            )
+            ));
         }
+        match self.ignored_shortcuts {
+            0 => {}
+            1 => sentences.push("Ignored 1 shortcut Canopy cannot use.".to_owned()),
+            n => sentences.push(format!("Ignored {n} shortcuts Canopy cannot use.")),
+        }
+        sentences.join(" ")
     }
 }
 
@@ -254,8 +261,14 @@ pub fn import(current: &Settings, text: &str) -> Result<Imported, String> {
     }
     let mut settings: Settings = serde_json::from_value(Value::Object(merged))
         .map_err(|e| format!("The settings file has a value Canopy cannot use: {e}."))?;
+    // Counted here, before `migrate` would drop them without saying so.
+    let ignored_shortcuts = crate::keymap::drop_ignored(&mut settings.keybindings);
     settings.migrate();
-    Ok(Imported { settings, kept })
+    Ok(Imported {
+        settings,
+        kept,
+        ignored_shortcuts,
+    })
 }
 
 /// `current` with every preference back to its default; consent, trust and session memory
@@ -802,5 +815,70 @@ mod tests {
         let endless = std::io::repeat(b' ');
         assert!(matches!(read_text(endless), Err(m) if m.contains("too large")));
         assert_eq!(read_text(&b"{}"[..]).as_deref(), Ok("{}"));
+    }
+    fn file_with_keys(keys: &str) -> String {
+        format!(
+            r#"{{"format": "canopy-settings", "version": 1, "settings": {{"keybindings": {keys}}}}}"#
+        )
+    }
+
+    /// A file's keys that break a rule or name no row are left out of the settings, counted in
+    /// the message and never exported again; its valid keys come through untouched.
+    #[test]
+    fn an_import_says_how_many_shortcuts_it_ignored() {
+        let text = file_with_keys(
+            r#"{"Fetch.Repository": "V", "Push.Repository": "SuperLeft",
+                "MergeDialog.Repository": "F9", "Nothing.Anywhere": "V"}"#,
+        );
+        let path = std::path::Path::new("keys.json");
+        let imported = import(&Settings::default(), &text).unwrap();
+        assert_eq!(imported.ignored_shortcuts, 3);
+        assert_eq!(
+            imported.settings.keybindings.keys().collect::<Vec<_>>(),
+            ["Fetch.Repository"],
+            "only the valid key is kept"
+        );
+        assert_eq!(
+            imported.message(path),
+            "Imported from keys.json. Ignored 3 shortcuts Canopy cannot use."
+        );
+        let again = export(&imported.settings).unwrap();
+        assert!(again.contains("Fetch.Repository"), "{again}");
+        for gone in ["SuperLeft", "F9", "Nothing.Anywhere"] {
+            assert!(!again.contains(gone), "{gone} is exported again:\n{again}");
+        }
+
+        let one = import(
+            &Settings::default(),
+            &file_with_keys(r#"{"Push.Repository": "SuperLeft"}"#),
+        )
+        .unwrap();
+        assert_eq!(
+            one.message(path),
+            "Imported from keys.json. Ignored 1 shortcut Canopy cannot use."
+        );
+        assert!(one.settings.keybindings.is_empty());
+
+        let valid = import(
+            &Settings::default(),
+            &file_with_keys(r#"{"Fetch.Repository": "V"}"#),
+        )
+        .unwrap();
+        assert_eq!(valid.ignored_shortcuts, 0);
+        assert_eq!(valid.message(path), "Imported from keys.json.");
+    }
+
+    #[test]
+    fn the_message_names_what_was_kept_and_what_was_ignored() {
+        let imported = Imported {
+            settings: Settings::default(),
+            kept: vec!["editor"],
+            ignored_shortcuts: 2,
+        };
+        assert_eq!(
+            imported.message(std::path::Path::new("a.json")),
+            "Imported from a.json. Kept as they are on this computer: editor. \
+             Ignored 2 shortcuts Canopy cannot use."
+        );
     }
 }
