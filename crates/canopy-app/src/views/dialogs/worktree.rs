@@ -257,7 +257,11 @@ fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
         );
     }
     if entry.submodule_repositories {
-        note(ui, "    its submodule repositories are deleted", p.danger);
+        note(
+            ui,
+            "    its submodule repositories are deleted, with any commits in them that were never pushed",
+            p.danger,
+        );
     }
 }
 
@@ -300,7 +304,7 @@ pub(super) fn show_forget(
                     }
                     note(
                         ui,
-                        "Removes git's record of worktrees whose folders are gone. No folder is deleted and their branches stay. Commits that only such a worktree's HEAD log or submodules hold are lost.",
+                        "Removes git's record of worktrees whose folders are gone. No folder is deleted and their branches stay. Commits that only such a worktree's HEAD log or its own refs hold are lost.",
                         p.text,
                     );
                     for entry in &forget.entries {
@@ -310,11 +314,15 @@ pub(super) fn show_forget(
             }
         })
         .footer(|footer| {
-            footer.cancel().confirm(format!(
-                "Forget {}",
-                plural(count.max(1), "worktree", "worktrees")
-            ));
-            if busy {
+            // A number only once git has named the worktrees it would forget.
+            footer.cancel().confirm(if count == 0 {
+                "Forget worktrees".to_owned()
+            } else {
+                format!("Forget {}", plural(count, "worktree", "worktrees"))
+            });
+            if tab.is_none() {
+                footer.confirm_disabled("This is no longer available");
+            } else if busy {
                 footer.confirm_disabled("Wait for repository operations to finish");
             } else if let Some(reason) = &blocked {
                 footer.confirm_disabled(reason.clone());
@@ -496,15 +504,52 @@ mod tests {
             "{nodes:?}"
         );
         assert!(said("No folder is deleted and their branches stay"));
-        assert!(said("HEAD log or submodules hold are lost"));
+        // The worktree's own refs (refs/worktree/*, a bisect's refs) go with its entry too.
+        assert!(said("HEAD log or its own refs hold are lost"));
         assert!(!said("config.worktree"), "no plumbing: {nodes:?}");
         assert!(said(
             "2 commits that no branch, remote branch or tag contains"
         ));
         assert!(said("a rebase in progress is lost"));
-        assert!(said("submodule repositories are deleted"));
+        assert!(said(
+            "its submodule repositories are deleted, with any commits in them that were never pushed"
+        ));
         assert!(!said("deletes nothing"), "no claim that nothing is deleted");
         assert!(button(&nodes, "Forget 2 worktrees").is_some_and(|n| !n.disabled));
+        // A worktree without submodules says nothing about them.
+        let plain = canopy_core::WorktreeForget {
+            entries: vec![entry("plain")],
+            blocked: None,
+        };
+        let nodes = forget_frames(&ctx, Some(Ok(Box::new(plain))));
+        let mentions_submodules = nodes.iter().any(|n| {
+            [&n.label, &n.value]
+                .into_iter()
+                .flatten()
+                .any(|text| text.contains("submodule"))
+        });
+        assert!(!mentions_submodules, "{nodes:?}");
+    }
+
+    /// A confirmation left open after its tab closed says so on its button too, not that
+    /// repository operations are running.
+    #[test]
+    fn a_forget_left_without_its_tab_says_it_is_gone() {
+        let ctx = setup();
+        let form = ForgetWorktreesForm::new(PathBuf::from("/work/canopy"), 1);
+        let salt = salt(&Dialog::ForgetWorktrees(Box::new(form.clone())));
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = spoken(&ctx, |_| {
+                show_forget(&ctx, salt, &form, None);
+            });
+        }
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("This is no longer available")
+        );
     }
 
     #[test]
@@ -521,10 +566,25 @@ mod tests {
             confirm.description.as_deref(),
             Some("Git would also forget /work/lo.")
         );
+        // With nothing to forget, or no count, the button names no number: "Forget 1
+        // worktree" beside "none is missing now" contradicted itself.
         let nodes = forget_frames(&ctx, Some(Ok(Box::default())));
-        assert!(button(&nodes, "Forget 1 worktree").is_some_and(|n| n.disabled));
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("Git would forget no worktree: none is missing now.")
+        );
+        assert!(button(&nodes, "Forget 1 worktree").is_none(), "{nodes:?}");
+        let nodes = forget_frames(&ctx, None);
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("Wait for the check of the worktrees")
+        );
         let nodes = forget_frames(&ctx, Some(Err("git went away".into())));
-        let confirm = button(&nodes, "Forget 1 worktree").expect("confirm");
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
         assert!(confirm.disabled);
         assert_eq!(
             confirm.description.as_deref(),
