@@ -300,7 +300,7 @@ pub(super) fn show_forget(
                     }
                     note(
                         ui,
-                        "Removes git's record of worktrees whose folders are gone. No folder is deleted and their branches stay. Commits that only such a worktree's HEAD log or submodules hold are lost.",
+                        "Removes git's record of worktrees whose folders are gone. No folder is deleted and their branches stay. Commits that only such a worktree's HEAD log holds are lost.",
                         p.text,
                     );
                     for entry in &forget.entries {
@@ -498,7 +498,7 @@ mod tests {
             "{nodes:?}"
         );
         assert!(said("No folder is deleted and their branches stay"));
-        assert!(said("HEAD log or submodules hold are lost"));
+        assert!(said("HEAD log holds are lost"));
         assert!(!said("config.worktree"), "no plumbing: {nodes:?}");
         assert!(said(
             "2 commits that no branch, remote branch or tag contains"
