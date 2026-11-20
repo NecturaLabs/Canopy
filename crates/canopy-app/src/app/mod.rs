@@ -819,6 +819,18 @@ impl CanopyApp {
         }
     }
 
+    /// Fetches the repository at `path`, as a click on Fetch there would, unless its tab is busy.
+    fn fetch_offered(&self, path: &std::path::Path, actions: &mut Vec<Action>) {
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.path == path && tab.running.is_none())
+        {
+            actions.push(Action::SwitchTab(index));
+            actions.push(Action::Fetch);
+        }
+    }
+
     fn tab(&mut self) -> Option<&mut RepoTab> {
         self.tabs.get_mut(self.active)
     }
@@ -1406,6 +1418,7 @@ impl eframe::App for CanopyApp {
         for offer in self.toasts.show(&ctx) {
             match offer {
                 Offer::Pull(path) => self.pull_offered(&path, &mut actions),
+                Offer::Fetch(path) => self.fetch_offered(&path, &mut actions),
                 Offer::Accounts => {
                     self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }

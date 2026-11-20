@@ -759,7 +759,7 @@ fn tool_of(kind: &OpKind) -> Option<Tool> {
     Some(match kind {
         OpKind::Fetch => Tool::Fetch,
         OpKind::Pull => Tool::Pull,
-        OpKind::Push => Tool::Push,
+        OpKind::Push | OpKind::ForcePush(_) => Tool::Push,
         OpKind::Stash => Tool::Stash,
         OpKind::Pop => Tool::Pop,
         OpKind::Merge | OpKind::Squash(_) => Tool::Merge,

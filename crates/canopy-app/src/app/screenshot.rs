@@ -1036,9 +1036,9 @@ mod tests {
             other => panic!("--overlay {name} opens {other:?}"),
         };
         assert!(
-            body("force-push").starts_with("origin/topic was at 38b14e7 when you last fetched")
+            body("force-push").starts_with("This replaces origin/topic with your local topic.")
         );
-        assert!(body("force-push-new").starts_with("Canopy has not fetched origin/topic."));
+        assert!(body("force-push-new").starts_with("origin/topic is not in your last fetch"));
     }
 
     #[test]

@@ -30,6 +30,7 @@ use super::kit::{Button, KitResponse, Size, paint};
 use super::motion;
 use super::theme;
 use crate::settings::NotificationPrefs;
+use crate::worker::Pin;
 
 /// Severity of a toast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +103,9 @@ impl Topic {
 pub enum Offer {
     /// A push was refused because the remote moved on: pull the repository at this path.
     Pull(PathBuf),
+    /// A force push was stopped because the remote is not where the last fetch saw it: fetch
+    /// the repository at this path.
+    Fetch(PathBuf),
     /// The hosting API refused the CLI's sign-in: open Settings at Accounts.
     Accounts,
     /// Git's own configuration sets a choice against Canopy's recommendation: open Settings at
@@ -118,6 +122,7 @@ impl Offer {
     fn choice(&self) -> Choice<'static> {
         let (confirm, glyph, decline) = match self {
             Self::Pull(_) => ("Pull", icon::ARROW_DOWN, "Not now"),
+            Self::Fetch(_) => ("Fetch", icon::ARROWS_CLOCKWISE, "Not now"),
             Self::Accounts => ("Open Accounts", icon::USER_CIRCLE, "Not now"),
             Self::GitSettings => ("Open Git settings", icon::GIT_BRANCH, "Later"),
             Self::ReviewUpdate => ("Review update", icon::DOWNLOAD_SIMPLE, "Later"),
@@ -142,13 +147,7 @@ fn error_help(
     repo: Option<&Path>,
 ) -> Option<(&'static str, Option<Offer>)> {
     let lower = body.to_lowercase();
-    if title.to_lowercase().contains("push") && lower.contains("stale info") {
-        // A force push pinned to what the user was asked about (`--force-with-lease=<ref>:<oid>`).
-        Some((
-            "The remote branch is not where your last fetch saw it. Fetch, check what arrived, then force push again.",
-            None,
-        ))
-    } else if title.to_lowercase().contains("push")
+    if title.to_lowercase().contains("push")
         && (lower.contains("fetch first") || lower.contains("non-fast-forward"))
     {
         Some((
@@ -180,6 +179,19 @@ fn error_help(
         ))
     } else {
         None
+    }
+}
+
+/// What to do about a force push Git stopped as stale: the tip the question showed, or the
+/// absence of the branch, is not what the remote has now.
+fn stale_help(pin: Pin) -> &'static str {
+    match pin {
+        Pin::Tip => {
+            "The remote branch has moved since your last fetch. Fetch, check what arrived, then force push again."
+        }
+        Pin::Absent => {
+            "The remote already has this branch, and your last fetch did not see it. Fetch, check what is on it, then force push again."
+        }
     }
 }
 
@@ -436,6 +448,7 @@ enum SavedKind {
 #[derive(Debug, Serialize, Deserialize)]
 enum SavedOffer {
     Pull(PathBuf),
+    Fetch(PathBuf),
     Accounts,
     GitSettings,
 }
@@ -460,10 +473,13 @@ impl Toasts {
                 unread: e.unread
                     || (matches!(
                         e.offer,
-                        Some(Offer::Pull(_) | Offer::Accounts | Offer::GitSettings)
+                        Some(
+                            Offer::Pull(_) | Offer::Fetch(_) | Offer::Accounts | Offer::GitSettings
+                        )
                     ) && self.items.iter().any(|t| t.id == e.id)),
                 offer: match &e.offer {
                     Some(Offer::Pull(path)) => Some(SavedOffer::Pull(path.clone())),
+                    Some(Offer::Fetch(path)) => Some(SavedOffer::Fetch(path.clone())),
                     Some(Offer::Accounts) => Some(SavedOffer::Accounts),
                     Some(Offer::GitSettings) => Some(SavedOffer::GitSettings),
                     Some(Offer::ReviewUpdate | Offer::Restart(_)) | None => None,
@@ -498,6 +514,7 @@ impl Toasts {
                 help: None,
                 offer: s.offer.map(|o| match o {
                     SavedOffer::Pull(path) => Offer::Pull(path),
+                    SavedOffer::Fetch(path) => Offer::Fetch(path),
                     SavedOffer::Accounts => Offer::Accounts,
                     SavedOffer::GitSettings => Offer::GitSettings,
                 }),
@@ -570,6 +587,32 @@ impl Toasts {
             .and_then(Path::file_name)
             .map(|name| name.to_string_lossy().into_owned());
         self.notify(ctx, kind, topic, title, body, help, offer, source, true);
+    }
+
+    /// A force push that Git stopped because the remote branch is not where the last fetch saw
+    /// it. Nothing was pushed; fetching and looking is the way on, so the card offers the fetch.
+    pub fn push_force_push_stopped(
+        &mut self,
+        ctx: &egui::Context,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        repo: &Path,
+        pin: Pin,
+    ) {
+        let source = repo
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        self.notify(
+            ctx,
+            ToastKind::Error,
+            Topic::Error,
+            title.into(),
+            body.into(),
+            Some(stale_help(pin)),
+            Some(Offer::Fetch(repo.to_path_buf())),
+            source,
+            true,
+        );
     }
 
     /// Like [`Self::push_for`] for work the user did not start (an automatic fetch failing):
@@ -1434,31 +1477,59 @@ mod tests {
         }
     }
 
-    /// A force push whose remote moved after the question says what to do, and keeps git's text.
+    /// A force push stopped as stale says what to do, offers the fetch, keeps git's text, and
+    /// tells a branch that was never fetched from one that moved.
     #[test]
-    fn a_force_push_refused_as_stale_says_to_fetch_and_look() {
+    fn a_stopped_force_push_offers_the_fetch_and_keeps_git_s_text() {
         let raw = " ! [rejected]        HEAD -> main (stale info)\nerror: failed to push some refs";
-        let (help, offer) = error_help("Could not force push", raw, Some(Path::new("/work/mote")))
-            .expect("an explanation");
-        assert!(
-            help.starts_with("The remote branch is not where your last fetch saw it"),
-            "{help}"
-        );
-        assert_eq!(offer, None, "pulling would not be the fix");
+        let repo = Path::new("/work/mote");
         let ctx = egui::Context::default();
-        let mut toasts = Toasts::default();
-        toasts.push(
-            &ctx,
-            ToastKind::Error,
-            Topic::Error,
-            "Could not force push",
-            raw,
-        );
+        let mut helps = Vec::new();
+        for pin in [Pin::Tip, Pin::Absent] {
+            let mut toasts = Toasts::default();
+            toasts.push_force_push_stopped(&ctx, "Force push stopped", raw, repo, pin);
+            let row = &toasts.history[0];
+            assert_eq!(row.title, "Force push stopped");
+            assert_eq!(row.offer, Some(Offer::Fetch(repo.to_path_buf())), "{pin:?}");
+            assert!(
+                row.body.contains("stale info"),
+                "git's own text stays: {}",
+                row.body
+            );
+            assert_eq!(toasts.items.len(), 1, "a card, not only a row");
+            helps.push(row.help.expect("a hint"));
+        }
+        assert!(helps[0].starts_with("The remote branch has moved since your last fetch"));
         assert!(
-            toasts.history[0].body.contains("stale info"),
-            "git's own text stays: {:?}",
-            toasts.history[0].body
+            helps[1].starts_with(
+                "The remote already has this branch, and your last fetch did not see it"
+            ),
+            "{}",
+            helps[1]
         );
+        assert_eq!(Offer::Fetch(repo.to_path_buf()).choice().confirm, "Fetch");
+        assert_eq!(Offer::Fetch(repo.to_path_buf()).choice().decline, "Not now");
+        assert_eq!(
+            error_help("Could not force push", raw, Some(repo)),
+            None,
+            "only the stopped push, which knows what it was pinned to, explains it"
+        );
+    }
+
+    /// The fetch a stopped force push offers survives a restart like the pull offer does.
+    #[test]
+    fn the_fetch_offer_of_a_stopped_force_push_survives_a_restart() {
+        let ctx = egui::Context::default();
+        let repo = Path::new("/work/mote");
+        let mut toasts = Toasts::default();
+        toasts.push_force_push_stopped(&ctx, "Force push stopped", "(stale info)", repo, Pin::Tip);
+        let mut restored = Toasts::default();
+        restored.restore_json(&toasts.to_json());
+        assert_eq!(
+            restored.history[0].offer,
+            Some(Offer::Fetch(repo.to_path_buf()))
+        );
+        assert!(restored.history[0].unread, "the decision is still waiting");
     }
 
     #[test]

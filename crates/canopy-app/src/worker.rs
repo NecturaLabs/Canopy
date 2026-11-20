@@ -285,7 +285,12 @@ impl Op {
             Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
             Self::Fetch { .. } => OpKind::Fetch,
             Self::Pull { .. } => OpKind::Pull,
-            Self::Push | Self::ForcePush(_) | Self::PublishBranch { .. } => OpKind::Push,
+            Self::ForcePush(target) => OpKind::ForcePush(if target.seen.is_some() {
+                Pin::Tip
+            } else {
+                Pin::Absent
+            }),
+            Self::Push | Self::PublishBranch { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             Self::Merge(..) | Self::Rebase(_) | Self::UpdateFromBase { .. } => OpKind::Merge,
             Self::StashSave { .. } => OpKind::Stash,
@@ -880,6 +885,14 @@ impl Drop for ThreadEnd {
     }
 }
 
+/// What a force push is pinned to: the remote branch's tip as the last fetch saw it, or, when
+/// that fetch had no such branch, its absence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pin {
+    Tip,
+    Absent,
+}
+
 /// What a finished operation means for the tab, independent of its label's wording.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpKind {
@@ -893,6 +906,9 @@ pub enum OpKind {
     Pull,
     /// A push: it can open, update or close a request.
     Push,
+    /// A force push, pinned to what the question showed: Git's refusal as stale says what to do
+    /// about it.
+    ForcePush(Pin),
     /// `git branch -d`: when Git refuses an unmerged branch, offer to force the delete.
     SafeDelete(String),
     /// A merge, squash or rebase invoked from the toolbar.
@@ -912,7 +928,10 @@ impl OpKind {
     /// Whether finishing this operation means the forge's pull or merge requests may have
     /// changed (it talked to the remote).
     pub fn syncs_remote(&self) -> bool {
-        matches!(self, Self::Fetch | Self::Pull | Self::Push)
+        matches!(
+            self,
+            Self::Fetch | Self::Pull | Self::Push | Self::ForcePush(_)
+        )
     }
 }
 
@@ -5001,6 +5020,24 @@ mod read_tests {
 
     /// #43: Publish works on any local branch, not only the checked-out one, and makes the remote
     /// branch its upstream.
+    /// A force push finishes as the kind that says what it was pinned to.
+    #[test]
+    fn a_force_push_kind_says_what_it_was_pinned_to() {
+        let target = |seen| {
+            Op::ForcePush(canopy_core::PushTarget {
+                branch: "topic".into(),
+                remote: "origin".into(),
+                dest: "topic".into(),
+                dest_ref: "refs/heads/topic".into(),
+                seen,
+            })
+        };
+        let oid = Oid::from_bytes(&[7; 20]).expect("an oid");
+        assert_eq!(target(Some(oid)).kind(), OpKind::ForcePush(Pin::Tip));
+        assert_eq!(target(None).kind(), OpKind::ForcePush(Pin::Absent));
+        assert!(OpKind::ForcePush(Pin::Tip).syncs_remote());
+    }
+
     #[test]
     fn a_branch_that_is_not_checked_out_can_be_published() {
         let root = tempfile::tempdir().expect("tempdir");

@@ -16,7 +16,7 @@ use crate::hosting::{
 use crate::request_view::{RequestDensity, RequestView};
 use crate::settings::{DiffPrefs, PullChoice};
 use crate::views::requests::row_standing;
-use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
+use crate::worker::{DiffKey, Event, Job, Op, OpKind, Pin, Worker};
 
 /// The main views of a repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,6 +431,10 @@ pub enum Delivery {
     /// Work the user did not start failed, or changed something: the center and the bell hold
     /// it, no card.
     Quiet,
+    /// A force push Git refused as stale, a safety stop and not a failure: the card says what to
+    /// do about it and offers the fetch. It is filed as an error until notifications have a
+    /// warning kind (#253).
+    ForcePushStopped(Pin),
 }
 
 /// Outcome of a finished operation, surfaced as a toast by the app.
@@ -484,6 +488,15 @@ const VERBS: &[(&str, &str, &str)] = &[
     ("Updating", "Updated", "update"),
     ("Untracking", "Stopped tracking", "stop tracking"),
 ];
+
+/// The title of a force push that Git refused because the remote branch is not where the push was
+/// pinned to.
+const FORCE_PUSH_STOPPED: &str = "Force push stopped";
+
+/// Whether Git refused a push pinned with `--force-with-lease` ("(stale info)" on its ref line).
+fn refused_as_stale(error: &str) -> bool {
+    error.to_lowercase().contains("stale info")
+}
 
 /// A finished operation's notification title from its progress label: "Creating branch x"
 /// becomes "Created branch x", or "Could not create branch x" when it failed.
@@ -635,6 +648,7 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
             body
         }
         OpKind::Push
+        | OpKind::ForcePush(_)
         | OpKind::Other
         | OpKind::Worktree
         | OpKind::Squash(_)
@@ -3098,16 +3112,26 @@ impl RepoTab {
                                     ok: false,
                                     at: Instant::now(),
                                 });
-                                notices.push(Notice {
-                                    ok: false,
+                                let (title, delivery) = match kind {
+                                    OpKind::ForcePush(pin) if refused_as_stale(&e) => (
+                                        FORCE_PUSH_STOPPED.to_owned(),
+                                        Delivery::ForcePushStopped(pin),
+                                    ),
                                     // Only a fetch nobody asked for is quiet; a failed
                                     // stage or resolve is the user's own action.
-                                    delivery: if announce || kind != OpKind::Fetch {
-                                        Delivery::Card
-                                    } else {
-                                        Delivery::Quiet
-                                    },
-                                    title: outcome_title(&label, false),
+                                    _ => (
+                                        outcome_title(&label, false),
+                                        if announce || kind != OpKind::Fetch {
+                                            Delivery::Card
+                                        } else {
+                                            Delivery::Quiet
+                                        },
+                                    ),
+                                };
+                                notices.push(Notice {
+                                    ok: false,
+                                    delivery,
+                                    title,
                                     body: e,
                                 });
                             }
@@ -5220,6 +5244,43 @@ mod tests {
         // The fetch the user starts always says how it went.
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
         assert_eq!(shown(&mut tab, finished(true, Err(refusal)))?, 1);
+        Ok(())
+    }
+
+    /// A force push Git refused as stale is a stopped push, not a failure, and carries what it was
+    /// pinned to; any other failure of it stays an ordinary one.
+    #[test]
+    fn a_force_push_refused_as_stale_is_a_stop_that_knows_its_pin()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let finished = |pin, error: &str| Event::OpFinished {
+            label: "Force pushing".into(),
+            kind: OpKind::ForcePush(pin),
+            announce: true,
+            result: Err(error.to_owned()),
+        };
+        let stale = " ! [rejected]        HEAD -> topic (stale info)";
+        for pin in [Pin::Tip, Pin::Absent] {
+            events.send(finished(pin, stale))?;
+            let notices = tab.poll(&[]);
+            let [notice] = notices.as_slice() else {
+                panic!("one notice: {notices:?}");
+            };
+            assert_eq!(notice.title, "Force push stopped");
+            assert_eq!(notice.delivery, Delivery::ForcePushStopped(pin));
+            assert_eq!(notice.body, stale, "git's text is kept");
+        }
+        events.send(finished(Pin::Tip, "fatal: unable to access the remote"))?;
+        let notices = tab.poll(&[]);
+        let [notice] = notices.as_slice() else {
+            panic!("one notice: {notices:?}");
+        };
+        assert_eq!(notice.title, "Could not force push");
+        assert_eq!(notice.delivery, Delivery::Card);
         Ok(())
     }
 
