@@ -483,7 +483,9 @@ in the density's metrics:
   A line wider than the pane fades out at the edge. A hunk header shows its title and actions
   only; how to pick lines is in the Stage hunk and Unstage hunk tooltips.
 - The diff header names the file with its folder and its +/− count on the left; the diff
-  options, layout switch, Blame and the file's action keep to the right edge.
+  options, layout switch, Blame and the file's action keep to the right edge. From 720 points it
+  is one row, the name cut to leave the controls their room; narrower, it is one row when both
+  parts fit whole (measured on the two-row layout for that file) and two rows otherwise.
 - Conflict side previews (no line numbers) drop the indentation their lines share, and a line
   too long for the card is cut back to a word or number boundary before its ellipsis, so a number
   is never cut in two, unless that would lose more than a quarter of what fits. A file both sides

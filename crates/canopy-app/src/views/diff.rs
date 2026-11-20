@@ -568,6 +568,9 @@ fn gutters(d: &FileDiff) -> (bool, bool) {
     }
 }
 
+/// From this width a diff header always takes one row.
+const HEADER_ONE_ROW_WIDTH: f32 = 720.0;
+
 /// The file header: name, counts, layout and options, and the file-level action.
 fn header(
     ui: &mut Ui,
@@ -578,9 +581,23 @@ fn header(
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let compact = ui.available_height() < theme::XL * 10.0;
-    let single_row = ui.available_width() >= 720.0;
     let gitlink = sel.entry.kind != ChangeKind::Typechange
         && (sel.entry.old_mode == Some(0o160_000) || sel.entry.new_mode == Some(0o160_000));
+    // A wide header always takes one row, its name cut to leave the controls their room; a
+    // narrower one takes one row when the name, counts and controls fit there whole, as
+    // measured when they last laid out on two rows for this file.
+    let wide = ui.available_width() >= HEADER_ONE_ROW_WIDTH;
+    let parts_id = ui.id().with((
+        "diff-header-parts",
+        &sel.entry.path,
+        format!("{:?}", sel.source),
+        sel.conflicted,
+        tab.diff.as_deref().map(|d| (d.additions, d.deletions)),
+    ));
+    let parts = ui.data(|d| d.get_temp::<(f32, f32)>(parts_id));
+    let inner_width = ui.available_width() - 2.0 * theme::MD;
+    let single_row = wide
+        || parts.is_some_and(|(identity, controls)| identity + theme::SM + controls <= inner_width);
     // One row of small controls fills `file_header_height`; wrapped rows get the usual gaps.
     let vertical_padding = if single_row {
         ((m.file_header_height - m.control_sm) / 2.0).max(0.0)
@@ -646,7 +663,7 @@ fn header(
                             .diff
                             .as_deref()
                             .is_some_and(|d| gutters(d) != (true, true));
-                        layout_toggle(ui, tab.split_diff, one_column, single_row, actions);
+                        layout_toggle(ui, tab.split_diff, one_column, wide, actions);
                     }
                     if Button::new("Blame")
                         .secondary()
@@ -696,7 +713,9 @@ fn header(
                     // grows while they wrap and settles on what they use, so a font
                     // or button change needs no new guess. The numbers are only the first one.
                     let width_id = ui.id().with("diff-controls-width");
-                    let learnt = ui.data(|d| d.get_temp::<f32>(width_id));
+                    let learnt = ui
+                        .data(|d| d.get_temp::<f32>(width_id))
+                        .or_else(|| parts.filter(|_| !wide).map(|(_, controls)| controls));
                     let controls_width =
                         learnt.unwrap_or(if matches!(sel.source, DiffSource::Commit(_)) {
                             280.0
@@ -736,8 +755,15 @@ fn header(
                 });
             } else {
                 ui.vertical(|ui| {
-                    ui.horizontal_wrapped(identity);
-                    ui.horizontal_wrapped(controls);
+                    let identity = ui.horizontal_wrapped(identity).response.rect.width();
+                    let controls = ui.horizontal_wrapped(controls).response.rect.width();
+                    // What one row would need: when it fits, the next pass lays it out so.
+                    if parts != Some((identity, controls)) {
+                        ui.data_mut(|d| d.insert_temp(parts_id, (identity, controls)));
+                        if identity + theme::SM + controls <= ui.available_width() {
+                            ui.ctx().request_discard("the diff header fits one row");
+                        }
+                    }
                 });
             }
         });
@@ -1696,6 +1722,62 @@ mod tests {
         assert!(
             !added.iter().any(|t| t.contains("No commits between")),
             "an added submodule has nothing to compare: {added:?}"
+        );
+    }
+
+    /// F14: a header narrower than 720 pt keeps the file's name and the controls on one row
+    /// when they fit there, and wraps them only when they do not.
+    #[test]
+    fn a_narrow_header_wraps_only_when_its_parts_do_not_fit() {
+        use crate::ui::kit::testkit::{ctx, spoken};
+        let ctx = ctx();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let sel = |path: &str| crate::tab::FileSelection {
+            source: DiffSource::Staged,
+            entry: canopy_core::FileEntry {
+                path: path.into(),
+                old_path: None,
+                kind: ChangeKind::Modified,
+                additions: 2,
+                deletions: 1,
+                lfs: false,
+                old_mode: Some(0o100_644),
+                new_mode: Some(0o100_644),
+            },
+            conflicted: false,
+        };
+        let rows = |width: f32, path: &str, tab: &mut RepoTab| {
+            let sel = sel(path);
+            let mut nodes = Vec::new();
+            for _ in 0..4 {
+                nodes = spoken(&ctx, |ui| {
+                    ui.set_width(width);
+                    header(ui, tab, &sel, &mut Vec::new());
+                });
+            }
+            let (name, _) = widgets::split_path(path);
+            let center = |label: &str| {
+                nodes
+                    .iter()
+                    .find(|n| n.label.as_deref().or(n.value.as_deref()) == Some(label))
+                    .and_then(|n| n.bounds)
+                    .map_or_else(|| panic!("{label}: {nodes:?}"), |b| b.center().y)
+            };
+            (center(name), center("Blame"))
+        };
+        let (name, blame) = rows(600.0, "src/main.rs", &mut tab);
+        assert!((name - blame).abs() < 2.0, "one row at 600: {name} {blame}");
+        let long = format!("src/{}.rs", "a_very_long_module_name".repeat(4));
+        let (name, blame) = rows(600.0, &long, &mut tab);
+        assert!(
+            blame > name + 8.0,
+            "two rows when the name does not fit: {name} {blame}"
         );
     }
 
