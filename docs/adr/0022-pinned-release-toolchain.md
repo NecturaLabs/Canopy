@@ -28,3 +28,18 @@ as the other release assets.
   rebuild of the same commit could use a newer one.
 - Pin only the release workflow input. Local builds would still select their own compiler, and
   Dependabot's Rust toolchain updater would have no toolchain file to update.
+
+## Consequences
+
+- A release of a tag from before the pin cannot be published for the first time: the identity
+  job and the release job refuse a commit without `rust-toolchain.toml`. Republishing an
+  already published release of such a tag still works, because it ships the files it already
+  has.
+- The required `Tests` check now depends on `static.rust-lang.org`: the toolchain, and for the
+  minimum-version job rustup itself, are downloaded on every run. An outage there fails the
+  check.
+- Each Dependabot update of the pin changes the compiler the release binaries are built with.
+  Its commit is `build(deps)`, so it makes a build releasable and its pull request deserves the
+  same review as a dependency bump.
+- The minimum-version job installs `1.95`, which rustup resolves to the newest 1.95.x patch
+  release, so it floats within that series and is not pinned like the release compiler.
