@@ -59,6 +59,11 @@ pub fn absolute_date_format(seconds: i64, iso: bool) -> String {
     date_in_zone(seconds, iso, jiff::tz::TimeZone::system())
 }
 
+/// A UTC calendar date in ISO or English month format (the first day of a UTC week).
+pub fn utc_date_format(seconds: i64, iso: bool) -> String {
+    date_in_zone(seconds, iso, jiff::tz::TimeZone::UTC)
+}
+
 fn date_in_zone(seconds: i64, iso: bool, zone: jiff::tz::TimeZone) -> String {
     jiff::Timestamp::from_second(seconds)
         .map(|d| {
