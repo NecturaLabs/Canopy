@@ -109,9 +109,8 @@ fn merged_key(snap: &RepoSnapshot, bases: &[String]) -> u64 {
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
-/// What the card says when the operation `label` names stopped on conflicts: the subject of
-/// the `commit` a cherry-pick or revert took is the first paragraph, as a finished commit's
-/// notice gives its subject.
+/// The notice for an operation (`label`) that stopped on conflicts. For a cherry-pick or revert,
+/// the subject of its `commit` leads the body, as it does in a finished commit's notice.
 pub(crate) fn conflict_notice(
     label: &str,
     commit: Option<&str>,
