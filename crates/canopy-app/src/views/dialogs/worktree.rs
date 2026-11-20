@@ -164,8 +164,7 @@ pub(super) fn show(
                         note(ui, "No changed, untracked or ignored files.", p.text_dim);
                     }
                     ui.add_space(theme::XS);
-                    note(ui, "Its HEAD reflog, config.worktree and refs/worktree/* are deleted too.", p.text_dim);
-                    note(ui, "Commits only that reflog holds are lost.", p.text_dim);
+                    note(ui, "Commits that only its HEAD log or its own refs hold are lost.", p.text_dim);
                 }
             }
         })
@@ -614,8 +613,9 @@ mod tests {
         );
     }
 
-    /// What else the removal deletes is said plainly, and the commits only a detached `HEAD`
-    /// reaches are one fact, with no filler about checks.
+    /// What else the removal loses is said in the words Forget missing worktrees uses, without
+    /// naming git's files (#284), and the commits only a detached `HEAD` reaches are one fact,
+    /// with no filler about checks.
     #[test]
     fn the_removal_says_what_else_it_deletes() {
         let ctx = setup();
@@ -633,10 +633,12 @@ mod tests {
             })
         };
         assert!(
-            said("HEAD reflog, config.worktree and refs/worktree"),
+            said("Commits that only its HEAD log or its own refs hold are lost."),
             "{nodes:?}"
         );
-        assert!(said("Commits only that reflog holds are lost"));
+        for plumbing in ["config.worktree", "refs/worktree", "reflog"] {
+            assert!(!said(plumbing), "{plumbing}: {nodes:?}");
+        }
         assert!(said(
             "2 commits are reachable only from this folder's detached HEAD"
         ));
