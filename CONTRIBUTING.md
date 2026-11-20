@@ -60,9 +60,12 @@ approved the run.
 
 ## Setup
 
-1. Install stable Rust with [rustup](https://rustup.rs), with rustfmt and clippy. Canopy
-   builds with the latest stable release and pins none; when a new clippy reports something,
-   fix it in its own commit. The minimum supported Rust version is 1.95 (egui 0.36.2 needs it).
+1. Install [rustup](https://rustup.rs) 1.28.1 or newer. The first `cargo` command in the checkout
+   installs the Rust toolchain in [rust-toolchain.toml](rust-toolchain.toml), including rustfmt and
+   clippy. Tools that turn off rustup's auto-install (rust-analyzer sets `RUSTUP_AUTO_INSTALL=0`)
+   need `rustup toolchain install` (no arguments) run once in the checkout. Dependabot proposes
+   updates to the pin. Fix new clippy warnings in their own commit.
+   CI separately checks the workspace on Rust 1.95, the minimum supported version.
 2. Install `git` 2.32 or newer (required by the fixture scripts) and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
 3. Fetch the component library: `crates/nectura-ui` is a submodule of the public repository

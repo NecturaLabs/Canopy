@@ -145,10 +145,15 @@ or how flows feel end to end.
   publishing, including a direct dispatch or rebuild of an existing tag. Failed or cancelled tests
   prevent the tag or publication. Dry runs do not run these tests and cannot tag.
 - CI runs the workspace tests on Linux, macOS and Windows for every push that changes code and
-  for a fork's pull request; the "CI for dev" and "CI for main" rulesets require its `Tests`
-  check. `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` pick the release platforms only. The local
-  pre-commit hook is an early check, while the mandatory release job is the enforced publication
-  gate.
+  for a fork's pull request. The `Tests` check required on `dev` and `main` also checks that the
+  workspace compiles on Rust 1.95 on Linux. `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` pick the
+  release platforms only. The mandatory release test job gates publication.
+- The first `cargo` command in the checkout installs the toolchain in
+  [rust-toolchain.toml](../rust-toolchain.toml) with rustup 1.28.1 or newer. CI and release jobs
+  install that pin explicitly and log `rustc -Vv`, `cargo -V` and `rustup show`. The release
+  and the update feed ship `toolchain.txt` with that output for each shipped target. The report
+  is covered by `SHA256SUMS` and Canopy's build-provenance attestation. Publishing a new release
+  requires a tag with the pin. Reruns of older published releases reuse their original assets.
 - `dev` takes a pull request only when its branch is up to date, so after each merge the other
   open pull requests need **Update branch** (`gh pr update-branch <n>`) and Dependabot's need a
   `@dependabot rebase` comment. `main` does not require it: its release merge commits never reach
