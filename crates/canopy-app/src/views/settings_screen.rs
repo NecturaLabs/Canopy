@@ -346,6 +346,32 @@ impl SettingsScreen {
         }
     }
 
+    /// Backup and reset as an import that ignored three shortcuts leaves it (the
+    /// settings-import-ignored screenshot).
+    pub fn after_import_ignored() -> Self {
+        let imported = crate::settings_file::Imported {
+            settings: Settings::default(),
+            kept: Vec::new(),
+            ignored_shortcuts: 3,
+        };
+        Self {
+            section: Section::Data,
+            file_status: Some((true, imported.message(Path::new("canopy-settings.json")))),
+            ..Self::default()
+        }
+    }
+
+    /// Keyboard with the first Fetch row waiting for its new key (the settings-keyboard-capture
+    /// screenshot).
+    pub fn capturing_a_key(ctx: &egui::Context) -> Self {
+        crate::keymap::start_capture(ctx);
+        Self {
+            section: Section::Keyboard,
+            rebinding: Some("Fetch.Anywhere".to_owned()),
+            ..Self::default()
+        }
+    }
+
     /// The screen opened at This repository, staying there until the repository's tab opens
     /// (the settings-repository screenshot).
     pub fn awaiting_repository() -> Self {
@@ -6123,7 +6149,7 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
                 ui,
                 concat!(
                     "Anywhere keys also work while typing; single keys only outside text fields. ",
-                    "Change replaces a row's keys with the one you press; Esc cancels."
+                    "Change replaces a row's keys with a key or chord; Esc cancels."
                 ),
             );
         });
@@ -6174,7 +6200,7 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
                                 screen.rebinding = None;
                             }
                             ui.label(
-                                RichText::new("Press the new key")
+                                RichText::new("Press the new key or chord")
                                     .size(theme::metrics().meta_size)
                                     .color(p.accent),
                             );

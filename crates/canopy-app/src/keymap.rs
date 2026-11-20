@@ -1072,7 +1072,8 @@ const fn is_modifier_key(key: Key) -> bool {
 
 /// Takes this frame's first key press for a waiting capture, before any binding sees it: Esc
 /// cancels, a modifier's own key is skipped (the capture keeps waiting for the key it
-/// modifies, which carries the modifiers), and Alt chords are refused (the window manager's).
+/// modifies, which carries the modifiers), and Alt chords and keys pressed while Super is held
+/// are refused (the window manager's).
 pub fn capture_key(ctx: &egui::Context) {
     let waiting = CAPTURE.with_borrow_mut(|c| {
         match c {
@@ -1088,6 +1089,7 @@ pub fn capture_key(ctx: &egui::Context) {
     if !waiting {
         return;
     }
+    let super_down = super_held(ctx);
     let mut result = None;
     ctx.input_mut(|i| {
         i.events.retain(|e| {
@@ -1108,6 +1110,10 @@ pub fn capture_key(ctx: &egui::Context) {
                 // modifies comes next, and a modifier alone is never a binding.
             } else if *key == Key::Escape {
                 result = Some(Capture::Cancelled);
+            } else if !cfg!(target_os = "macos") && super_down {
+                // Outside macOS egui's modifiers do not carry Super: the key would arrive as
+                // if pressed alone. Hand over the Super key, which Settings refuses by name.
+                result = Some(Capture::Got(bare(Key::SuperLeft)));
             } else {
                 let chord = Chord::from_press(*key, *modifiers);
                 if !modifiers.alt || chord.symbol {
@@ -1765,6 +1771,20 @@ mod tests {
             cancel_capture();
         }
 
+        // Release what the loop pressed: egui keeps a key down until its release arrives.
+        for key in [Key::SuperLeft, Key::SuperRight] {
+            run(
+                &ctx,
+                vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+            );
+        }
+
         // Once the key comes, a bare modifier before it does not stop it.
         start_capture(&ctx);
         run(
@@ -1775,5 +1795,56 @@ mod tests {
             ],
         );
         assert_eq!(take_capture(), Some(Captured::Key(bare(Key::J))));
+    }
+
+    /// Outside macOS egui's modifiers do not carry Super, so Super+H arrives as a Super press
+    /// and then a bare `h`. The window manager owns that chord: the capture refuses it with
+    /// the Super note instead of taking `h`.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_capture_refuses_a_key_pressed_while_super_is_held() {
+        let key_event = |key: Key, pressed: bool| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let run = |ctx: &egui::Context, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| capture_key(ui.ctx()),
+            );
+            output.textures_delta.clear();
+        };
+        let ctx = egui::Context::default();
+        let fetch = binding_by_id("Fetch.Repository").expect("a row");
+
+        start_capture(&ctx);
+        run(
+            &ctx,
+            vec![key_event(Key::SuperLeft, true), key_event(Key::H, true)],
+        );
+        let Some(Captured::Key(chord)) = take_capture() else {
+            panic!("Super+H ended the capture without a key");
+        };
+        assert_eq!(
+            rebind_problem(fetch, chord).as_deref(),
+            Some("Super belongs to the window manager.")
+        );
+
+        // The Super key still down in a later frame refuses the next key too.
+        start_capture(&ctx);
+        run(&ctx, vec![key_event(Key::J, true)]);
+        assert!(matches!(take_capture(), Some(Captured::Key(c)) if c.key == Key::SuperLeft));
+
+        // Once Super is released, keys are taken as they are.
+        run(&ctx, vec![key_event(Key::SuperLeft, false)]);
+        start_capture(&ctx);
+        run(&ctx, vec![key_event(Key::H, true)]);
+        assert_eq!(take_capture(), Some(Captured::Key(bare(Key::H))));
     }
 }

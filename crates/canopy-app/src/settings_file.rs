@@ -141,7 +141,8 @@ pub struct Imported {
     /// What the file named but this computer keeps, in the words of [`THIS_COMPUTER`] and
     /// [`NETWORK_SWITCHES`], each once.
     pub kept: Vec<&'static str>,
-    /// How many saved shortcuts the file named that break a keyboard rule, so were left out.
+    /// How many saved shortcuts the file named that Canopy cannot use (not a row, or against a
+    /// keyboard rule), so were left out.
     pub ignored_shortcuts: usize,
 }
 
@@ -157,10 +158,8 @@ impl Imported {
         }
         match self.ignored_shortcuts {
             0 => {}
-            1 => sentences.push("Ignored 1 shortcut that breaks a keyboard rule.".to_owned()),
-            n => sentences.push(format!(
-                "Ignored {n} shortcuts that break the keyboard rules."
-            )),
+            1 => sentences.push("Ignored 1 shortcut Canopy cannot use.".to_owned()),
+            n => sentences.push(format!("Ignored {n} shortcuts Canopy cannot use.")),
         }
         sentences.join(" ")
     }
@@ -823,8 +822,8 @@ mod tests {
         )
     }
 
-    /// A file's keys that break a rule are left out of the settings, counted in the message and
-    /// never exported again; its valid keys come through untouched.
+    /// A file's keys that break a rule or name no row are left out of the settings, counted in
+    /// the message and never exported again; its valid keys come through untouched.
     #[test]
     fn an_import_says_how_many_shortcuts_it_ignored() {
         let text = file_with_keys(
@@ -841,7 +840,7 @@ mod tests {
         );
         assert_eq!(
             imported.message(path),
-            "Imported from keys.json. Ignored 3 shortcuts that break the keyboard rules."
+            "Imported from keys.json. Ignored 3 shortcuts Canopy cannot use."
         );
         let again = export(&imported.settings).unwrap();
         assert!(again.contains("Fetch.Repository"), "{again}");
@@ -856,7 +855,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             one.message(path),
-            "Imported from keys.json. Ignored 1 shortcut that breaks a keyboard rule."
+            "Imported from keys.json. Ignored 1 shortcut Canopy cannot use."
         );
         assert!(one.settings.keybindings.is_empty());
 
@@ -879,7 +878,7 @@ mod tests {
         assert_eq!(
             imported.message(std::path::Path::new("a.json")),
             "Imported from a.json. Kept as they are on this computer: editor. \
-             Ignored 2 shortcuts that break the keyboard rules."
+             Ignored 2 shortcuts Canopy cannot use."
         );
     }
 }
