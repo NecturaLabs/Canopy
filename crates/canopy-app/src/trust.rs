@@ -221,9 +221,8 @@ pub fn add(list: &mut Vec<PathBuf>, folder: &Path) -> bool {
 mod tests {
     use super::*;
 
-    /// #254: a test that publishes settings trusting nothing (any test that runs the app's
-    /// frame does) leaves the folders other tests trusted for themselves, whichever tests run
-    /// together and in whatever order.
+    /// #254: publishing settings that trust nothing leaves the folders tests trusted for
+    /// themselves.
     #[test]
     fn publishing_settings_keeps_the_folders_tests_trusted_for_themselves() {
         let dir = PathBuf::from("/canopy-tests/trusted-by-one-test");
