@@ -46,8 +46,14 @@ Canopy is licensed under either of the [Apache License, Version 2.0](LICENSE-APA
 you intentionally submit for inclusion in Canopy, as defined in the Apache-2.0 licence, is dual
 licensed as above, without any additional terms or conditions. Please sign off each commit
 (`git commit -s`) to certify the [Developer Certificate of Origin](https://developercertificate.org/):
-that you wrote the change or otherwise have the right to submit it under these licences. Commits
-made on the GitHub website are signed off automatically.
+that you wrote the change or otherwise have the right to submit it under these licences. GitHub
+signs off web commits only in a repository that turns on "Require contributors to sign off on
+web-based commits", and your fork may not have it on. Where it is off, use `git commit -s`, or
+`git rebase --signoff` for commits you already made.
+
+For pull requests from forks, CI checks that every non-merge commit has a `Signed-off-by:`
+trailer matching the commit author's name and email. Same-repository and bot pull requests are
+exempt from this check.
 
 A pull request from a fork runs CI with a read-only token and no secrets, once a maintainer has
 approved the run.
@@ -216,11 +222,20 @@ Keep independently reviewable work in atomic commits. Contribute to the existing
 
 Example: `feat(changes): stage individual lines from the diff viewer`.
 
+Canopy uses merge commits, so CI checks every non-merge commit in the pull request against the
+subject pattern used to generate release notes. The type is any lowercase word, as in
+`tools/release.py`; the list above is what to use. Two kinds of subject fail the check:
+
+- `fixup!` and `squash!` commits. Fold them in with `git rebase -i --autosquash` before you push.
+- GitHub's default `Revert "..."` subject. Reword it as `revert: ...` with `git commit --amend`
+  (`git rebase -i` for an earlier commit).
+
 ## Before merging
 
 - [ ] Changes are reviewable as individual commits, based on current `dev` or the agreed PR branch.
 - [ ] `tools/check.sh` passes, and all required GitHub Actions checks pass for the PR head.
 - [ ] New or changed Git operations have tests against a temporary repository.
+- [ ] Each `canopy-core` integration test starts with `isolate_git!(<its name>)` and sets required Git config in its fixture.
 - [ ] UI changes include before and after screenshots (dark, and light where colours change),
       taken with `tools/screenshot.sh` on a fixture, or a line `No visible change: <why>`. The
       Visual evidence check asks for one when a pull request touches the UI or the site; it is a

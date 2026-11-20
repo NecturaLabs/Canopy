@@ -41,7 +41,7 @@ These come from the owner and override anything else in the repository.
   the machine. A change to that updates them and their `Last updated` date (matching
   `ui::legal::PRIVACY_VERSION`/`TERMS_VERSION`); one to what a crash report carries also bumps
   `crash_reports::DATA_VERSION`. After a dependency change run `python3 tools/notices.py` (writes
-  `docs/legal/third-party-notices.txt`; CI checks it).
+  `docs/legal/third-party-notices.txt` and the site's copy; CI checks both).
 - **Logging**: JSON-lines logs per run (`logging.rs`). Never log secrets or prompt answers; pass
   URLs through `canopy_core::cli::redact_url`, git arguments through `cli::loggable`.
 - **Git settings**: respect the user's git configuration; never force a choice on them. Where it
@@ -98,7 +98,8 @@ adding a dependency.
   `tools/check-source-headers.py` (source-file headers and guard self-test),
   `tools/check-numeric-literals.py` (unnamed numeric literals in the backends and its self-test),
   `tools/check-ui-colors.py` (theme boundary and guard self-test),
-  `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
+  `tools/release.py selftest`, `tools/check-pr-commits.py --selftest` (PR commit subjects and
+  sign-offs), `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
   paths in docs, module table and skill mirror), `tools/check-site.py` (the landing site's files,
   addresses and scripts), `tools/vendor-eframe.sh --check` (`vendor/eframe`
   is the published crate plus our patch and the build uses it; needs network access),
