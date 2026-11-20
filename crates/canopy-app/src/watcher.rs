@@ -1155,22 +1155,23 @@ mod tests {
                 })
             });
         });
+        // No more commands: once it has told them, the loop has no tab left and ends. Joining it
+        // waits for exactly that, with no deadline a busy machine could miss (#255). The stop
+        // channels stay open until then, or the tabs would count as closed.
+        drop(commands_tx);
+        thread
+            .join()
+            .map_err(|_panic| "the watcher thread panicked")?;
+        drop(keep);
+        // Each is told once, the first one (which panicked) included.
         for rx in &receivers {
-            let job = rx.recv_timeout(Duration::from_secs(10))?;
+            let job = rx.try_recv()?;
             assert_eq!(
                 format!("{job:?}"),
                 "WatchFailed(\"Canopy's file watcher stopped.\")"
             );
-        }
-        // Each is told once, the first one (which panicked) included.
-        for rx in &receivers {
             assert!(rx.try_recv().is_err(), "told twice");
         }
-        drop(commands_tx);
-        drop(keep);
-        thread
-            .join()
-            .map_err(|_panic| "the watcher thread panicked")?;
         Ok(())
     }
 
