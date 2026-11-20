@@ -405,11 +405,15 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     group = Some(t.group);
                 }
                 remeasured |= measured(ui, Shelf::tool_id(t), |ui| {
-                    if t.show(ui, &running)
-                        && let Some(action) = &t.action
-                    {
-                        actions.push(action.clone());
-                    }
+                    // Its own id, whichever tools come before it: focus stays on the tool
+                    // it was given to as tools move in and out of the More menu.
+                    ui.push_id(("toolbar-tool", &t.label), |ui| {
+                        if t.show(ui, &running)
+                            && let Some(action) = &t.action
+                        {
+                            actions.push(action.clone());
+                        }
+                    });
                 });
             }
             if plan.badge {
@@ -421,9 +425,13 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 ui.add_space((more_left - ui.cursor().min.x).max(0.0));
                 let mut more = None;
                 remeasured |= measured(ui, Shelf::more_id(), |ui| {
-                    let r = ToolButton::new(icon::DOTS_THREE, "More")
-                        .tooltip("More actions")
-                        .show(ui);
+                    let r = ui
+                        .push_id("toolbar-more", |ui| {
+                            ToolButton::new(icon::DOTS_THREE, "More")
+                                .tooltip("More actions")
+                                .show(ui)
+                        })
+                        .inner;
                     ui.ctx()
                         .accesskit_node_builder(r.id, |n| n.set_label("More actions"));
                     more = Some(r);
@@ -1813,6 +1821,51 @@ mod tests {
                 if width <= 640.0 {
                     assert!(more.is_some(), "no More menu at {width} ({density:?})");
                 }
+            }
+        }
+    }
+
+    /// A tool keeps its own id whatever the width, and More never takes a tool's: focus on More
+    /// must not pass to Pop when the window widens and Pop comes back (Enter would pop a stash).
+    #[test]
+    fn every_tool_keeps_its_own_id_at_every_width() {
+        let screen = Rect::from_min_max(egui::Pos2::ZERO, pos2(1500.0, 700.0));
+        let mut owners: std::collections::HashMap<egui::accesskit::NodeId, String> =
+            std::collections::HashMap::new();
+        let ctx = context();
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut tab = repo_tab("alpha");
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot::default()));
+        for width in [1440.0, 900.0, 760.0, 640.0, 560.0, 900.0, 1440.0] {
+            let mut out = None;
+            for _ in 0..3 {
+                if let Some(mut old) = out.take() {
+                    let old: &mut egui::FullOutput = &mut old;
+                    old.textures_delta.clear();
+                }
+                out = Some(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let slot = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 60.0));
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                            actions_bar(ui, &tab, &mut Vec::new());
+                        });
+                    },
+                ));
+            }
+            let mut out = out.expect("a frame");
+            out.textures_delta.clear();
+            for (id, n) in out.platform_output.accesskit_update.expect("nodes").nodes {
+                if n.role() != Role::Button {
+                    continue;
+                }
+                let Some(label) = n.label() else { continue };
+                let name = label.split(',').next().unwrap_or(label).to_owned();
+                let owner = owners.entry(id).or_insert_with(|| name.clone());
+                assert_eq!(*owner, name, "{name} took {owner}'s id at {width}");
             }
         }
     }
