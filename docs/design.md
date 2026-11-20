@@ -511,8 +511,8 @@ in the density's metrics:
   files" to the right of Stage all (which becomes its icon), and that button, a picked row's
   Stage button, Space and the row menu stage all of them. Any plain selection drops the rest.
   Narrow columns show both as icons. The diff header has Stage file for an unstaged file, as it
-  has Unstage file for a staged one; the list header adds its button only for several picked
-  files, so neither repeats the other. Discard
+  has Unstage file for a staged one. With one file open the list header has no button for it;
+  with several picked, Stage N files stages the open file too. Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).

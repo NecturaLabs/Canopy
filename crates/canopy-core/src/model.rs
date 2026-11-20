@@ -183,7 +183,8 @@ pub struct WorktreeRemoval {
 /// A registered working folder that `git worktree prune` would forget.
 ///
 /// Forgetting deletes the administrative folder `.git/worktrees/<id>`: its `HEAD` and reflog, its
-/// index, any submodule repositories under `modules/` and any rebase or bisect state.
+/// index, its own refs (`refs/worktree/*`, a bisect's refs), any submodule repositories under
+/// `modules/` and any operation in progress (`admin_operation`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForgottenWorktree {
     /// The folder's name inside `.git/worktrees`.
