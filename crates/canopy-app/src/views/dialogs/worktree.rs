@@ -320,7 +320,9 @@ pub(super) fn show_forget(
             } else {
                 format!("Forget {}", plural(count, "worktree", "worktrees"))
             });
-            if busy {
+            if tab.is_none() {
+                footer.confirm_disabled("This is no longer available");
+            } else if busy {
                 footer.confirm_disabled("Wait for repository operations to finish");
             } else if let Some(reason) = &blocked {
                 footer.confirm_disabled(reason.clone());
@@ -527,6 +529,27 @@ mod tests {
                 .any(|text| text.contains("submodule"))
         });
         assert!(!mentions_submodules, "{nodes:?}");
+    }
+
+    /// A confirmation left open after its tab closed says so on its button too, not that
+    /// repository operations are running.
+    #[test]
+    fn a_forget_left_without_its_tab_says_it_is_gone() {
+        let ctx = setup();
+        let form = ForgetWorktreesForm::new(PathBuf::from("/work/canopy"), 1);
+        let salt = salt(&Dialog::ForgetWorktrees(Box::new(form.clone())));
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = spoken(&ctx, |_| {
+                show_forget(&ctx, salt, &form, None);
+            });
+        }
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("This is no longer available")
+        );
     }
 
     #[test]
