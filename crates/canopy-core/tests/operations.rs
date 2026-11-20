@@ -3286,9 +3286,7 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
 /// and overwrite a commit nobody saw. The lease is pinned to what the question showed.
 #[test]
 fn a_force_push_is_refused_when_the_remote_moved_after_the_question() {
-    if !in_isolated_git_env("a_force_push_is_refused_when_the_remote_moved_after_the_question") {
-        return;
-    }
+    isolate_git!(a_force_push_is_refused_when_the_remote_moved_after_the_question);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir();
     git(up_dir.path(), &["checkout", "-q", "--detach"]);
@@ -3319,9 +3317,7 @@ fn a_force_push_is_refused_when_the_remote_moved_after_the_question() {
 /// push, the push is refused instead of replacing it.
 #[test]
 fn a_force_push_of_a_new_branch_is_refused_when_the_remote_created_it() {
-    if !in_isolated_git_env("a_force_push_of_a_new_branch_is_refused_when_the_remote_created_it") {
-        return;
-    }
+    isolate_git!(a_force_push_of_a_new_branch_is_refused_when_the_remote_created_it);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir();
     git(up_dir.path(), &["checkout", "-q", "--detach"]);
@@ -3352,9 +3348,7 @@ fn a_force_push_of_a_new_branch_is_refused_when_the_remote_created_it() {
 /// remote-tracking ref the remote's fetch settings keep it in.
 #[test]
 fn a_force_push_to_a_ref_outside_heads_is_pinned_to_that_ref() {
-    if !in_isolated_git_env("a_force_push_to_a_ref_outside_heads_is_pinned_to_that_ref") {
-        return;
-    }
+    isolate_git!(a_force_push_to_a_ref_outside_heads_is_pinned_to_that_ref);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir();
     git(up_dir.path(), &["checkout", "-q", "--detach"]);
@@ -3433,9 +3427,7 @@ fn a_force_push_to_a_ref_outside_heads_is_pinned_to_that_ref() {
 /// what the question saw is read from there, not from a ref that no longer follows the remote.
 #[test]
 fn a_force_push_reads_the_tracking_ref_from_the_remotes_fetch_settings() {
-    if !in_isolated_git_env("a_force_push_reads_the_tracking_ref_from_the_remotes_fetch_settings") {
-        return;
-    }
+    isolate_git!(a_force_push_reads_the_tracking_ref_from_the_remotes_fetch_settings);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir();
     git(up_dir.path(), &["checkout", "-q", "--detach"]);
@@ -3486,11 +3478,7 @@ fn a_force_push_reads_the_tracking_ref_from_the_remotes_fetch_settings() {
 /// nothing and failing later with a lease message.
 #[test]
 fn a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination() {
-    if !in_isolated_git_env(
-        "a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination",
-    ) {
-        return;
-    }
+    isolate_git!(a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination);
     let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir();
     git(
@@ -3534,9 +3522,7 @@ fn a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination
 /// nothing blames the remote for it.
 #[test]
 fn a_negative_fetch_refspec_does_not_stop_a_force_push() {
-    if !in_isolated_git_env("a_negative_fetch_refspec_does_not_stop_a_force_push") {
-        return;
-    }
+    isolate_git!(a_negative_fetch_refspec_does_not_stop_a_force_push);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir();
     git(up_dir.path(), &["checkout", "-q", "--detach"]);
@@ -3567,11 +3553,7 @@ fn a_negative_fetch_refspec_does_not_stop_a_force_push() {
 /// A branch with no upstream is created on the remote, which becomes its upstream.
 #[test]
 fn a_force_push_of_a_branch_without_an_upstream_creates_it_and_sets_the_upstream() {
-    if !in_isolated_git_env(
-        "a_force_push_of_a_branch_without_an_upstream_creates_it_and_sets_the_upstream",
-    ) {
-        return;
-    }
+    isolate_git!(a_force_push_of_a_branch_without_an_upstream_creates_it_and_sets_the_upstream);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir();
     git(up_dir.path(), &["checkout", "-q", "--detach"]);
@@ -3595,9 +3577,7 @@ fn a_force_push_of_a_branch_without_an_upstream_creates_it_and_sets_the_upstream
 /// target remembers the tip it saw.
 #[test]
 fn a_pinned_force_push_goes_through_when_the_remote_is_unchanged() {
-    if !in_isolated_git_env("a_pinned_force_push_goes_through_when_the_remote_is_unchanged") {
-        return;
-    }
+    isolate_git!(a_pinned_force_push_goes_through_when_the_remote_is_unchanged);
     let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
     let p = copy.workdir();
     git(up_dir.path(), &["checkout", "-q", "--detach"]);
