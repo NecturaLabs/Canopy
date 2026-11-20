@@ -574,9 +574,9 @@ kbd + kbd { margin-left: 3px; }
 .reveal-on [data-reveal="detail"]:not(.is-in) { transform: translate(28px, 28px) scale(0.94); }
 .reveal-on .pair.flip [data-reveal="detail"]:not(.is-in) { transform: translate(-28px, 28px) scale(0.94); }
 
-/* The palette arrives once */
+/* The palette and its tour button arrive once, together */
 @media (prefers-reduced-motion: no-preference) {
-  .palette { animation: rise 700ms var(--ease) both; }
+  .pal-area { animation: rise 700ms var(--ease) both; }
   @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -703,6 +703,7 @@ kbd + kbd { margin-left: 3px; }
 /* Fingers, not pointers: every control at least 44 px */
 @media (pointer: coarse) {
   .btn, .btn-sm { min-height: 44px; }
+  .pal-tour { min-width: 44px; }
   .theme-switch button { width: 44px; height: 44px; }
   .seg button { min-height: 44px; padding: 0 16px; }
   .brand { min-height: 44px; }
