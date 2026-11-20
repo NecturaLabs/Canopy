@@ -635,11 +635,11 @@ option is the value the closed select says "(Recommended)" after it, quieter tha
 speaks it that way too, however the value came about (chosen, written by a button, read from a
 file); a fitted select is as wide for it as for its longest label. An unavailable option shows its
 note instead. The list reserves room for the
-badge and check. A select never trims a label (owner decision, 2026-10-13, which replaces the
+badge and check. A select never trims a label that fits in three rows and 4096 characters (owner decision, 2026-10-13, which replaces the
 earlier "truncate the painted label"): the closed control widens to the value it shows, up to the
 width its host has, and beyond that wraps it onto more lines and grows taller; the list is as wide
 as its longest row, up to the host, and beyond that wraps the long rows, every row as tall as the
-tallest so the scroll stays uniform. The accessible name is the full label throughout. A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
+tallest so the scroll stays uniform. The accessible name is the full label throughout. A label past three rows or 4096 characters is cut: the closed control and each list row lay out its first 4096 characters and paint at most three rows, the last ending in an ellipsis. A cut label's tooltip replaces the control's own and gives all of it up to 600 characters, else its first 600, an ellipsis and its length ("… (1,000,000 characters)"). A select can also describe an option whose label already says it in words (`described`: the launcher selects' "<name> (Default)" entry has the description "Default").
 
 An option can be unavailable (`unavailable(value, "Not installed")`): its label is dimmed (`disabled_text`) and a neutral badge with the note ends the row where the Recommended badge would; the arrow keys, Home, End and typing pass over it, a click or Enter does nothing, and it is spoken as disabled with the note as its description. It can still be the current value (a saved choice that has gone): the closed control shows the label dimmed with the same badge before the caret, widens to hold it, with its tag, and carries the note as its accessible description. The kit gallery shows both states.
 
