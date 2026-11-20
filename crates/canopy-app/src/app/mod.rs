@@ -142,6 +142,8 @@ pub const OVERLAYS: &[&str] = &[
     "confirm-host",
     "convert-partial-clone",
     "confirm-merge-risky",
+    "force-push",
+    "force-push-new",
     "diverged",
     "pull-conflicts",
     "pull-moved",

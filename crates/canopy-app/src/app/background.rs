@@ -130,7 +130,7 @@ fn settle_identity_dialog(dialogs: &mut DialogStack, saved: bool) {
 
 /// The question before a force push: the branch and the remote branch it overwrites, and the
 /// commit the remote branch was at, which the push is pinned to.
-fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
+pub(super) fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
     let canopy_core::PushTarget {
         branch,
         remote,

@@ -73,7 +73,7 @@ OPTIONS:
                               git-missing, remove-submodule, discard-submodule, new-tag,
                               stash, export-patch, apply-patch, add-remote, add-remote-refused, publish, new-request,
                               confirm, confirm-danger, confirm-host, convert-partial-clone, confirm-merge-risky,
-                              diverged, pull-conflicts, pull-moved, whats-new, crash, update-available,
+                              force-push, force-push-new, diverged, pull-conflicts, pull-moved, whats-new, crash, update-available,
                               update-failed, terms, consent-reading, crash-reading, username,
                               password, approve or notice
         --size <WxH>          Initial window size [default: 1440x900]
