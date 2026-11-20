@@ -1478,7 +1478,7 @@ impl Repo {
 
     /// Force pushes the current branch to `asked`, which [`Repo::force_push_target`] returned
     /// when the user was asked. Refuses if the branch or destination changed since
-    /// ([`Repo::ensure_force_push_target`]); the lease is pinned to the remote tip the question
+    /// (`ensure_force_push_target`); the lease is pinned to the remote tip the question
     /// saw (`--force-with-lease=<ref>:<oid>`, or an empty value when the remote did not have
     /// the ref), so a commit pushed by someone else is never overwritten, even after a fetch
     /// (the background one included) updated the remote-tracking ref. It sends the one branch to
@@ -1532,7 +1532,7 @@ impl Repo {
     /// Refuses unless a force push would go where `asked` says, as [`Repo::force_push_target`]
     /// works it out now. The branch can change between the question and the push, and only
     /// what the user confirmed may be overwritten.
-    pub fn ensure_force_push_target(&self, asked: &PushTarget) -> Result<()> {
+    fn ensure_force_push_target(&self, asked: &PushTarget) -> Result<()> {
         let now = self.force_push_target()?;
         // `seen` is not compared: a remote that moved since is the lease's to refuse, with
         // git's own message.
@@ -1574,11 +1574,26 @@ impl Repo {
             .strip_prefix("refs/heads/")
             .unwrap_or(&dest_ref)
             .to_owned();
-        let tracking = self.tracking_ref(&remote, &dest_ref).ok_or_else(|| {
+        let tracking = self.tracking_ref(&remote, &dest_ref)?.ok_or_else(|| {
+            let local = dest_ref
+                .strip_prefix("refs/heads/")
+                .or_else(|| dest_ref.strip_prefix("refs/"))
+                .unwrap_or(&dest_ref);
+            // Without fetch settings for the remote git cannot resolve the upstream either, so
+            // the branch's own configuration says whether it has one.
+            let no_upstream = if self
+                .config_value(&format!("branch.{branch}.merge"))
+                .is_some()
+            {
+                String::new()
+            } else {
+                format!(" {branch} has no upstream yet, so a plain Push or Publish needs no force.")
+            };
             Error::invalid(format!(
-                "Canopy cannot tell what {remote} has at {dest_ref}: none of its fetch settings \
-                 bring that ref in. Fetch it into a remote-tracking branch first, or force push \
-                 from a terminal."
+                "Canopy cannot tell what {remote} has at {dest_ref}, because none of its fetch \
+                 settings track that ref. To track it, run `git config --add \
+                 remote.{remote}.fetch +{dest_ref}:refs/remotes/{remote}/{local}`, fetch, and \
+                 force push again.{no_upstream}"
             ))
         })?;
         let seen = self.git().refname_to_id(&tracking).ok();
@@ -1594,8 +1609,8 @@ impl Repo {
     /// The remote-tracking ref `remote`'s fetch settings keep `remote_ref` in, whether or not it
     /// exists yet: `refs/remotes/origin/main` for `refs/heads/main` under the usual setting, but
     /// whatever `remote.<name>.fetch` says.
-    fn tracking_ref(&self, remote: &str, remote_ref: &str) -> Option<String> {
-        let remote = self.git().find_remote(remote).ok()?;
+    fn tracking_ref(&self, remote: &str, remote_ref: &str) -> Result<Option<String>> {
+        let remote = self.git().find_remote(remote)?;
         for spec in remote.refspecs() {
             let tracks = spec.direction() == git2::Direction::Fetch
                 && !spec.src_bytes().starts_with(b"^")
@@ -1605,10 +1620,10 @@ impl Repo {
                 continue;
             }
             if let Ok(mapped) = spec.transform(remote_ref) {
-                return std::str::from_utf8(&mapped).ok().map(str::to_owned);
+                return Ok(std::str::from_utf8(&mapped).ok().map(str::to_owned));
             }
         }
-        None
+        Ok(None)
     }
 
     /// Where a push without a destination sends `branch`, as `(remote, ref on the remote)`,

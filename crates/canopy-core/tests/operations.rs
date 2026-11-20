@@ -3480,8 +3480,87 @@ fn a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination
     let refused = copy.force_push_target().expect_err("nothing tracks main");
     let text = refused.to_string();
     assert!(
-        text.contains("refs/heads/main") && text.contains("fetch"),
+        text.contains(
+            "`git config --add remote.origin.fetch +refs/heads/main:refs/remotes/origin/main`"
+        ),
         "{text}"
+    );
+    assert!(
+        !text.contains("Push or Publish"),
+        "main has an upstream: {text}"
+    );
+    // A branch without an upstream is told a plain push needs no force.
+    git(p, &["checkout", "-q", "--no-track", "-b", "topic"]);
+    let text = copy
+        .force_push_target()
+        .expect_err("nothing tracks topic")
+        .to_string();
+    assert!(
+        text.contains("remote.origin.fetch +refs/heads/topic:refs/remotes/origin/topic")
+            && text
+                .contains("topic has no upstream yet, so a plain Push or Publish needs no force"),
+        "{text}"
+    );
+}
+
+/// A negative fetch refspec leaves the other branches tracked: the question is still asked, and
+/// nothing blames the remote for it.
+#[test]
+fn a_negative_fetch_refspec_does_not_stop_a_force_push() {
+    if !in_isolated_git_env("a_negative_fetch_refspec_does_not_stop_a_force_push") {
+        return;
+    }
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(up_dir.path(), &["checkout", "-q", "--detach"]);
+    git(
+        p,
+        &["config", "--add", "remote.origin.fetch", "^refs/heads/x"],
+    );
+    git(
+        p,
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--allow-empty",
+            "-m",
+            "feat: rewritten",
+        ],
+    );
+    let asked = copy.force_push_target().expect("a target");
+    assert!(asked.seen.is_some(), "main is still tracked");
+    copy.force_push(&asked, |_| {}).expect("force push");
+    assert_eq!(
+        git(up_dir.path(), &["rev-parse", "main"]),
+        git(p, &["rev-parse", "HEAD"])
+    );
+}
+
+/// A branch with no upstream is created on the remote, which becomes its upstream.
+#[test]
+fn a_force_push_of_a_branch_without_an_upstream_creates_it_and_sets_the_upstream() {
+    if !in_isolated_git_env(
+        "a_force_push_of_a_branch_without_an_upstream_creates_it_and_sets_the_upstream",
+    ) {
+        return;
+    }
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(up_dir.path(), &["checkout", "-q", "--detach"]);
+    git(p, &["checkout", "-q", "--no-track", "-b", "topic"]);
+    git(p, &["commit", "-q", "--allow-empty", "-m", "feat: mine"]);
+    let asked = copy.force_push_target().expect("a target");
+    assert_eq!(asked.seen, None);
+    copy.force_push(&asked, |_| {}).expect("force push");
+    assert_eq!(
+        git(up_dir.path(), &["rev-parse", "topic"]),
+        git(p, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(git(p, &["config", "branch.topic.remote"]).trim(), "origin");
+    assert_eq!(
+        git(p, &["config", "branch.topic.merge"]).trim(),
+        "refs/heads/topic"
     );
 }
 
