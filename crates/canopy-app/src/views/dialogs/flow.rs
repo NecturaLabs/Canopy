@@ -272,6 +272,33 @@ fn start_problem(
     None
 }
 
+/// The Start or Finish dialog of a repository without git-flow: it says so and, with a
+/// repository open, offers the setup dialog instead of a dead end.
+fn not_set_up(
+    ctx: &egui::Context,
+    salt: (&'static str, std::mem::Discriminant<Dialog>),
+    title: &str,
+    glyph: &str,
+    repository: bool,
+) -> Outcome {
+    let p = palette(ctx);
+    let result = KitDialog::new(salt)
+        .title(title)
+        .icon(glyph)
+        .width(DialogWidth::Form)
+        .body(|ui| {
+            note(ui, "git-flow is not set up in this repository.", p.text_dim);
+        })
+        .footer(|f| {
+            f.cancel();
+            if repository {
+                f.confirm("Set up git-flow…");
+            }
+        })
+        .show(ctx);
+    answer(result, || Outcome::Run(vec![Action::FlowInit]))
+}
+
 pub(super) fn show_start(
     ctx: &egui::Context,
     salt: (&'static str, std::mem::Discriminant<Dialog>),
@@ -282,22 +309,13 @@ pub(super) fn show_start(
     let snap = tab.and_then(|t| t.snap.as_deref());
     let config = snap.and_then(|s| s.workflow.flow.as_ref());
     let (Some(snap), Some(config)) = (snap, config) else {
-        let result = KitDialog::new(salt)
-            .title("Start a git-flow branch")
-            .icon(icon::TREE_STRUCTURE)
-            .width(DialogWidth::Form)
-            .body(|ui| {
-                note(
-                    ui,
-                    "git-flow is not set up in this repository. Set it up first.",
-                    p.text_dim,
-                );
-            })
-            .footer(|f| {
-                f.cancel();
-            })
-            .show(ctx);
-        return answer(result, || Outcome::Keep);
+        return not_set_up(
+            ctx,
+            salt,
+            "Start a git-flow branch",
+            icon::TREE_STRUCTURE,
+            snap.is_some(),
+        );
     };
     let default = config.default_base(form.kind);
     let base = form.base.as_deref().unwrap_or(default).to_owned();
@@ -505,22 +523,13 @@ pub(super) fn show_finish(
     let snap = tab.and_then(|t| t.snap.as_deref());
     let config = snap.and_then(|s| s.workflow.flow.as_ref());
     let (Some(snap), Some(config)) = (snap, config) else {
-        let result = KitDialog::new(salt)
-            .title("Finish a git-flow branch")
-            .icon(icon::FLAG_CHECKERED)
-            .width(DialogWidth::Form)
-            .body(|ui| {
-                note(
-                    ui,
-                    "git-flow is not set up in this repository. Set it up first.",
-                    p.text_dim,
-                );
-            })
-            .footer(|f| {
-                f.cancel();
-            })
-            .show(ctx);
-        return answer(result, || Outcome::Keep);
+        return not_set_up(
+            ctx,
+            salt,
+            "Finish a git-flow branch",
+            icon::FLAG_CHECKERED,
+            snap.is_some(),
+        );
     };
     let flow_branches: Vec<&str> = snap
         .branches
@@ -858,6 +867,53 @@ mod tests {
             FlowFinishForm::new(Some("feature/a".into()), Some(&s)).branch,
             "feature/a"
         );
+    }
+
+    /// Start and Finish in a repository without git-flow offer its setup rather than only a way
+    /// out (audit F22).
+    #[test]
+    fn start_and_finish_without_git_flow_offer_its_setup() {
+        use crate::ui::kit::testkit::spoken;
+        let context = || {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+            ctx
+        };
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.snap = Some(std::sync::Arc::new(snap(&["main"])));
+        let offers = |nodes: &[crate::ui::kit::testkit::Spoken]| {
+            nodes.iter().any(|n| {
+                n.label
+                    .as_deref()
+                    .is_some_and(|l| l.starts_with("Set up git-flow…"))
+            })
+        };
+        let ctx = context();
+        let mut start = FlowStartForm::new(None);
+        let start_salt = salt(&Dialog::FlowStart(Box::new(start.clone())));
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = spoken(&ctx, |_| {
+                show_start(&ctx, start_salt, &mut start, Some(&tab));
+            });
+        }
+        assert!(offers(&nodes), "start: {nodes:?}");
+        let ctx = context();
+        let mut finish = FlowFinishForm::new(None, tab.snap.as_deref());
+        let finish_salt = salt(&Dialog::FlowFinish(Box::new(finish.clone())));
+        for _ in 0..3 {
+            nodes = spoken(&ctx, |_| {
+                show_finish(&ctx, finish_salt, &mut finish, Some(&tab));
+            });
+        }
+        assert!(offers(&nodes), "finish: {nodes:?}");
     }
 
     /// With a Git older than 2.38 the finish dialog says so and its button stays disabled, with
