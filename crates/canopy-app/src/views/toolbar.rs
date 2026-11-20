@@ -759,7 +759,7 @@ fn tool_of(kind: &OpKind) -> Option<Tool> {
     Some(match kind {
         OpKind::Fetch => Tool::Fetch,
         OpKind::Pull => Tool::Pull,
-        OpKind::Push => Tool::Push,
+        OpKind::Push | OpKind::ForcePush(_) => Tool::Push,
         OpKind::Stash => Tool::Stash,
         OpKind::Pop => Tool::Pop,
         OpKind::Merge | OpKind::Squash(_) => Tool::Merge,
@@ -1194,18 +1194,15 @@ mod tests {
                 },
                 Some(Tool::Pull),
             ),
+            (Op::Push, Some(Tool::Push)),
             (
-                Op::Push {
-                    force: false,
-                    expect: None,
-                },
-                Some(Tool::Push),
-            ),
-            (
-                Op::Push {
-                    force: true,
-                    expect: None,
-                },
+                Op::ForcePush(canopy_core::PushTarget {
+                    branch: "main".into(),
+                    remote: "origin".into(),
+                    dest: "main".into(),
+                    dest_ref: "refs/heads/main".into(),
+                    seen: None,
+                }),
                 Some(Tool::Push),
             ),
             (
