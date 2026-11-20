@@ -2263,12 +2263,13 @@ fn consent(
                 .blocking()
                 .description("If Canopy crashes, it can send a report to NecturaLabs so we can fix the problem.")
                 .body(|ui| {
-                    for (glyph, text, color) in [
-                        (icon::CHECK, "A report holds the error message, a stack trace, your Canopy version and your operating system.", p.success),
-                        (icon::SHIELD_CHECK, "Canopy does not add your name, tokens, logs or repository files. An error message can name a file or branch.", p.accent),
-                        (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 30 days.", p.accent2),
+                    // Facts, in the accent like the welcome dialog's: green would mean a result.
+                    for (glyph, text) in [
+                        (icon::CHECK, "A report holds the error message, a stack trace, your Canopy version and your operating system."),
+                        (icon::SHIELD_CHECK, "Canopy does not add your name, tokens, logs or repository files. An error message can name a file or branch."),
+                        (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 30 days."),
                     ] {
-                        bullet(ui, glyph, color, text);
+                        bullet(ui, glyph, p.accent, text);
                     }
                     note(ui, "Canopy works the same either way. You can change this at any time in Settings → Privacy.", p.text_faint);
                     documents(ui, &[Document::Privacy], reading);
@@ -3164,6 +3165,57 @@ mod tests {
 
     /// The welcome dialog tells, in its first start and updated-terms forms alike, that crash
     /// reports go out only with the user's agreement, as the Privacy Policy does.
+    /// J1: the crash question's three facts carry the accent, as the welcome dialog's do; green
+    /// means a result in this app, and a list of facts is not one.
+    #[test]
+    fn the_crash_question_marks_its_facts_in_the_accent() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut dialog = Dialog::Consent {
+            step: Pending::CrashReports,
+            updated: false,
+            reading: None,
+        };
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        let facts = [
+            egui_phosphor::regular::CHECK,
+            egui_phosphor::regular::SHIELD_CHECK,
+            egui_phosphor::regular::GLOBE_HEMISPHERE_WEST,
+        ];
+        let mut glyphs = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+                super::show(
+                    &ctx,
+                    &mut dialog,
+                    None,
+                    &mut picker,
+                    false,
+                    &crate::updater::Updater::default(),
+                    "git version 2.55.0",
+                );
+            });
+            output.textures_delta.clear();
+            glyphs = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if facts.contains(&t.galley.text()) => {
+                        t.galley.job.sections.first().map(|sec| sec.format.color)
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        let accent = crate::ui::theme::palette(&ctx).accent;
+        // The facts come first; a later check mark belongs to the documents' buttons.
+        assert!(glyphs.len() >= 3, "{glyphs:?}");
+        assert!(
+            glyphs[..3].iter().all(|c| *c == accent),
+            "{glyphs:?} vs {accent:?}"
+        );
+    }
+
     #[test]
     fn the_welcome_dialog_says_crash_reports_need_agreement() {
         for updated in [false, true] {
