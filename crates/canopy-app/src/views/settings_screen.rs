@@ -2014,18 +2014,26 @@ fn noted_row_layout(
                 crate::ui::kit::button::icon_button_side(Size::Sm) + ui.spacing().item_spacing.x;
             let text_width = (width - control_width - reset - theme::XL)
                 .clamp(width * 0.5, HELP_MAX_WIDTH.max(width * 0.5));
+            // A text shorter than its controls (a one-line title beside a keycap and a button)
+            // sits on their centre line; the heights are last frame's.
+            let heights = ui.id().with("row-heights");
+            let (text_h, control_h): (f32, f32) =
+                ui.data(|d| d.get_temp(heights)).unwrap_or_default();
+            let lift = ((control_h - text_h) / 2.0).max(0.0);
             ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(
+                let text = ui.allocate_ui_with_layout(
                     vec2(text_width, 0.0),
                     Layout::top_down(Align::Min),
                     |ui| {
                         // Without this the column is only as wide as its text, and the controls
                         // of rows with short help text sit at different distances from the edge.
                         ui.set_min_width(text_width);
+                        ui.add_space(lift);
                         label(ui);
                     },
                 );
-                ui.allocate_ui_with_layout(
+                let measured_text = text.response.rect.height() - lift;
+                let controls = ui.allocate_ui_with_layout(
                     vec2(width - text_width - 2.0 * theme::SM, 0.0),
                     Layout::right_to_left(Align::Center).with_main_wrap(true),
                     |ui| {
@@ -2048,6 +2056,11 @@ fn noted_row_layout(
                         }
                     },
                 );
+                let measured = (measured_text, controls.response.rect.height());
+                if (measured.0 - text_h).abs() > 0.5 || (measured.1 - control_h).abs() > 0.5 {
+                    ui.data_mut(|d| d.insert_temp(heights, measured));
+                    ui.ctx().request_discard("a settings row changed height");
+                }
             });
         }
     });
