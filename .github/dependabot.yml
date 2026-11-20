@@ -38,7 +38,5 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-    # A compiler bump changes the shipped binaries, so it is a releasable commit like cargo's
-    # (tools/release.py).
     commit-message:
-      prefix: "build(deps)"
+      prefix: "ci"
