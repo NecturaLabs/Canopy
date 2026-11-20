@@ -1437,7 +1437,7 @@ impl eframe::App for CanopyApp {
         reason = "tools/glass-check.py reads the glass soak report from standard output"
     )]
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
-        crate::ui::kit::glass::destroy(gl);
+        crate::ui::kit::glass::destroy(crate::ui::kit::glass::ExitContext::from_on_exit(gl));
         if let Some(writer) = &mut self.settings_writer {
             writer.finish();
         }
