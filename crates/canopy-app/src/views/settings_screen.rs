@@ -6149,7 +6149,7 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
                 ui,
                 concat!(
                     "Anywhere keys also work while typing; single keys only outside text fields. ",
-                    "Change replaces a row's keys with a key or chord; Esc cancels."
+                    "Change sets a row's shortcut to the one you press; Esc cancels."
                 ),
             );
         });
@@ -6200,7 +6200,7 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
                                 screen.rebinding = None;
                             }
                             ui.label(
-                                RichText::new("Press the new key or chord")
+                                RichText::new("Press the new shortcut")
                                     .size(theme::metrics().meta_size)
                                     .color(p.accent),
                             );
