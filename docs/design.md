@@ -359,7 +359,10 @@ in the density's metrics:
   Branches, and a section the user opened or closed keeps its state. The Remotes header carries no
   button and no menu.
 - History column widths follow the currently visible rows: graph lane spans, ref pills and
-  messages, author names and formatted dates. Metadata sits after the measured message width
+  messages, author names and formatted dates. One ref pill is at most 220 points wide (cut with
+  "…", its tooltip the full name); a row's pills take at most 55% of the description column and
+  leave the message at least 160 points, and those that do not fit become one neutral "+N" badge
+  whose tooltip lists them. Metadata sits after the measured message width
   instead of at the far window edge. Narrow views omit lower-priority columns; long messages
   elide, and busy graphs compress their lane spacing. Measurements stay bounded to the viewport.
 - History details sit below the graph, initially 40% of its available height, growing with
