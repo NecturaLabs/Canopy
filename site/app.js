@@ -262,6 +262,8 @@ const list = $("#pal-list");
 const search = $("[data-pal-search]");
 const foot = $("[data-pal-foot]");
 const body = $("[data-pal-body]");
+const tourToggle = $("[data-tour-toggle]");
+const tourIcon = $(".ph", tourToggle);
 const sectionLinks = $$("a", list).map((a) => ({ href: a.getAttribute("href"), label: $("span", a).textContent.trim(), icon: $(".ph", a).textContent, view: a.dataset.view }));
 const staticList = list.innerHTML;
 const go = (href) => () => {
@@ -283,7 +285,8 @@ let shown = [];
 let active = 0;
 
 /* The window under the headline shows the view of the palette's active row, one real render per
-   section. Until the visitor reaches for the palette, it steps through them by itself. */
+   section. It steps through them by itself until the visitor pauses it with the button below
+   the palette or reaches for the palette. */
 const stage = $("[data-stage]");
 const views = $$(".view", stage);
 let shownView = "history";
@@ -298,7 +301,7 @@ function showView(name) {
 }
 const TOUR_MS = 4200;
 let tourTimer = 0;
-let tourOff = false;
+let tourPaused = false;
 let heroInView = true;
 palette.style.setProperty("--tour", TOUR_MS + "ms");
 function tourStep() {
@@ -308,14 +311,19 @@ function tourStep() {
   render();
 }
 function tourSync() {
-  const run = !tourOff && !calm.matches && !search.hidden && heroInView && !document.hidden && !input.value;
+  const available = !calm.matches && !search.hidden && !input.value;
+  if (!available && document.activeElement === tourToggle) (search.hidden ? $("a", list) : input)?.focus();
+  tourToggle.hidden = !available;
+  tourToggle.setAttribute("aria-pressed", String(tourPaused));
+  tourIcon.textContent = tourPaused ? "\uE3D0" : "\uE39E";
+  const run = available && !tourPaused && heroInView && !document.hidden;
   palette.classList.toggle("is-touring", run);
   if (run && !tourTimer) tourTimer = setInterval(tourStep, TOUR_MS);
   if (!run && tourTimer) { clearInterval(tourTimer); tourTimer = 0; }
 }
-function stopTour() {
-  if (tourOff) return;
-  tourOff = true;
+function pauseTour() {
+  if (tourPaused) return;
+  tourPaused = true;
   tourSync();
 }
 
@@ -401,9 +409,10 @@ function run() {
   input.value = "";
   active = 0;
   render();
+  tourSync();
   c.run();
 }
-input.addEventListener("input", () => { active = 0; render(); });
+input.addEventListener("input", () => { active = 0; render(); tourSync(); });
 input.addEventListener("keydown", (e) => {
   const n = Math.max(1, shown.length);
   if (e.key === "ArrowDown") { active = (active + 1) % n; render(); e.preventDefault(); }
@@ -411,7 +420,14 @@ input.addEventListener("keydown", (e) => {
   else if (e.key === "Home" && !input.value) { active = 0; render(); e.preventDefault(); }
   else if (e.key === "End" && !input.value) { active = n - 1; render(); e.preventDefault(); }
   else if (e.key === "Enter" && !(e.ctrlKey || e.metaKey)) { run(); e.preventDefault(); }
-  else if (e.key === "Escape") { input.value = ""; active = 0; render(); input.blur(); e.preventDefault(); }
+  else if (e.key === "Escape") {
+    input.value = "";
+    active = 0;
+    render();
+    tourSync();
+    input.blur();
+    e.preventDefault();
+  }
 });
 
 const desktop = window.matchMedia("(min-width: 721px) and (not (pointer: coarse))");
@@ -443,8 +459,9 @@ paletteMode();
 desktop.addEventListener("change", () => { paletteMode(); tourSync(); });
 
 list.addEventListener("scroll", () => edgeFade(list), { passive: true });
-palette.addEventListener("pointerenter", stopTour);
-palette.addEventListener("focusin", stopTour);
+palette.addEventListener("pointerenter", pauseTour);
+palette.addEventListener("focusin", pauseTour);
+tourToggle.addEventListener("click", () => { tourPaused = !tourPaused; tourSync(); });
 calm.addEventListener("change", tourSync);
 document.addEventListener("visibilitychange", tourSync);
 if ("IntersectionObserver" in window) {
