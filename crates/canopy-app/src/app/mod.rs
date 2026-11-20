@@ -101,6 +101,7 @@ pub const OVERLAYS: &[&str] = &[
     "flow-init",
     "flow-start",
     "flow-finish",
+    "force-delete",
     "author-card",
     "request-filters",
     "request-sort",
