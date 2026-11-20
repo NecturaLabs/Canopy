@@ -65,7 +65,7 @@ OPTIONS:
                               settings-keyboard, settings-backup, settings-import-ignored,
                               settings-keyboard-capture, settings-repository,
                               settings-repository-pull, settings-repository-diffs,
-                              settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, remove-worktree, remove-worktree-dirty, remove-worktree-delete, forget-worktrees, worktrees, menu-worktree, clean-merged, update-from-base, flow-init, flow-start, flow-finish, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, notifications, branch-selected,
+                              settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, remove-worktree, remove-worktree-dirty, remove-worktree-delete, forget-worktrees, worktrees, menu-worktree, clean-merged, update-from-base, flow-init, flow-start, flow-finish, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, force-push-stopped, notifications, branch-selected,
                               long-message,
                               gallery, menu-branch, menu-commit, menu-file, menu-lfs-file, blame, open,
                               open-error, clone,
@@ -74,7 +74,7 @@ OPTIONS:
                               git-missing, remove-submodule, discard-submodule, new-tag,
                               stash, export-patch, apply-patch, add-remote, add-remote-refused, publish, new-request,
                               confirm, confirm-danger, confirm-host, convert-partial-clone, confirm-merge-risky,
-                              diverged, pull-conflicts, pull-moved, whats-new, crash, update-available,
+                              force-push, force-push-new, diverged, pull-conflicts, pull-moved, whats-new, crash, update-available,
                               update-failed, terms, consent-reading, crash-reading, username,
                               password, approve or notice
         --size <WxH>          Initial window size [default: 1440x900]

@@ -1136,7 +1136,7 @@ fn a_push_stops_for_a_submodule_commit_no_remote_has() {
 
             let repo = Repo::open(&work).expect("open");
             let err = repo
-                .push(false, |_| {})
+                .push(|_| {})
                 .expect_err("the submodule commit is on no remote")
                 .to_string();
             assert!(
@@ -1166,8 +1166,7 @@ fn a_push_stops_for_a_submodule_commit_no_remote_has() {
                 &work.join("m"),
                 &["push", "-q", "origin", "HEAD:refs/heads/kept"],
             );
-            repo.push(false, |_| {})
-                .expect("push after the submodule's");
+            repo.push(|_| {}).expect("push after the submodule's");
             assert_eq!(
                 git(&work, &["rev-parse", "other"]),
                 git(&work, &["rev-parse", "origin/other"]),
@@ -1199,7 +1198,7 @@ fn push_recurse_submodules_in_the_configuration_decides_while_followed() {
             ..GitOptions::default()
         });
         let git_alone = run(&work, &["push", "--dry-run"], &[]).status.success();
-        let result = repo.push(false, |_| {});
+        let result = repo.push(|_| {});
         assert_eq!(
             result.is_ok(),
             pushes,
