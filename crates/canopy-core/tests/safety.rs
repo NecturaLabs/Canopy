@@ -272,7 +272,7 @@ fn an_unmerged_branch_is_known_by_state_as_git_judges_it() {
         ],
     );
     git(p, &["branch", "-q", "--set-upstream-to", "origin/pushed"]);
-    // In HEAD but behind nothing in its upstream: not merged into the upstream, which decides.
+    // In HEAD but not in its upstream: unmerged, because the upstream decides.
     git(p, &["switch", "-q", "main"]);
     git(p, &["branch", "local", "main"]);
     git(p, &["update-ref", "refs/remotes/origin/local", "main~0"]);
