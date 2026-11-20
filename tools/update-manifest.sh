@@ -33,6 +33,10 @@ targets = {
 }
 platforms = {}
 for name, digest in sorted(sums.items()):
+    # Only archives name a platform; a report or other file that mentions a target triple must
+    # not replace that platform's entry.
+    if not name.endswith((".tar.gz", ".zip")):
+        continue
     for target, key in targets.items():
         if target in name:
             platforms[key] = {"url": f"{base.rstrip('/')}/{name}", "sha256": digest}

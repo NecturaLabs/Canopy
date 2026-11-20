@@ -2647,6 +2647,12 @@ fn an_empty_query_is_the_plain_list_and_search_needs_a_token_on_github_only() {
 #[test]
 fn a_gitlab_search_uses_the_list_parameters_and_interleaves_closed_and_merged() {
     let server = Server::start();
+    server.route(
+        "GET",
+        "/api/v4/version",
+        200,
+        r#"{"version":"18.11.0","revision":"abc"}"#,
+    );
     let target = |state: &str| {
         format!(
             "{GL}/merge_requests?state={state}&order_by=created_at&sort=asc&per_page=100&page=1\
@@ -2680,10 +2686,259 @@ fn a_gitlab_search_uses_the_list_parameters_and_interleaves_closed_and_merged() 
         draft: Some(false),
         order: SearchOrder::Oldest,
     };
-    let page = gitlab(&server, None)
+    let page = gitlab(&server, Some(TOKEN))
         .search_page(StateFilter::Closed, &query, 1, None)
         .expect("page");
     let order: Vec<u64> = page.rows.iter().map(|r| r.number).collect();
     assert_eq!(order, [2, 1, 3]);
     assert!(!page.more && page.cursor.is_none());
+}
+
+/// The merge request list targets a GitLab client asked for, in order.
+fn gitlab_list_targets(server: &Server) -> Vec<String> {
+    server
+        .requests()
+        .into_iter()
+        .filter(|r| r.target.contains("/merge_requests"))
+        .map(|r| r.target)
+        .collect()
+}
+
+/// The `GET /version` requests the server saw.
+fn version_requests(server: &Server) -> Vec<server::Recorded> {
+    server
+        .requests()
+        .into_iter()
+        .filter(|r| r.target == "/api/v4/version")
+        .collect()
+}
+
+fn draft_query(draft: bool) -> RequestQuery {
+    RequestQuery {
+        draft: Some(draft),
+        ..RequestQuery::default()
+    }
+}
+
+#[test]
+fn gitlab_19_and_newer_filters_drafts_with_draft() {
+    for version in ["19.0.0", "19.6.1-ee", "20.0.0-pre"] {
+        let server = Server::start();
+        server.route(
+            "GET",
+            "/api/v4/version",
+            200,
+            &json!({ "version": version, "revision": "abc" }).to_string(),
+        );
+        server.route("GET", &format!("{GL}/merge_requests"), 200, "[]");
+        let client = gitlab(&server, Some(TOKEN));
+        client
+            .search_page(StateFilter::Open, &draft_query(true), 1, None)
+            .expect("drafts");
+        client
+            .search_page(StateFilter::Open, &draft_query(false), 1, None)
+            .expect("ready");
+        let targets = gitlab_list_targets(&server);
+        assert_eq!(targets.len(), 2, "{version}: {targets:?}");
+        assert!(
+            targets[0].ends_with("&draft=true"),
+            "{version}: {targets:?}"
+        );
+        assert!(
+            targets[1].ends_with("&draft=false"),
+            "{version}: {targets:?}"
+        );
+        assert!(
+            targets.iter().all(|t| !t.contains("wip")),
+            "{version}: {targets:?}"
+        );
+        let seen = version_requests(&server);
+        assert_eq!(seen.len(), 1, "{version}: the version is read once");
+        assert_eq!(
+            seen[0].header("authorization"),
+            Some(&*format!("Bearer {TOKEN}")),
+            "the version is read with the host's own sign-in"
+        );
+        assert_no_token_leak(&client);
+    }
+}
+
+#[test]
+fn gitlab_before_19_filters_drafts_with_wip() {
+    for version in ["18.11.3-ee", "17.0.0", "9.5.0"] {
+        let server = Server::start();
+        server.route(
+            "GET",
+            "/api/v4/version",
+            200,
+            &json!({ "version": version, "revision": "abc" }).to_string(),
+        );
+        server.route("GET", &format!("{GL}/merge_requests"), 200, "[]");
+        let client = gitlab(&server, Some(TOKEN));
+        client
+            .search_page(StateFilter::Open, &draft_query(true), 1, None)
+            .expect("drafts");
+        client
+            .search_page(StateFilter::Open, &draft_query(false), 1, None)
+            .expect("ready");
+        let targets = gitlab_list_targets(&server);
+        assert!(targets[0].ends_with("&wip=yes"), "{version}: {targets:?}");
+        assert!(targets[1].ends_with("&wip=no"), "{version}: {targets:?}");
+        assert!(
+            targets.iter().all(|t| !t.contains("draft")),
+            "{version}: {targets:?}"
+        );
+        assert_eq!(version_requests(&server).len(), 1, "{version}");
+    }
+}
+
+/// Two draft searches (drafts, then the rest) on a GitLab whose `/version` answers `status`
+/// with `body` and `headers`; returns the list targets and how many version requests were made.
+fn two_draft_searches_after(
+    status: u16,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> (Vec<String>, usize) {
+    let server = Server::start();
+    server.route_with_headers("GET", "/api/v4/version", status, headers, body);
+    server.route("GET", &format!("{GL}/merge_requests"), 200, "[]");
+    let client = gitlab(&server, Some(TOKEN));
+    for draft in [true, false] {
+        client
+            .search_page(StateFilter::Open, &draft_query(draft), 1, None)
+            .expect("the search still runs");
+    }
+    (
+        gitlab_list_targets(&server),
+        version_requests(&server).len(),
+    )
+}
+
+#[test]
+fn gitlab_that_answers_without_a_version_uses_wip_and_is_not_asked_again() {
+    let answers: [(u16, &str); 7] = [
+        (401, r#"{"message":"401 Unauthorized"}"#),
+        (403, r#"{"message":"403 Forbidden"}"#),
+        (404, r#"{"message":"404 Not Found"}"#),
+        (400, r#"{"message":"400 Bad request"}"#),
+        (422, r#"{"message":"422 Unprocessable"}"#),
+        (200, r#"{"version":"soon","revision":"abc"}"#),
+        (200, "{}"),
+    ];
+    for (status, body) in answers {
+        let (targets, asked) = two_draft_searches_after(status, &[], body);
+        assert!(targets[0].ends_with("&wip=yes"), "{status}: {targets:?}");
+        assert!(targets[1].ends_with("&wip=no"), "{status}: {targets:?}");
+        assert_eq!(asked, 1, "{status} {body}: the answer is final");
+    }
+}
+
+/// Status, headers and body of one canned answer.
+type Answer<'a> = (u16, Vec<(&'a str, &'a str)>, &'a str);
+
+#[test]
+fn gitlab_failing_in_passing_uses_wip_but_is_asked_again() {
+    let (_, reset_text) = reset_soon(0);
+    let answers: [Answer<'_>; 5] = [
+        (500, vec![], "oops"),
+        (502, vec![], r#"{"message":"Bad Gateway"}"#),
+        (503, vec![], r#"{"message":"unavailable"}"#),
+        (
+            429,
+            vec![("ratelimit-reset", reset_text.as_str())],
+            r#"{"message":"Retry later"}"#,
+        ),
+        (200, vec![], "<html>a proxy page</html>"),
+    ];
+    for (status, headers, body) in answers {
+        let (targets, asked) = two_draft_searches_after(status, &headers, body);
+        assert!(targets[0].ends_with("&wip=yes"), "{status}: {targets:?}");
+        assert!(targets[1].ends_with("&wip=no"), "{status}: {targets:?}");
+        assert_eq!(asked, 2, "{status}: a failure that may pass is not kept");
+    }
+}
+
+#[test]
+fn gitlab_asks_again_after_a_failure_and_keeps_the_answer() {
+    let server = Server::start();
+    server.route("GET", &format!("{GL}/merge_requests"), 200, "[]");
+    server.route("GET", "/api/v4/version", 503, r#"{"message":"down"}"#);
+    let client = gitlab(&server, Some(TOKEN));
+    client
+        .search_page(StateFilter::Open, &draft_query(true), 1, None)
+        .expect("drafts while it is down");
+    server.route(
+        "GET",
+        "/api/v4/version",
+        200,
+        r#"{"version":"19.2.0-ee","revision":"abc"}"#,
+    );
+    for _ in 0..2 {
+        client
+            .search_page(StateFilter::Open, &draft_query(true), 1, None)
+            .expect("drafts");
+    }
+    let targets = gitlab_list_targets(&server);
+    assert!(targets[0].ends_with("&wip=yes"), "{targets:?}");
+    assert!(targets[1].ends_with("&draft=true"), "{targets:?}");
+    assert!(targets[2].ends_with("&draft=true"), "{targets:?}");
+    assert_eq!(version_requests(&server).len(), 2, "down once, then kept");
+}
+
+#[test]
+fn gitlab_reads_no_version_without_a_draft_filter() {
+    let server = Server::start();
+    server.route("GET", &format!("{GL}/merge_requests"), 200, "[]");
+    let query = RequestQuery {
+        text: "fix".into(),
+        ..RequestQuery::default()
+    };
+    gitlab(&server, Some(TOKEN))
+        .search_page(StateFilter::Open, &query, 1, None)
+        .expect("page");
+    assert!(version_requests(&server).is_empty());
+    let targets = gitlab_list_targets(&server);
+    assert!(
+        targets
+            .iter()
+            .all(|t| !t.contains("wip") && !t.contains("draft")),
+        "{targets:?}"
+    );
+}
+
+#[test]
+fn a_gitlab_client_without_a_sign_in_filters_drafts_with_wip_and_reads_no_version() {
+    let server = Server::start();
+    server.route(
+        "GET",
+        "/api/v4/version",
+        200,
+        r#"{"version":"19.0.0","revision":"abc"}"#,
+    );
+    server.route("GET", &format!("{GL}/merge_requests"), 200, "[]");
+    let client = gitlab(&server, None);
+    for draft in [true, false] {
+        client
+            .search_page(StateFilter::Open, &draft_query(draft), 1, None)
+            .expect("the list is public");
+    }
+    let targets = gitlab_list_targets(&server);
+    assert!(targets[0].ends_with("&wip=yes"), "{targets:?}");
+    assert!(targets[1].ends_with("&wip=no"), "{targets:?}");
+    assert!(
+        version_requests(&server).is_empty(),
+        "GitLab refuses it without a sign-in"
+    );
+}
+
+#[test]
+fn a_stopped_gitlab_client_sends_no_search() {
+    let server = Server::start();
+    let switch = Arc::new(AtomicBool::new(false));
+    let client = gitlab(&server, Some(TOKEN)).with_switch(Arc::clone(&switch));
+    let err = client
+        .search_page(StateFilter::Open, &draft_query(true), 1, None)
+        .expect_err("stopped");
+    assert!(matches!(err, Error::Stopped), "{err:?}");
+    assert!(server.requests().is_empty());
 }

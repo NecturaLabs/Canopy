@@ -151,6 +151,11 @@ class HookTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn("['test', '--workspace', '--locked']", invocation)
 
+    def test_the_toolchain_pin_runs_clippy(self):
+        status, invocation = self.run_hook(["rust-toolchain.toml"])
+        self.assertEqual(status, 0)
+        self.assertIsNotNone(invocation)
+
     def test_unrelated_files_skip_clippy(self):
         status, invocation = self.run_hook(["docs/example.md", "art/sample.png"])
         self.assertEqual(status, 0)
