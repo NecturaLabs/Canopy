@@ -1,13 +1,13 @@
 //! [`Client`]: the provider-neutral entry point.
 
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, OnceLock};
 
 use canopy_core::forge::{Forge, ForgeKind};
 
 use crate::error::Result;
-use crate::http::{Http, redact_userinfo};
+use crate::http::{GITHUB_API_ROOT, Http, redact_userinfo};
 use crate::model::{
     ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery, RequestSummary, StateFilter,
 };
@@ -85,6 +85,8 @@ pub struct Client {
     kind: ForgeKind,
     /// `/repos/owner/repo` or `/projects/group%2Fproject`.
     project: String,
+    /// GitLab's draft filter for this host, kept once the instance has answered.
+    draft_param: OnceLock<gitlab::DraftParam>,
 }
 
 impl fmt::Debug for Client {
@@ -98,13 +100,13 @@ impl fmt::Debug for Client {
     }
 }
 
-/// The REST API root for `forge`: `https://api.github.com` for github.com (`/api/v3` on any
+/// The REST API root for `forge`: [`GITHUB_API_ROOT`] for github.com (`/api/v3` on any
 /// other GitHub host), `https://<host>[:<port>]/api/v4` for GitLab. The port is the forge's web
 /// port ([`Forge::port`]), so a self-hosted GitLab at `https://gitlab.corp:8443` is called on
 /// 8443.
 fn default_api_base(forge: &Forge) -> String {
     match forge.kind {
-        ForgeKind::GitHub if forge.host == "github.com" => "https://api.github.com".to_owned(),
+        ForgeKind::GitHub if forge.host == "github.com" => GITHUB_API_ROOT.to_owned(),
         ForgeKind::GitHub => format!("https://{}/api/v3", forge.authority()),
         ForgeKind::GitLab => format!("https://{}/api/v4", forge.authority()),
     }
@@ -129,6 +131,7 @@ impl Client {
             forge: forge.clone(),
             kind: forge.kind,
             project,
+            draft_param: OnceLock::new(),
         }
     }
 
@@ -231,6 +234,9 @@ impl Client {
     /// The words of `query.text` go to the host as plain text (each quoted, with quotes, colons
     /// and backslashes removed on GitHub, so a word cannot become a qualifier or leave the
     /// repository); at most [`SEARCH_WORDS`] words are sent.
+    ///
+    /// A GitLab search that filters on drafts first reads the instance's version (`GET /version`
+    /// with the same sign-in, kept once the host answers) to name the filter `draft` or `wip`.
     pub fn search_page(
         &self,
         filter: StateFilter,
@@ -247,9 +253,27 @@ impl Client {
                 github::search_page(&self.http, &self.forge.path, filter, query, page, cursor)
             }
             ForgeKind::GitLab => {
-                gitlab::search_page(&self.http, &self.project, filter, query, page)
+                let param = self.gitlab_draft_param(query)?;
+                gitlab::search_page(&self.http, &self.project, filter, query, param, page)
             }
         }
+    }
+
+    /// The draft filter for a GitLab search: from the instance's version, read only when `query`
+    /// filters on drafts. An answer from the instance is kept for the client's life; a failure
+    /// that may pass (network, rate limit, 5xx) is not, so the next draft search asks again.
+    fn gitlab_draft_param(&self, query: &RequestQuery) -> Result<gitlab::DraftParam> {
+        if query.draft.is_none() {
+            return Ok(gitlab::DraftParam::Wip);
+        }
+        if let Some(param) = self.draft_param.get() {
+            return Ok(*param);
+        }
+        let choice = gitlab::draft_param(&self.http)?;
+        if choice.settled {
+            return Ok(*self.draft_param.get_or_init(|| choice.param));
+        }
+        Ok(choice.param)
     }
 
     /// Where the checks and reviews of requests `numbers` stand, as `(number, rollup)` pairs for
@@ -348,10 +372,26 @@ mod tests {
     }
 
     #[test]
+    fn github_dot_com_is_asked_for_the_latest_api_version_and_other_hosts_the_old_one() {
+        let api_version = |forge: &Forge| {
+            let client = Client::new(forge, None);
+            crate::http::github_api_version(client.http.base())
+        };
+        assert_eq!(
+            api_version(&forge(ForgeKind::GitHub, "github.com", "o/r")),
+            "2026-03-10"
+        );
+        assert_eq!(
+            api_version(&forge(ForgeKind::GitHub, "ghe.example.com", "o/r")),
+            "2022-11-28"
+        );
+    }
+
+    #[test]
     fn api_bases() {
         assert_eq!(
             default_api_base(&forge(ForgeKind::GitHub, "github.com", "o/r")),
-            "https://api.github.com"
+            GITHUB_API_ROOT
         );
         assert_eq!(
             default_api_base(&forge(ForgeKind::GitLab, "gitlab.com", "g/r")),
