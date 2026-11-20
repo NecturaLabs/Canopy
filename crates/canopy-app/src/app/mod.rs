@@ -76,6 +76,7 @@ pub const OVERLAYS: &[&str] = &[
     "settings-backup",
     "settings-import-ignored",
     "settings-keyboard-capture",
+    "settings-keyboard-refused",
     "settings-repository",
     "settings-repository-pull",
     "settings-repository-diffs",
@@ -684,6 +685,9 @@ impl CanopyApp {
             }
             Some("settings-import-ignored") => {
                 app.settings_screen = Some(SettingsScreen::after_import_ignored());
+            }
+            Some("settings-keyboard-refused") => {
+                app.settings_screen = Some(SettingsScreen::refused_a_key());
             }
             Some("settings-keyboard-capture") => {
                 app.settings_screen = Some(SettingsScreen::capturing_a_key(&cc.egui_ctx));

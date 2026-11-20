@@ -69,7 +69,7 @@ the row to the table, and **Reset all** every row. The tab jumps (Ctrl+1…9) ar
 A change is saved in the settings (`keybindings`: the row, written `Command.Section`, to the chord's
 text, `ctrl+shift+symbol+Key`), travels with Settings export and import, and applies on the next
 frame. The rules above hold for what you choose: a key another row uses is refused, naming that row
-(nothing is rebound silently), and so are Super, F9, Tab without Ctrl, a Ctrl key in a single-key
+under it (nothing is rebound silently), and so are Super, F9, Tab without Ctrl, a Ctrl key in a single-key
 row and a key without Ctrl in an "Anywhere" row (it would fire while typing). Alt is never read. A
 row with a double press (`gg`) fires on one press of its new key.
 

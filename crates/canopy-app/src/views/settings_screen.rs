@@ -361,6 +361,23 @@ impl SettingsScreen {
         }
     }
 
+    /// Keyboard with its first row's last key refused: `j`, a single key, which an Anywhere row
+    /// cannot take (the settings-keyboard-refused screenshot).
+    pub fn refused_a_key() -> Self {
+        let first = crate::keymap::BINDINGS
+            .iter()
+            .find(|b| crate::keymap::is_remappable(b));
+        let why = first
+            .zip(crate::keymap::Chord::from_text("J"))
+            .and_then(|(binding, chord)| crate::keymap::rebind_problem(binding, chord))
+            .unwrap_or_default();
+        Self {
+            section: Section::Keyboard,
+            key_note: first.map(|b| (crate::keymap::binding_id(b), why)),
+            ..Self::default()
+        }
+    }
+
     /// Keyboard with the first Fetch row waiting for its new key (the settings-keyboard-capture
     /// screenshot).
     pub fn capturing_a_key(ctx: &egui::Context) -> Self {
@@ -6048,16 +6065,6 @@ fn poll_file_task(screen: &mut SettingsScreen, s: &mut Settings, actions: &mut V
 /// Backup and reset: settings to and from a file, and every preference back to its default.
 fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &mut Vec<Action>) {
     let busy = screen.file_task.is_some();
-    if let Some((warn, message)) = &screen.file_status
-        && !Filter::searching(ui.ctx())
-    {
-        Callout::new(
-            if *warn { Tone::Warning } else { Tone::Success },
-            message.as_str(),
-        )
-        .show(ui);
-        ui.add_space(theme::SM);
-    }
     heading(ui, "Settings file");
     row_explained(
         ui,
@@ -6122,6 +6129,17 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
             }
         },
     );
+    // The result goes below every button, so it moves none of them.
+    if let Some((warn, message)) = &screen.file_status
+        && !Filter::searching(ui.ctx())
+    {
+        ui.add_space(theme::MD);
+        Callout::new(
+            if *warn { Tone::Warning } else { Tone::Success },
+            message.as_str(),
+        )
+        .show(ui);
+    }
 }
 
 /// Settings → Keyboard: every key of the keymap by where it applies, each with a button that
@@ -6164,6 +6182,7 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
         });
         ui.add_space(theme::MD);
     }
+    reset_all_shortcuts(ui, screen, s);
     for section in KeySection::ALL {
         let rows: Vec<&Binding> = keymap::BINDINGS
             .iter()
@@ -6174,24 +6193,32 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
             for b in rows {
                 let id = keymap::binding_id(b);
                 let waiting = screen.rebinding.as_deref() == Some(id.as_str());
-                let note =
-                    screen
-                        .key_note
-                        .as_ref()
-                        .filter(|(row, _)| *row == id)
-                        .map(|(_, why)| Note {
-                            text: why.clone(),
-                            warn: true,
-                        });
+                // Why the last key was refused, said under the row until the next change.
+                let refused = screen
+                    .key_note
+                    .as_ref()
+                    .filter(|(row, _)| *row == id)
+                    .map(|(_, why)| why.clone());
                 let keys = b.keys();
                 noted_row_layout(
                     ui,
                     b.description,
                     None,
                     &keys,
-                    &|_| {},
+                    &|ui| {
+                        if let Some(why) = &refused {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(why)
+                                        .size(theme::metrics().meta_size)
+                                        .color(p.warning),
+                                )
+                                .wrap(),
+                            );
+                        }
+                    },
                     "",
-                    note.as_ref(),
+                    None,
                     |ui| {
                         if !keymap::is_remappable(b) {
                             Keycap::new(keys.clone()).show(ui);
@@ -6244,20 +6271,27 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
             }
         });
     }
-    if !s.keybindings.is_empty() {
-        heading(ui, "Start over");
-        row(
-            ui,
-            "Reset all shortcuts",
-            "Every key back to the one Canopy ships with.",
-            |ui| {
-                if confirm_button(ui, "reset-keys", "Reset all", "Reset every shortcut") {
-                    s.keybindings.clear();
-                    screen.key_note = None;
-                }
-            },
-        );
-    }
+}
+
+/// The Keyboard page's first row: every key back to Canopy's own. It is there before any key
+/// is changed, so changing the first one moves no row below it.
+fn reset_all_shortcuts(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
+    let changed = !s.keybindings.is_empty();
+    row(
+        ui,
+        "Reset all shortcuts",
+        if changed {
+            "Every key back to the one Canopy ships with."
+        } else {
+            "Every key is the one Canopy ships with."
+        },
+        |ui| {
+            if changed && confirm_button(ui, "reset-keys", "Reset all", "Reset every shortcut") {
+                s.keybindings.clear();
+                screen.key_note = None;
+            }
+        },
+    );
 }
 
 /// What the repository's git configuration decides against Canopy's recommendation, one line per
@@ -10208,6 +10242,116 @@ mod tests {
             against_recommendation(&GitFacts::default(), &follow, repo).is_empty(),
             "a configuration that sets nothing is not listed"
         );
+    }
+
+    /// Three frames of `page`, so widths measured last frame have settled: what it speaks.
+    fn settled(
+        ctx: &egui::Context,
+        mut page: impl FnMut(&mut Ui),
+    ) -> Vec<crate::ui::kit::testkit::Spoken> {
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = crate::ui::kit::testkit::spoken(ctx, &mut page);
+        }
+        nodes
+    }
+
+    /// The node named `text`, or a label showing it.
+    fn node<'a>(
+        nodes: &'a [crate::ui::kit::testkit::Spoken],
+        text: &str,
+    ) -> Option<&'a crate::ui::kit::testkit::Spoken> {
+        nodes
+            .iter()
+            .find(|n| n.label.as_deref() == Some(text) || n.value.as_deref() == Some(text))
+    }
+
+    /// Where the node named or showing `text` is.
+    fn bounds_of(nodes: &[crate::ui::kit::testkit::Spoken], text: &str) -> Rect {
+        node(nodes, text)
+            .and_then(|n| n.bounds)
+            .unwrap_or_else(|| panic!("{text} is not shown"))
+    }
+
+    /// #259: a refused key says why in words under its row, not only in a mark's tooltip.
+    #[test]
+    fn a_refused_key_says_why_under_its_row() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::default();
+        let why = "Fetch already uses j.";
+        screen.key_note = Some(("Fetch.Repository".to_owned(), why.to_owned()));
+        let nodes = settled(&ctx, |ui| keyboard(ui, &mut screen, &mut settings));
+        let said = node(&nodes, why);
+        assert!(
+            said.is_some_and(|n| n.role == egui::accesskit::Role::Label),
+            "{said:?}"
+        );
+        // Under its own row, not another's.
+        let row = crate::keymap::binding_by_id("Fetch.Repository").expect("a row");
+        let line = bounds_of(&nodes, why);
+        // Several rows may share a title; one of them sits right above the line.
+        let above = nodes
+            .iter()
+            .filter(|n| n.value.as_deref() == Some(row.description))
+            .filter_map(|n| n.bounds)
+            .any(|title| (-1.0..24.0).contains(&(line.top() - title.bottom())));
+        assert!(above, "{line:?}");
+    }
+
+    /// #259: an export's or import's result shows without moving the buttons, so a second
+    /// click lands where the first did.
+    #[test]
+    fn a_settings_file_result_does_not_move_the_buttons() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::at(Section::Data);
+        let mut actions = Vec::new();
+        let mut places = |screen: &mut SettingsScreen| {
+            let nodes = settled(&ctx, |ui| backup(ui, screen, &mut settings, &mut actions));
+            (
+                bounds_of(&nodes, "Export…"),
+                bounds_of(&nodes, "Import…"),
+                bounds_of(&nodes, "Reset all…"),
+                said(&nodes, "Exported to"),
+            )
+        };
+        let before = places(&mut screen);
+        screen.file_status = Some((
+            false,
+            "Exported to /home/ada/canopy-settings.json.".to_owned(),
+        ));
+        let after = places(&mut screen);
+        assert!(after.3, "the result is shown");
+        assert_eq!(
+            (before.0, before.1, before.2),
+            (after.0, after.1, after.2),
+            "the buttons stay"
+        );
+    }
+
+    /// #259: Reset all shortcuts is at the top of the Keyboard page, and is there before any
+    /// key is changed, so changing the first one moves no row.
+    #[test]
+    fn reset_all_shortcuts_is_at_the_top_and_the_rows_hold_still() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::default();
+        let row = crate::keymap::binding_by_id("Fetch.Repository").expect("a row");
+        let mut places = |settings: &mut Settings| {
+            let nodes = settled(&ctx, |ui| keyboard(ui, &mut screen, settings));
+            (
+                bounds_of(&nodes, "Reset all shortcuts"),
+                bounds_of(&nodes, row.description),
+            )
+        };
+        let (reset, fetch) = places(&mut settings);
+        assert!(reset.bottom() < fetch.top(), "{reset:?} above {fetch:?}");
+        settings
+            .keybindings
+            .insert("Fetch.Repository".to_owned(), "V".to_owned());
+        let (reset_after, fetch_after) = places(&mut settings);
+        assert_eq!((reset, fetch), (reset_after, fetch_after), "nothing moved");
     }
 
     /// #55: Change listens for the next key, a free key is saved under the row and moves the
