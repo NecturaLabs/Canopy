@@ -2569,16 +2569,18 @@ fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
         },
     );
     let cards = n.cards;
-    for topic in crate::ui::toast::Topic::ALL {
-        let default = *DEFAULTS.notifications.clone().topic_mut(topic);
-        let on = n.topic_mut(topic);
-        ui.add_enabled_ui(cards, |ui| {
+    // One scope for every topic row: a scope per row added a gap between scopes, so these rows
+    // stood taller than the first.
+    ui.add_enabled_ui(cards, |ui| {
+        for topic in crate::ui::toast::Topic::ALL {
+            let default = *DEFAULTS.notifications.clone().topic_mut(topic);
+            let on = n.topic_mut(topic);
             row(ui, topic.label(), topic.help(), |ui| {
                 revert(ui, on, &default, topic.label());
                 switch(ui, on, topic.label());
             });
-        });
-    }
+        }
+    });
 }
 
 /// The theme cards, whole cards per row.
