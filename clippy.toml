@@ -422,3 +422,10 @@ reason = "colours come only from nectura-ui/src/theme.rs (AGENTS.md, Conventions
 [[disallowed-methods]]
 path = "egui::ecolor::Hsva::from_srgb"
 reason = "colours come only from nectura-ui/src/theme.rs (AGENTS.md, Conventions)"
+
+# nectura-ui's glass teardown is sound only while the context is current, which holds in
+# `App::on_exit`, where the last frame left it current. The token's constructor is safe and proves nothing, so this rule keeps it to that
+# one call.
+[[disallowed-methods]]
+path = "nectura_ui::kit::glass::ExitContext::from_on_exit"
+reason = "the token marks the one intended call, eframe's App::on_exit, where the context is current; it does not prove it"
