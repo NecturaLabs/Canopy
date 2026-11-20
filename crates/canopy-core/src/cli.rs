@@ -385,14 +385,21 @@ pub(crate) fn output_within(cmd: Command, args: &[&str], limit: Duration) -> Res
     output_within_input(cmd, args, limit, None)
 }
 
-/// [`output_within`] feeding `input` to standard input from a thread of its own, so a git that
-/// stops reading cannot hold up the limit.
-pub(crate) fn output_within_input(
-    mut cmd: Command,
-    args: &[&str],
-    limit: Duration,
-    input: Option<Vec<u8>>,
-) -> Result<Output> {
+/// A git child with its standard input, output and error each served by a thread of its own, so
+/// that no pipe waits on another: git may answer while it still reads (`check-ignore --stdin`),
+/// and a caller writing everything before reading anything would block once the answer fills
+/// the pipe.
+struct Piped {
+    child: Child,
+    stdout: std::thread::JoinHandle<Vec<u8>>,
+    stderr: std::thread::JoinHandle<Vec<u8>>,
+    /// Feeds the input; `None` when there is none.
+    writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
+}
+
+/// Starts `cmd` (a git command built with [`command`]) with `args` and `input` as its standard
+/// input, or none when `input` is `None`.
+fn spawn_piped(mut cmd: Command, args: &[&str], input: Option<Vec<u8>>) -> Result<Piped> {
     fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
@@ -402,7 +409,6 @@ pub(crate) fn output_within_input(
             buf
         })
     }
-    let started = Instant::now();
     let mut child = with_args(&mut cmd, args)
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -413,14 +419,35 @@ pub(crate) fn output_within_input(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(Error::GitMissing)?;
-    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        // A git that exits early closes its end; its exit status and stderr say why.
-        std::thread::spawn(move || {
-            let _ = stdin.write_all(&input);
-        });
-    }
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
+    let writer = input.zip(child.stdin.take()).map(|(input, mut stdin)| {
+        // Dropping `stdin` at the end of the thread closes it, which is git's end of the input.
+        std::thread::spawn(move || stdin.write_all(&input))
+    });
+    Ok(Piped {
+        stdout: drain(child.stdout.take()),
+        stderr: drain(child.stderr.take()),
+        child,
+        writer,
+    })
+}
+
+/// [`output_within`] feeding `input` to standard input from a thread of its own, so a git that
+/// stops reading cannot hold up the limit.
+pub(crate) fn output_within_input(
+    cmd: Command,
+    args: &[&str],
+    limit: Duration,
+    input: Option<Vec<u8>>,
+) -> Result<Output> {
+    let started = Instant::now();
+    // A git that exits early closes its end; its exit status and stderr say why. A writer still
+    // blocked on a git that timed out is left to end when the pipe closes.
+    let Piped {
+        mut child,
+        stdout,
+        stderr,
+        writer: _,
+    } = spawn_piped(cmd, args, input)?;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -532,29 +559,38 @@ pub(crate) fn run_with_input_within(
     }
 }
 
+/// Runs `cmd`, a git command built with [`command`], with `input` as its standard input and
+/// waits for it to finish, with no time limit. The input is written from a thread of its own while
+/// the output is read, so neither direction can wait on the other however much there is of it.
+///
+/// A git that exits before reading everything closes its end of the input: that is not an error
+/// here, its exit code and standard error say why. Any other failure to write is one, since git
+/// then did not get what it was asked to work on.
+fn output_with_input(cmd: Command, args: &[&str], input: &[u8]) -> Result<Output> {
+    let Piped {
+        mut child,
+        stdout,
+        stderr,
+        writer,
+    } = spawn_piped(cmd, args, Some(input.to_vec()))?;
+    let status = child.wait()?;
+    let out = Output {
+        code: status.code(),
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    };
+    match writer.map(std::thread::JoinHandle::join) {
+        Some(Ok(Err(e))) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.into()),
+        _ => Ok(out),
+    }
+}
+
 /// Like [`run`], feeding `input` to standard input.
 pub fn run_with_input(workdir: &Path, args: &[&str], input: &[u8]) -> Result<String> {
     let started = Instant::now();
-    let mut child = with_args(&mut command(Some(workdir)), args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(Error::GitMissing)?;
-    if let Some(mut stdin) = child.stdin.take() {
-        // A git that exits early closes its end; its exit status and stderr say why.
-        match stdin.write_all(input) {
-            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(e.into());
-            }
-            _ => {}
-        }
-    }
-    let out = child.wait_with_output()?;
-    record(args, started, out.status.code(), &out.stderr);
-    if out.status.success() {
+    let out = output_with_input(command(Some(workdir)), args, input)?;
+    record(args, started, out.code, &out.stderr);
+    if out.code == Some(0) {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
         Err(failure(args, &out.stdout, &out.stderr))
@@ -572,25 +608,8 @@ pub(crate) fn run_answer(
     ok_codes: &[i32],
 ) -> Result<(i32, Vec<u8>)> {
     let started = Instant::now();
-    let mut child = with_args(&mut command(Some(workdir)), args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(Error::GitMissing)?;
-    if let Some(mut stdin) = child.stdin.take() {
-        // A git that exits early closes its end; its exit status and stderr say why.
-        match stdin.write_all(input) {
-            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(e.into());
-            }
-            _ => {}
-        }
-    }
-    let out = child.wait_with_output()?;
-    let code = out.status.code();
+    let out = output_with_input(command(Some(workdir)), args, input)?;
+    let code = out.code;
     match code {
         Some(c) if ok_codes.contains(&c) => {
             record(args, started, Some(0), &out.stderr);
@@ -1355,6 +1374,29 @@ mod tests {
         assert!(
             stdout.lines().any(|l| l == "password=secret-42"),
             "{stdout}"
+        );
+    }
+
+    /// More than a pipe holds (64 KiB on Linux), for a git that never reads it.
+    const UNREAD_INPUT: usize = 1 << 20;
+
+    /// A git that exits without reading its input closes the pipe under the writer: that is not an
+    /// error, and git's exit status and standard error are what the caller sees.
+    #[test]
+    fn a_git_that_ignores_its_input_still_answers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = vec![b'x'; UNREAD_INPUT];
+        let version = run_with_input(dir.path(), &["version"], &input).expect("git version");
+        assert!(version.starts_with("git version"), "{version}");
+        let (code, out) =
+            run_answer(dir.path(), &["version"], &input, &[0]).expect("git version answers");
+        assert_eq!(code, 0);
+        assert!(out.starts_with(b"git version"));
+        let err = run_with_input(dir.path(), &["no-such-subcommand"], &input)
+            .expect_err("an unknown subcommand fails");
+        assert!(
+            err.to_string().contains("no-such-subcommand"),
+            "git's own message: {err}"
         );
     }
 }
