@@ -913,8 +913,8 @@ mod tests {
     use super::*;
 
     /// The fixture commits' time, 2024-01-02T12:00:00Z: noon UTC, so no zone from UTC-12 to UTC+14
-    /// moves it across a month or year boundary. The tests take its text from the app's own
-    /// formatter, in the local zone.
+    /// moves it across a month or year boundary. The details test takes its expected date from
+    /// `widgets::absolute_date`, which formats in the local zone.
     const FIXTURE_TIME: i64 = 1_704_196_800;
 
     /// The Date column grows to hold its longest text instead of cutting "10 minutes ago".
