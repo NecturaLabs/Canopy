@@ -367,6 +367,7 @@ A response with the wrong JSON shape reports its failure location without quotin
 | Keyboard cheatsheet and vim-style single-key actions | Done | ? | ? | ? |
 | Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard; relative/calendar History dates with English or ISO calendar format) | Done | ? | ? | ? |
 | Compact layouts and 80–160% interface zoom (Ctrl+=, Ctrl+- and Ctrl+0 work in dialogs, Settings and the palette too) | Done | ? | ? | ? |
+| In a narrow window the toolbar's tools that do not fit move, in order, into a More menu at its right end, with their icons, shortcuts and disabled reasons; the view switcher and Fetch, Pull and Push stay on the bar | Done | ? | ? | ? |
 | Shared raised controls, larger input targets and visible keyboard focus | Done | ? | ? | ? |
 | Keyboard-only use: one Tab stop per list with the arrows inside, Shift+F10 context menus, modal palette, cheatsheet and dialogs that give focus back | Done | ? | ? | ? |
 | A right-click on a commit or file row selects it before its menu opens (several marked files stay marked) | Done | Yes | ? | ? |

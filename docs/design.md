@@ -432,9 +432,11 @@ in the density's metrics:
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
-- The action toolbar uses `action_bar_height` (58 points in Comfortable density), with 46-point tools, body-size captions
-  and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has no
-  scroll bar and fades out at the edge it hides behind (Scroll edges). The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
+- The action toolbar uses `action_bar_height` (58 points in Comfortable density), with 46-point tools and body-size
+  captions. It never scrolls: when the tools are wider than the bar, only the active view keeps its name and the Local
+  only badge goes; the tools that still do not fit move, in order, into a More menu (dots-three icon, "More actions")
+  pinned at the right end, each row with the tool's icon, label, shortcut and disabled reason. The view switcher and
+  Fetch, Pull and Push never move. Document tabs scroll horizontally when needed. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
 - When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
