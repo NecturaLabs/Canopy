@@ -235,12 +235,12 @@ pub enum Op {
         prune: bool,
         checked: Option<Oid>,
     },
-    /// A push of the current branch. A force push carries `expect`, what the user was asked
-    /// about: the worker refuses if the branch or its destination is no longer that.
-    Push {
-        force: bool,
-        expect: Option<canopy_core::PushTarget>,
-    },
+    /// A push of the current branch, never forced.
+    Push,
+    /// A force push of the current branch to what the user was asked about, with the remote tip
+    /// they were shown: the worker refuses if the branch or its destination is no longer that,
+    /// and git refuses if the remote moved since.
+    ForcePush(canopy_core::PushTarget),
     AddRemote {
         name: String,
         url: String,
@@ -285,7 +285,7 @@ impl Op {
             Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
             Self::Fetch { .. } => OpKind::Fetch,
             Self::Pull { .. } => OpKind::Pull,
-            Self::Push { .. } | Self::PublishBranch { .. } => OpKind::Push,
+            Self::Push | Self::ForcePush(_) | Self::PublishBranch { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             Self::Merge(..) | Self::Rebase(_) | Self::UpdateFromBase { .. } => OpKind::Merge,
             Self::StashSave { .. } => OpKind::Stash,
@@ -414,8 +414,8 @@ impl Op {
             Self::StashDrop(_) => "Dropping stash".into(),
             Self::Fetch { .. } => "Fetching".into(),
             Self::Pull { .. } => "Pulling".into(),
-            Self::Push { force: true, .. } => "Force pushing".into(),
-            Self::Push { .. } => "Pushing".into(),
+            Self::ForcePush(_) => "Force pushing".into(),
+            Self::Push => "Pushing".into(),
             Self::AddRemote { name, .. } => format!("Adding remote {name}"),
             Self::RemoveRemote(r) => format!("Removing remote {r}"),
             Self::SetRemoteUrl { name, .. } => format!("Changing the URL of {name}"),
@@ -2452,10 +2452,8 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
                 repo.pull(strategy, progress)
             }
         }
-        Op::Push { force, expect } => match expect.filter(|_| force) {
-            Some(asked) => repo.force_push(&asked, progress),
-            None => repo.push(force, progress),
-        },
+        Op::Push => repo.push(progress),
+        Op::ForcePush(asked) => repo.force_push(&asked, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
         Op::SetRemoteUrl { name, url } => done(repo.set_remote_url(&name, &url)),
@@ -4157,10 +4155,7 @@ mod read_tests {
         };
         assert_eq!(asked.branch, "main");
         let force = |expect: &canopy_core::PushTarget| {
-            worker.send(Job::Op(Op::Push {
-                force: true,
-                expect: Some(expect.clone()),
-            }));
+            worker.send(Job::Op(Op::ForcePush(expect.clone())));
             events_until(&worker, |e| matches!(e, Event::OpFinished { .. }))
         };
 
@@ -4240,10 +4235,7 @@ mod read_tests {
         let theirs = git(&up, &["rev-parse", "main"]);
         git(&copy, &["fetch", "-q", "origin"]);
 
-        worker.send(Job::Op(Op::Push {
-            force: true,
-            expect: Some(asked.clone()),
-        }));
+        worker.send(Job::Op(Op::ForcePush(asked.clone())));
         let events = events_until(&worker, |e| matches!(e, Event::OpFinished { .. }));
         let Some(Event::OpFinished {
             result: Err(error), ..

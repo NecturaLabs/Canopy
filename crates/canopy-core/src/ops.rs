@@ -313,31 +313,26 @@ pub struct PushTarget {
     pub branch: String,
     /// The remote it goes to.
     pub remote: String,
-    /// The branch on that remote that is overwritten, without `refs/heads/`.
+    /// The branch on that remote that is overwritten, as shown to the user: [`Self::dest_ref`]
+    /// without `refs/heads/`.
     pub dest: String,
-    /// The tip of that branch as this repository last saw it (its remote-tracking ref) when the
-    /// target was worked out, or `None` when it has not seen the branch. The force push is
-    /// pinned to it ([`Repo::force_push`]): the remote must still be there, or must still not
-    /// have the branch, whatever a fetch brought in since.
+    /// The full name of the ref that is overwritten on the remote, as the push names it. It is
+    /// not always under `refs/heads/` (a remote's push refspec can map elsewhere).
+    pub dest_ref: String,
+    /// The tip of that ref as this repository last saw it (the remote-tracking ref the remote's
+    /// fetch settings map it to) when the target was worked out, or `None` when the remote did
+    /// not have it then. The force push is pinned to it ([`Repo::force_push`]): the remote must
+    /// still be there, or must still not have the ref, whatever a fetch brought in since.
     pub seen: Option<Oid>,
 }
 
-/// How [`Repo::push_with_lease`] guards the remote.
-#[derive(Clone, Copy)]
-enum Lease<'a> {
-    /// A plain push.
-    None,
-    /// A force push whose lease compares with the remote-tracking ref.
-    Bare,
-    /// A force push pinned to the tip the target saw.
-    Pinned(&'a PushTarget),
-}
-
-/// `--force-with-lease=<ref>:<expect>` for a force push of `target`: the remote branch must be
-/// at the tip the user was shown, or, with an empty value, must not exist.
+/// `--force-with-lease=<ref>:<expect>` for a force push of `target`: the remote ref must be at
+/// the tip the user was shown, or, with an empty value, must not exist. `--force-if-includes`
+/// is left out on purpose: with an explicit expected value git makes it a no-op (`man
+/// git-push`), and the explicit value already holds against a fetch.
 fn lease_argument(target: &PushTarget) -> String {
     let expect = target.seen.map(|oid| oid.to_string()).unwrap_or_default();
-    format!("--force-with-lease=refs/heads/{}:{expect}", target.dest)
+    format!("--force-with-lease={}:{expect}", target.dest_ref)
 }
 
 /// Every blob and gitlink path in `tree`, without converting native names through UTF-8.
@@ -1460,64 +1455,59 @@ impl Repo {
     }
 
     /// Pushes the current branch. Without an upstream, pushes to `origin` (or the only remote)
-    /// and sets it as upstream. `force` uses `--force-with-lease` without an expected value,
-    /// which compares with the remote-tracking ref and so trusts every fetch since; with git 2.30
-    /// or later, `--force-if-includes` makes it refuse commits a fetch brought in that the branch
-    /// never integrated. Prefer [`Repo::force_push`], which pins the lease to what the user was
-    /// shown. Annotated tags on the pushed commits go along when
-    /// [`crate::GitOptions::follow_tags`] says so.
-    pub fn push(&self, force: bool, progress: impl FnMut(&str)) -> Result<String> {
-        self.push_with_lease(if force { Lease::Bare } else { Lease::None }, progress)
-    }
-
-    /// Force pushes the current branch to `asked`, which [`Repo::force_push_target`] returned
-    /// when the user was asked. Refuses if the branch or destination changed since
-    /// ([`Repo::ensure_force_push_target`]); the lease is pinned to the remote branch tip the
-    /// question saw (`--force-with-lease=<ref>:<oid>`, or an empty value when it did not exist),
-    /// so a commit pushed by someone else is never overwritten, even after a fetch (the
-    /// background one included) updated the remote-tracking ref.
-    pub fn force_push(&self, asked: &PushTarget, progress: impl FnMut(&str)) -> Result<String> {
-        self.ensure_force_push_target(asked)?;
-        self.push_with_lease(Lease::Pinned(asked), progress)
-    }
-
-    fn push_with_lease(&self, lease: Lease<'_>, progress: impl FnMut(&str)) -> Result<String> {
-        let force = !matches!(lease, Lease::None);
+    /// and sets it as upstream. Annotated tags on the pushed commits go along when
+    /// [`crate::GitOptions::follow_tags`] says so. Never forces: see [`Repo::force_push`].
+    pub fn push(&self, progress: impl FnMut(&str)) -> Result<String> {
         let head = self.head()?;
         let Some(branch) = head.branch else {
             return Err(Error::invalid("Check out a branch to push it."));
         };
-        let has_upstream = self
-            .git()
-            .find_branch(&branch, git2::BranchType::Local)
-            .and_then(|b| b.upstream())
-            .is_ok();
-        // With an upstream this is a bare push: `push.default` decides where it goes. A force
-        // push names its one destination, so neither `push.default=matching` nor a remote's push
-        // refspecs can force other branches too.
+        let has_upstream = self.has_upstream(&branch);
+        // With an upstream this is a bare push: `push.default` decides where it goes.
         let mut args = self.push_default_override();
         args.extend(["push".to_owned(), "--progress".to_owned()]);
         args.extend(self.follow_tags_flag().map(str::to_owned));
         args.extend(self.push_submodules_flag().map(str::to_owned));
-        match lease {
-            Lease::Pinned(pin) => args.push(lease_argument(pin)),
-            Lease::Bare => {
-                args.push("--force-with-lease".to_owned());
-                if cli::version_number().is_some_and(|v| v >= cli::FORCE_IF_INCLUDES_SINCE) {
-                    args.push("--force-if-includes".to_owned());
-                }
-            }
-            Lease::None => {}
-        }
-        if force && has_upstream {
-            let (remote, dest) = self.push_destination(&branch)?;
-            args.extend([remote, format!("HEAD:{dest}")]);
-        } else if !has_upstream {
+        if !has_upstream {
             let remote = self.remote_without_upstream()?;
             args.extend(["--set-upstream".to_owned(), remote, branch]);
         }
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// Force pushes the current branch to `asked`, which [`Repo::force_push_target`] returned
+    /// when the user was asked. Refuses if the branch or destination changed since
+    /// ([`Repo::ensure_force_push_target`]); the lease is pinned to the remote tip the question
+    /// saw (`--force-with-lease=<ref>:<oid>`, or an empty value when the remote did not have
+    /// the ref), so a commit pushed by someone else is never overwritten, even after a fetch
+    /// (the background one included) updated the remote-tracking ref. It sends the one branch to
+    /// the one ref `asked` names, whatever `push.default` or the remote's push refspecs say.
+    pub fn force_push(&self, asked: &PushTarget, progress: impl FnMut(&str)) -> Result<String> {
+        self.ensure_force_push_target(asked)?;
+        let mut args = self.push_default_override();
+        args.extend(["push".to_owned(), "--progress".to_owned()]);
+        args.extend(self.follow_tags_flag().map(str::to_owned));
+        args.extend(self.push_submodules_flag().map(str::to_owned));
+        args.push(lease_argument(asked));
+        if !self.has_upstream(&asked.branch) {
+            args.push("--set-upstream".to_owned());
+        }
+        args.extend([
+            "--".to_owned(),
+            asked.remote.clone(),
+            format!("refs/heads/{}:{}", asked.branch, asked.dest_ref),
+        ]);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// Whether the local branch `branch` has an upstream.
+    fn has_upstream(&self, branch: &str) -> bool {
+        self.git()
+            .find_branch(branch, git2::BranchType::Local)
+            .and_then(|b| b.upstream())
+            .is_ok()
     }
 
     /// The remote a branch with no upstream is pushed to: `origin`, else the only remote.
@@ -1546,7 +1536,9 @@ impl Repo {
         let now = self.force_push_target()?;
         // `seen` is not compared: a remote that moved since is the lease's to refuse, with
         // git's own message.
-        if (&now.branch, &now.remote, &now.dest) == (&asked.branch, &asked.remote, &asked.dest) {
+        if (&now.branch, &now.remote, &now.dest_ref)
+            == (&asked.branch, &asked.remote, &asked.dest_ref)
+        {
             return Ok(());
         }
         Err(Error::invalid(format!(
@@ -1556,18 +1548,16 @@ impl Repo {
         )))
     }
 
-    /// Where [`Repo::push`] with `force` sends the current branch: the remote and the branch on
-    /// it, worked out as the push works them out. Refuses where the push would.
+    /// Where [`Repo::force_push`] sends the current branch: the remote and the ref on it, worked
+    /// out as a push works them out, and the tip of that ref this repository last saw. Refuses
+    /// where the push would, and where it cannot tell what the remote ref held (no fetch setting
+    /// of the remote maps it to a remote-tracking ref), since the lease would have nothing to
+    /// pin.
     pub fn force_push_target(&self) -> Result<PushTarget> {
         let Some(branch) = self.head()?.branch else {
             return Err(Error::invalid("Check out a branch to push it."));
         };
-        let has_upstream = self
-            .git()
-            .find_branch(&branch, git2::BranchType::Local)
-            .and_then(|b| b.upstream())
-            .is_ok();
-        let (remote, dest) = if has_upstream {
+        let (remote, dest_ref) = if self.has_upstream(&branch) {
             self.push_destination(&branch)?
         } else {
             (
@@ -1575,17 +1565,50 @@ impl Repo {
                 format!("refs/heads/{branch}"),
             )
         };
-        let dest = dest.strip_prefix("refs/heads/").unwrap_or(&dest).to_owned();
-        let seen = self
-            .git()
-            .refname_to_id(&format!("refs/remotes/{remote}/{dest}"))
-            .ok();
+        let dest_ref = if dest_ref.starts_with("refs/") {
+            dest_ref
+        } else {
+            format!("refs/heads/{dest_ref}")
+        };
+        let dest = dest_ref
+            .strip_prefix("refs/heads/")
+            .unwrap_or(&dest_ref)
+            .to_owned();
+        let tracking = self.tracking_ref(&remote, &dest_ref).ok_or_else(|| {
+            Error::invalid(format!(
+                "Canopy cannot tell what {remote} has at {dest_ref}: none of its fetch settings \
+                 bring that ref in. Fetch it into a remote-tracking branch first, or force push \
+                 from a terminal."
+            ))
+        })?;
+        let seen = self.git().refname_to_id(&tracking).ok();
         Ok(PushTarget {
             branch,
             remote,
             dest,
+            dest_ref,
             seen,
         })
+    }
+
+    /// The remote-tracking ref `remote`'s fetch settings keep `remote_ref` in, whether or not it
+    /// exists yet: `refs/remotes/origin/main` for `refs/heads/main` under the usual setting, but
+    /// whatever `remote.<name>.fetch` says.
+    fn tracking_ref(&self, remote: &str, remote_ref: &str) -> Option<String> {
+        let remote = self.git().find_remote(remote).ok()?;
+        for spec in remote.refspecs() {
+            let tracks = spec.direction() == git2::Direction::Fetch
+                && !spec.src_bytes().starts_with(b"^")
+                && spec.dst_bytes().starts_with(b"refs/")
+                && spec.src_matches(remote_ref);
+            if !tracks {
+                continue;
+            }
+            if let Ok(mapped) = spec.transform(remote_ref) {
+                return std::str::from_utf8(&mapped).ok().map(str::to_owned);
+            }
+        }
+        None
     }
 
     /// Where a push without a destination sends `branch`, as `(remote, ref on the remote)`,

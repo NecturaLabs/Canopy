@@ -128,26 +128,32 @@ fn settle_identity_dialog(dialogs: &mut DialogStack, saved: bool) {
     }
 }
 
-/// The question before a force push: the branch and the remote branch it overwrites.
+/// The question before a force push: the branch and the remote branch it overwrites, and the
+/// commit the remote branch was at, which the push is pinned to.
 fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
     let canopy_core::PushTarget {
         branch,
         remote,
         dest,
+        seen,
         ..
     } = &target;
+    let body = match seen {
+        Some(oid) => format!(
+            "{remote}/{dest} is at {} and is overwritten with your local {branch}. Git refuses if it has moved since.",
+            canopy_core::short_id(*oid)
+        ),
+        None => format!(
+            "{remote}/{dest} is not on the remote yet. Your local {branch} creates it. Git refuses if someone else has pushed it since."
+        ),
+    };
     Dialog::Confirm {
         title: format!("Force push {branch} to {remote}/{dest}?"),
-        body: format!(
-            "{remote}/{dest} is overwritten with your local {branch}. --force-with-lease refuses if someone else pushed in the meantime."
-        ),
+        body,
         confirm: "Force push branch".into(),
         danger: true,
         repo: repo.to_path_buf(),
-        op: Op::Push {
-            force: true,
-            expect: Some(target),
-        },
+        op: Op::ForcePush(target),
     }
 }
 
@@ -1590,5 +1596,32 @@ mod tests {
             IdentityStep::Ask
         );
         assert_eq!(step(false, false, false, None, true), IdentityStep::Ask);
+    }
+
+    /// The force push question says what the push is pinned to: the remote's tip, or that the
+    /// branch is not there yet.
+    #[test]
+    fn the_force_push_question_shows_the_tip_it_pins_the_push_to() {
+        let target = |seen| canopy_core::PushTarget {
+            branch: "topic".into(),
+            remote: "origin".into(),
+            dest: "topic".into(),
+            dest_ref: "refs/heads/topic".into(),
+            seen,
+        };
+        let body = |seen| match force_push_dialog(Path::new("/work/mote"), target(seen)) {
+            Dialog::Confirm { body, .. } => body,
+            other => panic!("a confirmation: {other:?}"),
+        };
+        let oid =
+            canopy_core::Oid::from_str("0123456789abcdef0123456789abcdef01234567").expect("an oid");
+        assert_eq!(
+            body(Some(oid)),
+            "origin/topic is at 0123456 and is overwritten with your local topic. Git refuses if it has moved since."
+        );
+        assert_eq!(
+            body(None),
+            "origin/topic is not on the remote yet. Your local topic creates it. Git refuses if someone else has pushed it since."
+        );
     }
 }

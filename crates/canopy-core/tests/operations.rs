@@ -596,8 +596,7 @@ fn push_and_fetch_against_a_local_remote() {
     repo.add_remote("origin", &url).expect("remote");
 
     let mut lines = Vec::new();
-    repo.push(false, |l| lines.push(l.to_owned()))
-        .expect("push");
+    repo.push(|l| lines.push(l.to_owned())).expect("push");
     assert!(
         lines.iter().any(|l| l.contains("main -> main")),
         "{lines:?}"
@@ -615,7 +614,7 @@ fn push_and_fetch_against_a_local_remote() {
 
     repo.fetch(None, true, |_| {}).expect("fetch");
     repo.pull(PullStrategy::Merge, |_| {}).expect("pull");
-    repo.push(false, |_| {}).expect("push again");
+    repo.push(|_| {}).expect("push again");
     assert_eq!(
         repo.snapshot(10)
             .expect("snapshot")
@@ -2000,7 +1999,7 @@ fn remotes_report_the_default_branch() {
     git(bare.path(), &["init", "-q", "--bare", "-b", "main"]);
     repo.add_remote("origin", &bare.path().to_string_lossy())
         .expect("remote");
-    repo.push(false, |_| {}).expect("push");
+    repo.push(|_| {}).expect("push");
     let remote = origin(&repo);
     assert!(remote.url.is_some());
     assert_eq!(remote.default_branch, None);
@@ -3198,7 +3197,7 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
         fs::write(p.join("a.txt"), "tagged\n").expect("write");
         git(p, &["commit", "-q", "-am", "feat: tagged"]);
         git(p, &["tag", "-a", "v1.0.0", "-m", "First release"]);
-        let result = copy.push(false, |_| {});
+        let result = copy.push(|_| {});
         assert_eq!(result.is_ok(), pushed, "{key:?}: {result:?}");
         if pushed {
             let tags = git(up_dir.path(), &["tag", "--list", "v1.0.0"]);
@@ -3207,7 +3206,7 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
         if key.is_none() || key == Some("push.followTags") {
             git(p, &["push", "-q", "origin", "topic"]);
             git(p, &["branch", "-q", "--set-upstream-to", "origin/topic"]);
-            copy.push(false, |_| {}).expect("push to topic");
+            copy.push(|_| {}).expect("push to topic");
             let tags = git(up_dir.path(), &["tag", "--list", "v1.0.0"]);
             assert_eq!(!tags.trim().is_empty(), tag_sent, "{key:?}: {tags:?}");
         }
@@ -3244,7 +3243,8 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
         );
         fs::write(p.join("a.txt"), "rewritten\n").expect("write");
         git(p, &["commit", "-q", "-am", "feat: rewritten"]);
-        copy.push(true, |_| {}).expect("force push");
+        let asked = copy.force_push_target().expect("a target");
+        copy.force_push(&asked, |_| {}).expect("force push");
         assert_eq!(
             git(up_dir.path(), &["rev-parse", "main"]),
             remote_main,
@@ -3291,28 +3291,6 @@ fn a_force_push_is_refused_when_the_remote_moved_after_the_question() {
     assert_eq!(git(up_dir.path(), &["rev-parse", "main"]), theirs);
 }
 
-/// Without a pinned expectation the bare lease still refuses a commit that a fetch brought in
-/// and that the local branch never integrated (`--force-if-includes`).
-#[test]
-fn an_unpinned_force_push_refuses_a_commit_it_never_integrated() {
-    if !in_isolated_git_env("an_unpinned_force_push_refuses_a_commit_it_never_integrated") {
-        return;
-    }
-    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
-    let p = copy.workdir();
-    git(up_dir.path(), &["checkout", "-q", "--detach"]);
-    git(p, &["commit", "-q", "--amend", "-m", "feat: rewritten"]);
-    git(
-        up_dir.path(),
-        &["commit", "-q", "--allow-empty", "-m", "feat: theirs"],
-    );
-    git(up_dir.path(), &["branch", "-q", "-f", "main", "HEAD"]);
-    let theirs = git(up_dir.path(), &["rev-parse", "main"]);
-    copy.fetch(None, false, |_| {}).expect("fetch");
-    copy.push(true, |_| {}).unwrap_err();
-    assert_eq!(git(up_dir.path(), &["rev-parse", "main"]), theirs);
-}
-
 /// A branch the remote does not have yet is pinned as absent: if someone creates it before the
 /// push, the push is refused instead of replacing it.
 #[test]
@@ -3334,8 +3312,177 @@ fn a_force_push_of_a_new_branch_is_refused_when_the_remote_created_it() {
     );
     git(up_dir.path(), &["branch", "-q", "topic", "HEAD"]);
     let theirs = git(up_dir.path(), &["rev-parse", "topic"]);
-    copy.force_push(&asked, |_| {}).unwrap_err();
+    // The fetch (the background one, say) brings it into the remote-tracking ref, where a bare
+    // lease would then match it.
+    copy.fetch(None, false, |_| {}).expect("fetch");
+    let refused = copy
+        .force_push(&asked, |_| {})
+        .expect_err("the branch someone else created must not be replaced");
+    assert!(refused.to_string().contains("stale info"), "{refused}");
     assert_eq!(git(up_dir.path(), &["rev-parse", "topic"]), theirs);
+}
+
+/// A remote's push refspec can send the branch outside `refs/heads/`. The lease names that ref
+/// as the push does (git drops a lease for a ref the push does not touch and falls back to the
+/// fast-forward check, which refuses a rewrite), and what the question saw is read from the
+/// remote-tracking ref the remote's fetch settings keep it in.
+#[test]
+fn a_force_push_to_a_ref_outside_heads_is_pinned_to_that_ref() {
+    if !in_isolated_git_env("a_force_push_to_a_ref_outside_heads_is_pinned_to_that_ref") {
+        return;
+    }
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(up_dir.path(), &["checkout", "-q", "--detach"]);
+    git(
+        p,
+        &[
+            "config",
+            "--add",
+            "remote.origin.fetch",
+            "+refs/other/*:refs/remotes/origin/other/*",
+        ],
+    );
+    git(
+        p,
+        &["config", "remote.origin.push", "refs/heads/*:refs/other/*"],
+    );
+    git(
+        p,
+        &["push", "-q", "origin", "refs/heads/main:refs/other/main"],
+    );
+    git(p, &["fetch", "-q", "origin"]);
+
+    // Rewriting what the remote has under that ref: allowed, the remote is where it was seen.
+    git(
+        p,
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--allow-empty",
+            "-m",
+            "feat: rewritten",
+        ],
+    );
+    let asked = copy.force_push_target().expect("a target");
+    assert_eq!(asked.dest, "refs/other/main");
+    assert!(
+        asked.seen.is_some(),
+        "the tracking ref holds the pushed tip"
+    );
+    copy.force_push(&asked, |_| {}).expect("force push");
+    assert_eq!(
+        git(up_dir.path(), &["rev-parse", "refs/other/main"]),
+        git(p, &["rev-parse", "HEAD"])
+    );
+
+    // The remote moves and a fetch brings it in: refused, whatever the lease says elsewhere.
+    git(
+        p,
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--allow-empty",
+            "-m",
+            "feat: rewritten again",
+        ],
+    );
+    let asked = copy.force_push_target().expect("a target");
+    git(
+        up_dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "feat: theirs"],
+    );
+    git(up_dir.path(), &["update-ref", "refs/other/main", "HEAD"]);
+    let theirs = git(up_dir.path(), &["rev-parse", "refs/other/main"]);
+    copy.fetch(None, false, |_| {}).expect("fetch");
+    let refused = copy.force_push(&asked, |_| {}).expect_err("refused");
+    assert!(refused.to_string().contains("stale info"), "{refused}");
+    assert_eq!(
+        git(up_dir.path(), &["rev-parse", "refs/other/main"]),
+        theirs
+    );
+}
+
+/// A remote whose fetch settings keep its branches somewhere other than `refs/remotes/<name>/`:
+/// what the question saw is read from there, not from a ref that no longer follows the remote.
+#[test]
+fn a_force_push_reads_the_tracking_ref_from_the_remotes_fetch_settings() {
+    if !in_isolated_git_env("a_force_push_reads_the_tracking_ref_from_the_remotes_fetch_settings") {
+        return;
+    }
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(up_dir.path(), &["checkout", "-q", "--detach"]);
+    git(
+        p,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/mirror/*",
+        ],
+    );
+    // The remote moves; only the mirror ref follows it, `refs/remotes/origin/main` is left behind.
+    git(
+        up_dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "feat: theirs"],
+    );
+    git(up_dir.path(), &["branch", "-q", "-f", "main", "HEAD"]);
+    let theirs = git(up_dir.path(), &["rev-parse", "main"]).trim().to_owned();
+    git(p, &["fetch", "-q", "origin"]);
+    git(p, &["reset", "-q", "--hard", &theirs]);
+    git(
+        p,
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--allow-empty",
+            "-m",
+            "feat: rewritten",
+        ],
+    );
+
+    let asked = copy.force_push_target().expect("a target");
+    assert_eq!(
+        asked.seen.map(|oid| oid.to_string()),
+        Some(theirs),
+        "the mirror ref, not refs/remotes/origin/main"
+    );
+    copy.force_push(&asked, |_| {}).expect("force push");
+    assert_eq!(
+        git(up_dir.path(), &["rev-parse", "main"]),
+        git(p, &["rev-parse", "HEAD"])
+    );
+}
+
+/// With no fetch setting that keeps the destination in a remote-tracking ref, Canopy cannot say
+/// what the remote held when it asked, so it refuses before the question instead of pinning to
+/// nothing and failing later with a lease message.
+#[test]
+fn a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination() {
+    if !in_isolated_git_env(
+        "a_force_push_is_refused_up_front_when_no_fetch_setting_tracks_the_destination",
+    ) {
+        return;
+    }
+    let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir();
+    git(
+        p,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/other/*:refs/remotes/origin/other/*",
+        ],
+    );
+    let refused = copy.force_push_target().expect_err("nothing tracks main");
+    let text = refused.to_string();
+    assert!(
+        text.contains("refs/heads/main") && text.contains("fetch"),
+        "{text}"
+    );
 }
 
 /// With the remote where the question saw it, the pinned force push goes through, and the
@@ -3387,7 +3534,9 @@ fn a_force_push_goes_where_a_push_would() {
         );
         fs::write(p.join("a.txt"), "forced\n").expect("write");
         git(p, &["commit", "-q", "-am", "feat: forced"]);
-        let pushed = copy.push(true, |_| {});
+        let pushed = copy
+            .force_push_target()
+            .and_then(|asked| copy.force_push(&asked, |_| {}));
         let ours = git(p, &["rev-parse", "HEAD"]);
         match dest {
             Some(dest) => {
@@ -3459,7 +3608,7 @@ fn push_follows_tags_and_ignores_push_default() {
         git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
         repo.add_remote("origin", &remote.path().to_string_lossy())
             .expect("remote");
-        repo.push(false, |_| {}).expect("first push");
+        repo.push(|_| {}).expect("first push");
         git(p, &["config", "push.default", "nothing"]);
         git(
             p,
@@ -3477,8 +3626,7 @@ fn push_follows_tags_and_ignores_push_default() {
         fs::write(p.join("a.txt"), "tagged\n").expect("write");
         git(p, &["commit", "-q", "-am", "feat: tagged"]);
         git(p, &["tag", "-a", "v1.0.0", "-m", "First release"]);
-        repo.push(false, |_| {})
-            .expect("push with push.default=nothing");
+        repo.push(|_| {}).expect("push with push.default=nothing");
         let tags = git(remote.path(), &["tag", "--list"]);
         assert_eq!(
             tags.trim() == "v1.0.0",

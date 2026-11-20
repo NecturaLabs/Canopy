@@ -351,10 +351,7 @@ impl CanopyApp {
                     {
                         self.dialogs.open(self.add_remote_dialog(true));
                     } else if let Some(t) = self.tab() {
-                        t.op(Op::Push {
-                            force: false,
-                            expect: None,
-                        });
+                        t.op(Op::Push);
                     }
                 }
                 Action::WhatsNew => {
@@ -1182,6 +1179,7 @@ mod tests {
                     branch: "feature/dark-mode".into(),
                     remote: "origin".into(),
                     dest: "feature/dark-mode".into(),
+                    dest_ref: "refs/heads/feature/dark-mode".into(),
                     seen: Some(canopy_core::Oid::from_bytes(&[7; 20]).expect("an oid")),
                 },
             )))
@@ -1198,14 +1196,10 @@ mod tests {
             "Force push feature/dark-mode to origin/feature/dark-mode?"
         );
         assert!(
-            body.contains("origin/feature/dark-mode is overwritten"),
+            body.contains("origin/feature/dark-mode is at 0707070 and is overwritten"),
             "{body}"
         );
-        let Op::Push {
-            force: true,
-            expect: Some(expect),
-        } = op
-        else {
+        let Op::ForcePush(expect) = op else {
             panic!("a force push naming its target: {op:?}");
         };
         assert_eq!(

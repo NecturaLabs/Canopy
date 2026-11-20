@@ -441,7 +441,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         actions.push(Action::OpenDialog(Dialog::Rename { old: name.clone(), new: name.clone() }));
                     }
                     if is_head && m.item(icon::ARROW_FAT_LINE_UP, "Push").shortcut(Command::Push).show(m.ui).clicked() {
-                        actions.push(Action::Op(Op::Push { force: false, expect: None }));
+                        actions.push(Action::Op(Op::Push));
                     }
                     // Any local branch without an upstream, checked out or not.
                     if !has_upstream {
