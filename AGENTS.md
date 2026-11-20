@@ -136,7 +136,7 @@ adding a dependency.
 - The owner has given full authority: ask only for decisions that are truly theirs
   (destructive and outward-facing actions still need the owner).
 - Project agents in `.claude/agents/` (Codex: `.codex/agents/`): `canopy-review`, `canopy-git`,
-  `canopy-visual-qa`, `canopy-ux-research`.
+  `canopy-visual-qa`, `canopy-ux-research`, `canopy-slop-check`.
 - Subagents (the owner's rule): at most 3 at a time. Small things are done directly. Each builder
   gets its own `CARGO_TARGET_DIR` in a scratch directory, deleted afterwards; keep 5 GB of disk
   free.
@@ -156,6 +156,9 @@ adding a dependency.
 - Before declaring work done: `tools/check.sh` passes and the `canopy-review` agent has reviewed
   the diff (brief it per the `independent-review` skill); fix or answer every Blocking finding.
   Only a typo or formatting-only change skips this.
+- Written words follow the `plain-writing` skill (PR text, reviews and comments, issues, UI copy,
+  docs). The `canopy-slop-check` agent checks a pull request's text before it is opened and
+  again before it is merged; make its cuts or answer them (owner, 2026-11-20).
 - Before every release, after all planned changes: the user simulation review (`tools/usersim.sh`,
   `docs/playbook.md`), Canopy driven like a user in an isolated environment; every finding is
   fixed before the release is cut.

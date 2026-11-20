@@ -43,3 +43,4 @@ form, `type(scope): summary` (CONTRIBUTING.md, Commit messages).
 - [ ] Docs updated where affected: `docs/features.md`, `docs/architecture.md`, `docs/design.md`,
       `CHANGELOG.md` (Unreleased)
 - [ ] No credentials, tokens or personal repository paths
+- [ ] Plain wording: no filler, praise or restatement; the summary leads with what changed and why
