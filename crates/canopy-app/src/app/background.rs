@@ -818,7 +818,7 @@ fn requests_refresh_interval(minutes: u32) -> Duration {
 /// The force-delete question's body. Git refused because `name` has commits that its upstream
 /// lacks, or the checked-out commit when it has none (or its upstream is gone), as
 /// `git branch -d` compares. `git branch -D` also deletes the branch's own reflog, so the tip's
-/// ID is the way back; HEAD's reflog keeps it only if the branch was checked out.
+/// ID is the way back; HEAD's reflog lists it only if HEAD was ever on it.
 fn force_delete_body(name: &str, snap: Option<&canopy_core::RepoSnapshot>) -> String {
     let branches = snap.map_or(&[][..], |s| s.branches.as_slice());
     let branch = branches.iter().find(|b| b.name == name);
@@ -826,14 +826,14 @@ fn force_delete_body(name: &str, snap: Option<&canopy_core::RepoSnapshot>) -> St
         .and_then(|b| b.upstream.clone())
         .or_else(|| branches.iter().find(|b| b.is_head).map(|b| b.name.clone()))
         .unwrap_or_else(|| "the checked-out commit".to_owned());
-    let way_back = match branch.and_then(|b| b.target) {
+    let compared = format!("{name} has commits that {against} does not have.");
+    match branch.and_then(|b| b.target) {
         Some(tip) => format!(
-            "To get the branch back later, create it at its tip, {}; HEAD's reflog keeps that commit only if the branch was checked out.",
+            "{compared} To get it back, create a branch at {}. HEAD's reflog lists that commit only if HEAD was ever on it.",
             canopy_core::short_id(tip)
         ),
-        None => "HEAD's reflog keeps them only if the branch was checked out.".to_owned(),
-    };
-    format!("{name} has commits that {against} does not have. {way_back}")
+        None => compared,
+    }
 }
 
 #[cfg(test)]
@@ -868,10 +868,7 @@ mod tests {
             "{body}"
         );
         assert!(body.contains(&canopy_core::short_id(tip)), "{body}");
-        assert!(
-            body.contains("only if the branch was checked out"),
-            "{body}"
-        );
+        assert!(body.contains("only if HEAD was ever on it"), "{body}");
         assert!(!body.contains("only through the reflog"), "{body}");
 
         let local = snap(vec![
