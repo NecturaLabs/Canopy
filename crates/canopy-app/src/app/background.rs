@@ -26,7 +26,7 @@ enum IdentityStep {
 fn notice_route(ok: bool, delivery: Delivery) -> (ToastKind, Topic) {
     match (ok, delivery) {
         (true, _) => (ToastKind::Success, Topic::Finished),
-        (false, Delivery::Attention) => (ToastKind::Error, Topic::Attention),
+        (false, Delivery::Attention) => (ToastKind::Attention, Topic::Attention),
         (false, Delivery::Card | Delivery::Quiet | Delivery::ForcePushStopped(_)) => {
             (ToastKind::Error, Topic::Error)
         }
@@ -34,7 +34,7 @@ fn notice_route(ok: bool, delivery: Delivery) -> (ToastKind, Topic) {
 }
 
 /// Announces a repository notice under the topic and delivery it carries.
-fn announce_notice(toasts: &mut Toasts, ctx: &egui::Context, repo: &Path, n: Notice) {
+pub(super) fn announce_notice(toasts: &mut Toasts, ctx: &egui::Context, repo: &Path, n: Notice) {
     let (kind, topic) = notice_route(n.ok, n.delivery);
     match n.delivery {
         Delivery::Quiet => toasts.push_quiet_for(ctx, kind, topic, n.title, n.body, repo),
@@ -922,7 +922,8 @@ mod tests {
     }
 
     /// #234: what waits on the user is an attention notice, a failure is an error, a success is
-    /// finished work, whatever its delivery.
+    /// finished work, whatever its delivery. #253: an attention notice no longer looks like an
+    /// error either.
     #[test]
     fn notices_are_filed_under_the_topic_that_fits() {
         assert_eq!(
@@ -931,7 +932,7 @@ mod tests {
         );
         assert_eq!(
             notice_route(false, Delivery::Attention),
-            (ToastKind::Error, Topic::Attention)
+            (ToastKind::Attention, Topic::Attention)
         );
         for delivery in [
             Delivery::Card,

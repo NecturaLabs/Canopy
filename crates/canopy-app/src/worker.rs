@@ -766,9 +766,12 @@ pub enum Event {
     /// The operation `label` (a pull, rebase, merge, cherry-pick, revert or stash apply) stopped
     /// on conflicts for the user to resolve; `autostashed` when git holds the uncommitted changes
     /// aside meanwhile. `stash` when it was a stash applied or popped: nothing is in progress
-    /// then (no continue or abort), and the stash is kept.
+    /// then (no continue or abort), and the stash is kept. A cherry-pick or revert is labelled by
+    /// its verb alone, and `commit` is its commit's subject (its short id when that cannot be
+    /// read).
     Conflicted {
         label: String,
+        commit: Option<String>,
         autostashed: bool,
         stash: bool,
     },
@@ -1773,7 +1776,12 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     // A cherry-pick, a revert and a stash apply or pop can stop on conflicts as
                     // well. Files already conflicted before they ran are not their stop: git
                     // refused them, and says why.
-                    let picks = matches!(op, Op::CherryPick(_) | Op::Revert(_));
+                    let picked = match op {
+                        Op::CherryPick(o) => Some(("Cherry-picking", o)),
+                        Op::Revert(o) => Some(("Reverting", o)),
+                        _ => None,
+                    };
+                    let picks = picked.is_some();
                     let applies_stash =
                         matches!(op, Op::StashApply { .. } | Op::StashApplyCommit { .. });
                     let conflicted_before =
@@ -1903,10 +1911,21 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         })));
                     } else if stopped {
                         // Not a failure: the conflicts are the user's to resolve.
+                        let (label, commit) = match picked {
+                            Some((verb, oid)) => (
+                                verb.to_owned(),
+                                Some(repo.subject(oid).unwrap_or_else(|e| {
+                                    tracing::warn!(error = %redacted(&e), "subject not read");
+                                    canopy_core::short_id(oid)
+                                })),
+                            ),
+                            None => (label, None),
+                        };
                         emit(Event::Conflicted {
                             autostashed: !held_before && repo.autostash_held(),
                             stash: applies_stash,
                             label,
+                            commit,
                         });
                     } else {
                         // Frequent and quiet, unless it left folders out.
@@ -4472,6 +4491,19 @@ mod read_tests {
                 "git is left mid-operation for the user to resolve"
             );
             assert_eq!(git(&repo, &["ls-files", "-u"]).lines().count(), 3);
+            // #253: the notice names the commit by its subject, not by its short id.
+            let Event::Conflicted { label, commit, .. } = ended else {
+                unreachable!()
+            };
+            assert_eq!(
+                label,
+                if revert {
+                    "Reverting"
+                } else {
+                    "Cherry-picking"
+                }
+            );
+            assert_eq!(commit.as_deref(), Some("theirs"));
         }
     }
 
