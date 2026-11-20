@@ -49,6 +49,10 @@ licensed as above, without any additional terms or conditions. Please sign off e
 that you wrote the change or otherwise have the right to submit it under these licences. Commits
 made on the GitHub website are signed off automatically.
 
+For pull requests from forks, CI checks that every non-merge commit has a `Signed-off-by:`
+trailer matching the commit author's name and email. Same-repository and bot pull requests are
+exempt from this check.
+
 A pull request from a fork runs CI with a read-only token and no secrets, once a maintainer has
 approved the run.
 
@@ -212,6 +216,9 @@ Keep independently reviewable work in atomic commits. Contribute to the existing
   with their pull request. Maintainers and bots are left out.
 
 Example: `feat(changes): stage individual lines from the diff viewer`.
+
+Canopy uses merge commits, so CI checks every non-merge commit in the pull request against the
+subject pattern used to generate release notes.
 
 ## Before merging
 
