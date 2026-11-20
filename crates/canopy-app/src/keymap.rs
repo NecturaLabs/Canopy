@@ -1568,12 +1568,13 @@ mod tests {
         apply_saved(&BTreeMap::from([fetch(bare(Key::P)), pull]));
         assert_eq!(ours(), [bare(Key::P)], "a swap holds");
         assert_eq!(key_of("Pull.Repository"), Some(vec![bare(Key::F)]));
-        // Two rows asking for the same free key: neither gets it.
+        // Two rows asking for the same free key: only one of them gets it.
         apply_saved(&BTreeMap::from([
             fetch(bare(Key::V)),
             ("Pull.Repository".to_owned(), text(bare(Key::V))),
         ]));
         assert_eq!(ours(), [bare(Key::F)]);
+        assert_eq!(key_of("Pull.Repository"), Some(vec![bare(Key::V)]));
         apply_saved(&BTreeMap::new());
     }
 

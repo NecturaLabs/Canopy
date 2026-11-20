@@ -71,8 +71,8 @@ text, `ctrl+shift+symbol+Key`), travels with Settings export and import, and app
 frame. The rules above hold for what you choose: a key another row uses is refused, naming that row
 (nothing is rebound silently), and so are Super, F9, Tab without Ctrl, a Ctrl key in a single-key
 row and a key without Ctrl in an "Anywhere" row (it would fire while typing). Alt is never read. A
-saved or imported file that breaks a rule, or gives two rows one key, has those entries ignored:
-they are dropped when the settings load or import, so they are not saved or exported again, and an
+saved or imported file that breaks a rule has those entries ignored, and where it gives two rows
+one key, only one of them keeps it: ignored entries are dropped when the settings load or import, so they are not saved or exported again, and an
 import says how many it ignored. A row with a double press (`gg`) fires on one press of its new
 key.
 
