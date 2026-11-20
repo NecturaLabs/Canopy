@@ -84,17 +84,18 @@ link previews do not read WebP.
   narrow windows it stays the plain list of section links written into the page, placed under the
   screenshot: one column on phones, two on tablets, every row at least 48 px tall. On wide windows
   it sits beside the headline; below 960 px it moves under the screenshot.
-- **The hero window.** It holds one real render per palette row with a view (History, Changes,
-  the conflict resolver, pull requests, Settings → Git, the shortcuts sheet and Observatory for
-  Themes), and crossfades to the active row's view whenever that row changes: by arrow key, by
-  pointer or as the filter narrows the list. The tour steps through the rows every 4.2 seconds.
-  The active row's background fills from left to right until the next step. The button below
-  the palette pauses or plays the tour. Hovering over or focusing the palette pauses it until
-  the visitor selects Play. The tour also stops while the hero is out of view or the tab is
-  hidden. The button is hidden when the search field has text, when reduced motion is on or
-  when the palette is a list of links. In link list mode, only the History render is in the page
-  (the others are `hidden`, so they are never downloaded), under the title On this page. When the
-  list is longer than its box, it fades out at the bottom until scrolled to the end.
+- **The hero window.** It holds one real render per palette row with a view (History, Changes, the
+  conflict resolver, pull requests, Settings → Git, the shortcuts sheet and Observatory for Themes),
+  and crossfades to the active row's view whenever that row changes: by arrow key, by pointer or as
+  the filter narrows the list. The tour steps through the rows every 4.2 seconds. The active row's
+  background fills from left to right until the next step. The button below the palette pauses or
+  plays the tour. Hovering over or focusing the palette pauses it until the visitor selects Play.
+  The tour waits while less than a third of the first screen (the palette and the window) is in view
+  or the tab is hidden. The button is hidden when the search field has text, when reduced motion is
+  on or when the palette is a list of links. Where the palette is the plain list of links, only the
+  History render is in the page (the others are `hidden`, so they are never downloaded), under the
+  title On this page. When the list is longer than its box, it fades out at the bottom until
+  scrolled to the end.
 - **Install command.** The main download is one command, chosen from the visitor's system:
   `curl -fsSL https://canopy.necturalabs.com/install | sh` on Linux and macOS and
   `irm https://canopy.necturalabs.com/install.ps1 | iex` on Windows; below 720 px the line

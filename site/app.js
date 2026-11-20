@@ -312,7 +312,7 @@ function tourStep() {
 }
 function tourSync() {
   const available = !calm.matches && !search.hidden && !input.value;
-  if (!available && document.activeElement === tourToggle) (search.hidden ? list : input).focus();
+  if (!available && document.activeElement === tourToggle) (search.hidden ? $("a", list) : input)?.focus();
   tourToggle.hidden = !available;
   tourToggle.setAttribute("aria-pressed", String(tourPaused));
   tourIcon.textContent = tourPaused ? "\uE3D0" : "\uE39E";
