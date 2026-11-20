@@ -912,8 +912,9 @@ mod tests {
 
     use super::*;
 
-    /// The fixture commits' time, 2024-01-02T12:00:00Z: noon, so the date is never the epoch's
-    /// day boundary, and the tests take its text from the app's own formatter, in the local zone.
+    /// The fixture commits' time, 2024-01-02T12:00:00Z: noon UTC, so no zone from UTC-12 to UTC+14
+    /// moves it across a month or year boundary. The tests take its text from the app's own
+    /// formatter, in the local zone.
     const FIXTURE_TIME: i64 = 1_704_196_800;
 
     /// The Date column grows to hold its longest text instead of cutting "10 minutes ago".
@@ -1466,6 +1467,7 @@ mod tests {
                 tab.diff = Some(std::sync::Arc::new(diff));
                 let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
                 let date = widgets::absolute_date(FIXTURE_TIME);
+                assert!(!date.is_empty(), "the fixture time formats as a date");
                 for text in ["Author", "0101010", date.as_str(), "file.rs", "other.rs"] {
                     assert!(
                         visible.iter().any(|t| t == text),
