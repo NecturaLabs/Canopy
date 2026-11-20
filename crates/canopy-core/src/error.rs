@@ -23,7 +23,7 @@ pub enum Error {
 
     /// The `git` executable could not be started.
     #[error("could not run git ({0}); is git installed and on PATH?")]
-    GitMissing(std::io::Error),
+    GitMissing(#[source] std::io::Error),
 
     /// The path is not inside a Git repository.
     #[error("{} is not a Git repository", .0.display())]
@@ -176,5 +176,18 @@ mod tests {
                 "{remote:?}: {msg}"
             );
         }
+    }
+
+    #[test]
+    fn git_missing_exposes_the_io_error_as_its_source() {
+        use std::error::Error as _;
+
+        let cause = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let expected = cause.to_string();
+        let err = Error::GitMissing(cause);
+        let source = err.source().expect("GitMissing has a source");
+        assert_eq!(source.to_string(), expected);
+        assert!(source.downcast_ref::<std::io::Error>().is_some());
+        assert!(err.to_string().contains(&expected), "{err}");
     }
 }
