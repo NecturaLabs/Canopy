@@ -18,6 +18,7 @@ core part to the `canopy-git` agent.
   whether a local branch exists. Never write through libgit2.
 - Check the behaviour with the real CLI in a scratch repository first and note the resulting refs,
   index and working tree.
+- Start each `canopy-core` integration test with `isolate_git!(<its name>)` and set required Git config in its fixture.
 - Write a function on `Repo` (or in the module) that takes explicit parameters (no hidden force)
   and returns `canopy_core::Result<T>`. CLI failures keep git's stderr.
 - Add plain data to `model.rs` if the UI needs new information, and include it in `snapshot()`

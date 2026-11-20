@@ -56,7 +56,7 @@ classification and triage tables.
 | Level | What it covers here | Where and how |
 |---|---|---|
 | Unit | Pure logic: graph lane layout (`graph.rs`), remote URL parsing and URL building (`forge.rs`), version comparison (`update.rs`), patch building (`diff.rs`), fuzzy matching, keymap tables, settings defaults, response mapping in `canopy-hosting` | `#[cfg(test)] mod tests` in the same file. Table-driven: an array of `(input, expected)` cases with the case named in the assertion message |
-| Integration | `canopy-core` against a real repository and the real `git` executable; `canopy-hosting` against a local HTTP server | `crates/<crate>/tests/*.rs`. Each test builds its own repository in a `tempfile::tempdir()` with a fixed identity and `commit.gpgsign false` in the repository config — reuse the `git` and `fixture` helpers in `crates/canopy-core/tests/operations.rs` rather than writing new ones |
+| Integration | `canopy-core` against a real repository and the real `git` executable; `canopy-hosting` against a local HTTP server | `crates/<crate>/tests/*.rs`. Reuse the test file's fixture helpers to create a repository in a `tempfile::tempdir()` with a fixed identity and `commit.gpgsign false` in its local config |
 | E2E | The assembled app on a fixture repository | No automated UI suite. Verified by rendering with the `screenshot` skill on a `fixture-repo` fixture and by running the operation in the app, as `add-git-operation` step 7 describes. Unit tests cannot see layout or colour |
 
 Canopy-specific rules, on top of the invariants below:
@@ -73,9 +73,8 @@ Canopy-specific rules, on top of the invariants below:
   github.com, gitlab.com, the update feed or Sentry for real, and never put a real token in a fixture.
   Cover the error mapping (401, 403 rate limit, 404, 429, malformed JSON), not only the happy path.
   Remote operations in `canopy-core` push and fetch to a local bare repository.
-- **Hermetic git config.** Tests must pass with an arbitrary global git config (hooks paths,
-  signing, `init.defaultBranch`). Set identity and signing in the repository's own config, pass
-  `-b main` to `git init`, and do not rely on anything in `~/.gitconfig`.
+- **Hermetic Git config.** Start every `canopy-core` integration test with `isolate_git!(<its name>)` from `crates/canopy-core/tests/support/mod.rs`.
+  The child starts with an empty global Git config, including no `user.name` or `init.defaultBranch`. Set identity and signing in the fixture's local config and pass the branch to `git init` with `-b`.
 - **Commands.** Whole crate: `cargo test -p canopy-core`. One test or a name filter:
   `cargo test -p canopy-core <name>`. Everything, as CI: `tools/check.sh`.
 - A new Git operation's test is step 1 of the `add-git-operation` skill; the `canopy-git` agent

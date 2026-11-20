@@ -218,6 +218,7 @@ Example: `feat(changes): stage individual lines from the diff viewer`.
 - [ ] Changes are reviewable as individual commits, based on current `dev` or the agreed PR branch.
 - [ ] `tools/check.sh` passes, and all required GitHub Actions checks pass for the PR head.
 - [ ] New or changed Git operations have tests against a temporary repository.
+- [ ] Each `canopy-core` integration test starts with `isolate_git!(<its name>)` and sets required Git config in its fixture.
 - [ ] UI changes include before and after screenshots (dark, and light where colours change),
       taken with `tools/screenshot.sh` on a fixture, or a line `No visible change: <why>`. The
       Visual evidence check asks for one when a pull request touches the UI or the site; it is a

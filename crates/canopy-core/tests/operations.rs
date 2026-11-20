@@ -78,22 +78,53 @@ fn fixture() -> (tempfile::TempDir, Repo) {
 
 #[test]
 fn commits_ignore_inherited_global_hooks() {
+    isolate_git!(
+        commits_ignore_inherited_global_hooks,
+        before_isolation = check_inherited_global_hooks
+    );
+    let dir = hook_fixture();
+    let p = dir.path();
+    let repo = canopys_choices(Repo::open(p).expect("open"));
+    repo.stage(&["a.txt".into()]).expect("stage");
+    repo.commit("first", false, false).expect("commit");
+    assert_eq!(git(p, &["log", "-1", "--format=%s"]).trim(), "first");
+}
+
+/// Run the control in the intermediate child before launching the isolated child.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the control drives plain git with the inherited global config"
+)]
+fn check_inherited_global_hooks(test: &str) -> bool {
     const HOSTILE_CONFIG: &str = "CANOPY_TEST_HOSTILE_CONFIG";
     if std::env::var_os(HOSTILE_CONFIG).is_none() {
         let home = tempfile::tempdir().expect("private home");
-        let global = home.path().join("global");
+        let global = home.path().join("gitconfig");
         fs::write(&global, "[core]\n\thooksPath = hooks\n").expect("global config");
-        let mut child = support::test_command("commits_ignore_inherited_global_hooks");
         support::assert_test_passed(
-            "commits_ignore_inherited_global_hooks",
-            child
-                .env(HOSTILE_CONFIG, "1")
-                .env("GIT_CONFIG_GLOBAL", global),
+            test,
+            support::test_command(test, home.path()).env(HOSTILE_CONFIG, "1"),
         );
-        return;
+        return false;
     }
 
-    isolate_git!(commits_ignore_inherited_global_hooks);
+    let dir = hook_fixture();
+    git(dir.path(), &["add", "a.txt"]);
+    let out = Command::new("git")
+        .current_dir(dir.path())
+        .args(["commit", "-m", "control"])
+        .output()
+        .expect("git commit runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && stderr.contains("inherited pre-commit hook ran"),
+        "expected the inherited pre-commit hook to reject git commit, got {}:\n{stderr}",
+        out.status,
+    );
+    true
+}
+
+fn hook_fixture() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("repository");
     let p = dir.path();
     git(p, &["init", "-q", "-b", "main"]);
@@ -112,10 +143,7 @@ fn commits_ignore_inherited_global_hooks() {
         fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("chmod hook");
     }
     fs::write(p.join("a.txt"), "first\n").expect("write file");
-    let repo = canopys_choices(Repo::open(p).expect("open"));
-    repo.stage(&["a.txt".into()]).expect("stage");
-    repo.commit("first", false, false).expect("commit");
-    assert_eq!(git(p, &["log", "-1", "--format=%s"]).trim(), "first");
+    dir
 }
 
 #[test]
@@ -707,6 +735,10 @@ fn upstream_and_clone() -> (tempfile::TempDir, Repo, tempfile::TempDir, Repo) {
     let dest = clone_dir.path().join("clone");
     canopy_core::ops::clone(&up_dir.path().to_string_lossy(), &dest, false, |_| {}).expect("clone");
     configure(&dest);
+    // If Git for Windows checked the clone's files out as CRLF under system-wide
+    // core.autocrlf=true, turning it off makes those files look edited. A pull's autostash
+    // would carry that edit into the next commit.
+    git(&dest, &["checkout-index", "--all", "--force", "-u"]);
     let copy = canopys_choices(Repo::open(&dest).expect("open clone"));
     (up_dir, up, clone_dir, copy)
 }
