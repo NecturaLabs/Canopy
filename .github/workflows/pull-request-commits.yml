@@ -1,0 +1,42 @@
+name: Pull request commits
+
+# Checks every non-merge commit in the pull request against the subject pattern the release notes
+# are built from. A pull request from a fork opened by a person also needs a DCO sign-off on each
+# commit (CONTRIBUTING.md asks outside contributors for one); members' branches and bots are exempt.
+#
+# `edited` is here for a change of base branch: it changes the range being checked. A title or
+# description edit runs the check again too, which is harmless and takes seconds.
+#
+# A pull request with a merge conflict has no merge ref, so GitHub starts no run for it and this
+# check does not run until the conflict is resolved.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: pull-request-commits-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  commits:
+    name: Commit subjects and sign-offs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # The default checkout is the PR merge ref, which contains both sides of the range.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check commits
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          SIGNOFF: >-
+            ${{ github.event.pull_request.head.repo.id != github.event.pull_request.base.repo.id
+                && github.event.pull_request.user.type != 'Bot' && 'required' || 'exempt' }}
+        run: python3 -B tools/check-pr-commits.py "$PR_BASE" "$PR_HEAD" --signoff "$SIGNOFF"

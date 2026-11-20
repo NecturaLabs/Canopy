@@ -66,7 +66,8 @@ gh attestation verify <file> --repo NecturaLabs/Canopy \
 Run the `git rev-parse` in a clone with the tags fetched, or put the commit from the release page
 in its place.
 
-`SHA256SUMS` in the release lists each file's checksum.
+`SHA256SUMS` lists each release asset's checksum. For releases that ship `toolchain.txt`, the
+checksum list and the build-provenance attestation also cover that report.
 
 Canopy's in-app updater trusts an update manifest only when its signature (`<manifest>.minisig`
 beside it in `NecturaLabs/app-updates`) verifies against the key built into Canopy,

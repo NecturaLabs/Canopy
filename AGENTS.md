@@ -98,7 +98,8 @@ adding a dependency.
   `tools/check-source-headers.py` (source-file headers and guard self-test),
   `tools/check-numeric-literals.py` (unnamed numeric literals in the backends and its self-test),
   `tools/check-ui-colors.py` (theme boundary and guard self-test),
-  `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
+  `tools/release.py selftest`, `tools/check-pr-commits.py --selftest` (PR commit subjects and
+  sign-offs), `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
   paths in docs, module table and skill mirror), `tools/check-site.py` (the landing site's files,
   addresses and scripts), `tools/vendor-eframe.sh --check` (`vendor/eframe`
   is the published crate plus our patch and the build uses it; needs network access),
@@ -114,7 +115,8 @@ adding a dependency.
   `stall-check.py` runs in CI's Linux test job and must pass. Run `cargo deny check`
   yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) runs
   the workspace tests on Linux, macOS and Windows for every push that changes code and for a
-  fork's pull request; its `Tests` check sums them up and is required on `dev` and `main`.
+  fork's pull request; its `Tests` check sums them up (and the minimum-Rust 1.95 check) and is
+  required on `dev` and `main`.
   `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` pick the release platforms only.
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`
