@@ -14,7 +14,7 @@
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{OnceLock, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
@@ -385,21 +385,20 @@ pub(crate) fn output_within(cmd: Command, args: &[&str], limit: Duration) -> Res
     output_within_input(cmd, args, limit, None)
 }
 
-/// A git child with its standard input, output and error each served by a thread of its own, so
-/// that no pipe waits on another: git may answer while it still reads (`check-ignore --stdin`),
-/// and a caller writing everything before reading anything would block once the answer fills
-/// the pipe.
+/// A git child whose standard output and error are each drained by a thread of its own, so that
+/// no pipe waits on another: git may answer while it still reads (`check-ignore --stdin`), and a
+/// caller writing everything before reading anything would block once the answer fills the pipe.
 struct Piped {
     child: Child,
+    /// The pipe to feed, when one was asked for.
+    stdin: Option<ChildStdin>,
     stdout: std::thread::JoinHandle<Vec<u8>>,
     stderr: std::thread::JoinHandle<Vec<u8>>,
-    /// Feeds the input; `None` when there is none.
-    writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
 }
 
-/// Starts `cmd` (a git command built with [`command`]) with `args` and `input` as its standard
-/// input, or none when `input` is `None`.
-fn spawn_piped(mut cmd: Command, args: &[&str], input: Option<Vec<u8>>) -> Result<Piped> {
+/// Starts `cmd` (a git command built with [`command`]) with `args`, giving it a pipe for standard
+/// input when `feed` is set and the null device otherwise.
+fn spawn_piped(mut cmd: Command, args: &[&str], feed: bool) -> Result<Piped> {
     fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
@@ -410,24 +409,16 @@ fn spawn_piped(mut cmd: Command, args: &[&str], input: Option<Vec<u8>>) -> Resul
         })
     }
     let mut child = with_args(&mut cmd, args)
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(if feed { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(Error::GitMissing)?;
-    let writer = input.zip(child.stdin.take()).map(|(input, mut stdin)| {
-        // Dropping `stdin` at the end of the thread closes it, which is git's end of the input.
-        std::thread::spawn(move || stdin.write_all(&input))
-    });
     Ok(Piped {
+        stdin: child.stdin.take(),
         stdout: drain(child.stdout.take()),
         stderr: drain(child.stderr.take()),
         child,
-        writer,
     })
 }
 
@@ -440,14 +431,19 @@ pub(crate) fn output_within_input(
     input: Option<Vec<u8>>,
 ) -> Result<Output> {
     let started = Instant::now();
-    // A git that exits early closes its end; its exit status and stderr say why. A writer still
-    // blocked on a git that timed out is left to end when the pipe closes.
     let Piped {
         mut child,
+        stdin,
         stdout,
         stderr,
-        writer: _,
-    } = spawn_piped(cmd, args, input)?;
+    } = spawn_piped(cmd, args, input.is_some())?;
+    if let (Some(input), Some(mut stdin)) = (input, stdin) {
+        // A git that exits early closes its end; its exit status and stderr say why. A writer
+        // still blocked on a git that timed out is left to end when the pipe closes.
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -564,25 +560,39 @@ pub(crate) fn run_with_input_within(
 /// the output is read, so neither direction can wait on the other however much there is of it.
 ///
 /// A git that exits before reading everything closes its end of the input: that is not an error
-/// here, its exit code and standard error say why. Any other failure to write is one, since git
-/// then did not get what it was asked to work on.
+/// here, its exit code and standard error say why. Any other failure to write is one, and git is
+/// killed before it can act on input that was cut short.
 fn output_with_input(cmd: Command, args: &[&str], input: &[u8]) -> Result<Output> {
     let Piped {
         mut child,
+        stdin,
         stdout,
         stderr,
-        writer,
-    } = spawn_piped(cmd, args, Some(input.to_vec()))?;
+    } = spawn_piped(cmd, args, !input.is_empty())?;
+    // No input: the null device gives git its end at once, as a pipe closed at once would.
+    let written = stdin.map(|mut stdin| {
+        // The readers run on their own threads, so waiting for the writer first cannot deadlock.
+        std::thread::scope(|scope| scope.spawn(move || stdin.write_all(input)).join())
+    });
+    let failure = match written {
+        None | Some(Ok(Ok(()))) => None,
+        Some(Ok(Err(e))) if e.kind() == std::io::ErrorKind::BrokenPipe => None,
+        Some(Ok(Err(e))) => Some(Error::from(e)),
+        Some(Err(_)) => Some(Error::invalid(
+            "the thread feeding git its input stopped unexpectedly.",
+        )),
+    };
+    if let Some(error) = failure {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
     let status = child.wait()?;
-    let out = Output {
+    Ok(Output {
         code: status.code(),
         stdout: stdout.join().unwrap_or_default(),
         stderr: stderr.join().unwrap_or_default(),
-    };
-    match writer.map(std::thread::JoinHandle::join) {
-        Some(Ok(Err(e))) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.into()),
-        _ => Ok(out),
-    }
+    })
 }
 
 /// Like [`run`], feeding `input` to standard input.
@@ -1381,7 +1391,8 @@ mod tests {
     const UNREAD_INPUT: usize = 1 << 20;
 
     /// A git that exits without reading its input closes the pipe under the writer: that is not an
-    /// error, and git's exit status and standard error are what the caller sees.
+    /// error, and git's exit status and standard error are what the caller sees. The old runners
+    /// passed this too: it guards the `BrokenPipe` path of the shared one.
     #[test]
     fn a_git_that_ignores_its_input_still_answers() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1398,5 +1409,37 @@ mod tests {
             err.to_string().contains("no-such-subcommand"),
             "git's own message: {err}"
         );
+    }
+
+    /// `run_with_input` shares the writer thread with `run_answer`: a git that answers while it
+    /// still reads must not hold it up either (issue #196).
+    #[test]
+    fn run_with_input_reads_the_answer_while_it_writes() {
+        use std::sync::mpsc;
+
+        /// Generous for a slow machine; a hung git never answers.
+        const LIMIT: Duration = Duration::from_secs(60);
+        let dir = tempfile::tempdir().expect("tempdir");
+        run(dir.path(), &["init", "-q"]).expect("git init");
+        // git check-ignore exits 1 when it ignores nothing, which `run_with_input` reports.
+        std::fs::write(dir.path().join(".gitignore"), "dir*\n").expect("write .gitignore");
+        let mut input = Vec::new();
+        for i in 0..4_000 {
+            input.extend_from_slice(format!("dir{i}/{}\0", "x".repeat(150)).as_bytes());
+        }
+        let expected = input.len();
+        let path = dir.path().to_owned();
+        let (tx, rx) = mpsc::channel();
+        // Not joined: a deadlocked run must fail the test, not hang it.
+        std::thread::spawn(move || {
+            let args = ["check-ignore", "-v", "-n", "--no-index", "-z", "--stdin"];
+            let _ = tx.send(run_with_input(&path, &args, &input));
+        });
+        let out = rx
+            .recv_timeout(LIMIT)
+            .expect("git check-ignore answered within the limit")
+            .expect("git check-ignore");
+        // Four fields per path where the input has one, so every path is answered.
+        assert!(out.len() > expected, "{} bytes for {expected}", out.len());
     }
 }
