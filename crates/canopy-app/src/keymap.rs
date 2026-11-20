@@ -1034,8 +1034,25 @@ pub fn take_capture() -> Option<Captured> {
     })
 }
 
+/// Whether `key` is a modifier's own key: egui sends a press of it (left and right apart) when
+/// a modifier goes down, before the key it modifies.
+const fn is_modifier_key(key: Key) -> bool {
+    matches!(
+        key,
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::ControlLeft
+            | Key::ControlRight
+            | Key::AltLeft
+            | Key::AltRight
+            | Key::SuperLeft
+            | Key::SuperRight
+    )
+}
+
 /// Takes this frame's first key press for a waiting capture, before any binding sees it: Esc
-/// cancels, a modifier alone is skipped, and Alt chords are refused (the window manager's).
+/// cancels, a modifier's own key is skipped (the capture keeps waiting for the key it
+/// modifies, which carries the modifiers), and Alt chords are refused (the window manager's).
 pub fn capture_key(ctx: &egui::Context) {
     let waiting = CAPTURE.with_borrow_mut(|c| {
         match c {
@@ -1066,7 +1083,10 @@ pub fn capture_key(ctx: &egui::Context) {
             else {
                 return !matches!(e, egui::Event::Text(_));
             };
-            if *key == Key::Escape {
+            if is_modifier_key(*key) {
+                // Pressing a chord sends the modifier's own press first; the key it
+                // modifies comes next, and a modifier alone is never a binding.
+            } else if *key == Key::Escape {
                 result = Some(Capture::Cancelled);
             } else {
                 let chord = Chord::from_press(*key, *modifiers);
@@ -1595,5 +1615,89 @@ mod tests {
         }
         assert!(!is_capturing(), "nobody kept it alive");
         assert_eq!(take_capture(), None);
+    }
+
+    /// Pressing a chord sends the modifier's own key press first (`ControlLeft`), then the key
+    /// with the modifiers held: the capture waits for the key, and a modifier alone never
+    /// becomes a binding.
+    #[test]
+    fn a_capture_waits_through_modifier_presses_for_the_key() {
+        let key_press = |key: Key, modifiers: Modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let run = |ctx: &egui::Context, events: Vec<egui::Event>| {
+            let mut fired = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    capture_key(ui.ctx());
+                    fired = dispatch(ui.ctx(), |_, _| true);
+                },
+            );
+            output.textures_delta.clear();
+            fired
+        };
+        let ctx = egui::Context::default();
+        let held = Modifiers::COMMAND | Modifiers::SHIFT;
+
+        // The modifiers and the key arrive together in one frame.
+        start_capture(&ctx);
+        run(
+            &ctx,
+            vec![
+                key_press(Key::ControlLeft, Modifiers::COMMAND),
+                key_press(Key::ShiftLeft, held),
+                key_press(Key::G, held),
+            ],
+        );
+        assert_eq!(
+            take_capture(),
+            Some(Captured::Key(ctrl_shift(Key::G))),
+            "Ctrl+Shift+G, not the Ctrl key"
+        );
+
+        // They arrive in frames of their own.
+        start_capture(&ctx);
+        run(&ctx, vec![key_press(Key::ControlLeft, Modifiers::COMMAND)]);
+        assert!(is_capturing(), "Ctrl alone keeps waiting");
+        assert_eq!(take_capture(), None);
+        run(&ctx, vec![key_press(Key::G, held)]);
+        assert_eq!(take_capture(), Some(Captured::Key(ctrl_shift(Key::G))));
+
+        // No modifier key alone ever becomes the binding.
+        for key in [
+            Key::ShiftLeft,
+            Key::ShiftRight,
+            Key::ControlLeft,
+            Key::ControlRight,
+            Key::AltLeft,
+            Key::AltRight,
+            Key::SuperLeft,
+            Key::SuperRight,
+        ] {
+            start_capture(&ctx);
+            run(&ctx, vec![key_press(key, Modifiers::NONE)]);
+            assert!(is_capturing(), "{key:?} alone keeps waiting");
+            assert_eq!(take_capture(), None, "{key:?} is not a binding");
+            cancel_capture();
+        }
+
+        // Once the key comes, a bare modifier before it does not stop it.
+        start_capture(&ctx);
+        run(
+            &ctx,
+            vec![
+                key_press(Key::ShiftLeft, Modifiers::SHIFT),
+                key_press(Key::J, Modifiers::NONE),
+            ],
+        );
+        assert_eq!(take_capture(), Some(Captured::Key(bare(Key::J))));
     }
 }

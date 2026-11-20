@@ -63,7 +63,8 @@ Chords marked "also" are alternatives for the same command.
 ## Changing a key
 
 Settings → Keyboard lists every row of the table with its keys. **Change** listens for the next key
-press and gives the row that one key, replacing the row's others (Esc cancels); **Reset** returns
+press and gives the row that one key, replacing the row's others (Esc cancels). Hold the modifiers
+and press the key, as in use (Ctrl+Shift+G); a modifier alone is never taken. **Reset** returns
 the row to the table, and **Reset all** every row. The tab jumps (Ctrl+1…9) are positions and stay.
 A change is saved in the settings (`keybindings`: the row, written `Command.Section`, to the chord's
 text, `ctrl+shift+symbol+Key`), travels with Settings export and import, and applies on the next
