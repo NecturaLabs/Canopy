@@ -232,7 +232,9 @@ def main() -> int:
             problems.append(
                 f"{rel}: not the current render of docs/legal/; run python3 tools/check-site.py --write-legal"
             )
-    if LEGAL.is_dir():
+    if LEGAL.is_dir() and not (LEGAL / NOTICES).is_file():
+        problems.append(f"docs/legal/{NOTICES}: missing; run python3 tools/notices.py")
+    elif LEGAL.is_dir():
         notices = (LEGAL / NOTICES).read_bytes()
         path = SITE / NOTICES
         rel = path.relative_to(SITE.parent)
