@@ -1877,6 +1877,13 @@ fn row_end(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), paint::SEAM), Sense::hover());
     paint::seam_h(ui.painter(), rect.x_range(), rect.center().y, s.border);
     ui.add_space(theme::SM);
+    let at = (ui.ctx().cumulative_pass_nr(), ui.cursor().min.y);
+    ui.data_mut(|d| d.insert_temp(last_seam_id(), at));
+}
+
+/// Where the last row's seam left the cursor, so a group gap right after it adds nothing.
+fn last_seam_id() -> egui::Id {
+    egui::Id::new("settings-last-row-seam")
 }
 
 /// Help or detail text under a row's title.
@@ -2088,9 +2095,15 @@ fn heading_now(ui: &mut Ui, text: &str) {
     ui.add_space(theme::MD);
 }
 
-/// Space before a group heading; none while searching, where the row above ends in a seam.
+/// Space before a group heading after something that is not a row: none right after a row,
+/// whose seam already parts it from the heading (every heading then stands the same distance
+/// below the divider), and none while searching, where the row above ends in a seam.
 fn group_gap(ui: &mut Ui, space: f32) {
-    if !Filter::searching(ui.ctx()) {
+    let pass = ui.ctx().cumulative_pass_nr();
+    let after_row = ui
+        .data(|d| d.get_temp::<(u64, f32)>(last_seam_id()))
+        .is_some_and(|(at, y)| at == pass && (y - ui.cursor().min.y).abs() < 0.5);
+    if !after_row && !Filter::searching(ui.ctx()) {
         ui.add_space(space);
     }
 }
