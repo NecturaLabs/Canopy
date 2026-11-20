@@ -350,7 +350,7 @@ Paths are under `crates/canopy-app/src/` unless they start with `crates/`.
 | A colour, theme or token | The `add-theme` skill: `nectura-ui/src/theme.rs` (`ThemeId::ALL`) | `docs/design.md`; screenshots dark and light |
 | A GitHub or GitLab call | The `hosting-api` skill: `crates/canopy-hosting`, then a `HostJob` in `hosting.rs` | `docs/legal/privacy-policy.md` when what leaves the machine changes |
 | What first launch asks, or what a report carries | `TERMS_VERSION` and `PRIVACY_VERSION` in `ui/legal.rs`, `DATA_VERSION` in `crash_reports.rs`, the `Settings` fields `accepted_terms`, `accepted_privacy`, `crash_reports` and `seen_intro` | The texts in `docs/legal/`, with their `Last updated` date |
-| A test that must not see the user's git configuration | `in_isolated_git_env` in `crates/canopy-core/tests/operations.rs` | `tools/check.sh` runs the suite with an isolated configuration too |
+| A `canopy-core` integration test | `isolate_git!` in [tests/support/mod.rs](../crates/canopy-core/tests/support/mod.rs) | Add any Git settings the test needs to its fixture |
 | CI, a release or the update feed | `docs/playbook.md`, the `release` skill and `.github/workflows/` | A change under `.github/` gets a security pass (`AGENTS.md`) |
 
 ## Commit graph layout

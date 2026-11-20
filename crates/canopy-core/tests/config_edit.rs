@@ -5,49 +5,16 @@
     reason = "integration fixture helpers may panic when setup fails"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{
     Repo, cli, config, config::Setting, global_pull_config, identity::Scope, ops::PullStrategy,
 };
-
-/// Run each scenario with its own global config without changing the test process environment.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "tests isolate Git configuration in a child test process"
-)]
-fn isolated(test: &str) -> bool {
-    if std::env::var_os("CANOPY_CONFIG_TEST_CHILD").is_some() {
-        return true;
-    }
-    let home = tempfile::tempdir().expect("private home");
-    let out = Command::new(std::env::current_exe().expect("test binary"))
-        .args([test, "--exact", "--test-threads=1"])
-        .env("CANOPY_CONFIG_TEST_CHILD", "1")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", home.path().join("global"))
-        .env("HOME", home.path())
-        .env("USERPROFILE", home.path())
-        .env("XDG_CONFIG_HOME", home.path())
-        .env_remove("GIT_CONFIG")
-        .env_remove("GIT_CONFIG_COUNT")
-        .env_remove("GIT_CONFIG_PARAMETERS")
-        .env_remove("GIT_AUTHOR_NAME")
-        .env_remove("GIT_AUTHOR_EMAIL")
-        .env_remove("GIT_COMMITTER_NAME")
-        .env_remove("GIT_COMMITTER_EMAIL")
-        .output()
-        .expect("child test");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success() && stdout.contains("1 passed"),
-        "{test}:\n{stdout}{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    false
-}
 
 fn global() -> PathBuf {
     PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").expect("private global config"))
@@ -75,9 +42,7 @@ fn included(dir: &Path, content: &str) -> PathBuf {
 
 #[test]
 fn global_reads_expand_includes_and_preserve_their_origin() {
-    if !isolated("global_reads_expand_includes_and_preserve_their_origin") {
-        return;
-    }
+    isolate_git!(global_reads_expand_includes_and_preserve_their_origin);
     let dir = fixture();
     let file = included(dir.path(), "[fetch]\nprune = true\n");
     let entries =
@@ -90,9 +55,7 @@ fn global_reads_expand_includes_and_preserve_their_origin() {
 
 #[test]
 fn global_pull_reads_numeric_booleans_from_includes() {
-    if !isolated("global_pull_reads_numeric_booleans_from_includes") {
-        return;
-    }
+    isolate_git!(global_pull_reads_numeric_booleans_from_includes);
     let dir = fixture();
     included(dir.path(), "[pull]\nrebase = -2\n");
     assert_eq!(
@@ -105,9 +68,7 @@ fn global_pull_reads_numeric_booleans_from_includes() {
 
 #[test]
 fn init_rejects_invalid_configured_branch_before_creating_the_target() {
-    if !isolated("init_rejects_invalid_configured_branch_before_creating_the_target") {
-        return;
-    }
+    isolate_git!(init_rejects_invalid_configured_branch_before_creating_the_target);
     let dir = tempfile::tempdir().expect("scratch");
     cli::run(
         dir.path(),
@@ -124,9 +85,7 @@ fn init_rejects_invalid_configured_branch_before_creating_the_target() {
 
 #[test]
 fn settings_edit_only_the_selected_scope_and_reset_reveals_included_values() {
-    if !isolated("settings_edit_only_the_selected_scope_and_reset_reveals_included_values") {
-        return;
-    }
+    isolate_git!(settings_edit_only_the_selected_scope_and_reset_reveals_included_values);
 
     let dir = fixture();
     let file = included(dir.path(), "[fetch]\nprune = false\n");
@@ -154,11 +113,9 @@ fn settings_edit_only_the_selected_scope_and_reset_reveals_included_values() {
 
 #[test]
 fn recommendations_replace_old_global_choices_leave_sensitive_values_and_allow_later_edits() {
-    if !isolated(
-        "recommendations_replace_old_global_choices_leave_sensitive_values_and_allow_later_edits",
-    ) {
-        return;
-    }
+    isolate_git!(
+        recommendations_replace_old_global_choices_leave_sensitive_values_and_allow_later_edits
+    );
 
     let dir = fixture();
     for (key, value) in [
@@ -230,9 +187,7 @@ fn recommendations_replace_old_global_choices_leave_sensitive_values_and_allow_l
 
 #[test]
 fn invalid_settings_and_branch_names_never_change_files() {
-    if !isolated("invalid_settings_and_branch_names_never_change_files") {
-        return;
-    }
+    isolate_git!(invalid_settings_and_branch_names_never_change_files);
 
     let dir = fixture();
     for (setting, value) in [
@@ -281,9 +236,7 @@ fn invalid_settings_and_branch_names_never_change_files() {
 
 #[test]
 fn direct_reads_exclude_includes_and_worktree_overrides() {
-    if !isolated("direct_reads_exclude_includes_and_worktree_overrides") {
-        return;
-    }
+    isolate_git!(direct_reads_exclude_includes_and_worktree_overrides);
     let dir = fixture();
     included(dir.path(), "[fetch]\nprune = false\n");
     assert_eq!(
@@ -342,9 +295,7 @@ fn direct_reads_exclude_includes_and_worktree_overrides() {
 
 #[test]
 fn init_reads_config_for_the_new_repository_instead_of_its_parent() {
-    if !isolated("init_reads_config_for_the_new_repository_instead_of_its_parent") {
-        return;
-    }
+    isolate_git!(init_reads_config_for_the_new_repository_instead_of_its_parent);
     let dir = fixture();
     cli::run(
         dir.path(),
@@ -366,9 +317,7 @@ fn init_reads_config_for_the_new_repository_instead_of_its_parent() {
 
 #[test]
 fn init_follows_conditional_global_config_for_its_destination() {
-    if !isolated("init_follows_conditional_global_config_for_its_destination") {
-        return;
-    }
+    isolate_git!(init_follows_conditional_global_config_for_its_destination);
     let dir = tempfile::tempdir().expect("scratch");
     let target = dir.path().join("conditional");
     let file = global().with_file_name("conditional");
@@ -400,9 +349,7 @@ fn init_follows_conditional_global_config_for_its_destination() {
 
 #[test]
 fn all_canonical_values_roundtrip_and_write_errors_retain_git_stderr() {
-    if !isolated("all_canonical_values_roundtrip_and_write_errors_retain_git_stderr") {
-        return;
-    }
+    isolate_git!(all_canonical_values_roundtrip_and_write_errors_retain_git_stderr);
     let dir = fixture();
     for setting in Setting::ALL {
         for &value in setting.values() {
@@ -434,9 +381,7 @@ fn all_canonical_values_roundtrip_and_write_errors_retain_git_stderr() {
 
 #[test]
 fn init_reinitialization_preserves_existing_unborn_and_committed_heads() {
-    if !isolated("init_reinitialization_preserves_existing_unborn_and_committed_heads") {
-        return;
-    }
+    isolate_git!(init_reinitialization_preserves_existing_unborn_and_committed_heads);
     let dir = fixture();
     for committed in [false, true] {
         if committed {
@@ -457,9 +402,7 @@ fn init_reinitialization_preserves_existing_unborn_and_committed_heads() {
 
 #[test]
 fn boolean_reads_use_git_semantics_and_keep_included_origins() {
-    if !isolated("boolean_reads_use_git_semantics_and_keep_included_origins") {
-        return;
-    }
+    isolate_git!(boolean_reads_use_git_semantics_and_keep_included_origins);
     let dir = fixture();
     let file = included(dir.path(), "[fetch]\nprune = -2\n");
     for (line, expected) in [
@@ -488,9 +431,7 @@ fn boolean_reads_use_git_semantics_and_keep_included_origins() {
 
 #[test]
 fn invalid_submodule_boolean_is_reported_instead_of_silently_disabling_updates() {
-    if !isolated("invalid_submodule_boolean_is_reported_instead_of_silently_disabling_updates") {
-        return;
-    }
+    isolate_git!(invalid_submodule_boolean_is_reported_instead_of_silently_disabling_updates);
     let dir = fixture();
     cli::run(dir.path(), &["config", "submodule.recurse", "sometimes"]).expect("invalid boolean");
     let repo = Repo::open(dir.path()).expect("repository");
@@ -502,9 +443,7 @@ fn invalid_submodule_boolean_is_reported_instead_of_silently_disabling_updates()
 
 #[test]
 fn recommendations_report_later_include_overrides_without_rewriting_the_include() {
-    if !isolated("recommendations_report_later_include_overrides_without_rewriting_the_include") {
-        return;
-    }
+    isolate_git!(recommendations_report_later_include_overrides_without_rewriting_the_include);
     let dir = fixture();
     cli::run(dir.path(), &["config", "--global", "fetch.prune", "true"])
         .expect("direct setting before include");
@@ -535,9 +474,7 @@ fn recommendations_report_later_include_overrides_without_rewriting_the_include(
 
 #[test]
 fn values_shown_but_not_offered_are_no_choices() {
-    if !isolated("values_shown_but_not_offered_are_no_choices") {
-        return;
-    }
+    isolate_git!(values_shown_but_not_offered_are_no_choices);
     let dir = fixture();
     for value in Setting::PushDefault.shown_only() {
         let error = config::set(dir.path(), Scope::Local, Setting::PushDefault, Some(value))
