@@ -43,7 +43,7 @@ pub mod updates;
 pub use cli_token::{CliAccount, CliError, CliLogin, install_page, login_command, login_from_cli};
 pub use client::{Client, SEARCH_WORDS, is_login};
 pub use error::{Error, Result};
-pub use http::{is_loopback_base, plain_text, set_build};
+pub use http::{is_loopback_base, plain_text, set_build, visible_name};
 pub use model::{
     Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
     RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,

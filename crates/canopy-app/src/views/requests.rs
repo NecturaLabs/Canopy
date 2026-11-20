@@ -15,7 +15,7 @@ use canopy_core::RefKind;
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{
     CheckState, MergeMethod, RequestDetails, RequestState, RequestSummary, ReviewDecision, Rollup,
-    StateFilter,
+    StateFilter, visible_name,
 };
 
 use crate::action::Action;
@@ -1252,8 +1252,10 @@ fn row(ui: &mut Ui, r: &RequestSummary, d: RowDraw<'_>) -> Response {
     );
     let when = widgets::relative_time(r.updated_at, now);
     let mut tooltip = format!(
-        "{state} · {}\n{number} · {} · {when}\n{} → {}",
-        r.title, r.author, r.source_branch, r.target_branch
+        "{state} · {}\n{number} · {} · {when}\n{}",
+        r.title,
+        r.author,
+        branch_line(r)
     );
     let mut info = format!(
         "{state} request {number} {} by {}, {when}",
@@ -1540,9 +1542,9 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                                 .size(m.body_size)
                                 .color(p.text_dim),
                         );
-                        branch_pill(ui, &summary.source_branch);
+                        branch_pill(ui, &visible_name(&summary.source_branch));
                         ui.label(RichText::new("into").size(m.body_size).color(p.text_dim));
-                        branch_pill(ui, &summary.target_branch);
+                        branch_pill(ui, &visible_name(&summary.target_branch));
                         widgets::wrapped_fact(
                             ui,
                             &format!(
@@ -1601,6 +1603,17 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
 
 /// How many placeholder lines the body shows while the details load.
 const DETAILS_PLACEHOLDER_ROWS: usize = 6;
+
+/// "source → target", for the row's tooltip. Branch names are shown with the characters that
+/// hide or reorder text dropped ([`visible_name`]); the request keeps them, since checkout needs
+/// the real name.
+fn branch_line(r: &RequestSummary) -> String {
+    format!(
+        "{} → {}",
+        visible_name(&r.source_branch),
+        visible_name(&r.target_branch)
+    )
+}
 
 fn branch_pill(ui: &mut Ui, name: &str) {
     let pill = RefPill::new(name, RefKind::LocalBranch);
@@ -2084,8 +2097,8 @@ pub(crate) fn merge_confirmation(
             "{warning}{} \"{}\" ({}) into {} on {}, as reviewed at commit {short}. If anyone pushes to it before the merge runs, {} refuses the merge. This cannot be undone from Canopy.",
             method.label(),
             r.title,
-            r.source_branch,
-            r.target_branch,
+            visible_name(&r.source_branch),
+            visible_name(&r.target_branch),
             kind.name(),
             kind.name()
         ),
@@ -3084,6 +3097,44 @@ mod tests {
                     .map(Arc::as_ref)
             )
             .is_none()
+        );
+    }
+
+    /// #271: a branch name can hold characters that hide or reorder text. The header, the row's
+    /// tooltip and the merge question show it cleaned; the request keeps the raw name, which
+    /// checkout needs.
+    #[test]
+    fn branch_names_are_cleaned_for_display_only() {
+        let mut tab = test_tab();
+        let mut d = details(RequestState::Open);
+        d.summary.source_branch = "fix\u{202E}gnp.exe".into();
+        d.summary.target_branch = "main\u{2066}".into();
+        tab.requests.selected = Some(7);
+        tab.requests.list = Some(Ok(Arc::from([d.summary.clone()])));
+        tab.requests.details = Some(Ok(Arc::new(d.clone())));
+        let frame = render(theme::ThemeId::Midnight, SCREEN, |ui| {
+            detail(ui, &mut tab, ForgeKind::GitHub, &mut Vec::new());
+        });
+        assert!(frame.has("fixgnp.exe"), "{:?}", frame.texts);
+        assert!(frame.has("main"), "{:?}", frame.texts);
+        assert!(
+            !frame.mentions("\u{202E}") && !frame.mentions("\u{2066}"),
+            "{:?}",
+            frame.texts
+        );
+        assert_eq!(branch_line(&d.summary), "fixgnp.exe → main");
+        let Some(Dialog::ConfirmHost { body, .. }) =
+            merge_confirmation(&tab, ForgeKind::GitHub, &d.summary, Some(&d))
+        else {
+            panic!("a merge question");
+        };
+        assert!(body.contains("(fixgnp.exe) into main on"), "{body}");
+        let Some(Ok(list)) = &tab.requests.list else {
+            panic!("the list")
+        };
+        assert_eq!(
+            list[0].source_branch, "fix\u{202E}gnp.exe",
+            "checkout keeps the raw name"
         );
     }
 
