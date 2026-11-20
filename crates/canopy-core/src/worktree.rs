@@ -15,6 +15,11 @@ use crate::{
 /// How many paths of each kind a [`WorktreeLoss`] keeps: the user is shown a few, the count says
 /// how many more.
 const SHOWN_PATHS: usize = 8;
+/// How long git may take to list a worktree's own refs.
+const OWN_REFS_LIMIT: std::time::Duration = std::time::Duration::from_secs(15);
+/// The refs each worktree keeps for itself, in its administrative folder rather than with the
+/// repository's (git's `worktree` documentation, "Refs"): what forgetting the worktree deletes.
+const OWN_REFS: [&str; 3] = ["refs/worktree", "refs/bisect", "refs/rewritten"];
 
 /// Whether `a` and `b` name the same folder, however each was spelled (links, `..`, a trailing
 /// slash, a short 8.3 name on Windows), even when it no longer exists.
@@ -292,7 +297,7 @@ impl Repo {
         if removal.branch.is_none()
             && let Some(head) = removal.head
         {
-            removal.unreachable_commits = self.commits_only_reached_by(head)?;
+            removal.unreachable_commits = self.commits_only_reached_by([head])?;
         }
         Ok(removal)
     }
@@ -402,15 +407,34 @@ impl Repo {
                 unreadable.push(id.to_owned());
                 (None, None)
             });
+            // What forgetting deletes that can hold commits: a detached `HEAD` and the refs the
+            // worktree keeps for itself.
+            let mut holders = Vec::new();
+            if let (None, Some(head)) = (&branch, head) {
+                holders.push(("HEAD".to_owned(), head));
+            }
+            match own_refs(&common, &admin) {
+                Some(own) => holders.extend(own),
+                None if !unreadable.iter().any(|u| u == id) => unreadable.push(id.to_owned()),
+                None => {}
+            }
+            let unreachable_commits =
+                self.commits_only_reached_by(holders.iter().map(|(_, tip)| *tip))?;
+            let mut held_by = Vec::new();
+            if unreachable_commits > 0 {
+                for (name, tip) in holders {
+                    if self.commits_only_reached_by([tip])? > 0 {
+                        held_by.push(name);
+                    }
+                }
+            }
             let path = worktree.path().to_path_buf();
             entries.push(ForgottenWorktree {
                 id: id.to_owned(),
                 reason: reason.to_owned(),
                 gone: folder_gone(&path) && lock_reason(&worktree).is_none(),
-                unreachable_commits: match (&branch, head) {
-                    (None, Some(head)) => self.commits_only_reached_by(head)?,
-                    _ => 0,
-                },
+                unreachable_commits,
+                held_by,
                 branch,
                 head,
                 submodule_repositories: admin.join("modules").is_dir(),
@@ -434,7 +458,7 @@ impl Repo {
             ))
         } else if !unreadable.is_empty() && unknown.is_empty() {
             Some(format!(
-                "Canopy cannot read the HEAD of {} in the repository's worktrees folder, so it cannot say which commits forgetting would lose. Run git worktree prune -n -v to see them.",
+                "Canopy cannot read the HEAD or the refs of {} in the repository's worktrees folder, so it cannot say which commits forgetting would lose. Run git worktree prune -n -v to see them.",
                 unreadable.join(", ")
             ))
         } else if unknown.is_empty() {
@@ -511,10 +535,17 @@ impl Repo {
         }
     }
 
-    /// Commits reachable from `head` that no branch, remote branch or tag reaches.
-    fn commits_only_reached_by(&self, head: Oid) -> Result<usize> {
+    /// Commits reachable from `tips` that no branch, remote branch or tag reaches.
+    fn commits_only_reached_by(&self, tips: impl IntoIterator<Item = Oid>) -> Result<usize> {
         let mut walk = self.git().revwalk()?;
-        walk.push(head)?;
+        let mut any = false;
+        for tip in tips {
+            walk.push(tip)?;
+            any = true;
+        }
+        if !any {
+            return Ok(0);
+        }
         for reference in self.git().references()? {
             let reference = reference?;
             let Ok(name) = reference.name() else {
@@ -531,6 +562,29 @@ impl Repo {
         walk.try_fold(0, |count, commit| commit.map(|_| count + 1))
             .map_err(Into::into)
     }
+}
+
+/// The commits the refs a worktree keeps for itself ([`OWN_REFS`]) point to, by name, as git
+/// reads them from its administrative folder `admin`: they are stored there, so the repository's
+/// own listing does not show them. `None` when git cannot read them.
+fn own_refs(common: &Repository, admin: &Path) -> Option<Vec<(String, Oid)>> {
+    let mut command = cli::command(Some(common.path()));
+    command.env("GIT_DIR", admin);
+    let mut args = vec!["for-each-ref", "--format=%(objectname) %(refname)"];
+    args.extend(OWN_REFS);
+    let out = cli::output_within(command, &args, OWN_REFS_LIMIT).ok()?;
+    if out.code != Some(0) {
+        return None;
+    }
+    let refs = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (oid, name) = line.split_once(' ')?;
+            let target = common.find_object(Oid::from_str(oid).ok()?, None).ok()?;
+            Some((name.to_owned(), target.peel_to_commit().ok()?.id()))
+        })
+        .collect();
+    Some(refs)
 }
 
 /// The folders in the repository's worktrees folder whose names [`prune_line`] cannot read back
