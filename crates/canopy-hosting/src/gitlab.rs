@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, search_words, unix};
 use crate::error::{Error, Result, head_changed, map_head_conflict};
-use crate::http::{Http, Method, encode, shorten};
+use crate::http::{Http, Method, encode, shorten, status};
 use crate::model::{
     Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
     RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
@@ -171,6 +171,91 @@ fn pipeline_state(status: &str, allow_failure: bool) -> CheckState {
     }
 }
 
+/// The first GitLab release whose merge request list takes `draft`; it deprecated `wip`.
+const DRAFT_FILTER_MAJOR: u64 = 19;
+
+/// The merge request list's draft filter on one instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DraftParam {
+    /// `draft=true|false` (a Boolean), GitLab 19.0 and newer.
+    Draft,
+    /// `wip=yes|no` (a String), deprecated since 19.0 but still accepted by every release.
+    Wip,
+}
+
+impl DraftParam {
+    /// The query parameter for asking for drafts (`true`) or for everything else.
+    fn query(self, draft: bool) -> &'static str {
+        match (self, draft) {
+            (Self::Draft, true) => "draft=true",
+            (Self::Draft, false) => "draft=false",
+            (Self::Wip, true) => "wip=yes",
+            (Self::Wip, false) => "wip=no",
+        }
+    }
+
+    /// The parameter for an instance reporting `version` (`19.0.1-ee`): `draft` from major
+    /// version 19, `wip` before it and when the text is not a version.
+    fn for_version(version: &str) -> Self {
+        // A slice of the leading digits, so a hostile answer of millions of digits costs no
+        // copy; one too long for `u64` fails to parse and gives `wip`.
+        let version = version.trim();
+        let digits = version
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(version.len());
+        match version.get(..digits).map(str::parse::<u64>) {
+            Some(Ok(major)) if major >= DRAFT_FILTER_MAJOR => Self::Draft,
+            _ => Self::Wip,
+        }
+    }
+}
+
+/// What [`draft_param`] decided and whether it is final for the instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DraftChoice {
+    pub param: DraftParam,
+    /// The instance answered (its version, or a refusal that will not change on its own), so the
+    /// choice can be kept. `false` after a failure that may pass: the next search asks again.
+    pub settled: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Version {
+    version: String,
+}
+
+/// Which draft filter the instance behind `http` understands, from `GET /version` on the same
+/// host with the same sign-in. An older instance ignores an unknown `draft` without an error, so
+/// the version is the only way to tell. Without a version the choice is [`DraftParam::Wip`],
+/// which every release still accepts; it is settled when the instance answered (a version, text
+/// that is not one, or a 401, 403, 404 or other 4xx refusal) and not when the failure may pass
+/// (the network, a rate limit, a 5xx, an answer that is not JSON). Only [`Error::Stopped`] is
+/// returned, so a switched-off client sends nothing. Without a sign-in GitLab refuses `/version`,
+/// so nothing is sent and the choice is a settled [`DraftParam::Wip`].
+pub(crate) fn draft_param(http: &Http) -> Result<DraftChoice> {
+    if !http.has_token() {
+        return Ok(DraftChoice {
+            param: DraftParam::Wip,
+            settled: true,
+        });
+    }
+    let (param, settled) = match http.json::<Version>(Method::Get, "/version", None) {
+        Ok(v) => (DraftParam::for_version(&v.version), true),
+        Err(Error::Stopped) => return Err(Error::Stopped),
+        Err(e) => {
+            let settled = match &e {
+                Error::Unauthorized(_) | Error::NotFound(_) => true,
+                Error::Api { status: code, .. } => *code < status::SERVER_ERROR,
+                _ => false,
+            };
+            tracing::debug!(error = %e, settled, "GitLab version unreadable, filtering drafts with wip");
+            (DraftParam::Wip, settled)
+        }
+    };
+    Ok(DraftChoice { param, settled })
+}
+
 pub(crate) fn viewer(http: &Http) -> Result<String> {
     let user: User = http.json(Method::Get, "/user", None)?;
     Ok(user.username)
@@ -269,6 +354,7 @@ fn search_state_page(
     project: &str,
     state: &str,
     query: &RequestQuery,
+    param: DraftParam,
     page: usize,
 ) -> Result<Vec<RequestSummary>> {
     let (order_by, sort) = match query.order {
@@ -290,23 +376,23 @@ fn search_state_page(
     if let Some(author) = query.author.as_deref().filter(|a| !a.is_empty()) {
         let _ = write!(path, "&author_username={}", encode(author));
     }
-    match query.draft {
-        Some(true) => path.push_str("&wip=yes"),
-        Some(false) => path.push_str("&wip=no"),
-        None => {}
+    if let Some(draft) = query.draft {
+        let _ = write!(path, "&{}", param.query(draft));
     }
     let mrs: Vec<Mr> = http.json(Method::Get, &path, None)?;
     Ok(mrs.iter().map(Mr::summary).collect())
 }
 
 /// Page `page` (1-based) of the merge requests matching `query`, by the list endpoint's own
-/// search, author and draft parameters. "Closed" reads the page of "closed" and of "merged" and
-/// interleaves them in the order asked for, as [`list_page`] does.
+/// search, author and draft parameters (`param` names the last, see [`draft_param`]). "Closed"
+/// reads the page of "closed" and of "merged" and interleaves them in the order asked for, as
+/// [`list_page`] does.
 pub(crate) fn search_page(
     http: &Http,
     project: &str,
     filter: StateFilter,
     query: &RequestQuery,
+    param: DraftParam,
     page: usize,
 ) -> Result<ListPage> {
     let states: &[&str] = match filter {
@@ -317,7 +403,7 @@ pub(crate) fn search_page(
     let mut rows = Vec::new();
     let mut more = false;
     for state in states {
-        let part = search_state_page(http, project, state, query, page)?;
+        let part = search_state_page(http, project, state, query, param, page)?;
         more |= part.len() == PER_PAGE;
         rows.extend(part);
     }
@@ -592,7 +678,7 @@ fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<S
             // A merge_error left over from an earlier attempt is stale once the head moved.
             if !error.is_empty() && now.sha == before.sha {
                 return Err(Error::Api {
-                    status: crate::http::status::CONFLICT,
+                    status: status::CONFLICT,
                     message: shorten(&format!(
                         "GitLab could not rebase the merge request: {error}"
                     )),
@@ -602,7 +688,7 @@ fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<S
         }
         if Instant::now() >= deadline {
             return Err(Error::Api {
-                status: crate::http::status::ACCEPTED,
+                status: status::ACCEPTED,
                 message: "GitLab is still rebasing the merge request; merge it again once the \
                           rebase has finished"
                     .to_owned(),
@@ -641,6 +727,96 @@ pub(crate) fn approve(http: &Http, project: &str, iid: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_draft_filter_follows_the_instance_version() {
+        for (version, expected) in [
+            ("19.0.0", DraftParam::Draft),
+            ("19.0.0-pre", DraftParam::Draft),
+            ("19.6.1-ee", DraftParam::Draft),
+            ("20.1.0", DraftParam::Draft),
+            (" 100.0.0\n", DraftParam::Draft),
+            ("18.11.3-ee", DraftParam::Wip),
+            ("9.9.9", DraftParam::Wip),
+            ("", DraftParam::Wip),
+            ("unknown", DraftParam::Wip),
+            ("v19.0.0", DraftParam::Wip),
+            ("-19.0.0", DraftParam::Wip),
+            ("99999999999999999999999.0", DraftParam::Wip),
+        ] {
+            assert_eq!(DraftParam::for_version(version), expected, "{version:?}");
+        }
+        // A host that answers with a huge run of digits gets `wip`, not a huge number.
+        let huge = "9".repeat(1 << 20);
+        assert_eq!(DraftParam::for_version(&huge), DraftParam::Wip);
+    }
+
+    #[test]
+    fn the_draft_filter_is_a_boolean_and_the_old_one_a_yes_no() {
+        assert_eq!(DraftParam::Draft.query(true), "draft=true");
+        assert_eq!(DraftParam::Draft.query(false), "draft=false");
+        assert_eq!(DraftParam::Wip.query(true), "wip=yes");
+        assert_eq!(DraftParam::Wip.query(false), "wip=no");
+    }
+
+    /// An address on 127.0.0.1 below every ephemeral port range that refuses connections.
+    fn refused_address() -> std::net::SocketAddr {
+        (1..=16u16)
+            .map(|port| std::net::SocketAddr::from(([127, 0, 0, 1], port)))
+            .find(|address| {
+                std::net::TcpStream::connect(address)
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
+            })
+            .expect("a port below 17 on 127.0.0.1 that refuses connections")
+    }
+
+    #[test]
+    fn a_switched_off_client_reads_no_version_and_says_so() {
+        let mut http = Http::new(
+            canopy_core::forge::ForgeKind::GitLab,
+            &format!("http://{}/api/v4", refused_address()),
+            Some("tok-SECRET".to_owned()),
+        );
+        http.set_switch(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            false,
+        )));
+        assert!(matches!(draft_param(&http), Err(Error::Stopped)));
+    }
+
+    #[test]
+    fn without_a_sign_in_the_version_is_not_asked_for() {
+        // The address refuses connections: a request would be a settled-false network failure.
+        let http = Http::new(
+            canopy_core::forge::ForgeKind::GitLab,
+            &format!("http://{}/api/v4", refused_address()),
+            None,
+        );
+        let choice = draft_param(&http).expect("no request, no failure");
+        assert_eq!(
+            choice,
+            DraftChoice {
+                param: DraftParam::Wip,
+                settled: true
+            }
+        );
+    }
+
+    #[test]
+    fn an_unreachable_host_gives_wip_without_settling_it() {
+        let http = Http::new(
+            canopy_core::forge::ForgeKind::GitLab,
+            &format!("http://{}/api/v4", refused_address()),
+            Some("tok-SECRET".to_owned()),
+        );
+        let choice = draft_param(&http).expect("a failure falls back");
+        assert_eq!(
+            choice,
+            DraftChoice {
+                param: DraftParam::Wip,
+                settled: false
+            }
+        );
+    }
 
     #[test]
     fn project_ids_are_url_encoded() {
