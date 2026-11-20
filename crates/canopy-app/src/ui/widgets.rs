@@ -130,6 +130,14 @@ pub fn elide_middle(ui: &egui::Ui, text: &str, font: &egui::FontId, max_width: f
     build(low)
 }
 
+/// A path shown as the placeholder of a one-line text field `width` points wide, cut in its
+/// middle to fit inside the field's padding, so its last folder stays in view.
+pub fn field_placeholder(ui: &egui::Ui, path: &str, width: f32) -> String {
+    let m = super::theme::metrics();
+    let font = egui::FontId::proportional(m.body_size);
+    elide_middle(ui, path, &font, width - 2.0 * m.field_pad_x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

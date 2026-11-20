@@ -956,12 +956,11 @@ pub fn show(
                             || crate::settings::expand_home(&home()),
                             std::path::Path::to_path_buf,
                         );
-                        // The suggestion is spelled out in the helper, which wraps: the field's
-                        // placeholder cuts a long path before its last folder.
-                        let helper = suggestion.as_deref().map_or_else(
-                            || "A new or empty folder.".to_owned(),
-                            |path| format!("A new or empty folder. Empty uses {path}"),
-                        );
+                        let helper = if suggestion.is_some() {
+                            "A new or empty folder. Leave it empty to use the folder shown."
+                        } else {
+                            "A new or empty folder."
+                        };
                         folder_row(
                             ui,
                             picker,
@@ -971,7 +970,7 @@ pub fn show(
                             FolderField {
                                 label: "Folder",
                                 hint: suggestion.as_deref().unwrap_or("~/src/my-project-topic"),
-                                helper: Some(&helper),
+                                helper: Some(helper),
                                 error: problem,
                                 focus: false,
                             },

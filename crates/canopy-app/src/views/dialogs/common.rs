@@ -204,14 +204,21 @@ fn path_row(
         ui,
         ("folder", salt),
         |ui, width| {
+            // A long placeholder (a suggested path) is cut in its middle, keeping its last
+            // folder, and an empty field's tooltip spells it out.
+            let hint = crate::ui::widgets::field_placeholder(ui, f.hint, width);
+            let cut = hint != f.hint && value.is_empty();
             let mut field = TextField::new(value)
                 .label(f.label)
-                .placeholder(f.hint)
+                .placeholder(hint)
                 .error(error)
                 .width(width)
                 .id_salt(("dialog-folder", salt));
             if let Some(h) = f.helper {
                 field = field.helper(h);
+            }
+            if cut {
+                field = field.tooltip(f.hint);
             }
             field.show(ui)
         },

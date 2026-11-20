@@ -51,7 +51,7 @@ use crate::ui::theme::{
     self, Curve, Density, Elevation, Fill, GlassBlocked, NodeShape, Palette, Style, Surfaces,
     ThemeId, palette,
 };
-use crate::ui::widgets::{elide_middle, forge_icon};
+use crate::ui::widgets::{elide_middle, field_placeholder, forge_icon};
 use crate::updater::{self, UpdateState, Updater};
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
@@ -4822,7 +4822,6 @@ fn integrations(
 ) {
     heading(ui, "Cloning");
     row(ui, "Default clone folder", "Where new clones go.", |ui| {
-        let right = ui.cursor().max.x;
         if let Some(dir) = picker.show(
             ui,
             "default-clone-folder",
@@ -4830,14 +4829,19 @@ fn integrations(
         ) {
             s.clone_dir = dir.display().to_string();
         }
-        // The button and the field together are as wide as the other fields, so every
-        // field starts at the same edge.
-        let button = right - ui.cursor().max.x;
-        let default = clone_parent.to_owned();
-        let width = (FIELD_WIDTH - button).max(80.0);
+        // The field is as wide as the other fields, so a path has room; its tooltip and an
+        // empty field's placeholder keep the path's last folder.
+        let width = FIELD_WIDTH;
+        let shown = if s.clone_dir.trim().is_empty() {
+            clone_parent.to_owned()
+        } else {
+            s.clone_dir.clone()
+        };
+        let placeholder = field_placeholder(ui, clone_parent, width);
         fixed_width(ui, width, |ui| {
             TextField::new(&mut s.clone_dir)
-                .placeholder(default)
+                .placeholder(placeholder)
+                .tooltip(shown)
                 .width(width)
                 .name("Default clone folder")
                 .id_salt("clone-dir")
@@ -5830,16 +5834,14 @@ fn trusted_folder_list(ui: &mut Ui, s: &mut Settings) {
             {
                 remove = Some(i);
             }
-            ui.add(
-                egui::Label::new(
-                    RichText::new(folder.display().to_string())
-                        .font(FontId::new(m.small_size, FontFamily::Monospace))
-                        .color(p.text_dim),
-                )
-                .truncate(),
-            )
-            .kit_tooltip(folder.display().to_string())
-            .show();
+            // Cut in the middle: a path's last folder is the part that names it.
+            let shown = folder.display().to_string();
+            let font = FontId::new(m.small_size, FontFamily::Monospace);
+            let cut = elide_middle(ui, &shown, &font, ui.available_width());
+            let response = ui.label(RichText::new(&cut).font(font).color(p.text_dim));
+            if cut != shown {
+                response.kit_tooltip(shown).show();
+            }
         });
     }
     if let Some(i) = remove {
