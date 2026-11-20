@@ -240,7 +240,9 @@ kbd + kbd { margin-left: 3px; }
   transition: background 160ms var(--ease), box-shadow 200ms var(--ease), border-color 160ms var(--ease), transform 120ms var(--ease), color 160ms var(--ease);
 }
 .btn:hover { background: linear-gradient(var(--raised-hover-a), var(--raised-hover-b)); border-color: var(--edge-strong); text-decoration: none; }
-.btn:active { transform: scale(0.98); }
+@media (prefers-reduced-motion: no-preference) {
+  .btn:active { transform: scale(0.98); }
+}
 .btn-cta { background: var(--cta); border-color: transparent; color: var(--on-cta); box-shadow: var(--sh-cta); font-weight: 600; }
 .btn-cta:hover { background: var(--cta-hover); border-color: transparent; box-shadow: var(--sh-cta-hover); }
 .btn-sm { min-height: 34px; padding: 0 15px; font-size: 13.5px; }
@@ -253,7 +255,9 @@ kbd + kbd { margin-left: 3px; }
 .arrow-link { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; font-weight: 500; }
 .arrow-link .ph { font-size: 14px; transition: transform 200ms var(--ease); }
 .arrow-link:hover { text-decoration: underline; }
-.arrow-link:hover .ph { transform: translateX(3px); }
+@media (prefers-reduced-motion: no-preference) {
+  .arrow-link:hover .ph { transform: translateX(3px); }
+}
 
 /* Header: frosted, so the page scrolls under it */
 .top {
@@ -310,6 +314,11 @@ kbd + kbd { margin-left: 3px; }
 .hero-shot .view { transition: opacity 520ms var(--ease), filter 520ms var(--ease), transform 760ms var(--ease); }
 .hero-shot .view + .view { position: absolute; inset: 0; }
 .hero-shot .view:not(.is-on) { opacity: 0; filter: blur(5px); transform: scale(1.012); pointer-events: none; }
+/* Reduced motion keeps the crossfade, without the zoom and blur */
+@media (prefers-reduced-motion: reduce) {
+  .hero-shot .view { transition: opacity 520ms var(--ease); }
+  .hero-shot .view:not(.is-on) { filter: none; transform: none; }
+}
 
 /* The palette: a live command palette on desktop, a list of the page's sections on touch screens */
 .pal-area { grid-area: pal; position: relative; z-index: 2; }
@@ -345,7 +354,10 @@ kbd + kbd { margin-left: 3px; }
 .is-touring [aria-selected="true"] { position: relative; isolation: isolate; background: var(--hover); }
 .is-touring [aria-selected="true"]::before {
   content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
-  background: var(--selected); transform-origin: left; animation: tour var(--tour, 4200ms) linear both;
+  background: var(--selected); transform-origin: left;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .is-touring [aria-selected="true"]::before { animation: tour var(--tour, 4200ms) linear both; }
 }
 @keyframes tour { from { transform: scaleX(0); } }
 /* A list that scrolls fades out at the edge where more waits */
@@ -384,9 +396,11 @@ kbd + kbd { margin-left: 3px; }
 .sec::after {
   content: ""; position: absolute; z-index: -1; top: calc(var(--dot-y) - var(--dot) / 2); left: calc(var(--rail-x) - var(--dot) / 2);
   width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--lane); box-shadow: 0 0 0 4px var(--ground);
-  transition: transform 420ms var(--ease);
 }
-.rail-on .sec:not(.is-lit)::after { transform: scale(0); }
+@media (prefers-reduced-motion: no-preference) {
+  .sec::after { transition: transform 420ms var(--ease); }
+  .rail-on .sec:not(.is-lit)::after { transform: scale(0); }
+}
 .sec h2 {
   font-family: var(--display); font-size: var(--h2-size); line-height: 1.02; letter-spacing: -0.035em; font-weight: 600;
   text-wrap: balance;
@@ -567,20 +581,19 @@ kbd + kbd { margin-left: 3px; }
 
 /* Scroll reveals: text rises, shots rise and settle, details arrive a beat later from their corner.
    Only with motion allowed, and only once app.js has marked the page (content shows without it). */
-.reveal-on [data-reveal] { transition: opacity 640ms var(--ease), transform 820ms var(--ease); }
-.reveal-on [data-reveal]:not(.is-in) { opacity: 0; transform: translateY(28px); }
-.reveal-on [data-reveal="shot"]:not(.is-in) { transform: translateY(44px) scale(0.97); }
-.reveal-on [data-reveal="detail"] { transition-delay: 200ms; }
-.reveal-on [data-reveal="detail"]:not(.is-in) { transform: translate(28px, 28px) scale(0.94); }
-.reveal-on .pair.flip [data-reveal="detail"]:not(.is-in) { transform: translate(-28px, 28px) scale(0.94); }
+@media (prefers-reduced-motion: no-preference) {
+  .reveal-on [data-reveal] { transition: opacity 640ms var(--ease), transform 820ms var(--ease); }
+  .reveal-on [data-reveal]:not(.is-in) { opacity: 0; transform: translateY(28px); }
+  .reveal-on [data-reveal="shot"]:not(.is-in) { transform: translateY(44px) scale(0.97); }
+  .reveal-on [data-reveal="detail"] { transition-delay: 200ms; }
+  .reveal-on [data-reveal="detail"]:not(.is-in) { transform: translate(28px, 28px) scale(0.94); }
+  .reveal-on .pair.flip [data-reveal="detail"]:not(.is-in) { transform: translate(-28px, 28px) scale(0.94); }
+}
 
 /* The palette and its tour button arrive once, together */
 @media (prefers-reduced-motion: no-preference) {
   .pal-area { animation: rise 700ms var(--ease) both; }
   @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
-}
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
 
 /* ---- Narrower screens ---- */

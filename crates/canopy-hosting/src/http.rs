@@ -755,11 +755,13 @@ fn hide_tokens(text: &str) -> String {
     }
 }
 
-/// A name or title a host sent, made fit to show: [`plain_text`]'s characters that hide or
-/// reorder text are dropped, controls, line and paragraph separators and the Braille blank
-/// become spaces, and the ends are trimmed. The inside keeps its spacing; unlike [`plain_text`]
-/// it neither collapses whitespace nor cuts the length. Empty when nothing visible is left.
-pub(crate) fn visible_name(text: &str) -> String {
+/// A name or title a host sent, made fit to show.
+///
+/// [`plain_text`]'s characters that hide or reorder text are dropped, controls, line and
+/// paragraph separators and the Braille blank become spaces, and the ends are trimmed. The inside
+/// keeps its spacing; unlike [`plain_text`] it neither collapses whitespace nor cuts the length.
+/// Empty when nothing visible is left.
+pub fn visible_name(text: &str) -> String {
     let shown: String = text
         .chars()
         .filter(|&c| !hides_text(c))
