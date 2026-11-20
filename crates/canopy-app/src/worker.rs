@@ -889,7 +889,9 @@ impl Drop for ThreadEnd {
 /// that fetch had no such branch, its absence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pin {
+    /// The last fetch saw the remote branch at a tip.
     Tip,
+    /// The last fetch saw no such remote branch.
     Absent,
 }
 
@@ -5018,8 +5020,6 @@ mod read_tests {
         );
     }
 
-    /// #43: Publish works on any local branch, not only the checked-out one, and makes the remote
-    /// branch its upstream.
     /// A force push finishes as the kind that says what it was pinned to.
     #[test]
     fn a_force_push_kind_says_what_it_was_pinned_to() {
@@ -5038,6 +5038,8 @@ mod read_tests {
         assert!(OpKind::ForcePush(Pin::Tip).syncs_remote());
     }
 
+    /// #43: Publish works on any local branch, not only the checked-out one, and makes the remote
+    /// branch its upstream.
     #[test]
     fn a_branch_that_is_not_checked_out_can_be_published() {
         let root = tempfile::tempdir().expect("tempdir");

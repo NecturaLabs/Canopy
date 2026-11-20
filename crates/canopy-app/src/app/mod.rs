@@ -106,6 +106,7 @@ pub const OVERLAYS: &[&str] = &[
     "commit-compact",
     "amend-commit",
     "toasts",
+    "force-push-stopped",
     "notifications",
     "branch-selected",
     "long-message",
@@ -641,6 +642,19 @@ impl CanopyApp {
                     Offer::ReviewUpdate,
                 );
             }
+            Some("force-push-stopped") => {
+                // Git's own answer to a force push pinned to a tip that moved, with the Fetch offer.
+                app.toasts.push_force_push_stopped(
+                    &cc.egui_ctx,
+                    "Force push stopped",
+                    " ! [rejected]        topic -> topic (stale info)\nerror: failed to push some refs to 'origin'",
+                    launch
+                        .paths
+                        .first()
+                        .map_or(std::path::Path::new("."), PathBuf::as_path),
+                    crate::worker::Pin::Tip,
+                );
+            }
             Some("settings-keyboard") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard));
             }
@@ -809,25 +823,24 @@ impl CanopyApp {
 
     /// What accepting a notification's Pull offer does: show the repository's tab, then pull it.
     fn pull_offered(&self, path: &std::path::Path, actions: &mut Vec<Action>) {
-        if let Some(index) = self
-            .tabs
-            .iter()
-            .position(|tab| tab.path == path && tab.running.is_none())
-        {
-            actions.push(Action::SwitchTab(index));
-            actions.push(Action::Pull);
-        }
+        self.offered(path, Action::Pull, actions);
     }
 
-    /// Fetches the repository at `path`, as a click on Fetch there would, unless its tab is busy.
+    /// What accepting a notification's Fetch offer does: show the repository's tab, then fetch it.
     fn fetch_offered(&self, path: &std::path::Path, actions: &mut Vec<Action>) {
+        self.offered(path, Action::Fetch, actions);
+    }
+
+    /// Shows the tab of the repository at `path`, then runs `action` there, unless that tab is
+    /// busy with another operation.
+    fn offered(&self, path: &std::path::Path, action: Action, actions: &mut Vec<Action>) {
         if let Some(index) = self
             .tabs
             .iter()
             .position(|tab| tab.path == path && tab.running.is_none())
         {
             actions.push(Action::SwitchTab(index));
-            actions.push(Action::Fetch);
+            actions.push(action);
         }
     }
 

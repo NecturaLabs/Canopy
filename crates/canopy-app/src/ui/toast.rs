@@ -187,7 +187,7 @@ fn error_help(
 fn stale_help(pin: Pin) -> &'static str {
     match pin {
         Pin::Tip => {
-            "The remote branch has moved since your last fetch. Fetch, check what arrived, then force push again."
+            "The remote branch is not where your last fetch saw it: it moved or was deleted. Fetch, check what is there, then force push again."
         }
         Pin::Absent => {
             "The remote already has this branch, and your last fetch did not see it. Fetch, check what is on it, then force push again."
@@ -1499,7 +1499,7 @@ mod tests {
             assert_eq!(toasts.items.len(), 1, "a card, not only a row");
             helps.push(row.help.expect("a hint"));
         }
-        assert!(helps[0].starts_with("The remote branch has moved since your last fetch"));
+        assert!(helps[0].starts_with("The remote branch is not where your last fetch saw it"));
         assert!(
             helps[1].starts_with(
                 "The remote already has this branch, and your last fetch did not see it"

@@ -150,7 +150,7 @@ pub(super) fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) ->
             canopy_core::short_id(*oid)
         ),
         None => format!(
-            "{remote}/{dest} is not in your last fetch, so Canopy cannot show what a force push would replace. If it exists on the remote, Git refuses."
+            "{remote}/{dest} is not in your last fetch, so Canopy cannot show what it would replace. If the remote has it, Git refuses."
         ),
     };
     Dialog::Confirm {
@@ -1631,7 +1631,7 @@ mod tests {
         );
         assert_eq!(
             body(None),
-            "origin/topic is not in your last fetch, so Canopy cannot show what a force push would replace. If it exists on the remote, Git refuses."
+            "origin/topic is not in your last fetch, so Canopy cannot show what it would replace. If the remote has it, Git refuses."
         );
     }
 }

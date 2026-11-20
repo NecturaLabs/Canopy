@@ -1454,6 +1454,70 @@ mod tests {
         settle_reads(&mut app);
     }
 
+    /// #197: the Fetch a stopped force push offers loads a tab nobody has shown yet first, then
+    /// fetches it, in that order.
+    #[test]
+    fn a_fetch_offered_for_a_tab_not_yet_shown_loads_it_first() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let mut app = test_app();
+        let paths: Vec<_> = ["a", "b"]
+            .iter()
+            .map(|name| {
+                let path = dir.path().join(name);
+                std::fs::create_dir(&path).expect("folder");
+                path
+            })
+            .collect();
+        app.add_tab(&ctx, paths[0].clone(), true);
+        app.add_tab(&ctx, paths[1].clone(), false);
+        let queues: Vec<_> = (0..2).map(|i| lazy_tab(&mut app, i)).collect();
+        app.load_active_tab(&ctx);
+        assert!(!app.tabs[1].is_loaded());
+
+        let mut actions = Vec::new();
+        app.fetch_offered(&paths[1], &mut actions);
+        app.apply(&ctx, actions);
+        assert_eq!(app.active, 1);
+        let queued: Vec<_> = queues[1].try_iter().collect();
+        assert!(
+            matches!(
+                queued.as_slice(),
+                [Job::Refresh(_), Job::Op(Op::Fetch { .. })]
+            ),
+            "the fetch must not be lost: {queued:?}"
+        );
+        settle_reads(&mut app);
+    }
+
+    /// #197: an offer for a tab that is busy with another operation, or that is not open, does
+    /// nothing: no tab switch and no second operation on the same repository.
+    #[test]
+    fn a_fetch_or_pull_offered_for_a_busy_or_unknown_tab_does_nothing() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let mut app = test_app();
+        let path = dir.path().join("a");
+        std::fs::create_dir(&path).expect("folder");
+        app.add_tab(&ctx, path.clone(), true);
+        let mut actions = Vec::new();
+        app.fetch_offered(&path, &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::SwitchTab(0), Action::Fetch]),
+            "{actions:?}"
+        );
+
+        app.tabs[0].running = Some("Pulling".into());
+        let mut actions = Vec::new();
+        app.fetch_offered(&path, &mut actions);
+        app.pull_offered(&path, &mut actions);
+        assert!(actions.is_empty(), "{actions:?}");
+        app.tabs[0].running = None;
+        app.fetch_offered(&dir.path().join("elsewhere"), &mut actions);
+        assert!(actions.is_empty(), "{actions:?}");
+        settle_reads(&mut app);
+    }
+
     /// #62: the active tab is never one that has not loaded, whichever way it became active.
     #[test]
     fn every_change_of_the_active_tab_leaves_it_loaded() {
