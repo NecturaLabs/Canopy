@@ -2942,6 +2942,22 @@ impl RepoTab {
                                 .max()
                                 .unwrap_or(0)
                         });
+                        // Colours of the last read fit only the same lines: a refresh that
+                        // changed the file shows it plain until its own colours arrive.
+                        let same_lines = match (&read.result, &result) {
+                            (Some(Ok(old)), Ok(new)) => {
+                                old.lines.len() == new.lines.len()
+                                    && old
+                                        .lines
+                                        .iter()
+                                        .zip(&new.lines)
+                                        .all(|(a, b)| a.text == b.text)
+                            }
+                            _ => false,
+                        };
+                        if !same_lines {
+                            read.highlights = None;
+                        }
                         read.result = Some(result);
                     }
                 }
@@ -5938,6 +5954,84 @@ mod tests {
             )
         });
         assert!(asked, "turned on, the blame is not coloured again");
+        Ok(())
+    }
+
+    /// A blame read again keeps its colours while its lines are the same, and drops them once
+    /// they differ, so old spans never colour new text (a file too long to highlight again
+    /// would keep them for good).
+    #[test]
+    fn a_refreshed_blame_keeps_its_colours_only_for_the_same_lines()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let blame = |texts: &[&str]| {
+            Ok(Arc::new(canopy_core::Blame {
+                commits: Vec::new(),
+                lines: texts
+                    .iter()
+                    .map(|t| canopy_core::BlameLine {
+                        commit: 0,
+                        text: (*t).into(),
+                    })
+                    .collect(),
+            }))
+        };
+        let read =
+            |tab: &mut RepoTab, texts: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+                tab.read_blame("a.rs".into(), None);
+                let serial = std::iter::from_fn(|| jobs.try_recv().ok())
+                    .find_map(|job| match job {
+                        Job::Blame { serial, .. } => Some(serial),
+                        _ => None,
+                    })
+                    .expect("a blame job");
+                events.send(Event::Blame {
+                    serial,
+                    result: blame(texts),
+                })?;
+                tab.poll(&[]);
+                Ok(())
+            };
+        read(&mut tab, &["fn a() {}", "fn b() {}"])?;
+        events.send(Event::BlameHighlight {
+            serial: tab.blame_serial,
+            highlights: Arc::new(Highlights::default()),
+        })?;
+        tab.poll(&[]);
+        let coloured = |tab: &RepoTab| tab.blame.as_ref().is_some_and(|b| b.highlights.is_some());
+        assert!(coloured(&tab));
+        // Read again with the same lines (a refresh): the colours stay.
+        let serial = tab.blame_serial;
+        tab.send_blame("a.rs".into(), None);
+        let again = std::iter::from_fn(|| jobs.try_recv().ok())
+            .find_map(|job| match job {
+                Job::Blame { serial, .. } => Some(serial),
+                _ => None,
+            })
+            .expect("a blame job");
+        assert_ne!(again, serial);
+        events.send(Event::Blame {
+            serial: again,
+            result: blame(&["fn a() {}", "fn b() {}"]),
+        })?;
+        tab.poll(&[]);
+        assert!(coloured(&tab), "the same lines lost their colours");
+        // A line inserted at the top: the old spans would colour the wrong lines.
+        tab.send_blame("a.rs".into(), None);
+        let changed = std::iter::from_fn(|| jobs.try_recv().ok())
+            .find_map(|job| match job {
+                Job::Blame { serial, .. } => Some(serial),
+                _ => None,
+            })
+            .expect("a blame job");
+        events.send(Event::Blame {
+            serial: changed,
+            result: blame(&["// new", "fn a() {}", "fn b() {}"]),
+        })?;
+        tab.poll(&[]);
+        assert!(!coloured(&tab), "new lines kept the old colours");
         Ok(())
     }
 
