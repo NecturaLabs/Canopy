@@ -25,7 +25,7 @@ pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) 
     let result = KitDialog::new(super::salt(dialog))
         .title("File history")
         .description(path)
-        .width(DialogWidth::Reading)
+        .width(DialogWidth::Wide)
         .initial_focus(InitialFocus::Cancel)
         .body(|ui| match tab.and_then(|t| t.file_history.as_ref()) {
             None => working(ui, "Reading the file's history…"),
