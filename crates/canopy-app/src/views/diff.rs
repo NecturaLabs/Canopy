@@ -680,12 +680,14 @@ fn header(
                     }
                 }
                 let path = sel.entry.path.clone();
+                // Keyed by the file too: a press that began on one file's button and ends after
+                // a refresh selected another file clicks neither.
                 let file_action = |label: &str, glyph: &str| {
                     Button::new(label)
                         .secondary()
                         .size(Size::Sm)
                         .icon(glyph)
-                        .id_salt(("diff-file-action", label.to_owned()))
+                        .id_salt(("diff-file-action", label.to_owned(), path.clone()))
                 };
                 match (&sel.source, sel.conflicted) {
                     (_, true) => {
@@ -1830,6 +1832,50 @@ mod tests {
             blame > name + 8.0,
             "two rows when the name does not fit: {name} {blame}"
         );
+    }
+
+    /// The header's Stage file is a different button for each file: a press that began on one
+    /// file's button and ends after a refresh selected another file stages neither.
+    #[test]
+    fn each_file_has_its_own_stage_button() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        ctx.enable_accesskit();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let mut stage_id = |path: &str| {
+            let sel = crate::tab::FileSelection {
+                source: DiffSource::Unstaged,
+                entry: canopy_core::FileEntry {
+                    path: path.into(),
+                    old_path: None,
+                    kind: ChangeKind::Modified,
+                    additions: 2,
+                    deletions: 1,
+                    lfs: false,
+                    old_mode: Some(0o100_644),
+                    new_mode: Some(0o100_644),
+                },
+                conflicted: false,
+            };
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                header(ui, &mut tab, &sel, &mut Vec::new());
+            });
+            out.textures_delta.clear();
+            out.platform_output
+                .accesskit_update
+                .expect("nodes")
+                .nodes
+                .into_iter()
+                .find(|(_, n)| n.label() == Some("Stage file"))
+                .map(|(id, _)| id)
+                .expect("a Stage file button")
+        };
+        assert_ne!(stage_id("a.rs"), stage_id("b.rs"));
     }
 
     #[test]
