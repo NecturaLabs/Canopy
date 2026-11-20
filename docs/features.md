@@ -268,8 +268,8 @@ remote and Add remote… for one whose remotes are elsewhere.
 Request list icons show lifecycle and draft state. A row leads with the request's number and title
 (`#154 Title`, `!154` for a merge request), which wraps to a second line before it is cut, then the
 author and when it was last updated with the labels at the right, then the first lines of its
-description as plain text. The preview flattens Markdown, drops comments and tags, and shows a
-linked image (a badge) as its alt text. A middle dot separates paragraphs, and a request without a
+description as plain text. The preview flattens Markdown, drops HTML comments and tags, and shows
+a linked image (a badge) as its alt text. A middle dot separates paragraphs, and a request without a
 description shows no preview. Titles, author names, label names and check names drop characters that
 do not show or that reorder text (zero-width spaces, blank fillers, text-direction controls), show a
 line break, tab or Braille blank as a space, and lose spaces at their ends. The branches are in the
