@@ -4,8 +4,9 @@
 Every file a page, stylesheet or script names must exist in site/, every address outside it must
 be https and on a host the content security policy in site/netlify.toml allows or a link the
 visitor follows, the scripts must parse, and the site's Privacy Policy and Terms of Service pages
-must be the current render of docs/legal/. Exits non-zero with one line per problem.
---write-legal renders those two pages again from docs/legal/.
+must be the current render of docs/legal/. The site's third-party notices must match the bytes
+in docs/legal/. Exits non-zero with one line per problem.
+--write-legal renders the two pages and copies the notices from docs/legal/.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ SITE = (
     Path(ARGS[0]) if ARGS else Path(__file__).resolve().parent.parent / "site"
 ).resolve()
 LEGAL = SITE.parent / "docs" / "legal"
+NOTICES = "third-party-notices.txt"
 # Each page the site publishes from docs/legal/: (page, source, title).
 LEGAL_PAGES = (
     ("privacy.html", "privacy-policy.md", "Privacy Policy"),
@@ -82,6 +84,7 @@ LEGAL_PAGE = """<!doctype html>
         <h2 class="foot-h">Legal</h2>
         <a href="privacy.html">Privacy Policy</a>
         <a href="terms.html">Terms of Service</a>
+        <a href="third-party-notices.txt">Third-party notices</a>
       </div>
     </nav>
   </div>
@@ -218,16 +221,28 @@ def allowed_hosts() -> dict[str, set[str]]:
 
 
 def main() -> int:
-    if "--write-legal" in sys.argv[1:]:
-        for path, text in legal_pages().items():
-            path.write_text(text, encoding="utf-8")
-            print(f"check-site: wrote {path.relative_to(SITE.parent)}")
+    write_legal = "--write-legal" in sys.argv[1:]
     problems: list[str] = []
     for path, text in legal_pages().items():
         rel = path.relative_to(SITE.parent)
-        if not path.exists() or path.read_text(encoding="utf-8") != text:
+        if write_legal:
+            path.write_text(text, encoding="utf-8")
+            print(f"check-site: wrote {rel}")
+        elif not path.is_file() or path.read_text(encoding="utf-8") != text:
             problems.append(
                 f"{rel}: not the current render of docs/legal/; run python3 tools/check-site.py --write-legal"
+            )
+    if LEGAL.is_dir():
+        notices = (LEGAL / NOTICES).read_bytes()
+        path = SITE / NOTICES
+        rel = path.relative_to(SITE.parent)
+        if write_legal:
+            path.write_bytes(notices)
+            print(f"check-site: wrote {rel}")
+        elif not path.is_file() or path.read_bytes() != notices:
+            problems.append(
+                f"{rel}: missing or differs from docs/legal/{NOTICES}; "
+                "run python3 tools/check-site.py --write-legal"
             )
     pages = sorted(SITE.rglob("*.html"))
     if not pages:

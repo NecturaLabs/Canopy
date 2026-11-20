@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Writes docs/legal/third-party-notices.txt: the licence texts of everything Canopy ships.
 
+It writes the same text to site/third-party-notices.txt, the copy the website publishes
+(`tools/check-site.py` fails while the two differ).
+
 The file lists every crate compiled into the `canopy` binary on Linux, macOS or Windows (normal
 dependencies only; build scripts, proc macros and test-only crates ship nothing) with its
 version, licence expression and the licence and notice files from its source package, plus the
@@ -13,7 +16,7 @@ each licence text comes from; the file gets an "Assets embedded in crates" secti
 new minor), so an upgrade forces a review of the table. two-face's texts are decoded from the
 crate's own `generated/acknowledgements_full.bin`, so they always follow the locked version.
 
-    tools/notices.py           regenerate the file
+    tools/notices.py           regenerate the file and the site's copy
     tools/notices.py --check   exit 1 if the committed file is out of date (CI)
 
 Needs the crates' sources (`cargo fetch --locked` downloads them) and Python 3.9 or newer.
@@ -33,6 +36,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "legal" / "third-party-notices.txt"
+SITE_COPY = ROOT / "site" / "third-party-notices.txt"
 TARGETS = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 BINARY_PACKAGE = "canopy-app"
 LICENCE_FILE = re.compile(r"^(licen[cs]e|copying|notice|copyright|unlicense|authors)", re.I)
@@ -364,8 +368,9 @@ def main() -> None:
             sys.exit(f"{OUT.relative_to(ROOT)} is out of date: run tools/notices.py")
         print(f"{OUT.relative_to(ROOT)} is up to date")
         return
-    OUT.write_text(text, encoding="utf-8")
-    print(OUT.relative_to(ROOT))
+    for path in (OUT, SITE_COPY):
+        path.write_text(text, encoding="utf-8")
+        print(path.relative_to(ROOT))
 
 
 if __name__ == "__main__":

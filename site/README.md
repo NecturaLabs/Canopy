@@ -1,13 +1,15 @@
 # Canopy website
 
-The landing page for Canopy: one static page, led by the keyboard, plus the Privacy Policy and
-Terms of Service. Its first screen is the headline and the install command beside a working
-command palette, with the app's window below them showing the view of the palette's active row,
-and each section names the keys that do the job. There is no build step and no framework:
-`index.html`, `styles.css`, `app.js` and `theme.js` are the source and the output.
-`privacy.html` and `terms.html` are rendered from `../docs/legal/` by
-`python3 tools/check-site.py --write-legal`; never edit them by hand. `check-site.py` fails while
-either differs from that render, so a change to a legal document that skips the step fails CI.
+The landing page for Canopy: one static page, led by the keyboard, plus the Privacy Policy, the
+Terms of Service and the third-party notices. Its first screen is the headline and the install
+command beside a working command palette, with the app's window below them showing the view of
+the palette's active row, and each section names the keys that do the job. There is no build step
+and no framework: `index.html`, `styles.css`, `app.js` and `theme.js` are the source and the
+output. `privacy.html` and `terms.html` are rendered from `../docs/legal/` by
+`python3 tools/check-site.py --write-legal`; never edit them by hand. `third-party-notices.txt` is
+a copy of `../docs/legal/third-party-notices.txt`, written by `tools/notices.py` (and by
+`--write-legal`). `check-site.py` fails while any of them differs from its source, so a change to
+a legal document or to the dependencies that skips the step fails CI.
 
 ## How it looks
 
@@ -60,7 +62,8 @@ repository variable `NETLIFY_SITE_ID`; nothing is set by hand in Netlify. To red
 The whole folder is published as it is, this README included (Netlify reads `netlify.toml` and does not serve it). `netlify.toml`
 sets the headers: a content security policy that allows only the site's own files plus
 `raw.githubusercontent.com` for the build list, no referrer, no framing, and long caching for the
-fonts. Every response carries `Cache-Control: no-transform`, so Cloudflare, which proxies the
+fonts. The notices use `text/plain; charset=utf-8` and revalidate like the legal pages.
+Every response carries `Cache-Control: no-transform`, so Cloudflare, which proxies the
 domain, injects nothing (its JavaScript detections and email obfuscation would add inline scripts
 the policy refuses). The page has no inline scripts, styles or event handlers, so the policy needs no
 exceptions. It also holds the two installer addresses: `/install` and `/install.ps1` are 302

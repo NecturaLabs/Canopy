@@ -53,8 +53,9 @@ in a document no longer exists.
   [specs/HANDOFF-canopy-3-core-workflows.md](specs/HANDOFF-canopy-3-core-workflows.md) (what two
   merged branches added and the app still has to wire up). The `memory-hygiene` skill tends them. A
   session never leaves a standing handoff at the repository root: each item goes where it lives.
-- **Generated, do not edit**: `legal/third-party-notices.txt` (`tools/notices.py`) and the images in
-  `screenshots/` (`tools/screenshot.sh`, the `screenshot` skill).
+- **Generated, do not edit**: `legal/third-party-notices.txt` (`tools/notices.py`), the site's
+  [legal pages and notices](../site/README.md), and the images in `screenshots/`
+  (`tools/screenshot.sh`, the `screenshot` skill).
 
 ## Adding a document
 
