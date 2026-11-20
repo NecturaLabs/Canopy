@@ -197,13 +197,14 @@ impl DraftParam {
     /// The parameter for an instance reporting `version` (`19.0.1-ee`): `draft` from major
     /// version 19, `wip` before it and when the text is not a version.
     fn for_version(version: &str) -> Self {
-        let major: String = version
-            .trim()
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        match major.parse::<u64>() {
-            Ok(major) if major >= DRAFT_FILTER_MAJOR => Self::Draft,
+        // A slice of the leading digits, so a hostile answer of millions of digits costs no
+        // copy; one too long for `u64` fails to parse and gives `wip`.
+        let version = version.trim();
+        let digits = version
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(version.len());
+        match version.get(..digits).map(str::parse::<u64>) {
+            Some(Ok(major)) if major >= DRAFT_FILTER_MAJOR => Self::Draft,
             _ => Self::Wip,
         }
     }
@@ -745,6 +746,9 @@ mod tests {
         ] {
             assert_eq!(DraftParam::for_version(version), expected, "{version:?}");
         }
+        // A host that answers with a huge run of digits gets `wip`, not a huge number.
+        let huge = "9".repeat(1 << 20);
+        assert_eq!(DraftParam::for_version(&huge), DraftParam::Wip);
     }
 
     #[test]
