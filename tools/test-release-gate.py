@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import stat
 import subprocess
 import tempfile
 from textwrap import dedent
@@ -49,6 +51,56 @@ def action_pin_step(identifier):
     return steps[0]
 
 
+def action_step_named(name):
+    action = (ROOT / ".github/actions/setup-rust/action.yml").read_text()
+    steps = [s for s in re.split(r"(?m)^    - ", action) if s.startswith(f"name: {name}\n")]
+    if len(steps) != 1:
+        raise AssertionError(f"setup-rust has no step called {name}")
+    return steps[0]
+
+
+def fake_programs(directory, programs):
+    """Executables named `programs` in `directory`, each a /bin/sh script."""
+    directory.mkdir(exist_ok=True)
+    for name, body in programs.items():
+        path = directory / name
+        path.write_text("#!/bin/sh\n" + body)
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+PIN_ACCEPTED = {
+    "plain": b'[toolchain]\nchannel = "1.100.0"\n',
+    "crlf": b'[toolchain]\r\nchannel = "1.100.0"\r\nprofile = "minimal"\r\n',
+    "trailing comment": b'[toolchain]\nchannel = "1.100.0" # the pin\n',
+    "commented-out second channel": b'[toolchain]\nchannel = "1.100.0"\n# channel = "1.99.0"\n',
+    "indented, tight": b'[toolchain]\n\tchannel="1.100.0"\n',
+}
+PIN_REJECTED = {
+    "duplicate channel lines": b'[toolchain]\nchannel = "1.100.0"\nchannel = "1.100.0"\n',
+    "prerelease": b'[toolchain]\nchannel = "1.100.0-beta"\n',
+    "two components": b'[toolchain]\nchannel = "1.100"\n',
+    "stable": b'[toolchain]\nchannel = "stable"\n',
+    "no channel": b'[toolchain]\nprofile = "minimal"\n',
+    "only a comment": b'[toolchain]\n# channel = "1.100.0"\n',
+}
+
+# What needs the pinned toolchain, or the files a pinned toolchain builds: cargo, rustc and rustup
+# directly, and the scripts that run them.
+NEEDS_RUST = re.compile(r"\b(?:cargo|rustc|rustup)\b|vendor-eframe|notices\.py|stall-check|glass-check")
+SETUP_RUST = re.compile(r"(?m)^\s*uses: \./\.github/actions/setup-rust\s*$")
+
+
+def run_text(step):
+    """The script of a workflow step, without comment lines, or None for a step with no `run:`."""
+    if re.search(r"(?m)^\s*run: [|>]", step):
+        script = run_block(step)
+    elif match := re.search(r"(?m)^\s*run: (.+)$", step):
+        script = match[1]
+    else:
+        return None
+    return "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+
+
 class ReleaseGateTests(unittest.TestCase):
     def test_setup_rust_uses_an_exact_toolchain(self):
         setup = (ROOT / ".github/actions/setup-rust/action.yml").read_text()
@@ -64,9 +116,12 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertRegex(channels[0], r'^"1\.[0-9]+\.[0-9]+"\s*(?:#.*)?$')
 
     def test_release_ships_toolchain_report_before_checksums_and_attestation(self):
-        build = job("release.yml", "build")
+        package = step_script(job("release.yml", "build"), "Package")
+        report = re.search(r"\{\n(.*?)\n\s*\} > \"dist/\$name\.toolchain\.txt\"", package, re.S)
+        self.assertIsNotNone(report, "the Package step writes dist/$name.toolchain.txt")
         for command in ("rustc -Vv", "cargo -V", "rustup show"):
-            self.assertIn(command, build)
+            self.assertIn(command, report[1])
+        self.assertLess(report.start(), package.index("tar -czf"))
         release = job("release.yml", "release")
         self.assertLess(release.index("name: Assemble the toolchain report"), release.index("name: Checksums"))
         self.assertIn("dist/toolchain.txt", release.split("subject-path: |", 1)[1].split("      #", 1)[0])
@@ -146,21 +201,124 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn('for r in "$CHANGES" "$RESULT" "$MSRV"; do', tests)
         self.assertIn("if: always()", tests)
 
-    def test_every_job_that_runs_cargo_installs_the_pin_first(self):
-        # cargo reads rust-toolchain.toml through rustup, which would otherwise install the
-        # toolchain unverified and unlogged.
-        for workflow, name in (("advisories.yml", "advisories"), ("ci.yml", "checks")):
-            body = job(workflow, name)
-            self.assertIn("uses: ./.github/actions/setup-rust", body, name)
-            first_cargo = re.search(r"(?m)^\s+(?:- )?run: cargo\b", body)
-            self.assertLess(body.index("setup-rust"), first_cargo.start(), name)
+    def test_every_step_that_needs_rust_comes_after_the_pin_is_installed(self):
+        # cargo and rustup read rust-toolchain.toml and would install the toolchain unverified and
+        # unlogged, so setup-rust (which installs, checks and logs it) comes first in each job.
+        scanned = needing = 0
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            text = path.read_text()
+            if "\njobs:\n" not in text:
+                continue
+            for name in re.findall(r"(?m)^  ([\w-]+):\s*$", text.split("\njobs:\n", 1)[1]):
+                steps = re.split(r"(?m)^      - ", job(path.name, name))[1:]
+                setup = next((i for i, step in enumerate(steps) if SETUP_RUST.search(step)), None)
+                for i, step in enumerate(steps):
+                    scanned += 1
+                    script = run_text(step)
+                    if script is None or not NEEDS_RUST.search(script):
+                        continue
+                    needing += 1
+                    where = f"{path.name} {name}: {script.strip().splitlines()[0]}"
+                    self.assertIsNotNone(setup, where)
+                    self.assertLess(setup, i, where)
+        self.assertGreater(scanned, 50)
+        self.assertGreaterEqual(needing, 10)
+
+    def test_the_msrv_job_checks_the_workspace_rust_version(self):
+        manifest = (ROOT / "Cargo.toml").read_text()
+        rust_version = re.search(r'(?m)^rust-version\s*=\s*"([^"]+)"', manifest)[1]
+        msrv = job("ci.yml", "msrv")
+        versions = re.findall(r"(?:\+|toolchain install |RUSTUP_TOOLCHAIN=|on Rust )(\d+\.\d+(?:\.\d+)?)", msrv)
+        self.assertGreaterEqual(len(versions), 5, versions)
+        self.assertEqual(set(versions), {rust_version})
+
+    def test_dependabot_commit_prefixes_decide_which_updates_are_releasable(self):
+        # tools/release.py releases build(deps) (a new compiler changes the shipped binaries, as a
+        # new crate does) and does not release ci.
+        text = (ROOT / ".github/dependabot.yml").read_text()
+        prefixes = {}
+        for entry in re.split(r"(?m)^  - package-ecosystem: ", text)[1:]:
+            prefixes[entry.split("\n", 1)[0]] = re.search(r'prefix: "([^"]+)"', entry)[1]
+        self.assertEqual(
+            prefixes, {"cargo": "build(deps)", "rust-toolchain": "build(deps)", "github-actions": "ci"}
+        )
+
+    def test_a_new_release_requires_a_pin_unless_it_is_already_published(self):
+        script = step_script(job("release.yml", "identity"), "Require a Rust pin for new releases")
+        cases = [
+            # (has pin, what gh prints, expected status, whether gh is called)
+            ("pin present", True, "false", 0, False),
+            ("pin present, release is a draft", True, "true", 0, False),
+            ("no pin, published release", False, "false", 0, True),
+            ("no pin, draft release", False, "true", 1, True),
+            ("no pin, no such release", False, "fail", 1, True),
+        ]
+        for label, has_pin, mode, status, calls_gh in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                if has_pin:
+                    (root / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "1.100.0"\n')
+                fake_programs(root / "bin", {
+                    "gh": 'echo "$@" >> "$GH_LOG"\n[ "$GH_MODE" = fail ] && { echo "release not found" >&2; exit 1; }\necho "$GH_MODE"\n',
+                })
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, capture_output=True, text=True,
+                    env={
+                        "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}", "GH_MODE": mode,
+                        "GH_LOG": str(root / "gh.log"), "TAG": "build-1", "GITHUB_REPOSITORY": "test/repo",
+                        "GH_TOKEN": "token",
+                    },
+                )
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertEqual((root / "gh.log").exists(), calls_gh)
+                if calls_gh:
+                    self.assertIn("release view build-1 --repo test/repo", (root / "gh.log").read_text())
+                if status:
+                    self.assertIn("::error::", result.stdout)
+
+    def run_verify_step(self, reported, expected="1.100.0"):
+        script = run_block(action_step_named("Verify and log the active Rust toolchain"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_programs(root, {
+                "rustc": 'if [ "$1" = --version ]; then echo "$FAKE_RUSTC"; else echo "rustc verbose details"; fi\n',
+                "cargo": 'echo "cargo 1.100.0 (fake)"\n',
+                "rustup": 'echo "rustup show output"\n',
+            })
+            return subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, capture_output=True, text=True,
+                env={
+                    "PATH": f"{root}{os.pathsep}{os.environ['PATH']}", "RUST_CHANNEL": expected,
+                    "FAKE_RUSTC": reported,
+                },
+            )
+
+    def test_the_active_toolchain_must_be_the_pin_and_is_logged(self):
+        ok = self.run_verify_step("rustc 1.100.0 (abcdef 2026-11-20)")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        for line in ("rustc verbose details", "cargo 1.100.0 (fake)", "rustup show output"):
+            self.assertIn(line, ok.stdout)
+        for reported in (
+            "rustc 1.99.0 (abcdef 2026-11-20)",
+            "rustc 1.100.0-beta.1 (abcdef 2026-11-20)",
+            "rustc 1.100.01 (abcdef 2026-11-20)",
+            "rustc 1.1.0 (abcdef 2026-11-20)",
+            "",
+        ):
+            with self.subTest(reported=reported):
+                bad = self.run_verify_step(reported)
+                self.assertEqual(bad.returncode, 1)
+                self.assertIn("::error::Expected Rust 1.100.0", bad.stdout)
+                self.assertNotIn("rustc verbose details", bad.stdout)
 
     def run_pin_step(self, contents):
-        """Run setup-rust's Unix pin step on a rust-toolchain.toml; return the channel or None."""
+        """Run setup-rust's Unix pin step on a rust-toolchain.toml (None: no file); return the
+        channel, or None when the step fails. self.pin_output holds what it printed."""
         script = run_block(action_pin_step("pin-unix"))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "rust-toolchain.toml").write_bytes(contents)
+            if contents is not None:
+                (root / "rust-toolchain.toml").write_bytes(contents)
             out, env_file = root / "output", root / "env"
             out.touch()
             env_file.touch()
@@ -168,6 +326,7 @@ class ReleaseGateTests(unittest.TestCase):
                 ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, capture_output=True,
                 env={"PATH": os.environ["PATH"], "GITHUB_OUTPUT": str(out), "GITHUB_ENV": str(env_file)},
             )
+            self.pin_output = result.stdout.decode() + result.stderr.decode()
             if result.returncode != 0:
                 self.assertEqual(out.read_text(), "")
                 return None
@@ -191,29 +350,47 @@ class ReleaseGateTests(unittest.TestCase):
         return matches[0][1] if len(matches) == 1 else None
 
     def test_the_rust_pin_is_read_strictly_on_every_platform(self):
-        accepted = {
-            "plain": b'[toolchain]\nchannel = "1.100.0"\n',
-            "crlf": b'[toolchain]\r\nchannel = "1.100.0"\r\nprofile = "minimal"\r\n',
-            "trailing comment": b'[toolchain]\nchannel = "1.100.0" # the pin\n',
-            "commented-out second channel": b'[toolchain]\nchannel = "1.100.0"\n# channel = "1.99.0"\n',
-            "indented, tight": b'[toolchain]\n\tchannel="1.100.0"\n',
-        }
-        rejected = {
-            "duplicate channel lines": b'[toolchain]\nchannel = "1.100.0"\nchannel = "1.100.0"\n',
-            "prerelease": b'[toolchain]\nchannel = "1.100.0-beta"\n',
-            "two components": b'[toolchain]\nchannel = "1.100"\n',
-            "stable": b'[toolchain]\nchannel = "stable"\n',
-            "no channel": b'[toolchain]\nprofile = "minimal"\n',
-            "only a comment": b'[toolchain]\n# channel = "1.100.0"\n',
-        }
-        for label, contents in accepted.items():
+        for label, contents in PIN_ACCEPTED.items():
             with self.subTest(label=label):
                 self.assertEqual(self.run_pin_step(contents), "channel=1.100.0\n")
                 self.assertEqual(self.pin_pwsh_channel(contents), "1.100.0")
-        for label, contents in rejected.items():
+        for label, contents in PIN_REJECTED.items():
             with self.subTest(label=label):
                 self.assertIsNone(self.run_pin_step(contents))
                 self.assertIsNone(self.pin_pwsh_channel(contents))
+
+    def test_a_missing_pin_file_fails_with_a_message(self):
+        self.assertIsNone(self.run_pin_step(None))
+        self.assertIn("::error::rust-toolchain.toml is missing", self.pin_output)
+        self.assertNotIn("sed:", self.pin_output)
+        self.assertIn("rust-toolchain.toml is missing", action_pin_step("pin-windows"))
+
+    @unittest.skipUnless(shutil.which("pwsh"), "pwsh is not installed: the Windows pin step is only checked as a Python translation")
+    def test_the_windows_pin_step_under_powershell(self):
+        script = "$ErrorActionPreference = 'stop'\n" + run_block(action_pin_step("pin-windows"))
+        cases = [(label, contents, "1.100.0") for label, contents in PIN_ACCEPTED.items()]
+        cases += [(label, contents, None) for label, contents in PIN_REJECTED.items()] + [("no file", None, None)]
+        for label, contents, channel in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                if contents is not None:
+                    (root / "rust-toolchain.toml").write_bytes(contents)
+                (root / "step.ps1").write_text(script)
+                out, env_file = root / "output", root / "env"
+                out.touch()
+                env_file.touch()
+                result = subprocess.run(
+                    ["pwsh", "-NoProfile", "-NonInteractive", "-File", "step.ps1"], cwd=root, capture_output=True,
+                    text=True, env=os.environ | {"GITHUB_OUTPUT": str(out), "GITHUB_ENV": str(env_file)},
+                )
+                read = lambda p: p.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+                if channel is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(read(out), "")
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(read(out), f"channel={channel}\n")
+                    self.assertEqual(read(env_file), "RUSTUP_AUTO_INSTALL=0\n")
 
     def run_steps(self, root, body, names, env):
         for name in names:
