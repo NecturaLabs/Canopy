@@ -41,6 +41,28 @@ const MAX_MESSAGE: usize = 300;
 /// every request, the GraphQL query included, visibly shares it).
 const MAX_BODY: u64 = 10 * 1024 * 1024;
 
+/// The REST API version `api.github.com` is asked for, the latest GitHub publishes. None of its
+/// breaking changes touches an endpoint or a field Canopy uses.
+const GITHUB_API_VERSION: &str = "2026-03-10";
+
+/// The REST API version sent to every GitHub host but `api.github.com`. GitHub Enterprise Server
+/// 3.20 and older know only this one and answer another with an error; GitHub supports it until
+/// 2028-03-10. Move a server to [`GITHUB_API_VERSION`] only once its releases accept it.
+const GITHUB_ENTERPRISE_API_VERSION: &str = "2022-11-28";
+
+/// The API root of github.com itself; any other GitHub root is Enterprise Server (`/api/v3`) or a
+/// local test server.
+const GITHUB_API_ROOT: &str = "https://api.github.com";
+
+/// The `X-GitHub-Api-Version` for requests to the API at `base` (no trailing slash).
+fn github_api_version(base: &str) -> &'static str {
+    if base.eq_ignore_ascii_case(GITHUB_API_ROOT) {
+        GITHUB_API_VERSION
+    } else {
+        GITHUB_ENTERPRISE_API_VERSION
+    }
+}
+
 /// The running build, announced in the `User-Agent` of every request.
 static BUILD: OnceLock<String> = OnceLock::new();
 
@@ -461,7 +483,7 @@ impl Http {
         req = match self.kind {
             ForgeKind::GitHub => req
                 .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28"),
+                .header("X-GitHub-Api-Version", github_api_version(&self.base)),
             ForgeKind::GitLab => req.header("Accept", "application/json"),
         };
         if let Some(token) = &self.token {
@@ -772,6 +794,43 @@ pub(crate) fn encode(s: &str) -> String {
 mod tests {
     use super::*;
     use ureq::http::HeaderValue;
+
+    /// The `X-GitHub-Api-Version` a GitHub request to `base` carries.
+    fn sent_github_version(base: &str) -> String {
+        let http = Http::new(ForgeKind::GitHub, base, None);
+        let req = http.headers(http.agent.get(format!("{base}/rate_limit")));
+        let value = req
+            .headers_ref()
+            .and_then(|h| h.get("x-github-api-version"));
+        value.and_then(|v| v.to_str().ok()).unwrap_or("").to_owned()
+    }
+
+    #[test]
+    fn github_dot_com_gets_the_latest_api_version_and_enterprise_servers_the_old_one() {
+        assert_eq!(
+            sent_github_version("https://api.github.com"),
+            GITHUB_API_VERSION
+        );
+        assert_eq!(
+            sent_github_version("https://api.github.com/"),
+            GITHUB_API_VERSION,
+            "a trailing slash is trimmed"
+        );
+        assert_eq!(GITHUB_API_VERSION, "2026-03-10");
+        for ghes in [
+            "https://ghe.example.com/api/v3",
+            "https://ghe.example.com:8443/api/v3",
+            "https://api.github.com.evil.example",
+            "http://127.0.0.1:8080",
+        ] {
+            assert_eq!(
+                sent_github_version(ghes),
+                GITHUB_ENTERPRISE_API_VERSION,
+                "{ghes}"
+            );
+        }
+        assert_eq!(GITHUB_ENTERPRISE_API_VERSION, "2022-11-28");
+    }
 
     #[test]
     fn transport_error_tokens_are_cleaned_before_redaction() {

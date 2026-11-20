@@ -1,8 +1,8 @@
 //! [`Client`]: the provider-neutral entry point.
 
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, OnceLock};
 
 use canopy_core::forge::{Forge, ForgeKind};
 
@@ -85,6 +85,8 @@ pub struct Client {
     kind: ForgeKind,
     /// `/repos/owner/repo` or `/projects/group%2Fproject`.
     project: String,
+    /// GitLab's draft filter name for this host, read once on the first draft search.
+    draft_param: OnceLock<gitlab::DraftParam>,
 }
 
 impl fmt::Debug for Client {
@@ -129,6 +131,7 @@ impl Client {
             forge: forge.clone(),
             kind: forge.kind,
             project,
+            draft_param: OnceLock::new(),
         }
     }
 
@@ -231,6 +234,9 @@ impl Client {
     /// The words of `query.text` go to the host as plain text (each quoted, with quotes, colons
     /// and backslashes removed on GitHub, so a word cannot become a qualifier or leave the
     /// repository); at most [`SEARCH_WORDS`] words are sent.
+    ///
+    /// A GitLab search that filters on drafts first reads the instance's version (`GET /version`,
+    /// once per client, with the same sign-in) to name the filter `draft` or `wip`.
     pub fn search_page(
         &self,
         filter: StateFilter,
@@ -247,9 +253,23 @@ impl Client {
                 github::search_page(&self.http, &self.forge.path, filter, query, page, cursor)
             }
             ForgeKind::GitLab => {
-                gitlab::search_page(&self.http, &self.project, filter, query, page)
+                let param = self.gitlab_draft_param(query)?;
+                gitlab::search_page(&self.http, &self.project, filter, query, param, page)
             }
         }
+    }
+
+    /// The draft filter name for a GitLab search: from the instance's version, read once per
+    /// client and only when `query` filters on drafts (no request otherwise).
+    fn gitlab_draft_param(&self, query: &RequestQuery) -> Result<gitlab::DraftParam> {
+        if query.draft.is_none() {
+            return Ok(gitlab::DraftParam::Wip);
+        }
+        if let Some(param) = self.draft_param.get() {
+            return Ok(*param);
+        }
+        let param = gitlab::draft_param(&self.http)?;
+        Ok(*self.draft_param.get_or_init(|| param))
     }
 
     /// Where the checks and reviews of requests `numbers` stand, as `(number, rollup)` pairs for

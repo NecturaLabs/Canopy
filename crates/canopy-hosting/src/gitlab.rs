@@ -171,6 +171,63 @@ fn pipeline_state(status: &str, allow_failure: bool) -> CheckState {
     }
 }
 
+/// The first GitLab release whose merge request list takes `draft`; it deprecated `wip`.
+const DRAFT_FILTER_MAJOR: u64 = 19;
+
+/// The name of the merge request list's draft filter on one instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DraftParam {
+    /// `draft=yes|no`, GitLab 19.0 and newer.
+    Draft,
+    /// `wip=yes|no`, deprecated since 19.0 but still accepted by every release.
+    Wip,
+}
+
+impl DraftParam {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Wip => "wip",
+        }
+    }
+
+    /// The parameter for an instance reporting `version` (`19.0.1-ee`): `draft` from major
+    /// version 19, `wip` before it and when the text is not a version.
+    fn for_version(version: &str) -> Self {
+        let major: String = version
+            .trim()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        match major.parse::<u64>() {
+            Ok(major) if major >= DRAFT_FILTER_MAJOR => Self::Draft,
+            _ => Self::Wip,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Version {
+    version: String,
+}
+
+/// Which draft filter the instance behind `http` understands, from `GET /version` on the same
+/// host with the same sign-in. An older instance ignores an unknown `draft` without an error, so
+/// the version is the only way to tell. A version that cannot be read (no sign-in, a refusal, a
+/// network error, an unparsable answer) gives [`DraftParam::Wip`], which every release still
+/// accepts. Only [`Error::Stopped`] is returned, so a switched-off client sends nothing.
+pub(crate) fn draft_param(http: &Http) -> Result<DraftParam> {
+    match http.json::<Version>(Method::Get, "/version", None) {
+        Ok(v) => Ok(DraftParam::for_version(&v.version)),
+        Err(Error::Stopped) => Err(Error::Stopped),
+        Err(e) => {
+            tracing::debug!(error = %e, "GitLab version unreadable, filtering drafts with wip");
+            Ok(DraftParam::Wip)
+        }
+    }
+}
+
 pub(crate) fn viewer(http: &Http) -> Result<String> {
     let user: User = http.json(Method::Get, "/user", None)?;
     Ok(user.username)
@@ -269,6 +326,7 @@ fn search_state_page(
     project: &str,
     state: &str,
     query: &RequestQuery,
+    param: DraftParam,
     page: usize,
 ) -> Result<Vec<RequestSummary>> {
     let (order_by, sort) = match query.order {
@@ -290,23 +348,28 @@ fn search_state_page(
     if let Some(author) = query.author.as_deref().filter(|a| !a.is_empty()) {
         let _ = write!(path, "&author_username={}", encode(author));
     }
-    match query.draft {
-        Some(true) => path.push_str("&wip=yes"),
-        Some(false) => path.push_str("&wip=no"),
-        None => {}
+    if let Some(draft) = query.draft {
+        let _ = write!(
+            path,
+            "&{}={}",
+            param.name(),
+            if draft { "yes" } else { "no" }
+        );
     }
     let mrs: Vec<Mr> = http.json(Method::Get, &path, None)?;
     Ok(mrs.iter().map(Mr::summary).collect())
 }
 
 /// Page `page` (1-based) of the merge requests matching `query`, by the list endpoint's own
-/// search, author and draft parameters. "Closed" reads the page of "closed" and of "merged" and
-/// interleaves them in the order asked for, as [`list_page`] does.
+/// search, author and draft parameters (`param` names the last, see [`draft_param`]). "Closed"
+/// reads the page of "closed" and of "merged" and interleaves them in the order asked for, as
+/// [`list_page`] does.
 pub(crate) fn search_page(
     http: &Http,
     project: &str,
     filter: StateFilter,
     query: &RequestQuery,
+    param: DraftParam,
     page: usize,
 ) -> Result<ListPage> {
     let states: &[&str] = match filter {
@@ -317,7 +380,7 @@ pub(crate) fn search_page(
     let mut rows = Vec::new();
     let mut more = false;
     for state in states {
-        let part = search_state_page(http, project, state, query, page)?;
+        let part = search_state_page(http, project, state, query, param, page)?;
         more |= part.len() == PER_PAGE;
         rows.extend(part);
     }
@@ -641,6 +704,26 @@ pub(crate) fn approve(http: &Http, project: &str, iid: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_draft_filter_follows_the_instance_version() {
+        for (version, expected) in [
+            ("19.0.0", DraftParam::Draft),
+            ("19.0.0-pre", DraftParam::Draft),
+            ("19.6.1-ee", DraftParam::Draft),
+            ("20.1.0", DraftParam::Draft),
+            (" 100.0.0\n", DraftParam::Draft),
+            ("18.11.3-ee", DraftParam::Wip),
+            ("9.9.9", DraftParam::Wip),
+            ("", DraftParam::Wip),
+            ("unknown", DraftParam::Wip),
+            ("v19.0.0", DraftParam::Wip),
+            ("-19.0.0", DraftParam::Wip),
+            ("99999999999999999999999.0", DraftParam::Wip),
+        ] {
+            assert_eq!(DraftParam::for_version(version), expected, "{version:?}");
+        }
+    }
 
     #[test]
     fn project_ids_are_url_encoded() {
