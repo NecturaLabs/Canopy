@@ -109,6 +109,27 @@ fn merged_key(snap: &RepoSnapshot, bases: &[String]) -> u64 {
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
+/// What the card says when the operation `label` names stopped on conflicts: the subject of
+/// the `commit` a cherry-pick or revert took is the first paragraph, as a finished commit's
+/// notice gives its subject.
+pub(crate) fn conflict_notice(
+    label: &str,
+    commit: Option<&str>,
+    autostashed: bool,
+    stash: bool,
+) -> Notice {
+    let body = stopped_body(autostashed, stash);
+    Notice {
+        ok: false,
+        delivery: Delivery::Attention,
+        title: format!("{label} stopped on conflicts"),
+        body: match commit {
+            Some(subject) => format!("{subject}\n\n{body}"),
+            None => body,
+        },
+    }
+}
+
 /// What a merge, rebase, pull, cherry-pick or revert that stopped on conflicts asks of the user.
 /// When git holds their uncommitted changes aside (`--autostash`), they are not in the stash
 /// list: it says where they are and when they come back. A stash that was applied or popped
@@ -3193,6 +3214,7 @@ impl RepoTab {
                 }
                 Event::Conflicted {
                     label,
+                    commit,
                     autostashed,
                     stash,
                 } => {
@@ -3201,12 +3223,12 @@ impl RepoTab {
                     self.progress = None;
                     // The resolver lives in Changes: take the user to the conflicted files.
                     self.view = View::Changes;
-                    notices.push(Notice {
-                        ok: false,
-                        delivery: Delivery::Attention,
-                        title: format!("{label} stopped on conflicts"),
-                        body: stopped_body(autostashed, stash),
-                    });
+                    notices.push(conflict_notice(
+                        &label,
+                        commit.as_deref(),
+                        autostashed,
+                        stash,
+                    ));
                 }
                 Event::AutostashConflict => {
                     // The resolver lives in Changes: take the user to the conflicted files.
@@ -5506,6 +5528,7 @@ mod tests {
                 &mut tab,
                 Event::Conflicted {
                     label: "Pulling".into(),
+                    commit: None,
                     autostashed: false,
                     stash: false
                 }
@@ -5787,6 +5810,7 @@ mod tests {
         tab.view = View::History;
         events.send(Event::Conflicted {
             label: "Pulling".into(),
+            commit: None,
             autostashed: false,
             stash: false,
         })?;
@@ -5842,6 +5866,7 @@ mod tests {
             tab.worker = worker;
             events.send(Event::Conflicted {
                 label: "Merging".into(),
+                commit: None,
                 autostashed,
                 stash: false,
             })?;
@@ -5850,6 +5875,29 @@ mod tests {
             assert_eq!(notices[0].body, stopped_body(autostashed, false));
         }
         Ok(())
+    }
+
+    /// #253: a cherry-pick or revert that stopped names its commit by subject, in the first paragraph
+    /// under the title, as a finished commit's notice does; other operations name no commit.
+    #[test]
+    fn a_stopped_cherry_pick_names_its_commit_by_subject() {
+        let notice = conflict_notice(
+            "Cherry-picking",
+            Some("feat(retry): use exponential backoff defaults"),
+            false,
+            false,
+        );
+        assert_eq!(notice.title, "Cherry-picking stopped on conflicts");
+        assert_eq!(
+            notice.body,
+            format!(
+                "feat(retry): use exponential backoff defaults\n\n{}",
+                stopped_body(false, false)
+            )
+        );
+        let merge = conflict_notice("Merging feature", None, false, false);
+        assert_eq!(merge.title, "Merging feature stopped on conflicts");
+        assert_eq!(merge.body, stopped_body(false, false));
     }
 
     /// Changes put aside for a pull that conflict when they come back are said plainly, and the

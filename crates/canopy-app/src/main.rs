@@ -65,7 +65,7 @@ OPTIONS:
                               settings-keyboard, settings-backup, settings-import-ignored,
                               settings-keyboard-capture, settings-repository,
                               settings-repository-pull, settings-repository-diffs,
-                              settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, remove-worktree, remove-worktree-dirty, remove-worktree-delete, forget-worktrees, worktrees, menu-worktree, clean-merged, update-from-base, flow-init, flow-start, flow-finish, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, force-push-stopped, notifications, branch-selected,
+                              settings-search, settings-search-none, about, repository-insights, file-history, file-history-commit, lfs, lfs-patterns, lfs-locks, search-changes, clean-stale, remove-worktree, remove-worktree-dirty, remove-worktree-delete, forget-worktrees, worktrees, menu-worktree, clean-merged, update-from-base, flow-init, flow-start, flow-finish, author-card, request-filters, request-sort, commit-expanded, commit-compact, amend-commit, toasts, force-push-stopped, conflict-notice, notifications, branch-selected,
                               long-message,
                               gallery, menu-branch, menu-commit, menu-file, menu-lfs-file, blame, open,
                               open-error, clone,

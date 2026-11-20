@@ -877,7 +877,9 @@ the last picture, and an author without a picture keeps initials (never a genera
 
 Overlay cards (glass with Translucent surfaces on) share a bounded bottom-right scroll stack, at
 most 408 points wide, so five errors remain reachable even in a compact zoomed window. Newest
-notices lead the stack. Every card has one layout in every theme, padded `toast_pad` (tighter in
+notices lead the stack. A view's row of actions at the bottom of the window (the resolver's Save
+resolved file) stays clear: the stack rises `LG` above it while it shows
+(`ui::toast::keep_clear`). Every card has one layout in every theme, padded `toast_pad` (tighter in
 Dense) and shaped like the other floating layers of the style: the kind's glyph (`icon_toast`,
 centred on the title's line), a semibold title that truncates, the body in `text_dim` at
 `meta_size` with 1.45 leading 4 points below it (a blank line in a body starts a paragraph, set 8
@@ -887,7 +889,9 @@ when the notification asks for a decision, a row of two buttons 10 points lower.
 updated or removed, what a pull did to the branch); git's own text is kept for failures. Known
 failures lead with a plain explanation, any other error shows git's first line under its title, and git's full output is in
 the notification center (its tooltip and Copy). Screen readers hear an error as an alert with its
-message.
+message. A stop that waits on the user (a conflict to resolve) is not a failure: its card takes
+the `warning` tone and `WARNING` glyph instead of `danger` and `WARNING_CIRCLE`, lasts as long as
+an error, and is announced politely.
 
 A decision (`ui::toast::Offer`) is labelled for what it does, with a tonal Primary Sm button and a
 Ghost Sm one beside it: a rejected push offers Pull / Not now for its repository, a force push
@@ -897,7 +901,8 @@ credentials), a new build Review update / Later, an installed one Restart now / 
 declining only closes the card, and the center offers it until it is taken or cleared.
 
 A card lasts as long as its words take to read: two seconds to notice it plus a quarter second a
-word, within 5 to 10 seconds for information and success and 8 to 15 for an error; a decision
+word, within 5 to 10 seconds for information and success and 8 to 15 for an error or a stop that
+waits on the user; a decision
 stays 15 seconds, then waits in the center and counts on the bell. Design systems settle on these
 ranges (Atlassian flags 5 to 15 s, Canva 5 s up to 10, SAP Fiori 4 to 10), and as WCAG 2.2.1 asks,
 the timers run only while the pointer is off the stack, no card button has keyboard focus and the

@@ -109,6 +109,7 @@ pub const OVERLAYS: &[&str] = &[
     "amend-commit",
     "toasts",
     "force-push-stopped",
+    "conflict-notice",
     "notifications",
     "branch-selected",
     "long-message",
@@ -643,6 +644,23 @@ impl CanopyApp {
                     "",
                     Offer::ReviewUpdate,
                 );
+            }
+            Some("conflict-notice") => {
+                // A cherry-pick of the conflict fixture's feature/backoff commit that stopped on
+                // conflicts (the fixture puts it in that state), over the resolver it opens.
+                if let Some(repo) = launch.paths.first() {
+                    background::announce_notice(
+                        &mut app.toasts,
+                        &cc.egui_ctx,
+                        repo,
+                        crate::tab::conflict_notice(
+                            "Cherry-picking",
+                            Some("feat(retry): use exponential backoff defaults"),
+                            false,
+                            false,
+                        ),
+                    );
+                }
             }
             Some("force-push-stopped") => {
                 // Git's own answer to a force push pinned to a tip that moved, with the Fetch offer.
