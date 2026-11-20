@@ -438,10 +438,16 @@ jobs:
         run: |
           for target in $(jq -r '.[].target' <<<"$EXPECTED"); do
             name="canopy-build-$BUILD-$target"
-            if [[ -f "late/$name.tar.gz" && -f "late/$name.toolchain.txt" ]]; then
-              cp "late/$name.tar.gz" "late/$name.toolchain.txt" dist/
-            else
+            archive=
+            for candidate in "late/$name.tar.gz" "late/$name.zip"; do
+              if [[ -f $candidate ]]; then archive=$candidate; fi
+            done
+            if [[ -z $archive ]]; then
               echo "::warning::No experimental $target archive was found (the build failed, timed out or could not be downloaded): build $BUILD ships without it."
+            elif [[ ! -f "late/$name.toolchain.txt" ]]; then
+              echo "::warning::The experimental $target archive has no toolchain report: build $BUILD ships without that target."
+            else
+              cp "$archive" "late/$name.toolchain.txt" dist/
             fi
           done
       - name: Assemble the toolchain report
