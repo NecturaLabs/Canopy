@@ -423,7 +423,9 @@ fn spawn_piped(mut cmd: Command, args: &[&str], feed: bool) -> Result<Piped> {
 }
 
 /// [`output_within`] feeding `input` to standard input from a thread of its own, so a git that
-/// stops reading cannot hold up the limit.
+/// stops reading cannot hold up the limit. Write errors are ignored, so this is only for commands
+/// that tolerate truncated input (today `fetch --stdin` in `partial.rs`), never `commit -F -` or
+/// `apply`.
 pub(crate) fn output_within_input(
     cmd: Command,
     args: &[&str],
@@ -556,8 +558,8 @@ pub(crate) fn run_with_input_within(
 }
 
 /// Runs `cmd`, a git command built with [`command`], with `input` as its standard input and
-/// waits for it to finish, with no time limit. The input is written from a thread of its own while
-/// the output is read, so neither direction can wait on the other however much there is of it.
+/// waits for it to finish, with no time limit. The output is drained on threads of its own while
+/// the input is written, so neither direction can wait on the other however much there is of it.
 ///
 /// A git that exits before reading everything closes its end of the input: that is not an error
 /// here, its exit code and standard error say why. Any other failure to write is one, and git is
@@ -570,22 +572,15 @@ fn output_with_input(cmd: Command, args: &[&str], input: &[u8]) -> Result<Output
         stderr,
     } = spawn_piped(cmd, args, !input.is_empty())?;
     // No input: the null device gives git its end at once, as a pipe closed at once would.
-    let written = stdin.map(|mut stdin| {
-        // The readers run on their own threads, so waiting for the writer first cannot deadlock.
-        std::thread::scope(|scope| scope.spawn(move || stdin.write_all(input)).join())
-    });
-    let failure = match written {
-        None | Some(Ok(Ok(()))) => None,
-        Some(Ok(Err(e))) if e.kind() == std::io::ErrorKind::BrokenPipe => None,
-        Some(Ok(Err(e))) => Some(Error::from(e)),
-        Some(Err(_)) => Some(Error::invalid(
-            "the thread feeding git its input stopped unexpectedly.",
-        )),
-    };
-    if let Some(error) = failure {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
+    if let Some(mut stdin) = stdin {
+        // Dropping `stdin` afterwards closes the pipe, which is git's end of the input.
+        if let Err(write_error) = stdin.write_all(input)
+            && write_error.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(write_error.into());
+        }
     }
     let status = child.wait()?;
     Ok(Output {
