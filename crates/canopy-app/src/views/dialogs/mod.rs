@@ -2048,7 +2048,10 @@ fn confirmation<'a>(
     glyph: &str,
     extra: impl FnOnce(&mut Ui) + 'a,
 ) -> KitDialog<'a> {
-    let mut d = KitDialog::new(salt)
+    // The title is part of the id: one question that replaces another on the next frame (a
+    // force delete after git refused the safe one) is a new dialog, so it opens on its own
+    // initial focus, not on the focus the last one's buttons had (#266).
+    let mut d = KitDialog::new((salt, title))
         .title(title)
         .description(body)
         .body(extra)
@@ -2414,6 +2417,89 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
 #[cfg(test)]
 mod tests {
     use super::folder_from_url;
+
+    /// #266: git refuses a safe branch delete and the force-delete question replaces the first
+    /// one on the very next frame. It opens with Cancel focused, as a destructive question
+    /// always does, so Return cancels: neither the focus the first question's confirm button had
+    /// (Tab, Return) nor no focus at all (a mouse click) carries over to Force delete.
+    #[test]
+    fn a_force_delete_question_that_replaces_another_opens_on_cancel() {
+        use crate::ui::kit::overlay::DialogResult;
+        use crate::ui::kit::testkit::{key, spoken_with};
+        use egui::Key;
+        for by_keyboard in [true, false] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            crate::ui::theme::apply(
+                &ctx,
+                crate::ui::theme::ThemeId::Midnight,
+                crate::ui::theme::Appearance::STILL,
+            );
+            let question = |title: &str, confirm: &str| Dialog::Confirm {
+                title: title.into(),
+                body: "Body.".into(),
+                confirm: confirm.into(),
+                danger: true,
+                repo: "fixture".into(),
+                op: crate::worker::Op::DeleteBranch {
+                    name: "topic".into(),
+                    force: false,
+                },
+            };
+            let first = question("Delete branch topic?", "Delete branch");
+            let second = question("Force delete branch topic?", "Force delete");
+            let frame = |dialog: &Dialog, events: Vec<egui::Event>| {
+                let Dialog::Confirm {
+                    title,
+                    body,
+                    confirm,
+                    danger,
+                    ..
+                } = dialog
+                else {
+                    unreachable!()
+                };
+                let mut result = DialogResult::Open;
+                spoken_with(&ctx, events, |_| {
+                    result = super::confirmation(
+                        super::salt(dialog),
+                        title,
+                        body,
+                        confirm,
+                        *danger,
+                        "?",
+                        |_| {},
+                    )
+                    .show(&ctx);
+                });
+                result
+            };
+            for _ in 0..3 {
+                frame(&first, Vec::new());
+            }
+            if by_keyboard {
+                // Cancel has the focus; Tab moves it to Delete branch, and Return presses it.
+                frame(&first, key(Key::Tab));
+                assert_eq!(frame(&first, key(Key::Enter)), DialogResult::Confirm);
+            } else {
+                ctx.memory_mut(|m| {
+                    if let Some(f) = m.focused() {
+                        m.surrender_focus(f);
+                    }
+                });
+                frame(&first, Vec::new());
+            }
+            // The refusal comes back and the second question shows on the next frame.
+            for _ in 0..3 {
+                assert_eq!(frame(&second, Vec::new()), DialogResult::Open);
+            }
+            assert_eq!(
+                frame(&second, key(Key::Enter)),
+                DialogResult::Cancel,
+                "Return cancels the force delete (keyboard: {by_keyboard})"
+            );
+        }
+    }
 
     #[test]
     fn a_submodule_folder_is_suggested_from_its_url() {
