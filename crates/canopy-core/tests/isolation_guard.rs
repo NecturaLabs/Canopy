@@ -8,19 +8,28 @@ use std::path::Path;
 fn integration_tests_start_with_git_isolation() -> std::io::Result<()> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let mut problems = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.extension().is_some_and(|ext| ext == "rs")
-            && path
-                .file_name()
-                .is_some_and(|name| name != "isolation_guard.rs")
-        {
-            check_tests(&fs::read_to_string(&path)?, &path, &mut problems);
-        }
-    }
+    check_dir(&dir, &dir, &mut problems)?;
     problems.sort();
     let problems = problems.join("\n");
     assert!(problems.is_empty(), "\n{problems}");
+    Ok(())
+}
+
+/// Check every Rust file under `tests/`, including subdirectories such as `tests/foo/main.rs`.
+/// Skip the shared `support` module and this guard.
+fn check_dir(root: &Path, dir: &Path, problems: &mut Vec<String>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            if path != root.join("support") {
+                check_dir(root, &path, problems)?;
+            }
+        } else if path.extension().is_some_and(|ext| ext == "rs")
+            && path != root.join("isolation_guard.rs")
+        {
+            check_tests(&fs::read_to_string(&path)?, &path, problems);
+        }
+    }
     Ok(())
 }
 

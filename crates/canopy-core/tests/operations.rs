@@ -7,6 +7,7 @@
 
 mod support;
 
+use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -90,6 +91,39 @@ fn commits_ignore_inherited_global_hooks() {
     assert_eq!(git(p, &["log", "-1", "--format=%s"]).trim(), "first");
 }
 
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the command only carries an environment to inspect"
+)]
+fn isolation_removes_every_inherited_git_variable() {
+    isolate_git!(isolation_removes_every_inherited_git_variable);
+    let hostile = [
+        "GIT_TEMPLATE_DIR",
+        "GIT_NAMESPACE",
+        "GIT_DIFF_OPTS",
+        "GIT_ATTR_SOURCE",
+        "GIT_SOME_FUTURE_SETTING",
+        "git_lowercase",
+        "EMAIL",
+    ];
+    let kept = ["HOME", "PATH", "NOT_GIT_SETTING", "GITHUB_TOKEN"];
+    let mut child = Command::new("git");
+    support::remove_inherited_git_variables(
+        &mut child,
+        hostile.iter().chain(&kept).map(OsString::from),
+    );
+    let mut removed: Vec<_> = child
+        .get_envs()
+        .filter(|(_, value)| value.is_none())
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .collect();
+    removed.sort();
+    let mut expected = hostile.map(String::from);
+    expected.sort();
+    assert_eq!(removed, expected);
+}
+
 /// Run the control in the intermediate child before launching the isolated child.
 #[expect(
     clippy::disallowed_methods,
@@ -118,7 +152,7 @@ fn check_inherited_global_hooks(test: &str) -> bool {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success() && stderr.contains("inherited pre-commit hook ran"),
-        "expected the inherited pre-commit hook to reject git commit, got {}:\n{stderr}",
+        "the control commit did not fail on the inherited pre-commit hook: either the hook could not run (a temp directory mounted noexec?) or git ignored core.hooksPath. Got {}:\n{stderr}",
         out.status,
     );
     true
@@ -4082,9 +4116,7 @@ fn stale_candidates_non_utf8_worktree_path_is_protected_without_lossy_removal() 
     isolate_git!(stale_candidates_non_utf8_worktree_path_is_protected_without_lossy_removal);
 
     let (dir, repo) = stale_fixture();
-    let parent = dir
-        .path()
-        .join(std::ffi::OsString::from_vec(b"parent-\xff".to_vec()));
+    let parent = dir.path().join(OsString::from_vec(b"parent-\xff".to_vec()));
     fs::create_dir(&parent).expect("non-UTF8 parent");
     let path = parent.join("linked");
     let out = canopy_core::cli::command(Some(dir.path()))

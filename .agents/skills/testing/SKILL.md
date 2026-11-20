@@ -73,8 +73,10 @@ Canopy-specific rules, on top of the invariants below:
   github.com, gitlab.com, the update feed or Sentry for real, and never put a real token in a fixture.
   Cover the error mapping (401, 403 rate limit, 404, 429, malformed JSON), not only the happy path.
   Remote operations in `canopy-core` push and fetch to a local bare repository.
-- **Hermetic Git config.** Start every `canopy-core` integration test with `isolate_git!(<its name>)` from `crates/canopy-core/tests/support/mod.rs`.
-  The child starts with an empty global Git config, including no `user.name` or `init.defaultBranch`. Set identity and signing in the fixture's local config and pass the branch to `git init` with `-b`.
+- **Hermetic git config.** Tests must pass with an arbitrary global git config (hooks paths,
+  signing, `init.defaultBranch`), in every crate and in unit tests too. Set identity and signing in the repository's own config,
+  pass `-b main` to `git init`, and do not rely on anything in `~/.gitconfig`.
+  In `crates/canopy-core/tests`, start every test with `isolate_git!(<its name>)` from `support/mod.rs`: it reruns the test in a child with every inherited `GIT_*` variable removed, an empty global Git config and a private home. It cannot hide the system-level config (`/etc/gitconfig`, and on Windows Git for Windows' `etc\gitconfig` and `%PROGRAMDATA%\Git\config`) from libgit2, since that needs the banned `unsafe` `git2::opts::set_search_path`. Git itself ignores it through `GIT_CONFIG_NOSYSTEM`.
 - **Commands.** Whole crate: `cargo test -p canopy-core`. One test or a name filter:
   `cargo test -p canopy-core <name>`. Everything, as CI: `tools/check.sh`.
 - A new Git operation's test is step 1 of the `add-git-operation` skill; the `canopy-git` agent
