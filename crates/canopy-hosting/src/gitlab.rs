@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, search_words, unix};
 use crate::error::{Error, Result, head_changed, map_head_conflict};
-use crate::http::{Http, Method, encode, shorten, status};
+use crate::http::{Http, Method, encode, shorten, status, visible_name};
 use crate::model::{
     Check, CheckState, Comment, ListPage, MergeMethod, NewRequest, RequestDetails, RequestQuery,
     RequestState, RequestSummary, Review, ReviewDecision, Rollup, SearchOrder, StateFilter,
@@ -70,8 +70,9 @@ struct Mr {
     merge_error: Option<String>,
 }
 
+/// The username to show; empty when there is none or nothing of it is visible.
 fn username(user: Option<&User>) -> String {
-    user.map(|u| u.username.clone()).unwrap_or_default()
+    user.map(|u| visible_name(&u.username)).unwrap_or_default()
 }
 
 impl Mr {
@@ -87,7 +88,7 @@ impl Mr {
         };
         RequestSummary {
             number: self.iid,
-            title: self.title.clone(),
+            title: visible_name(&self.title),
             author: username(self.author.as_ref()),
             state,
             draft: self.draft || self.work_in_progress,
@@ -101,10 +102,12 @@ impl Mr {
                 .labels
                 .iter()
                 .filter_map(|l| match l {
-                    Value::String(s) => Some(s.clone()),
-                    Value::Object(o) => o.get("name").and_then(Value::as_str).map(str::to_owned),
+                    Value::String(s) => Some(s.as_str()),
+                    Value::Object(o) => o.get("name").and_then(Value::as_str),
                     _ => None,
                 })
+                .map(visible_name)
+                .filter(|name| !name.is_empty())
                 .collect(),
             description: description_preview(self.description.as_deref().unwrap_or_default()),
             rollup: None,
@@ -569,15 +572,7 @@ pub(crate) fn details(http: &Http, project: &str, iid: u64) -> Result<RequestDet
                 None,
             ),
         ) {
-            checks.extend(jobs.into_iter().map(|j| Check {
-                state: pipeline_state(&j.status, j.allow_failure),
-                url: j.web_url.filter(|u| !u.is_empty()),
-                name: if j.stage.is_empty() {
-                    j.name
-                } else {
-                    format!("{}: {}", j.stage, j.name)
-                },
-            }));
+            checks.extend(jobs.into_iter().map(check_from_job));
         }
     }
 
@@ -598,6 +593,18 @@ pub(crate) fn details(http: &Http, project: &str, iid: u64) -> Result<RequestDet
         checks,
         comments,
     })
+}
+
+fn check_from_job(j: Job) -> Check {
+    Check {
+        state: pipeline_state(&j.status, j.allow_failure),
+        url: j.web_url.filter(|u| !u.is_empty()),
+        name: visible_name(&if j.stage.is_empty() {
+            j.name
+        } else {
+            format!("{}: {}", j.stage, j.name)
+        }),
+    }
 }
 
 /// GitLab marks drafts with a title prefix.
@@ -727,6 +734,55 @@ pub(crate) fn approve(http: &Http, project: &str, iid: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn user(username: &str) -> User {
+        User {
+            username: username.into(),
+        }
+    }
+
+    #[test]
+    fn merge_request_summary_drops_what_hides_text_and_blanks_the_braille_blank() {
+        let mr = Mr {
+            title: " Fix\u{202E}  A\u{2800}B\u{200D}\tC\u{2028}".into(),
+            author: Some(user("a\u{2800}da")),
+            ..Mr::default()
+        };
+        let summary = mr.summary();
+        assert_eq!(summary.title, "Fix  A B C");
+        assert_eq!(summary.author, "a da");
+    }
+
+    #[test]
+    fn an_author_of_only_hidden_characters_has_no_name() {
+        assert_eq!(username(Some(&user("\u{202E}\u{2800}"))), "");
+        assert_eq!(username(Some(&user("\u{202E}ada"))), "ada");
+        assert_eq!(username(None), "");
+    }
+
+    #[test]
+    fn labels_are_cleaned_and_blank_ones_dropped() {
+        let mr = Mr {
+            labels: vec![
+                json!("\u{2800}"),
+                json!("good\u{2800}first\u{200B} issue"),
+                json!({"name": "\u{202E}"}),
+                json!({"name": "ui\u{200B}"}),
+            ],
+            ..Mr::default()
+        };
+        assert_eq!(mr.summary().labels, ["good first issue", "ui"]);
+    }
+
+    #[test]
+    fn job_check_names_are_cleaned() {
+        let job = Job {
+            name: "test\u{2800}linux".into(),
+            stage: "\u{202E}build".into(),
+            ..Job::default()
+        };
+        assert_eq!(check_from_job(job).name, "build: test linux");
+    }
 
     #[test]
     fn the_draft_filter_follows_the_instance_version() {
