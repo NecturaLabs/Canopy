@@ -527,6 +527,12 @@ impl Repo {
         Ok((out, truncated))
     }
 
+    /// The first line of `oid`'s message (what the history list shows for it).
+    pub fn subject(&self, oid: Oid) -> Result<String> {
+        let commit = self.git.find_commit(oid)?;
+        Ok(String::from_utf8_lossy(commit.summary_bytes().unwrap_or_default()).into_owned())
+    }
+
     /// Gathers everything the main window shows, in one consistent read. Offline: in a partial
     /// clone that lacks the tree of `HEAD` (a treeless clone after a soft reset) the status is
     /// left out and [`RepoSnapshot::status_unavailable`] says so; see [`Repo::complete_status`].

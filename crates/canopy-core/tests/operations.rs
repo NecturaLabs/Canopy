@@ -4749,3 +4749,34 @@ fn a_worktree_refuses_in_gits_words_what_git_refuses() {
     );
     assert_eq!(listed_worktrees(p).len(), 2, "only the first one exists");
 }
+
+/// A commit's subject is the first line of its message, as `git log --format=%s` gives it for a
+/// one-line first paragraph.
+#[test]
+fn a_commit_s_subject_is_the_first_line_of_its_message() {
+    isolate_git!(a_commit_s_subject_is_the_first_line_of_its_message);
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    fs::write(p.join("b.txt"), "b\n").expect("write");
+    git(p, &["add", "b.txt"]);
+    git(
+        p,
+        &[
+            "commit",
+            "-q",
+            "-m",
+            "fix(retry): tune defaults",
+            "-m",
+            "Body text.",
+        ],
+    );
+    let head = repo.head().expect("head").oid.expect("a commit");
+    assert_eq!(
+        repo.subject(head).expect("subject"),
+        "fix(retry): tune defaults"
+    );
+    assert_eq!(
+        repo.subject(head).expect("subject"),
+        git(p, &["log", "-1", "--format=%s"]).trim_end()
+    );
+}

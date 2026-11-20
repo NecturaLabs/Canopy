@@ -37,7 +37,48 @@ use crate::worker::Pin;
 pub enum ToastKind {
     Info,
     Success,
+    /// Not a failure, but it waits on the user: an operation stopped on conflicts to resolve.
+    Attention,
     Error,
+}
+
+/// The tone a card of `kind` takes: its glyph, its colour and how a screen reader announces it.
+fn card_tone(kind: ToastKind) -> Tone {
+    match kind {
+        ToastKind::Info => Tone::Accent,
+        ToastKind::Success => Tone::Success,
+        ToastKind::Attention => Tone::Warning,
+        ToastKind::Error => Tone::Danger,
+    }
+}
+
+/// The glyph and colour of a notification of `kind` in the center, as its card shows them.
+fn center_glyph(kind: ToastKind, p: &theme::Palette) -> (&'static str, egui::Color32) {
+    match kind {
+        ToastKind::Error => (icon::WARNING_CIRCLE, p.danger),
+        ToastKind::Attention => (icon::WARNING, p.warning),
+        ToastKind::Success => (icon::CHECK_CIRCLE, p.success),
+        ToastKind::Info => (icon::INFO, p.accent),
+    }
+}
+
+/// What a view keeps the cards clear of this frame ([`keep_clear`]).
+#[derive(Clone, Default)]
+struct KeepClear(Vec<egui::Rect>);
+
+fn keep_clear_id() -> Id {
+    Id::new("notifications-keep-clear")
+}
+
+/// Keeps the notification cards clear of `rect` this frame: a row of actions at the bottom of a
+/// view, which the stack would otherwise cover (#253). Called every frame the row shows, before
+/// the cards are drawn; the stack rises above it when it would cover it.
+pub fn keep_clear(ctx: &egui::Context, rect: egui::Rect) {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<KeepClear>(keep_clear_id())
+            .0
+            .push(rect);
+    });
 }
 
 /// What a notification is about, which decides whether it shows as a card
@@ -291,7 +332,8 @@ fn lifetime(kind: ToastKind, decision: bool, title: &str, body: Option<&str>) ->
     let words = title.split_whitespace().count() + body.map_or(0, |b| b.split_whitespace().count());
     let reading =
         NOTICE_SECONDS + SECONDS_PER_WORD * f64::from(u32::try_from(words).unwrap_or(u32::MAX));
-    let (least, most) = if kind == ToastKind::Error {
+    // What waits on the user is read as carefully as a failure.
+    let (least, most) = if matches!(kind, ToastKind::Error | ToastKind::Attention) {
         ERROR_SECONDS
     } else {
         INFO_SECONDS
@@ -440,6 +482,7 @@ fn one() -> u32 {
 enum SavedKind {
     Info,
     Success,
+    Attention,
     Error,
 }
 
@@ -463,6 +506,7 @@ impl Toasts {
                 kind: match e.kind {
                     ToastKind::Info => SavedKind::Info,
                     ToastKind::Success => SavedKind::Success,
+                    ToastKind::Attention => SavedKind::Attention,
                     ToastKind::Error => SavedKind::Error,
                 },
                 title: e.title.clone(),
@@ -503,6 +547,7 @@ impl Toasts {
                 kind: match s.kind {
                     SavedKind::Info => ToastKind::Info,
                     SavedKind::Success => ToastKind::Success,
+                    SavedKind::Attention => ToastKind::Attention,
                     SavedKind::Error => ToastKind::Error,
                 },
                 title: s.title,
@@ -841,11 +886,13 @@ impl Toasts {
         });
         if self.items.len() > 5 {
             // Evict an older card, never the one that just arrived. Prefer an older routine
-            // card to an error, and an error to an unanswered decision.
+            // card to an error or what waits on the user, and those to an unanswered decision.
             let older = &self.items[..self.items.len() - 1];
             let oldest = older
                 .iter()
-                .position(|t| t.offer.is_none() && t.kind != ToastKind::Error)
+                .position(|t| {
+                    t.offer.is_none() && !matches!(t.kind, ToastKind::Error | ToastKind::Attention)
+                })
                 .or_else(|| older.iter().position(|t| t.offer.is_none()))
                 .unwrap_or(0);
             let gone = self.items.remove(oldest);
@@ -868,6 +915,10 @@ impl Toasts {
     }
 
     fn show_cards(&mut self, ctx: &egui::Context) -> Vec<Offer> {
+        // Taken every frame, cards or not: a view asks again each frame its row shows.
+        let clear = ctx
+            .data_mut(|d| d.remove_temp::<KeepClear>(keep_clear_id()))
+            .unwrap_or_default();
         let now = ctx.input(|i| i.time);
         // The timers wait while the pointer is on the stack or the window is in the background.
         let hovered = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|at| {
@@ -905,21 +956,36 @@ impl Toasts {
         let mut dismiss = None;
         let mut taken = None;
         let mut cards = Vec::with_capacity(self.items.len());
-        // Bottom-right, 16 from the window's right edge and above the status bar.
-        let corner = screen.right_bottom() - vec2(theme::LG, m.status_bar_height + theme::LG);
+        // Bottom-right, 16 from the window's right edge and above the status bar, and above a
+        // view's row of actions the stack would cover.
+        let width = m
+            .toast_width
+            .min((screen.width() - 2.0 * theme::XL).max(0.0));
+        let mut corner = screen.right_bottom() - vec2(theme::LG, m.status_bar_height + theme::LG);
+        // Where the stack would be, as tall as it was last frame.
+        let height = ctx
+            .memory(|mem| mem.area_rect(Id::new("notifications")))
+            .map_or(0.0, |r| r.height());
+        let columns = egui::Rangef::new(corner.x - width, corner.x);
+        let rows = egui::Rangef::new(corner.y - height, corner.y);
+        for row in clear.0 {
+            if row.x_range().intersection(columns).span() > 0.0
+                && row.y_range().intersection(rows).span() >= 0.0
+            {
+                corner.y = corner.y.min(row.min.y - theme::LG);
+            }
+        }
+        let lift = screen.right_bottom().y - m.status_bar_height - theme::LG - corner.y;
         egui::Area::new(Id::new("notifications"))
             .order(Order::Tooltip)
             .pivot(Align2::RIGHT_BOTTOM)
             .fixed_pos(corner)
             .interactable(true)
             .show(ctx, |ui| {
-                ui.set_width(
-                    m.toast_width
-                        .min((screen.width() - 2.0 * theme::XL).max(0.0)),
-                );
+                ui.set_width(width);
                 // An Area begins with its previous frame's size. Do not feed that shrunken
                 // height back into the scroll viewport: arrivals and disclosures must grow.
-                let max_height = room_above_status_bar(screen.height()).max(0.0);
+                let max_height = (room_above_status_bar(screen.height()) - lift).max(0.0);
                 ui.set_max_height(max_height);
                 ui.spacing_mut().item_spacing.y = theme::SM;
                 ui.spacing_mut().scroll = theme::solid_scroll();
@@ -941,11 +1007,7 @@ impl Toasts {
                                 .rev()
                                 .take_while(|o| t.born - o.born < f64::from(motion::TOAST_STAGGER))
                                 .count();
-                            let tone = match t.kind {
-                                ToastKind::Info => Tone::Accent,
-                                ToastKind::Success => Tone::Success,
-                                ToastKind::Error => Tone::Danger,
-                            };
+                            let tone = card_tone(t.kind);
                             let mut card =
                                 ToastCard::new(Id::new(("notification", t.id)), tone, &t.title)
                                     .born(t.born)
@@ -1221,11 +1283,7 @@ impl Toasts {
                         );
                         ui.add_space(theme::SM);
                     }
-                    let (glyph, color) = match e.kind {
-                        ToastKind::Error => (icon::WARNING_CIRCLE, p.danger),
-                        ToastKind::Success => (icon::CHECK_CIRCLE, p.success),
-                        ToastKind::Info => (icon::INFO, p.accent),
-                    };
+                    let (glyph, color) = center_glyph(e.kind, p);
                     ui.push_id(e.id, |ui| {
                         ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = COLUMN_GAP;
@@ -2084,6 +2142,133 @@ mod tests {
         });
         output.textures_delta.clear();
         output
+    }
+
+    /// One frame at `time` in which a view keeps the cards clear of `row`, when given.
+    fn frame_keeping_clear(
+        ctx: &egui::Context,
+        toasts: &mut Toasts,
+        time: f64,
+        row: Option<egui::Rect>,
+    ) -> egui::Rect {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                vec2(1024.0, 640.0),
+            )),
+            time: Some(time),
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |_| {
+            if let Some(row) = row {
+                keep_clear(ctx, row);
+            }
+            toasts.show(ctx);
+        })
+        .textures_delta
+        .clear();
+        ctx.memory(|m| m.area_rect(Id::new("notifications")))
+            .expect("the stack")
+    }
+
+    /// #253: a row of actions at the bottom of a view (the resolver's Save resolved file) stays
+    /// clickable while a card shows: the stack rises above it, only while the row is there and
+    /// only when it would cover it.
+    #[test]
+    fn cards_rise_above_the_row_of_actions_they_would_cover() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut toasts = Toasts::default();
+        toasts.push(
+            &ctx,
+            ToastKind::Attention,
+            Topic::Attention,
+            "Cherry-picking stopped on conflicts",
+            "Resolve each conflicted file in Changes.",
+        );
+        let mut time = 0.0;
+        let mut at = |toasts: &mut Toasts, row| {
+            time += 0.1;
+            frame_keeping_clear(&ctx, toasts, time, row);
+            frame_keeping_clear(&ctx, toasts, time + 0.05, row)
+        };
+        let corner = at(&mut toasts, None);
+        let row = egui::Rect::from_min_max(egui::pos2(300.0, 560.0), egui::pos2(1024.0, 616.0));
+        assert!(corner.intersects(row), "the case this is about: {corner:?}");
+        let lifted = at(&mut toasts, Some(row));
+        assert!(
+            lifted.max.y <= row.min.y - theme::SM,
+            "{lifted:?} covers {row:?}"
+        );
+        assert!((lifted.max.x - corner.max.x).abs() < 0.5, "same side");
+        // A row beside the stack or above it, not under it, leaves it in the corner.
+        let beside = egui::Rect::from_min_max(egui::pos2(0.0, 560.0), egui::pos2(300.0, 616.0));
+        let above = egui::Rect::from_min_max(egui::pos2(300.0, 40.0), egui::pos2(1024.0, 96.0));
+        for row in [beside, above] {
+            assert!(!corner.intersects(row));
+            let kept = at(&mut toasts, Some(row));
+            assert!(
+                (kept.max.y - corner.max.y).abs() < 0.5,
+                "{kept:?} moved for {row:?}"
+            );
+        }
+        // The row is asked for every frame: once its view is gone, the corner is back.
+        let back = at(&mut toasts, None);
+        assert!(
+            (back.max.y - corner.max.y).abs() < 0.5,
+            "{back:?} stayed up"
+        );
+    }
+
+    /// A row kept clear while no card shows is let go the same frame, so rows never pile up.
+    #[test]
+    fn rows_kept_clear_without_cards_do_not_pile_up() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        let row = egui::Rect::from_min_max(egui::pos2(0.0, 560.0), egui::pos2(1024.0, 616.0));
+        for frame in 0..3 {
+            ctx.run_ui(egui::RawInput::default(), |_| {
+                keep_clear(&ctx, row);
+                toasts.show(&ctx);
+            })
+            .drop_without_applying_deltas();
+            assert!(
+                ctx.data(|d| d.get_temp::<KeepClear>(keep_clear_id()))
+                    .is_none(),
+                "frame {frame}"
+            );
+        }
+    }
+
+    /// #253: what waits on the user (a conflict to resolve) does not look like a failure: its
+    /// card and its row in the center take the warning tone and glyph, and a screen reader hears
+    /// it politely rather than as an alert.
+    #[test]
+    fn attention_notices_look_unlike_errors() {
+        assert_eq!(card_tone(ToastKind::Attention), Tone::Warning);
+        assert_eq!(card_tone(ToastKind::Error), Tone::Danger);
+        let p = theme::ThemeId::Midnight.palette();
+        let attention = center_glyph(ToastKind::Attention, p);
+        let error = center_glyph(ToastKind::Error, p);
+        assert_eq!(attention, (icon::WARNING, p.warning));
+        assert_ne!(attention.0, error.0);
+        assert_ne!(attention.1, error.1);
+        // It waits like an error does, longer than a routine notice...
+        assert_eq!(
+            lifetime(ToastKind::Attention, false, "a", None),
+            ERROR_SECONDS.0
+        );
+        // ...but offers no copy of git's output, and git's hints do not apply to its words.
+        assert_eq!(
+            recovery(
+                ToastKind::Attention,
+                "Push failed",
+                "! [rejected] main -> main (fetch first)",
+                None
+            ),
+            (None, None)
+        );
     }
 
     trait IntoIterOne {
