@@ -200,11 +200,13 @@ pub(crate) fn write_atomic(dest: &Path, content: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::isolate_git;
 
     use super::*;
 
     #[test]
     fn rejects_paths_that_leave_the_tree() {
+        isolate_git!(rejects_paths_that_leave_the_tree);
         let root = Path::new("/repo");
         for bad in [
             "",
@@ -241,6 +243,7 @@ mod tests {
 
     #[test]
     fn accepts_plain_and_missing_paths() {
+        isolate_git!(accepts_plain_and_missing_paths);
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("a")).unwrap();
         assert_eq!(
@@ -260,6 +263,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn rejects_any_symlink_component() {
+        isolate_git!(rejects_any_symlink_component);
         let dir = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(outside.path(), dir.path().join("out")).unwrap();
@@ -276,6 +280,7 @@ mod tests {
 
     #[test]
     fn write_atomic_replaces_content() {
+        isolate_git!(write_atomic_replaces_content);
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("sub").join("f.txt");
         write_atomic(&f, b"one").unwrap();
@@ -287,6 +292,7 @@ mod tests {
 
     #[test]
     fn a_failed_write_removes_its_staging_file() {
+        isolate_git!(a_failed_write_removes_its_staging_file);
         let dir = tempfile::tempdir().unwrap();
         // The final rename cannot replace a folder, after the staging file was fully written.
         let in_the_way = dir.path().join("f.txt");
@@ -301,6 +307,7 @@ mod tests {
 
     #[test]
     fn a_staging_file_is_named_so_a_later_run_can_find_its_owner() {
+        isolate_git!(a_staging_file_is_named_so_a_later_run_can_find_its_owner);
         let dir = tempfile::tempdir().unwrap();
         let tmp_name = crate::leftovers::staging_file_name("f.txt", std::process::id(), 0);
         let f = dir.path().join("f.txt");

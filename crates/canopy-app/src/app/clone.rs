@@ -273,6 +273,11 @@ mod tests {
     /// opened with git's message, never deleted.
     #[test]
     fn a_clone_with_an_unreachable_submodule_is_kept_with_a_warning() {
+        if !crate::repo_config::in_isolated_git_env(
+            "app::clone::tests::a_clone_with_an_unreachable_submodule_is_kept_with_a_warning",
+        ) {
+            return;
+        }
         let dir = tempfile::tempdir().expect("temporary folder");
         let source = source_with_a_lost_submodule(dir.path());
         let dest = dir.path().join("copy");
