@@ -119,7 +119,8 @@ same feed release) unless beta already offers a newer build.
      on macOS an ad-hoc signed `Canopy.app` (from `packaging/macos/Info.plist`, `.icns` made from
      `assets/icon-512.png`); on Windows `canopy.exe`;
    - publishes the GitHub release `build-<number>` with those archives, `install.sh`,
-     `install.ps1`, a `SHA256SUMS` file and the notes (`prerelease` for the beta channel);
+     `install.ps1`, `toolchain.txt` (the `rustc`, `cargo` and `rustup` details of the runner
+     behind each archive), a `SHA256SUMS` file and the notes (`prerelease` for the beta channel);
    - copies them to a release `canopy-build-<number>` in `NecturaLabs/app-updates` and commits
      `canopy/latest.json` (`canopy/beta.json` for the beta channel; a stable release writes both) through
      `tools/update-manifest.sh`; a stable release also commits `packaging/install.sh` and
@@ -145,7 +146,8 @@ same feed release) unless beta already offers a newer build.
 - `gh release view build-<number>` lists one archive per target built (two for Linux, two for macOS,
   one for Windows, for the platforms that were on; one fewer for each experimental build that
   failed: check why), `install.sh`,
-  `install.ps1` and `SHA256SUMS`; the notes match
+  `install.ps1`, `toolchain.txt` (its `rustc` version is the one in `rust-toolchain.toml` at the tag) and
+  `SHA256SUMS`; the notes match
   `tools/release.py notes build-<number>`; `gh release view build-<number> --json isPrerelease`
   is `true` for a beta and `false` for a stable release.
 - If Linux was built, download its archive: `gh attestation verify <archive> --repo NecturaLabs/Canopy`

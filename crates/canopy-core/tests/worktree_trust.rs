@@ -9,10 +9,14 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::Repo;
 
@@ -28,7 +32,6 @@ fn git(dir: &Path, args: &[&str]) {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("git runs");
     assert!(
@@ -86,6 +89,7 @@ fn fixture() -> Fixture {
 
 #[test]
 fn a_worktree_is_trusted_only_when_its_folder_and_the_shared_git_folder_both_are() {
+    isolate_git!(a_worktree_is_trusted_only_when_its_folder_and_the_shared_git_folder_both_are);
     let f = fixture();
     let main = f.trusted.join("main");
     repository(&main);
@@ -110,6 +114,7 @@ fn a_worktree_is_trusted_only_when_its_folder_and_the_shared_git_folder_both_are
 
 #[test]
 fn a_forged_git_file_cannot_borrow_a_trusted_repositorys_trust() {
+    isolate_git!(a_forged_git_file_cannot_borrow_a_trusted_repositorys_trust);
     let f = fixture();
     let main = f.trusted.join("main");
     repository(&main);
@@ -161,6 +166,7 @@ fn a_forged_git_file_cannot_borrow_a_trusted_repositorys_trust() {
 
 #[test]
 fn a_rewritten_commondir_or_gitdir_in_a_worktree_cannot_move_it_into_trust() {
+    isolate_git!(a_rewritten_commondir_or_gitdir_in_a_worktree_cannot_move_it_into_trust);
     let f = fixture();
     let foreign = f.elsewhere.join("foreign");
     repository(&foreign);
@@ -188,6 +194,7 @@ fn a_rewritten_commondir_or_gitdir_in_a_worktree_cannot_move_it_into_trust() {
 
 #[test]
 fn links_cannot_move_a_worktree_into_or_out_of_a_trusted_folder() {
+    isolate_git!(links_cannot_move_a_worktree_into_or_out_of_a_trusted_folder);
     let f = fixture();
     let main = f.trusted.join("main");
     repository(&main);

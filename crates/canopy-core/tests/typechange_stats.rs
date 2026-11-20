@@ -6,9 +6,13 @@
     reason = "fixture helpers report failures by panicking"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{ChangeKind, MissingObjects, Repo};
 
@@ -20,7 +24,6 @@ fn git(path: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(path)
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("git runs");
     assert!(
@@ -83,6 +86,7 @@ fn counts(old: &[u8], new: &[u8], old_mode: &str, new_mode: &str) -> (usize, usi
 
 #[test]
 fn large_type_changes_count_both_blob_sides() {
+    isolate_git!(large_type_changes_count_both_blob_sides);
     let large = "a long line of text\n".repeat(20_000);
     assert_eq!(
         counts(large.as_bytes(), b"target", "100644", "120000"),
@@ -96,6 +100,7 @@ fn large_type_changes_count_both_blob_sides() {
 
 #[test]
 fn large_file_and_gitlink_changes_count_text_and_pointer() {
+    isolate_git!(large_file_and_gitlink_changes_count_text_and_pointer);
     let large = "a long line of text\n".repeat(20_000);
     assert_eq!(
         counts(large.as_bytes(), b"", "100644", "160000"),
@@ -109,6 +114,7 @@ fn large_file_and_gitlink_changes_count_text_and_pointer() {
 
 #[test]
 fn typechange_counts_handle_empty_and_unterminated_text() {
+    isolate_git!(typechange_counts_handle_empty_and_unterminated_text);
     for (text, lines) in [
         (&b""[..], 0),
         (&b"one\n"[..], 1),

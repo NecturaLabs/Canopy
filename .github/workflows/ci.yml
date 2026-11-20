@@ -127,8 +127,6 @@ jobs:
           persist-credentials: false
           submodules: true
       - uses: ./.github/actions/setup-rust
-        with:
-          components: clippy
       # `-D warnings` after `--` applies to the workspace members only. RUSTFLAGS would also apply
       # it to vendor/eframe, a path dependency cargo does not cap, so a newer rustc's warnings in
       # code we do not write would fail CI.
@@ -183,27 +181,52 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 tools/stall-check.py --require
 
-  # The check the rulesets require for the tests: one name for the matrix, since a skipped matrix
-  # job reports no per-platform name, and requiring "Test (Linux)" would leave a documentation-only
-  # push waiting forever. It always runs, so a cancelled run fails it
-  # rather than skipping it (a skipped job satisfies a required check). A skipped test job passes
-  # (a documentation-only push, or a pull request from a branch of this repository, which its push
-  # run covers); a failed or cancelled one fails.
+  msrv:
+    name: Minimum supported Rust
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: ./.github/actions/setup-rust
+        timeout-minutes: 10
+        with:
+          isolated: "true"
+      # Use the checksum-verified rustup from setup-rust and select the MSRV explicitly.
+      - name: Check the workspace on Rust 1.95
+        shell: bash
+        run: |
+          rustup toolchain install 1.95 --profile minimal --no-self-update
+          rustc +1.95 -Vv
+          cargo +1.95 -V
+          RUSTUP_TOOLCHAIN=1.95 rustup show
+          cargo +1.95 check --workspace --locked
+
+  # The rulesets require one check for the test matrix and the MSRV check. It runs even when a
+  # dependency was cancelled, since a skipped job satisfies a required check. A documentation-only
+  # push or a pull request already covered by its push can skip either dependency.
   tests:
     name: Tests
     runs-on: ubuntu-latest
-    needs: [changes, test]
+    needs: [changes, test, msrv]
     if: always()
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Every test job passed or was skipped
+      - name: Tests and the MSRV check passed or were skipped
         env:
           CHANGES: ${{ needs.changes.result }}
           RESULT: ${{ needs.test.result }}
+          MSRV: ${{ needs.msrv.result }}
         run: |
-          echo "What changed: $CHANGES; test jobs: $RESULT"
-          for r in "$CHANGES" "$RESULT"; do
+          echo "What changed: $CHANGES; test jobs: $RESULT; MSRV: $MSRV"
+          for r in "$CHANGES" "$RESULT" "$MSRV"; do
             [[ $r == success || $r == skipped ]] || exit 1
           done
 
@@ -227,7 +250,6 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         uses: ./.github/actions/setup-rust
         with:
-          components: rustfmt
           cache: "false"
       - name: cargo fmt --all --check
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
@@ -262,6 +284,7 @@ jobs:
           python3 tools/release.py selftest
           python3 tools/prune-releases.py selftest
           python3 tools/sign-manifest.py selftest
+          python3 tools/check-pr-commits.py --selftest
       # A pinned, checksum-verified ShellCheck, so every runner reports the same findings.
       # packaging/ is held to every rule; tools/ to warnings and errors.
       - name: ShellCheck
