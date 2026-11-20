@@ -161,6 +161,7 @@ impl Repo {
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
             held_by: Vec::new(),
+            own_refs: Vec::new(),
             blocked: None,
             operation: None,
             fingerprint: 0,
@@ -306,10 +307,11 @@ impl Repo {
         let admin = self.git().commondir().join("worktrees").join(&id);
         let Some(own) = own_refs(&common, &admin) else {
             removal.blocked = Some(
-                "Canopy cannot read the refs this folder keeps for itself, so it cannot tell which commits the removal would lose.".into(),
+                "Canopy cannot read this folder's own refs, so it cannot tell which commits removing it would lose.".into(),
             );
             return Ok(removal);
         };
+        removal.own_refs.clone_from(&own);
         holders.extend(own);
         removal.unreachable_commits =
             self.commits_only_reached_by(holders.iter().map(|(_, tip)| *tip))?;
@@ -377,6 +379,7 @@ impl Repo {
                 "another branch or commit is checked out there"
             } else if now.unreachable_commits != expected.unreachable_commits
                 || now.held_by != expected.held_by
+                || now.own_refs != expected.own_refs
             {
                 "its commits changed"
             } else {
@@ -589,8 +592,16 @@ impl Repo {
 
 /// The commits the refs a worktree keeps for itself ([`OWN_REFS`]) point to, by name, as git
 /// reads them from its administrative folder `admin`: they are stored there, so the repository's
-/// own listing does not show them. `None` when git cannot read them.
+/// own listing does not show them. `None` when git cannot read them, or when a file under them
+/// cannot be read: git's listing passes over such a file, but removing or forgetting the
+/// worktree deletes it with whatever it holds.
 fn own_refs(common: &Repository, admin: &Path) -> Option<Vec<(String, Oid)>> {
+    if OWN_REFS
+        .iter()
+        .any(|folder| has_unreadable_file(&admin.join(folder)))
+    {
+        return None;
+    }
     let mut command = cli::command(Some(common.path()));
     command.env("GIT_DIR", admin);
     let mut args = vec!["for-each-ref", "--format=%(objectname) %(refname)"];
@@ -608,6 +619,24 @@ fn own_refs(common: &Repository, admin: &Path) -> Option<Vec<(String, Oid)>> {
         })
         .collect();
     Some(refs)
+}
+
+/// Whether `folder`, or a folder inside it, holds a file or folder that cannot be read. A folder
+/// that does not exist holds nothing.
+fn has_unreadable_file(folder: &Path) -> bool {
+    let entries = match std::fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
+    };
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else { return true };
+        let path = entry.path();
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => has_unreadable_file(&path),
+            Ok(_) => std::fs::File::open(&path).is_err(),
+            Err(_) => true,
+        }
+    })
 }
 
 /// The folders in the repository's worktrees folder whose names [`prune_line`] cannot read back

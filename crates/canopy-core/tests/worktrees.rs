@@ -719,6 +719,56 @@ fn the_removal_counts_commits_only_a_worktree_s_own_refs_hold() {
         .expect_err("a new ref holding a commit is a change");
     assert!(err.to_string().contains("its commits changed"), "{err}");
     assert!(exists(&both));
+
+    // Moving a ref to another commit nothing else reaches keeps the count and the names, but
+    // the commit it held is not the one the user saw: refused too.
+    let seen = f.repo.worktree_removal(&parked, &[]).expect("inspect");
+    fs::write(parked.join("a.txt"), "elsewhere\n").expect("edit");
+    git(&parked, &["commit", "-q", "-am", "another lonely commit"]);
+    git(&parked, &["update-ref", "refs/worktree/wip", "HEAD"]);
+    git(&parked, &["reset", "-q", "--hard", "HEAD~1"]);
+    let moved = f.repo.worktree_removal(&parked, &[]).expect("inspect");
+    assert_eq!(
+        (moved.unreachable_commits, &moved.held_by),
+        (seen.unreachable_commits, &seen.held_by)
+    );
+    let err = f
+        .repo
+        .remove_worktree(&seen, &[])
+        .expect_err("a moved ref is a change");
+    assert!(err.to_string().contains("its commits changed"), "{err}");
+    assert!(exists(&parked));
+}
+
+/// Git's listing passes over a ref file it cannot read, but the removal still deletes it: a
+/// folder with such a file is refused rather than counted short.
+#[cfg(unix)]
+#[test]
+fn a_worktree_whose_own_ref_cannot_be_read_is_not_removed() {
+    use std::os::unix::fs::PermissionsExt;
+    isolate_git!(a_worktree_whose_own_ref_cannot_be_read_is_not_removed);
+    let f = fixture();
+    let parked = f.linked("parked");
+    fs::write(parked.join("a.txt"), "parked\n").expect("edit");
+    git(&parked, &["commit", "-q", "-am", "parked work"]);
+    git(&parked, &["update-ref", "refs/worktree/wip", "HEAD"]);
+    git(&parked, &["reset", "-q", "--hard", "HEAD~1"]);
+    let file = f.main.join(".git/worktrees/parked/refs/worktree/wip");
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).expect("chmod");
+    if fs::File::open(&file).is_ok() {
+        // Running as root reads it anyway: nothing to test.
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).expect("chmod");
+        return;
+    }
+    let removal = f.repo.worktree_removal(&parked, &[]).expect("inspect");
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).expect("chmod");
+    assert!(
+        removal
+            .blocked
+            .as_deref()
+            .is_some_and(|reason| reason.contains("cannot read this folder's own refs")),
+        "{removal:?}"
+    );
 }
 
 /// #285: forgetting deletes a worktree's own refs (`refs/worktree/*`, a bisect's refs) with

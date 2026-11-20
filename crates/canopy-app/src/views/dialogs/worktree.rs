@@ -383,6 +383,7 @@ mod tests {
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
             held_by: Vec::new(),
+            own_refs: Vec::new(),
             blocked: None,
             operation: None,
             fingerprint: 0,

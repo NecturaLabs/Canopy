@@ -173,6 +173,10 @@ pub struct WorktreeRemoval {
     /// What holds those commits: `HEAD` for a detached `HEAD`, and each of its own refs that
     /// holds some, by full name.
     pub held_by: Vec<String>,
+    /// Every ref the folder keeps for itself, by full name, with the commit it points to. A
+    /// ref that moved since the confirmation makes the removal refuse, even when the count and
+    /// [`held_by`](Self::held_by) stay the same.
+    pub own_refs: Vec<(String, Oid)>,
     /// Why Canopy will not remove it, when it will not.
     pub blocked: Option<String>,
     /// A rebase, bisect, merge, cherry-pick or revert in progress in this folder: its state is
