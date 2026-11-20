@@ -77,6 +77,7 @@ Canopy-specific rules, on top of the invariants below:
   signing, `init.defaultBranch`), in every crate and in unit tests too. Set identity and signing in the repository's own config,
   pass `-b main` to `git init`, and do not rely on anything in `~/.gitconfig`.
   In `crates/canopy-core/tests`, start every test with `isolate_git!(<its name>)` from `support/mod.rs`: it reruns the test in a child with every inherited `GIT_*` variable removed, an empty global Git config and a private home. It cannot hide the system-level config (`/etc/gitconfig`, and on Windows Git for Windows' `etc\gitconfig` and `%PROGRAMDATA%\Git\config`) from libgit2, since that needs the banned `unsafe` `git2::opts::set_search_path`. Git itself ignores it through `GIT_CONFIG_NOSYSTEM`.
+  A `canopy-core` unit test in a file that makes temporary directories starts with the same `isolate_git!(<its name>)`, imported from `crate::test_support`; `tests/isolation_guard.rs` enforces both. In `canopy-app`, a test whose result a hostile global config changes starts with `if !in_isolated_git_env("<module path>::<name>") { return; }` (`repo_config.rs`).
 - **Commands.** Whole crate: `cargo test -p canopy-core`. One test or a name filter:
   `cargo test -p canopy-core <name>`. Everything, as CI: `tools/check.sh`.
 - A new Git operation's test is step 1 of the `add-git-operation` skill; the `canopy-git` agent
