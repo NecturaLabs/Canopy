@@ -697,9 +697,13 @@ fn header(
                             actions.push(Action::Op(Op::Stage(vec![path])));
                         }
                     }
-                    // An unstaged file is staged from its row, its menu or Space, and a
-                    // commit's files have no action.
-                    (DiffSource::Unstaged, false) | (DiffSource::Commit(_), _) => {}
+                    // A commit's files have no action.
+                    (DiffSource::Commit(_), _) => {}
+                    (DiffSource::Unstaged, false) => {
+                        if file_action("Stage file", icon::PLUS).show(ui).clicked() {
+                            actions.push(Action::Op(Op::Stage(vec![path])));
+                        }
+                    }
                     (DiffSource::Staged, false) => {
                         if file_action("Unstage file", icon::MINUS).show(ui).clicked() {
                             actions.push(Action::Op(Op::Unstage(vec![path])));
@@ -1723,6 +1727,49 @@ mod tests {
             !added.iter().any(|t| t.contains("No commits between")),
             "an added submodule has nothing to compare: {added:?}"
         );
+    }
+
+    /// J2: an unstaged file's header has Stage file where a staged one's has Unstage file; a
+    /// commit's file has neither.
+    #[test]
+    fn the_header_stages_and_unstages_the_whole_file() {
+        use crate::ui::kit::testkit::{ctx, spoken};
+        let ctx = ctx();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        for (source, stage, unstage) in [
+            (DiffSource::Unstaged, true, false),
+            (DiffSource::Staged, false, true),
+            (DiffSource::Commit(canopy_core::Oid::ZERO_SHA1), false, false),
+        ] {
+            let sel = crate::tab::FileSelection {
+                source,
+                entry: canopy_core::FileEntry {
+                    path: "src/main.rs".into(),
+                    old_path: None,
+                    kind: ChangeKind::Modified,
+                    additions: 1,
+                    deletions: 1,
+                    lfs: false,
+                    old_mode: Some(0o100_644),
+                    new_mode: Some(0o100_644),
+                },
+                conflicted: false,
+            };
+            let mut actions = Vec::new();
+            let mut nodes = Vec::new();
+            for _ in 0..3 {
+                nodes = spoken(&ctx, |ui| header(ui, &mut tab, &sel, &mut actions));
+            }
+            let has = |label: &str| nodes.iter().any(|n| n.label.as_deref() == Some(label));
+            assert_eq!(has("Stage file"), stage, "{source:?}");
+            assert_eq!(has("Unstage file"), unstage, "{source:?}");
+        }
     }
 
     /// F14: a header narrower than 720 pt keeps the file's name and the controls on one row

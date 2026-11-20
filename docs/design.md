@@ -508,8 +508,8 @@ in the density's metrics:
   one (`RepoTab::marked`, the kit's `Selection` rules); the Unstaged header then adds "Stage N
   files" to the right of Stage all (which becomes its icon), and that button, a picked row's
   Stage button, Space and the row menu stage all of them. Any plain selection drops the rest.
-  Narrow columns show both as icons. The diff header has no Stage file button: one file is
-  staged from its row, its menu or Space. Discard
+  Narrow columns show both as icons. The diff header has Stage file for an unstaged file, as it
+  has Unstage file for a staged one. Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
