@@ -95,15 +95,18 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
     }
 }
 
+/// How wide `text` is on one line in `font`.
+pub fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+        .size()
+        .x
+}
+
 /// `text` cut in its middle with an ellipsis until it fits in `max_width` when drawn in
 /// `font`: a path or branch name keeps its start and its end, the parts that name it.
 pub fn elide_middle(ui: &egui::Ui, text: &str, font: &egui::FontId, max_width: f32) -> String {
-    let width = |t: &str| {
-        ui.painter()
-            .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
-            .size()
-            .x
-    };
+    let width = |t: &str| text_width(ui, t, font);
     if width(text) <= max_width {
         return text.to_owned();
     }
