@@ -197,7 +197,9 @@ adding a dependency.
   `revert` or `build(deps)` commit makes a build releasable and its subject becomes the release
   note (`tools/release.py`), so write it for users. A release is a numbered build (`git rev-list
   --count` on `main`): there is no version to bump. Never tag by hand: releases come from the
-  manual "Create release" workflow (`release` skill). No model attribution in commits or files.
+  manual "Create release" workflow (`release` skill). An agent's commit ends with an
+  `Assisted-by:` trailer naming its tool, model and effort, never a session link; files carry no
+  model attribution.
 
 ## Boundaries
 
