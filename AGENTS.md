@@ -98,7 +98,8 @@ adding a dependency.
   `tools/check-source-headers.py` (source-file headers and guard self-test),
   `tools/check-numeric-literals.py` (unnamed numeric literals in the backends and its self-test),
   `tools/check-ui-colors.py` (theme boundary and guard self-test),
-  `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
+  `tools/release.py selftest`, `tools/check-pr-commits.py --selftest` (PR commit subjects and
+  sign-offs), `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
   paths in docs, module table and skill mirror), `tools/check-site.py` (the landing site's files,
   addresses and scripts), `tools/vendor-eframe.sh --check` (`vendor/eframe`
   is the published crate plus our patch and the build uses it; needs network access),
