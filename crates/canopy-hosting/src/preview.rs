@@ -417,9 +417,21 @@ mod tests {
 
     #[test]
     fn unclosed_marks_cost_one_pass_and_closed_ones_still_work() {
-        // Far past what a description is cut to, so a pass per mark could not finish.
+        // Far past what a description is cut to, so a pass per mark could not finish. One pass
+        // means twice the input takes about twice the time; a pass per mark would take four
+        // times. The fastest of three runs is compared, so a busy machine slows neither size
+        // alone, and no wall-clock limit depends on how fast the machine is.
         let n = 200_000;
-        let started = std::time::Instant::now();
+        let fastest = |text: &str| {
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    let flat = inline(text);
+                    (started.elapsed(), flat)
+                })
+                .min_by_key(|(took, _)| *took)
+                .unwrap_or_default()
+        };
         for hostile in [
             format!("{}>", "<a".repeat(n / 2)),
             "<".repeat(n),
@@ -436,14 +448,15 @@ mod tests {
             "[![a][b]](".repeat(n / 4),
             format!("[a]({}", "(".repeat(n)),
         ] {
-            let flat = inline(&hostile);
+            let (full, flat) = fastest(&hostile);
             assert_ne!(flat, "");
+            let (half, _) = fastest(hostile.get(..hostile.len() / 2).expect("ASCII"));
+            assert!(
+                full < half * 3 + std::time::Duration::from_millis(5),
+                "{:?}…: {full:?} for the whole, {half:?} for half",
+                hostile.get(..12).expect("ASCII")
+            );
         }
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(5),
-            "took {:?}",
-            started.elapsed()
-        );
 
         assert_eq!(
             description_preview("<<<a [[b](c) [d](e) <f>g</f> [h"),

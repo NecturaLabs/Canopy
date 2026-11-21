@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use git2::{BranchType, Oid, Repository, Sort};
+use git2::{BranchType, Oid, Repository, Revwalk, Sort};
 
 use crate::diff::{self, DiffSource, FileDiff, Whitespace};
 use crate::graph;
@@ -504,9 +504,11 @@ impl Repo {
         let mut walk = self.git.revwalk()?;
         walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
         let _ = walk.push_head();
-        walk.push_glob("refs/heads")?;
-        walk.push_glob("refs/remotes")?;
-        walk.push_glob("refs/tags")?;
+        push_refs(
+            &self.git,
+            &mut walk,
+            &["refs/heads/*", "refs/remotes/*", "refs/tags/*"],
+        )?;
         let mut out = Vec::with_capacity(max_commits.min(MAX_PREALLOCATED_COMMITS));
         let mut truncated = false;
         for oid in walk {
@@ -1061,4 +1063,21 @@ impl Repo {
     pub fn config_string(&self, key: &str) -> Option<String> {
         self.git.config().ok()?.get_string(key).ok()
     }
+}
+
+/// Pushes onto `walk` the commit each ref matching one of `globs` leads to. Unlike
+/// [`Revwalk::push_glob`], it reads the commit from the ref itself, not by looking the name up
+/// again, which fails for a name over libgit2's length limit (#270). Each glob lists only its
+/// own folder, as `push_glob` does, so a ref folder deeper than libgit2 lists (100 levels)
+/// elsewhere hides nothing. As with `push_glob`, a ref that leads to no commit (a tag of a tree,
+/// a missing object) is passed over.
+pub(crate) fn push_refs(git: &Repository, walk: &mut Revwalk<'_>, globs: &[&str]) -> Result<()> {
+    for glob in globs {
+        for reference in git.references_glob(glob)? {
+            if let Ok(commit) = reference?.peel_to_commit() {
+                walk.push(commit.id())?;
+            }
+        }
+    }
+    Ok(())
 }
