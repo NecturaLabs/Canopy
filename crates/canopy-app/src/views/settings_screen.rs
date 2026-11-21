@@ -51,7 +51,7 @@ use crate::ui::theme::{
     self, Curve, Density, Elevation, Fill, GlassBlocked, NodeShape, Palette, Style, Surfaces,
     ThemeId, palette,
 };
-use crate::ui::widgets::forge_icon;
+use crate::ui::widgets::{elide_middle, field_placeholder, forge_icon};
 use crate::updater::{self, UpdateState, Updater};
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
@@ -153,7 +153,8 @@ pub struct SettingsScreen {
     remote_saved: Option<(String, String, Instant)>,
     /// An export or import waiting on its file chooser.
     file_task: Option<crate::settings_file::FileTask>,
-    /// What the last export, import or reset did: `(failed, message)`.
+    /// What the last export, import or reset did: `(warn, message)`, where `warn` is set for a
+    /// failure or an import that ignored shortcuts.
     file_status: Option<(bool, String)>,
     /// Stay on This repository until a repository is open (the screenshot overlay opens
     /// Settings before its repository's tab); cleared once one is.
@@ -341,6 +342,49 @@ impl SettingsScreen {
         Self {
             section,
             reveal: Some(group),
+            ..Self::default()
+        }
+    }
+
+    /// Backup and reset as an import that ignored three shortcuts leaves it (the
+    /// settings-import-ignored screenshot).
+    pub fn after_import_ignored() -> Self {
+        let imported = crate::settings_file::Imported {
+            settings: Settings::default(),
+            kept: Vec::new(),
+            ignored_shortcuts: 3,
+        };
+        Self {
+            section: Section::Data,
+            file_status: Some((true, imported.message(Path::new("canopy-settings.json")))),
+            ..Self::default()
+        }
+    }
+
+    /// Keyboard after the first row was given `j`, a single key, which an Anywhere row cannot
+    /// take (the settings-keyboard-refused screenshot).
+    pub fn refused_a_key() -> Self {
+        let first = crate::keymap::BINDINGS
+            .iter()
+            .find(|b| crate::keymap::is_remappable(b));
+        let why = first
+            .zip(crate::keymap::Chord::from_text("J"))
+            .and_then(|(binding, chord)| crate::keymap::rebind_problem(binding, chord))
+            .unwrap_or_default();
+        Self {
+            section: Section::Keyboard,
+            key_note: first.map(|b| (crate::keymap::binding_id(b), why)),
+            ..Self::default()
+        }
+    }
+
+    /// Keyboard with the first Fetch row waiting for its new key (the settings-keyboard-capture
+    /// screenshot).
+    pub fn capturing_a_key(ctx: &egui::Context) -> Self {
+        crate::keymap::start_capture(ctx);
+        Self {
+            section: Section::Keyboard,
+            rebinding: Some("Fetch.Anywhere".to_owned()),
             ..Self::default()
         }
     }
@@ -1729,12 +1773,15 @@ fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Not
         "pulls, rebases and merges",
     )?;
     if let (true, [only]) = (follow, values.as_slice()) {
-        let rest = if only.key.eq_ignore_ascii_case("rebase.autoStash") {
-            "merges"
+        let (git, rest) = if only.key.eq_ignore_ascii_case("rebase.autoStash") {
+            ("rebases", "merges")
         } else {
-            "rebases"
+            ("merges", "rebases")
         };
-        note.text = format!("{} Canopy's switch decides {rest}.", note.text);
+        note.text = format!(
+            "{} Git decides {git}; Canopy's switch decides {rest}.",
+            note.text
+        );
     }
     Some(note)
 }
@@ -1853,6 +1900,13 @@ fn row_end(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), paint::SEAM), Sense::hover());
     paint::seam_h(ui.painter(), rect.x_range(), rect.center().y, s.border);
     ui.add_space(theme::SM);
+    let at = (ui.ctx().cumulative_pass_nr(), ui.cursor().min.y);
+    ui.data_mut(|d| d.insert_temp(last_seam_id(), at));
+}
+
+/// Where the last row's seam left the cursor, so a group gap right after it adds nothing.
+fn last_seam_id() -> egui::Id {
+    egui::Id::new("settings-last-row-seam")
 }
 
 /// Help or detail text under a row's title.
@@ -1947,15 +2001,10 @@ fn noted_row_layout(
                 if !detail.is_empty() {
                     HelpMark::new(title, detail).show(ui);
                 }
-                if let Some(note) = note {
-                    // Beside an explanation mark, the state remark is set apart from it.
-                    let mark = HelpMark::new(title, &note.text).notice(note.warn);
-                    if detail.is_empty() {
-                        mark.show(ui);
-                    } else {
-                        ui.add_space(theme::XS);
-                        mark.apart().show(ui);
-                    }
+                // One mark per row: beside an explanation mark, the state remark is a line
+                // under the help instead.
+                if let Some(note) = note.filter(|_| detail.is_empty()) {
+                    HelpMark::new(title, &note.text).notice(note.warn).show(ui);
                 }
                 if let Some(tag) = tag {
                     ui.add_space(theme::XS);
@@ -1967,6 +2016,16 @@ fn noted_row_layout(
             });
         });
         help(ui);
+        if let Some(note) = note.filter(|_| !detail.is_empty()) {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&note.text)
+                        .size(m.meta_size)
+                        .color(if note.warn { p.warning } else { p.text }),
+                )
+                .wrap(),
+            );
+        }
     };
     ui.push_id(title, |ui| {
         if width < 620.0 {
@@ -1990,18 +2049,26 @@ fn noted_row_layout(
                 crate::ui::kit::button::icon_button_side(Size::Sm) + ui.spacing().item_spacing.x;
             let text_width = (width - control_width - reset - theme::XL)
                 .clamp(width * 0.5, HELP_MAX_WIDTH.max(width * 0.5));
+            // A text shorter than its controls (a one-line title beside a keycap and a button)
+            // sits on their centre line; the heights are last frame's.
+            let heights = ui.id().with("row-heights");
+            let (text_h, control_h): (f32, f32) =
+                ui.data(|d| d.get_temp(heights)).unwrap_or_default();
+            let lift = ((control_h - text_h) / 2.0).max(0.0);
             ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(
+                let text = ui.allocate_ui_with_layout(
                     vec2(text_width, 0.0),
                     Layout::top_down(Align::Min),
                     |ui| {
                         // Without this the column is only as wide as its text, and the controls
                         // of rows with short help text sit at different distances from the edge.
                         ui.set_min_width(text_width);
+                        ui.add_space(lift);
                         label(ui);
                     },
                 );
-                ui.allocate_ui_with_layout(
+                let measured_text = text.response.rect.height() - lift;
+                let controls = ui.allocate_ui_with_layout(
                     vec2(width - text_width - 2.0 * theme::SM, 0.0),
                     Layout::right_to_left(Align::Center).with_main_wrap(true),
                     |ui| {
@@ -2024,6 +2091,11 @@ fn noted_row_layout(
                         }
                     },
                 );
+                let measured = (measured_text, controls.response.rect.height());
+                if (measured.0 - text_h).abs() > 0.5 || (measured.1 - control_h).abs() > 0.5 {
+                    ui.data_mut(|d| d.insert_temp(heights, measured));
+                    ui.ctx().request_discard("a settings row changed height");
+                }
             });
         }
     });
@@ -2051,9 +2123,15 @@ fn heading_now(ui: &mut Ui, text: &str) {
     ui.add_space(theme::MD);
 }
 
-/// Space before a group heading; none while searching, where the row above ends in a seam.
+/// Space before a group heading after something that is not a row: none right after a row,
+/// whose seam already parts it from the heading (every heading then stands the same distance
+/// below the divider), and none while searching, where the row above ends in a seam.
 fn group_gap(ui: &mut Ui, space: f32) {
-    if !Filter::searching(ui.ctx()) {
+    let pass = ui.ctx().cumulative_pass_nr();
+    let after_row = ui
+        .data(|d| d.get_temp::<(u64, f32)>(last_seam_id()))
+        .is_some_and(|(at, y)| at == pass && (y - ui.cursor().min.y).abs() < 0.5);
+    if !after_row && !Filter::searching(ui.ctx()) {
         ui.add_space(space);
     }
 }
@@ -2539,16 +2617,18 @@ fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
         },
     );
     let cards = n.cards;
-    for topic in crate::ui::toast::Topic::ALL {
-        let default = *DEFAULTS.notifications.clone().topic_mut(topic);
-        let on = n.topic_mut(topic);
-        ui.add_enabled_ui(cards, |ui| {
+    // One scope for every topic row: a scope per row added a gap between scopes, so these rows
+    // stood taller than the first.
+    ui.add_enabled_ui(cards, |ui| {
+        for topic in crate::ui::toast::Topic::ALL {
+            let default = *DEFAULTS.notifications.clone().topic_mut(topic);
+            let on = n.topic_mut(topic);
             row(ui, topic.label(), topic.help(), |ui| {
                 revert(ui, on, &default, topic.label());
                 switch(ui, on, topic.label());
             });
-        });
-    }
+        }
+    });
 }
 
 /// Match system's theme for a dark or a light system: the themes of that kind (the custom theme
@@ -2751,23 +2831,28 @@ fn theme_card(
                 FontId::new(m.body_size, theme::medium()),
                 p.text,
             );
-            let (caption, _) = ui.allocate_exact_size(vec2(w, name.size().y), Sense::hover());
-            ui.painter().galley(caption.left_top(), name, p.text);
-            ui.painter().text(
-                caption.right_center(),
-                Align2::RIGHT_CENTER,
-                if id == DEFAULTS.theme {
-                    "Recommended"
-                } else if tp.dark {
-                    "Dark"
-                } else {
-                    "Light"
-                },
+            let (line, _) = ui.allocate_exact_size(vec2(w, name.size().y), Sense::hover());
+            ui.painter().galley(line.left_top(), name, p.text);
+            // Under the name, so "Dark (Recommended)" never meets a long name on a narrow card.
+            let caption = ui.painter().layout_no_wrap(
+                theme_caption(id == DEFAULTS.theme, tp.dark).to_owned(),
                 FontId::proportional(m.small_size),
                 p.text_faint,
             );
+            let (line, _) = ui.allocate_exact_size(vec2(w, caption.size().y), Sense::hover());
+            ui.painter().galley(line.left_top(), caption, p.text_faint);
         });
     card.response
+}
+
+/// A theme card's second label: Dark or Light on every card, the recommended theme's marked so.
+fn theme_caption(recommended: bool, dark: bool) -> &'static str {
+    match (recommended, dark) {
+        (true, true) => "Dark (Recommended)",
+        (true, false) => "Light (Recommended)",
+        (false, true) => "Dark",
+        (false, false) => "Light",
+    }
 }
 
 /// The window in miniature, as the approved preview draws it: the ground, the chrome column with
@@ -2896,37 +2981,6 @@ fn in_use(field: &Field) -> Option<Note> {
         },
         warn: false,
     })
-}
-
-/// `text` cut in its middle with an ellipsis until it fits in `max_width`.
-fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
-    let width = |t: &str| {
-        ui.painter()
-            .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
-            .size()
-            .x
-    };
-    if width(text) <= max_width {
-        return text.to_owned();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let build = |keep: usize| {
-        let head = keep.div_ceil(2);
-        let tail = keep / 2;
-        let start: String = chars[..head].iter().collect();
-        let end: String = chars[chars.len() - tail..].iter().collect();
-        format!("{start}…{end}")
-    };
-    let (mut low, mut high) = (0, chars.len());
-    while low < high {
-        let mid = (low + high).div_ceil(2);
-        if width(&build(mid)) <= max_width {
-            low = mid;
-        } else {
-            high = mid - 1;
-        }
-    }
-    build(low)
 }
 
 /// The width of a text field in a settings row.
@@ -3793,7 +3847,7 @@ fn git(
     row(
         ui,
         "Syntax highlighting",
-        "Colours code in diffs by language.",
+        "Colours code in diffs and blame by language.",
         |ui| {
             revert(
                 ui,
@@ -4885,7 +4939,6 @@ fn integrations(
 ) {
     heading(ui, "Cloning");
     row(ui, "Default clone folder", "Where new clones go.", |ui| {
-        let right = ui.cursor().max.x;
         if let Some(dir) = picker.show(
             ui,
             "default-clone-folder",
@@ -4893,14 +4946,19 @@ fn integrations(
         ) {
             s.clone_dir = dir.display().to_string();
         }
-        // The button and the field together are as wide as the other fields, so every
-        // field starts at the same edge.
-        let button = right - ui.cursor().max.x;
-        let default = clone_parent.to_owned();
-        let width = (FIELD_WIDTH - button).max(80.0);
+        // The field is as wide as the other fields, so a path has room; its tooltip and an
+        // empty field's placeholder keep the path's last folder.
+        let width = FIELD_WIDTH;
+        let shown = if s.clone_dir.trim().is_empty() {
+            clone_parent.to_owned()
+        } else {
+            s.clone_dir.clone()
+        };
+        let placeholder = field_placeholder(ui, clone_parent, width);
         fixed_width(ui, width, |ui| {
             TextField::new(&mut s.clone_dir)
-                .placeholder(default)
+                .placeholder(placeholder)
+                .tooltip(shown)
                 .width(width)
                 .name("Default clone folder")
                 .id_salt("clone-dir")
@@ -5893,16 +5951,14 @@ fn trusted_folder_list(ui: &mut Ui, s: &mut Settings) {
             {
                 remove = Some(i);
             }
-            ui.add(
-                egui::Label::new(
-                    RichText::new(folder.display().to_string())
-                        .font(FontId::new(m.small_size, FontFamily::Monospace))
-                        .color(p.text_dim),
-                )
-                .truncate(),
-            )
-            .kit_tooltip(folder.display().to_string())
-            .show();
+            // Cut in the middle: a path's last folder is the part that names it.
+            let shown = folder.display().to_string();
+            let font = FontId::new(m.small_size, FontFamily::Monospace);
+            let cut = elide_middle(ui, &shown, &font, ui.available_width());
+            let response = ui.label(RichText::new(&cut).font(font).color(p.text_dim));
+            if cut != shown {
+                response.kit_tooltip(shown).show();
+            }
         });
     }
     if let Some(i) = remove {
@@ -6058,9 +6114,10 @@ fn poll_file_task(screen: &mut SettingsScreen, s: &mut Settings, actions: &mut V
         Outcome::Read(path, text) => match crate::settings_file::import(s, &text) {
             Ok(imported) => {
                 let message = imported.message(&path);
+                let ignored = imported.ignored_shortcuts > 0;
                 *s = imported.settings;
                 actions.push(Action::SettingsReplaced);
-                Some((false, message))
+                Some((ignored, message))
             }
             Err(e) => Some((true, e)),
         },
@@ -6070,25 +6127,11 @@ fn poll_file_task(screen: &mut SettingsScreen, s: &mut Settings, actions: &mut V
 /// Backup and reset: settings to and from a file, and every preference back to its default.
 fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &mut Vec<Action>) {
     let busy = screen.file_task.is_some();
-    if let Some((failed, message)) = &screen.file_status
-        && !Filter::searching(ui.ctx())
-    {
-        Callout::new(
-            if *failed {
-                Tone::Warning
-            } else {
-                Tone::Success
-            },
-            message.as_str(),
-        )
-        .show(ui);
-        ui.add_space(theme::SM);
-    }
     heading(ui, "Settings file");
     row_explained(
         ui,
         "Export settings",
-        "Saves your preferences to a file, without consent.",
+        "Saves your preferences to a file.",
         "Left out: consent, trusted folders, the programs Canopy runs, GitLab hosts, the clone folder and per-repository settings.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Export…" })
@@ -6148,6 +6191,17 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
             }
         },
     );
+    // The result goes below every button, so it moves none of them.
+    if let Some((warn, message)) = &screen.file_status
+        && !Filter::searching(ui.ctx())
+    {
+        ui.add_space(theme::MD);
+        Callout::new(
+            if *warn { Tone::Warning } else { Tone::Success },
+            message.as_str(),
+        )
+        .show(ui);
+    }
 }
 
 /// Settings → Keyboard: every key of the keymap by where it applies, each with a button that
@@ -6184,12 +6238,13 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
                 ui,
                 concat!(
                     "Anywhere keys also work while typing; single keys only outside text fields. ",
-                    "Change replaces a row's keys with the one you press; Esc cancels."
+                    "Change sets a row's shortcut to the one you press; Esc cancels."
                 ),
             );
         });
         ui.add_space(theme::MD);
     }
+    reset_all_shortcuts(ui, screen, s);
     for section in KeySection::ALL {
         let rows: Vec<&Binding> = keymap::BINDINGS
             .iter()
@@ -6200,24 +6255,32 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
             for b in rows {
                 let id = keymap::binding_id(b);
                 let waiting = screen.rebinding.as_deref() == Some(id.as_str());
-                let note =
-                    screen
-                        .key_note
-                        .as_ref()
-                        .filter(|(row, _)| *row == id)
-                        .map(|(_, why)| Note {
-                            text: why.clone(),
-                            warn: true,
-                        });
+                // Why the last key was refused, said under the row until the next change.
+                let refused = screen
+                    .key_note
+                    .as_ref()
+                    .filter(|(row, _)| *row == id)
+                    .map(|(_, why)| why.clone());
                 let keys = b.keys();
                 noted_row_layout(
                     ui,
                     b.description,
                     None,
                     &keys,
-                    &|_| {},
+                    &|ui| {
+                        if let Some(why) = &refused {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(why)
+                                        .size(theme::metrics().meta_size)
+                                        .color(p.warning),
+                                )
+                                .wrap(),
+                            );
+                        }
+                    },
                     "",
-                    note.as_ref(),
+                    None,
                     |ui| {
                         if !keymap::is_remappable(b) {
                             Keycap::new(keys.clone()).show(ui);
@@ -6235,7 +6298,7 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
                                 screen.rebinding = None;
                             }
                             ui.label(
-                                RichText::new("Press the new key")
+                                RichText::new("Press the new shortcut")
                                     .size(theme::metrics().meta_size)
                                     .color(p.accent),
                             );
@@ -6270,20 +6333,27 @@ fn keyboard(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
             }
         });
     }
-    if !s.keybindings.is_empty() {
-        heading(ui, "Start over");
-        row(
-            ui,
-            "Reset all shortcuts",
-            "Every key back to the one Canopy ships with.",
-            |ui| {
-                if confirm_button(ui, "reset-keys", "Reset all", "Reset every shortcut") {
-                    s.keybindings.clear();
-                    screen.key_note = None;
-                }
-            },
-        );
-    }
+}
+
+/// The Keyboard page's first row: every key back to Canopy's own. It is there before any key
+/// is changed, so changing the first one moves no row below it.
+fn reset_all_shortcuts(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings) {
+    let changed = !s.keybindings.is_empty();
+    row(
+        ui,
+        "Reset all shortcuts",
+        if changed {
+            "Every key back to the one Canopy ships with."
+        } else {
+            "Every key is the one Canopy ships with."
+        },
+        |ui| {
+            if changed && confirm_button(ui, "reset-keys", "Reset all", "Reset every shortcut") {
+                s.keybindings.clear();
+                screen.key_note = None;
+            }
+        },
+    );
 }
 
 /// What the repository's git configuration decides against Canopy's recommendation, one line per
@@ -7991,6 +8061,65 @@ mod tests {
         assert!(after.width() <= 0.0, "no button at the default: {after:?}");
     }
 
+    /// J8: the second label means the same thing on every card, the recommended one too.
+    #[test]
+    fn every_theme_card_says_dark_or_light() {
+        assert_eq!(theme_caption(true, true), "Dark (Recommended)");
+        assert_eq!(theme_caption(false, true), "Dark");
+        assert_eq!(theme_caption(false, false), "Light");
+        let default = DEFAULTS.theme;
+        assert!(
+            ThemeId::ALL.contains(&default),
+            "the recommended theme is a card"
+        );
+    }
+
+    /// J3: a row with both an explanation and a state remark carries one mark: the remark is a
+    /// line under its help instead of a second mark beside the first.
+    #[test]
+    fn a_row_carries_one_mark() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let note = Note {
+            text: "No sign-in for github.com. Sign in under Accounts.".to_owned(),
+            warn: false,
+        };
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    noted_row_layout(
+                        ui,
+                        "Download profile pictures",
+                        None,
+                        "Shows pictures.",
+                        &|ui: &mut Ui| help_label(ui, "Shows pictures."),
+                        "Sends commit IDs to GitHub.",
+                        Some(&note),
+                        |_| {},
+                    );
+                });
+            });
+        }
+        let marks = nodes
+            .iter()
+            .filter(|n| {
+                n.label.as_deref().is_some_and(|l| {
+                    l == "About Download profile pictures"
+                        || l == "Note on Download profile pictures"
+                })
+            })
+            .count();
+        assert_eq!(marks, 1, "{nodes:?}");
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref().or(n.value.as_deref()) == Some(note.text.as_str())),
+            "the remark is shown as text: {nodes:?}"
+        );
+    }
+
     #[test]
     fn privacy_draws_why_pictures_are_missing() {
         let mut settings = Settings::default();
@@ -8254,10 +8383,29 @@ mod tests {
             ..GitFacts::default()
         };
         let note = autostash_note(&facts, true, true).expect("a note");
-        assert!(note.text.ends_with("decides merges."), "{}", note.text);
-        facts.autostash = vec![fact("merge.autoStash", "true")];
+        assert!(
+            note.text
+                .ends_with("Git decides rebases; Canopy's switch decides merges."),
+            "{}",
+            note.text
+        );
+        facts.autostash = vec![fact("merge.autoStash", "false")];
         let note = autostash_note(&facts, true, true).expect("a note");
-        assert!(note.text.ends_with("decides rebases."), "{}", note.text);
+        assert!(
+            note.text
+                .ends_with("Git decides merges; Canopy's switch decides rebases."),
+            "{}",
+            note.text
+        );
+        // The notification center drops the "Your git configuration decides" lead-in, so the
+        // sentence itself has to say which side git's value decides.
+        let lines = against_recommendation(&facts, &Settings::default(), Path::new("fixture"));
+        assert!(
+            lines.iter().any(|l| l
+                .contains("Git decides merges; Canopy's switch decides rebases. Recommended: On.")),
+            "{lines:?}"
+        );
+        facts.autostash = vec![fact("merge.autoStash", "true")];
         facts.autostash.push(fact("rebase.autoStash", "true"));
         let note = autostash_note(&facts, true, true).expect("a note");
         assert!(!note.text.contains("switch"), "{}", note.text);
@@ -8691,29 +8839,6 @@ mod tests {
         );
         assert_eq!(label(&Source::Guessed), "guessed by Git from this computer");
         assert_eq!(source_label_in(None, home), "not set");
-    }
-
-    #[test]
-    fn a_long_path_is_cut_in_the_middle_to_the_width() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        let path = "From global: /home/ada/projects/scratch/canopy-polish/tmpdir/gitconfig";
-        let font = FontId::proportional(theme::metrics().small_size);
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                assert_eq!(elide_middle(ui, path, &font, 10_000.0), path);
-                let cut = elide_middle(ui, path, &font, 200.0);
-                assert!(cut.contains('…') && cut.starts_with("From") && cut.ends_with("gitconfig"));
-                let width = ui
-                    .painter()
-                    .layout_no_wrap(cut, font.clone(), Color32::WHITE)
-                    .size()
-                    .x;
-                assert!(width <= 200.0, "{width}");
-                assert_eq!(elide_middle(ui, path, &font, 0.0), "…");
-            });
-        });
-        output.textures_delta.clear();
     }
 
     #[test]
@@ -10198,6 +10323,116 @@ mod tests {
             against_recommendation(&GitFacts::default(), &follow, repo).is_empty(),
             "a configuration that sets nothing is not listed"
         );
+    }
+
+    /// What `page` speaks after three frames, so widths measured the frame before have settled.
+    fn settled(
+        ctx: &egui::Context,
+        mut page: impl FnMut(&mut Ui),
+    ) -> Vec<crate::ui::kit::testkit::Spoken> {
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = crate::ui::kit::testkit::spoken(ctx, &mut page);
+        }
+        nodes
+    }
+
+    /// The node named `text`, or a label showing it.
+    fn node<'a>(
+        nodes: &'a [crate::ui::kit::testkit::Spoken],
+        text: &str,
+    ) -> Option<&'a crate::ui::kit::testkit::Spoken> {
+        nodes
+            .iter()
+            .find(|n| n.label.as_deref() == Some(text) || n.value.as_deref() == Some(text))
+    }
+
+    /// Where the node named or showing `text` is.
+    fn bounds_of(nodes: &[crate::ui::kit::testkit::Spoken], text: &str) -> Rect {
+        node(nodes, text)
+            .and_then(|n| n.bounds)
+            .unwrap_or_else(|| panic!("{text} is not shown"))
+    }
+
+    /// #259: a refused key says why in words under its row, not only in a mark's tooltip.
+    #[test]
+    fn a_refused_key_says_why_under_its_row() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::default();
+        let why = "Fetch already uses j.";
+        screen.key_note = Some(("Fetch.Repository".to_owned(), why.to_owned()));
+        let nodes = settled(&ctx, |ui| keyboard(ui, &mut screen, &mut settings));
+        let said = node(&nodes, why);
+        assert!(
+            said.is_some_and(|n| n.role == egui::accesskit::Role::Label),
+            "{said:?}"
+        );
+        // Under its own row, not another's.
+        let row = crate::keymap::binding_by_id("Fetch.Repository").expect("a row");
+        let line = bounds_of(&nodes, why);
+        // Several rows may share a title; one of them sits right above the line.
+        let above = nodes
+            .iter()
+            .filter(|n| n.value.as_deref() == Some(row.description))
+            .filter_map(|n| n.bounds)
+            .any(|title| (-1.0..24.0).contains(&(line.top() - title.bottom())));
+        assert!(above, "{line:?}");
+    }
+
+    /// #259: an export's or import's result shows without moving the buttons, so a second
+    /// click lands where the first did.
+    #[test]
+    fn a_settings_file_result_does_not_move_the_buttons() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::at(Section::Data);
+        let mut actions = Vec::new();
+        let mut places = |screen: &mut SettingsScreen| {
+            let nodes = settled(&ctx, |ui| backup(ui, screen, &mut settings, &mut actions));
+            (
+                bounds_of(&nodes, "Export…"),
+                bounds_of(&nodes, "Import…"),
+                bounds_of(&nodes, "Reset all…"),
+                said(&nodes, "Exported to"),
+            )
+        };
+        let before = places(&mut screen);
+        screen.file_status = Some((
+            false,
+            "Exported to /home/ada/canopy-settings.json.".to_owned(),
+        ));
+        let after = places(&mut screen);
+        assert!(after.3, "the result is shown");
+        assert_eq!(
+            (before.0, before.1, before.2),
+            (after.0, after.1, after.2),
+            "the buttons stay"
+        );
+    }
+
+    /// #259: Reset all shortcuts is at the top of the Keyboard page, and is there before any
+    /// key is changed, so changing the first one moves no row.
+    #[test]
+    fn reset_all_shortcuts_is_at_the_top_and_the_rows_hold_still() {
+        let ctx = crate::ui::kit::testkit::ctx();
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::default();
+        let row = crate::keymap::binding_by_id("Fetch.Repository").expect("a row");
+        let mut places = |settings: &mut Settings| {
+            let nodes = settled(&ctx, |ui| keyboard(ui, &mut screen, settings));
+            (
+                bounds_of(&nodes, "Reset all shortcuts"),
+                bounds_of(&nodes, row.description),
+            )
+        };
+        let (reset, fetch) = places(&mut settings);
+        assert!(reset.bottom() < fetch.top(), "{reset:?} above {fetch:?}");
+        settings
+            .keybindings
+            .insert("Fetch.Repository".to_owned(), "V".to_owned());
+        let (reset_after, fetch_after) = places(&mut settings);
+        assert_eq!((reset, fetch), (reset_after, fetch_after), "nothing moved");
     }
 
     /// #55: Change listens for the next key, a free key is saved under the row and moves the

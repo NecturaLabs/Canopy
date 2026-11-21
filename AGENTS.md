@@ -41,7 +41,7 @@ These come from the owner and override anything else in the repository.
   the machine. A change to that updates them and their `Last updated` date (matching
   `ui::legal::PRIVACY_VERSION`/`TERMS_VERSION`); one to what a crash report carries also bumps
   `crash_reports::DATA_VERSION`. After a dependency change run `python3 tools/notices.py` (writes
-  `docs/legal/third-party-notices.txt`; CI checks it).
+  `docs/legal/third-party-notices.txt` and the site's copy; CI checks both).
 - **Logging**: JSON-lines logs per run (`logging.rs`). Never log secrets or prompt answers; pass
   URLs through `canopy_core::cli::redact_url`, git arguments through `cli::loggable`.
 - **Git settings**: respect the user's git configuration; never force a choice on them. Where it
@@ -98,7 +98,8 @@ adding a dependency.
   `tools/check-source-headers.py` (source-file headers and guard self-test),
   `tools/check-numeric-literals.py` (unnamed numeric literals in the backends and its self-test),
   `tools/check-ui-colors.py` (theme boundary and guard self-test),
-  `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
+  `tools/release.py selftest`, `tools/check-pr-commits.py --selftest` (PR commit subjects and
+  sign-offs), `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
   paths in docs, module table and skill mirror), `tools/check-site.py` (the landing site's files,
   addresses and scripts), `tools/vendor-eframe.sh --check` (`vendor/eframe`
   is the published crate plus our patch and the build uses it; needs network access),
@@ -114,7 +115,8 @@ adding a dependency.
   `stall-check.py` runs in CI's Linux test job and must pass. Run `cargo deny check`
   yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) runs
   the workspace tests on Linux, macOS and Windows for every push that changes code and for a
-  fork's pull request; its `Tests` check sums them up and is required on `dev` and `main`.
+  fork's pull request; its `Tests` check sums them up (and the minimum-Rust 1.95 check) and is
+  required on `dev` and `main`.
   `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` pick the release platforms only.
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`
@@ -136,7 +138,7 @@ adding a dependency.
 - The owner has given full authority: ask only for decisions that are truly theirs
   (destructive and outward-facing actions still need the owner).
 - Project agents in `.claude/agents/` (Codex: `.codex/agents/`): `canopy-review`, `canopy-git`,
-  `canopy-visual-qa`, `canopy-ux-research`.
+  `canopy-visual-qa`, `canopy-ux-research`, `canopy-slop-check`.
 - Subagents (the owner's rule): at most 3 at a time. Small things are done directly. Each builder
   gets its own `CARGO_TARGET_DIR` in a scratch directory, deleted afterwards; keep 5 GB of disk
   free.
@@ -156,6 +158,9 @@ adding a dependency.
 - Before declaring work done: `tools/check.sh` passes and the `canopy-review` agent has reviewed
   the diff (brief it per the `independent-review` skill); fix or answer every Blocking finding.
   Only a typo or formatting-only change skips this.
+- Written words follow the `plain-writing` skill (PR text, reviews and comments, issues, UI copy,
+  docs). The `canopy-slop-check` agent checks a pull request's text before it is opened and
+  again before it is merged; make its cuts or answer them (owner, 2026-11-20).
 - Before every release, after all planned changes: the user simulation review (`tools/usersim.sh`,
   `docs/playbook.md`), Canopy driven like a user in an isolated environment; every finding is
   fixed before the release is cut.
@@ -197,7 +202,9 @@ adding a dependency.
   `revert` or `build(deps)` commit makes a build releasable and its subject becomes the release
   note (`tools/release.py`), so write it for users. A release is a numbered build (`git rev-list
   --count` on `main`): there is no version to bump. Never tag by hand: releases come from the
-  manual "Create release" workflow (`release` skill). No model attribution in commits or files.
+  manual "Create release" workflow (`release` skill). An agent's commit ends with an
+  `Assisted-by:` trailer naming its tool, model and effort, never a session link; files carry no
+  model attribution.
 
 ## Boundaries
 

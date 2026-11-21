@@ -153,9 +153,10 @@ pub(super) fn show(
                         Callout::new(
                             Tone::Danger,
                             format!(
-                                "{} reachable only from this folder's detached HEAD; once it is removed nothing points to {}.",
-                                plural(removal.unreachable_commits, "commit is", "commits are"),
+                                "{} that no branch, remote branch or tag contains: nothing points to {} once {} deleted.",
+                                plural(removal.unreachable_commits, "commit", "commits"),
                                 if removal.unreachable_commits == 1 { "it" } else { "them" },
+                                holders(&removal.held_by),
                             ),
                         )
                         .show(ui);
@@ -164,8 +165,7 @@ pub(super) fn show(
                         note(ui, "No changed, untracked or ignored files.", p.text_dim);
                     }
                     ui.add_space(theme::XS);
-                    note(ui, "Its HEAD reflog, config.worktree and refs/worktree/* are deleted too.", p.text_dim);
-                    note(ui, "Commits only that reflog holds are lost.", p.text_dim);
+                    note(ui, "Commits that only its HEAD log or its own refs hold are lost.", p.text_dim);
                 }
             }
         })
@@ -220,6 +220,20 @@ impl ForgetWorktreesForm {
     }
 }
 
+/// What holds a forgotten worktree's lonely commits, with its verb: "its HEAD is", or "its HEAD
+/// and refs/worktree/wip are" when its own refs hold some too.
+fn holders(held_by: &[String]) -> String {
+    let names: Vec<&str> = held_by
+        .iter()
+        .map(|name| if name == "HEAD" { "its HEAD" } else { name })
+        .collect();
+    match names.as_slice() {
+        [] => "it is".to_owned(),
+        [one] => format!("{one} is"),
+        [rest @ .., last] => format!("{} and {last} are", rest.join(", ")),
+    }
+}
+
 /// What forgetting one worktree deletes besides the working folder it no longer has.
 fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
     let p = palette(ui.ctx());
@@ -238,13 +252,14 @@ fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
         note(
             ui,
             format!(
-                "    {} that no branch, remote branch or tag contains: nothing points to {} once its HEAD is deleted",
+                "    {} that no branch, remote branch or tag contains: nothing points to {} once {} deleted",
                 plural(entry.unreachable_commits, "commit", "commits"),
                 if entry.unreachable_commits == 1 {
                     "it"
                 } else {
                     "them"
-                }
+                },
+                holders(&entry.held_by),
             ),
             p.danger,
         );
@@ -257,7 +272,11 @@ fn forgotten(ui: &mut Ui, entry: &canopy_core::ForgottenWorktree) {
         );
     }
     if entry.submodule_repositories {
-        note(ui, "    its submodule repositories are deleted", p.danger);
+        note(
+            ui,
+            "    its submodule repositories are deleted, with any commits in them that were never pushed",
+            p.danger,
+        );
     }
 }
 
@@ -300,10 +319,9 @@ pub(super) fn show_forget(
                     }
                     note(
                         ui,
-                        "Git forgets these worktrees, whose folders are gone. It deletes no working folder, but it deletes each one's entry in the repository (.git/worktrees): its HEAD and reflog, its index, its config.worktree and refs/worktree/*, and the repositories of its submodules. The branches stay.",
+                        "Removes git's record of worktrees whose folders are gone. No folder is deleted and their branches stay. Commits that only such a worktree's HEAD log or its own refs hold are lost.",
                         p.text,
                     );
-                    note(ui, "Commits only a HEAD reflog holds are lost.", p.text);
                     for entry in &forget.entries {
                         forgotten(ui, entry);
                     }
@@ -311,11 +329,15 @@ pub(super) fn show_forget(
             }
         })
         .footer(|footer| {
-            footer.cancel().confirm(format!(
-                "Forget {}",
-                plural(count.max(1), "worktree", "worktrees")
-            ));
-            if busy {
+            // A number only once git has named the worktrees it would forget.
+            footer.cancel().confirm(if count == 0 {
+                "Forget worktrees".to_owned()
+            } else {
+                format!("Forget {}", plural(count, "worktree", "worktrees"))
+            });
+            if tab.is_none() {
+                footer.confirm_disabled("This is no longer available");
+            } else if busy {
                 footer.confirm_disabled("Wait for repository operations to finish");
             } else if let Some(reason) = &blocked {
                 footer.confirm_disabled(reason.clone());
@@ -359,6 +381,8 @@ mod tests {
             },
             ignored: WorktreeLoss::default(),
             unreachable_commits: 0,
+            held_by: Vec::new(),
+            own_refs: Vec::new(),
             blocked: None,
             operation: None,
             fingerprint: 0,
@@ -440,6 +464,7 @@ mod tests {
             branch: None,
             head: None,
             unreachable_commits: 0,
+            held_by: Vec::new(),
             submodule_repositories: false,
             operation: None,
         }
@@ -469,13 +494,14 @@ mod tests {
         nodes
     }
 
-    /// The confirmation says what forgetting deletes, plainly, and names each worktree that
+    /// The confirmation says what forgetting removes, plainly, and names each worktree that
     /// holds commits nothing else reaches.
     #[test]
     fn forgetting_names_what_it_deletes_and_the_commits_it_orphans() {
         let ctx = setup();
         let mut lonely = entry("lonely");
         lonely.unreachable_commits = 2;
+        lonely.held_by = vec!["HEAD".into(), "refs/worktree/wip".into()];
         lonely.operation = Some("rebase".into());
         lonely.submodule_repositories = true;
         let forget = canopy_core::WorktreeForget {
@@ -491,18 +517,63 @@ mod tests {
                     .any(|text| text.contains(part))
             })
         };
+        // F23: in plain words, without git's file names.
         assert!(
-            said("deletes each one's entry in the repository"),
+            said("Removes git's record of worktrees whose folders are gone"),
             "{nodes:?}"
         );
-        assert!(said("HEAD and reflog, its index"));
+        assert!(said("No folder is deleted and their branches stay"));
+        // The worktree's own refs (refs/worktree/*, a bisect's refs) go with its entry too.
+        assert!(said("HEAD log or its own refs hold are lost"));
+        assert!(!said("config.worktree"), "no plumbing: {nodes:?}");
         assert!(said(
             "2 commits that no branch, remote branch or tag contains"
         ));
+        // #285: what holds them, its detached HEAD or its own refs.
+        assert!(
+            said("once its HEAD and refs/worktree/wip are deleted"),
+            "{nodes:?}"
+        );
         assert!(said("a rebase in progress is lost"));
-        assert!(said("submodule repositories are deleted"));
+        assert!(said(
+            "its submodule repositories are deleted, with any commits in them that were never pushed"
+        ));
         assert!(!said("deletes nothing"), "no claim that nothing is deleted");
         assert!(button(&nodes, "Forget 2 worktrees").is_some_and(|n| !n.disabled));
+        // A worktree without submodules says nothing about them.
+        let plain = canopy_core::WorktreeForget {
+            entries: vec![entry("plain")],
+            blocked: None,
+        };
+        let nodes = forget_frames(&ctx, Some(Ok(Box::new(plain))));
+        let mentions_submodules = nodes.iter().any(|n| {
+            [&n.label, &n.value]
+                .into_iter()
+                .flatten()
+                .any(|text| text.contains("submodule"))
+        });
+        assert!(!mentions_submodules, "{nodes:?}");
+    }
+
+    /// A confirmation left open after its tab closed says so on its button too, not that
+    /// repository operations are running.
+    #[test]
+    fn a_forget_left_without_its_tab_says_it_is_gone() {
+        let ctx = setup();
+        let form = ForgetWorktreesForm::new(PathBuf::from("/work/canopy"), 1);
+        let salt = salt(&Dialog::ForgetWorktrees(Box::new(form.clone())));
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = spoken(&ctx, |_| {
+                show_forget(&ctx, salt, &form, None);
+            });
+        }
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("This is no longer available")
+        );
     }
 
     #[test]
@@ -519,10 +590,25 @@ mod tests {
             confirm.description.as_deref(),
             Some("Git would also forget /work/lo.")
         );
+        // With nothing to forget, or no count, the button names no number: "Forget 1
+        // worktree" beside "none is missing now" contradicted itself.
         let nodes = forget_frames(&ctx, Some(Ok(Box::default())));
-        assert!(button(&nodes, "Forget 1 worktree").is_some_and(|n| n.disabled));
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("Git would forget no worktree: none is missing now.")
+        );
+        assert!(button(&nodes, "Forget 1 worktree").is_none(), "{nodes:?}");
+        let nodes = forget_frames(&ctx, None);
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
+        assert!(confirm.disabled);
+        assert_eq!(
+            confirm.description.as_deref(),
+            Some("Wait for the check of the worktrees")
+        );
         let nodes = forget_frames(&ctx, Some(Err("git went away".into())));
-        let confirm = button(&nodes, "Forget 1 worktree").expect("confirm");
+        let confirm = button(&nodes, "Forget worktrees").expect("confirm");
         assert!(confirm.disabled);
         assert_eq!(
             confirm.description.as_deref(),
@@ -530,13 +616,15 @@ mod tests {
         );
     }
 
-    /// What else the removal deletes is said plainly, and the commits only a detached `HEAD`
-    /// reaches are one fact, with no filler about checks.
+    /// What else the removal loses is said in the words Forget missing worktrees uses, without
+    /// naming git's files (#284), and the commits only a detached `HEAD` reaches are one fact,
+    /// with no filler about checks.
     #[test]
     fn the_removal_says_what_else_it_deletes() {
         let ctx = setup();
         let mut lonely = removal();
         lonely.unreachable_commits = 2;
+        lonely.held_by = vec!["HEAD".into(), "refs/worktree/wip".into()];
         let tab = tab_with(&lonely);
         let mut form = RemoveWorktreeForm::new(tab.path.clone(), lonely.path, 1);
         let (nodes, _) = frames(&ctx, &mut form, &tab);
@@ -549,12 +637,15 @@ mod tests {
             })
         };
         assert!(
-            said("HEAD reflog, config.worktree and refs/worktree"),
+            said("Commits that only its HEAD log or its own refs hold are lost."),
             "{nodes:?}"
         );
-        assert!(said("Commits only that reflog holds are lost"));
+        // Git's files are not named; a ref that holds commits is, as the Forget row names it.
+        for plumbing in ["config.worktree", "refs/worktree/*", "reflog"] {
+            assert!(!said(plumbing), "{plumbing}: {nodes:?}");
+        }
         assert!(said(
-            "2 commits are reachable only from this folder's detached HEAD"
+            "2 commits that no branch, remote branch or tag contains: nothing points to them once its HEAD and refs/worktree/wip are deleted."
         ));
         assert!(!said("Safety is checked again"));
     }

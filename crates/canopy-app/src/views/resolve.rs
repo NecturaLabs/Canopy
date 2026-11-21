@@ -299,7 +299,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
     let Some(Ok(file)) = &r.file else { return };
     let n = file.conflicts();
     let done = r.resolved();
-    egui::Panel::bottom(egui::Id::new(("resolve-footer", &r.path)))
+    let shown = egui::Panel::bottom(egui::Id::new(("resolve-footer", &r.path)))
         .frame(egui::Frame::new().fill(s.panel).inner_margin(egui::Margin::symmetric(14, 10)))
         .show(ui, |ui| {
             let top = ui.max_rect().top() - 10.0;
@@ -342,6 +342,19 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                 });
             });
         });
+    // The conflict notice that brought the user here must not cover Save resolved file (#253).
+    crate::ui::toast::keep_clear(ui.ctx(), shown.response.rect);
+}
+
+/// What a conflict side is called after its title, from the `label` git wrote after its
+/// marker: `HEAD`, and a stash's "Updated upstream", are the checked-out branch (`current`);
+/// a stash's "Stashed changes" is the stash.
+fn side_label<'a>(label: &'a str, side: &Choice, current: Option<&'a str>) -> &'a str {
+    match (side, label) {
+        (Choice::Ours, "HEAD" | "Updated upstream") => current.unwrap_or_default(),
+        (Choice::Theirs, "Stashed changes") => "stash",
+        _ => label,
+    }
 }
 
 fn code_font() -> FontId {
@@ -888,11 +901,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 ] {
                     ui.vertical(|ui| {
                         ui.set_width(w);
-                        let name = if label == "HEAD" && side == Choice::Ours {
-                            r.current.as_deref().unwrap_or_default()
-                        } else {
-                            label.as_str()
-                        };
+                        let name = side_label(label, &side, r.current.as_deref());
                         ui.label(
                             small(
                                 if name.is_empty() {
@@ -1147,6 +1156,84 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// #253: a notification card that arrives with the resolver open (the conflict notice that
+    /// took the user there) leaves Save resolved file and Save progress clickable.
+    #[test]
+    fn notification_cards_leave_the_resolver_footer_clear() {
+        use crate::ui::toast::{ToastKind, Toasts, Topic};
+        let ctx = context();
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(1, 2)))));
+        let mut toasts = Toasts::default();
+        toasts.push(
+            &ctx,
+            ToastKind::Attention,
+            Topic::Attention,
+            "Cherry-picking stopped on conflicts",
+            "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.",
+        );
+        for frame in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1000.0, 800.0),
+                    )),
+                    time: Some(f64::from(frame) * 0.05),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        footer(ui, &mut r, &mut Vec::new());
+                        body(ui, &mut r);
+                    });
+                    toasts.show(ui.ctx());
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let footer = egui::containers::panel::PanelState::load(
+            &ctx,
+            egui::Id::new(("resolve-footer", &r.path)),
+        )
+        .expect("resolver footer");
+        let stack = ctx
+            .memory(|m| m.area_rect(egui::Id::new("notifications")))
+            .expect("the card");
+        assert!(
+            !stack.intersects(footer.outer_rect),
+            "card {stack:?} over footer {:?}",
+            footer.outer_rect
+        );
+    }
+
+    /// #253: a stash applied with conflicts names its sides as other conflicts do, not by git's
+    /// own labels for them ("Updated upstream", "Stashed changes").
+    #[test]
+    fn stash_conflict_sides_are_named_like_other_conflicts() {
+        assert_eq!(
+            side_label("Updated upstream", &Choice::Ours, Some("main")),
+            "main"
+        );
+        assert_eq!(
+            side_label("Stashed changes", &Choice::Theirs, Some("main")),
+            "stash"
+        );
+        assert_eq!(side_label("Updated upstream", &Choice::Ours, None), "");
+        // As before: HEAD is the checked-out branch, other labels stay as git wrote them.
+        assert_eq!(side_label("HEAD", &Choice::Ours, Some("main")), "main");
+        assert_eq!(
+            side_label(
+                "008ae4d (feat(retry): use backoff)",
+                &Choice::Theirs,
+                Some("main")
+            ),
+            "008ae4d (feat(retry): use backoff)"
+        );
+        assert_eq!(side_label("HEAD", &Choice::Theirs, Some("main")), "HEAD");
     }
 
     /// What a whole-file choice for a conflict of `kind` shows: the button labels painted, and

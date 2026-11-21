@@ -8,6 +8,7 @@ use egui_phosphor::regular as icon;
 use canopy_core::{Blame, BlameCommit, short_id};
 
 use crate::action::Action;
+use crate::highlight::Highlights;
 use crate::tab::{BlameRead, FileSelection, RepoTab};
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
@@ -62,7 +63,15 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, sel: &FileSelection, actions: &mut V
                 .compact(true)
                 .show(ui);
         }
-        Some(Ok(blame)) => lines(ui, &read.path, blame, read.longest, tab.iso_dates, actions),
+        Some(Ok(blame)) => lines(
+            ui,
+            &read.path,
+            blame,
+            read.longest,
+            read.highlights.as_deref(),
+            tab.iso_dates,
+            actions,
+        ),
     }
 }
 
@@ -168,6 +177,7 @@ fn lines(
     path: &str,
     blame: &Blame,
     longest: usize,
+    highlights: Option<&Highlights>,
     iso: bool,
     actions: &mut Vec<Action>,
 ) {
@@ -291,13 +301,15 @@ fn lines(
                     small.clone(),
                     p.text_faint,
                 );
-                painter.text(
-                    pos2(x + CODE_GAP, cy),
-                    Align2::LEFT_CENTER,
-                    &line.text,
-                    mono.clone(),
-                    p.text,
-                );
+                // Coloured by language like the file's diff, once the highlighter has it.
+                let spans = highlights
+                    .and_then(|h| h.lines.first())
+                    .and_then(|lines| lines.get(i))
+                    .map_or(&[][..], Vec::as_slice);
+                let code = painter.layout_job(crate::views::diff::code_job(
+                    &line.text, spans, p.text, &p.syntax, &mono,
+                ));
+                painter.galley(pos2(x + CODE_GAP, cy - code.size().y / 2.0), code, p.text);
             }
         });
 }
@@ -330,5 +342,68 @@ mod tests {
         );
         assert!(tooltip(&commit, false).contains(&written));
         assert!(spoken(1, &commit, "x", true).contains(&iso));
+    }
+
+    /// J7: with syntax highlighting on, a blamed TOML line paints its code in more than one
+    /// colour, as the file's diff does; with it off, in one.
+    #[test]
+    fn blamed_code_is_coloured_by_language_when_highlighting_is_on() {
+        let text = ["[package]", "name = \"canopy\" # the app", "edition = 2024"];
+        let blame = Blame {
+            commits: vec![BlameCommit {
+                oid: git2::Oid::from_bytes(&[1; 20]).expect("an id"),
+                author: "Ada".into(),
+                email: "ada@example.com".into(),
+                time: 1_786_708_800,
+                summary: "Add metrics".into(),
+            }],
+            lines: text
+                .iter()
+                .map(|t| canopy_core::BlameLine {
+                    commit: 0,
+                    text: (*t).into(),
+                })
+                .collect(),
+        };
+        let h = crate::highlight::highlight(&crate::highlight::whole_file("Cargo.toml", text))
+            .expect("TOML is highlighted");
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let colours = |highlights: Option<&Highlights>| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                lines(
+                    ui,
+                    "Cargo.toml",
+                    &blame,
+                    30,
+                    highlights,
+                    false,
+                    &mut Vec::new(),
+                );
+            });
+            out.textures_delta.clear();
+            let mut colours = std::collections::BTreeSet::new();
+            for c in &out.shapes {
+                if let egui::Shape::Text(t) = &c.shape
+                    && t.galley.text() == text[1]
+                {
+                    for section in &t.galley.job.sections {
+                        let colour = if section.format.color == egui::Color32::PLACEHOLDER {
+                            t.fallback_color
+                        } else {
+                            section.format.color
+                        };
+                        colours.insert(colour.to_array());
+                    }
+                }
+            }
+            colours
+        };
+        assert!(
+            colours(Some(&h)).len() > 1,
+            "highlighted code is one colour"
+        );
+        assert_eq!(colours(None).len(), 1, "plain code is not one colour");
     }
 }

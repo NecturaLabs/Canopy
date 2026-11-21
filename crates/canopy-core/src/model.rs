@@ -166,9 +166,17 @@ pub struct WorktreeRemoval {
     pub untracked: WorktreeLoss,
     /// Ignored files and folders, which git deletes without asking.
     pub ignored: WorktreeLoss,
-    /// Commits only this folder's detached `HEAD` reaches (none when a branch is checked out
-    /// there): no branch contains them, and the removal deletes the `HEAD` and its reflog.
+    /// Commits only this folder's detached `HEAD` or its own refs (`refs/worktree/*`, a
+    /// bisect's refs) reach: no branch, remote branch or tag contains them, and the removal
+    /// deletes the `HEAD`, its reflog and those refs.
     pub unreachable_commits: usize,
+    /// What holds those commits: `HEAD` for a detached `HEAD`, and each of its own refs that
+    /// holds some, by full name.
+    pub held_by: Vec<String>,
+    /// Every ref the folder keeps for itself, by full name, with the commit it points to. A
+    /// ref that moved since the confirmation makes the removal refuse, even when the count and
+    /// [`held_by`](Self::held_by) stay the same.
+    pub own_refs: Vec<(String, Oid)>,
     /// Why Canopy will not remove it, when it will not.
     pub blocked: Option<String>,
     /// A rebase, bisect, merge, cherry-pick or revert in progress in this folder: its state is
@@ -183,7 +191,8 @@ pub struct WorktreeRemoval {
 /// A registered working folder that `git worktree prune` would forget.
 ///
 /// Forgetting deletes the administrative folder `.git/worktrees/<id>`: its `HEAD` and reflog, its
-/// index, any submodule repositories under `modules/` and any rebase or bisect state.
+/// index, its own refs (`refs/worktree/*`, a bisect's refs), any submodule repositories under
+/// `modules/` and any operation in progress (`admin_operation`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForgottenWorktree {
     /// The folder's name inside `.git/worktrees`.
@@ -200,9 +209,13 @@ pub struct ForgottenWorktree {
     pub branch: Option<String>,
     /// The commit its `HEAD` is at.
     pub head: Option<Oid>,
-    /// Commits only this folder's detached `HEAD` reaches: no branch, remote branch or tag
-    /// contains them, and forgetting it deletes the `HEAD`.
+    /// Commits only this folder's detached `HEAD` or its own refs (`refs/worktree/*`, a
+    /// bisect's refs) reach: no branch, remote branch or tag contains them, and forgetting it
+    /// deletes those.
     pub unreachable_commits: usize,
+    /// What holds those commits: `HEAD` when detached, then the names of its own refs that reach
+    /// one of them. Empty when there are none.
+    pub held_by: Vec<String>,
     /// It has submodule repositories under `.git/worktrees/<id>/modules`.
     pub submodule_repositories: bool,
     /// A rebase, bisect, merge, cherry-pick or revert is in progress there, and is lost.

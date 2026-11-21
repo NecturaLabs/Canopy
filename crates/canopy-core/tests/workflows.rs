@@ -7,10 +7,14 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{
     ChangeKind, DiffSource, FlowConfig, FlowFinish, FlowKind, GitOptions, MergedReason,
@@ -35,13 +39,6 @@ fn git_output_os(dir: &Path, args: &[&OsStr]) -> std::process::Output {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        // The fixtures must not depend on the user's global configuration; a missing file reads
-        // as empty.
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            std::env::temp_dir().join("canopy-tests-no-global-gitconfig"),
-        )
         .output()
         .expect("git runs")
 }
@@ -128,6 +125,7 @@ fn flow_twins() -> (tempfile::TempDir, Repo, tempfile::TempDir) {
 
 #[test]
 fn flow_init_writes_the_avh_keys_and_creates_develop() {
+    isolate_git!(flow_init_writes_the_avh_keys_and_creates_develop);
     let (dir, repo) = fixture();
     let p = dir.path();
     assert_eq!(repo.flow_config().expect("config"), None);
@@ -163,6 +161,7 @@ fn flow_init_writes_the_avh_keys_and_creates_develop() {
 
 #[test]
 fn flow_config_reads_custom_prefixes() {
+    isolate_git!(flow_config_reads_custom_prefixes);
     let (dir, repo) = fixture();
     let p = dir.path();
     git(p, &["config", "gitflow.branch.master", "main"]);
@@ -181,6 +180,7 @@ fn flow_config_reads_custom_prefixes() {
 
 #[test]
 fn feature_start_and_finish_match_the_git_commands() {
+    isolate_git!(feature_start_and_finish_match_the_git_commands);
     let (dir, repo, cli) = flow_twins();
     let (p, c) = (dir.path(), cli.path());
 
@@ -207,6 +207,7 @@ fn feature_start_and_finish_match_the_git_commands() {
 
 #[test]
 fn a_single_commit_feature_or_bugfix_finishes_with_a_fast_forward() {
+    isolate_git!(a_single_commit_feature_or_bugfix_finishes_with_a_fast_forward);
     for kind in [FlowKind::Feature, FlowKind::Bugfix] {
         for setting in ["false", "only"] {
             let (dir, repo, cli) = flow_twins();
@@ -233,6 +234,7 @@ fn a_single_commit_feature_or_bugfix_finishes_with_a_fast_forward() {
 
 #[test]
 fn a_diverged_single_commit_feature_finishes_with_a_merge() {
+    isolate_git!(a_diverged_single_commit_feature_finishes_with_a_merge);
     let (dir, repo, cli) = flow_twins();
     let (p, c) = (dir.path(), cli.path());
     let branch = repo
@@ -257,6 +259,7 @@ fn a_diverged_single_commit_feature_finishes_with_a_merge() {
 
 #[test]
 fn bugfix_squash_finish_matches_the_git_commands() {
+    isolate_git!(bugfix_squash_finish_matches_the_git_commands);
     let (dir, repo, cli) = flow_twins();
     let (p, c) = (dir.path(), cli.path());
     repo.flow_start(FlowKind::Bugfix, "crash", Some("main"))
@@ -288,6 +291,7 @@ fn bugfix_squash_finish_matches_the_git_commands() {
 
 #[test]
 fn release_finish_merges_tags_and_merges_back_like_the_git_commands() {
+    isolate_git!(release_finish_merges_tags_and_merges_back_like_the_git_commands);
     let (dir, repo, cli) = flow_twins();
     let (p, c) = (dir.path(), cli.path());
     repo.flow_start(FlowKind::Release, "1.2.0", None)
@@ -320,6 +324,7 @@ fn release_finish_merges_tags_and_merges_back_like_the_git_commands() {
 
 #[test]
 fn hotfix_starts_from_production_and_finishes_without_a_tag() {
+    isolate_git!(hotfix_starts_from_production_and_finishes_without_a_tag);
     let (dir, repo, cli) = flow_twins();
     let (p, c) = (dir.path(), cli.path());
     repo.flow_start(FlowKind::Hotfix, "1.0.1", None)
@@ -351,6 +356,7 @@ fn hotfix_starts_from_production_and_finishes_without_a_tag() {
 
 #[test]
 fn flow_start_refuses_what_git_flow_refuses() {
+    isolate_git!(flow_start_refuses_what_git_flow_refuses);
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     repo.flow_start(FlowKind::Feature, "x", None)
@@ -381,6 +387,7 @@ fn flow_start_refuses_what_git_flow_refuses() {
 
 #[test]
 fn flow_finish_refuses_a_conflict_and_changes_nothing() {
+    isolate_git!(flow_finish_refuses_a_conflict_and_changes_nothing);
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     repo.flow_start(FlowKind::Feature, "clash", None)
@@ -401,6 +408,7 @@ fn flow_finish_refuses_a_conflict_and_changes_nothing() {
 
 #[test]
 fn release_finish_refuses_a_back_merge_conflict_before_merging() {
+    isolate_git!(release_finish_refuses_a_back_merge_conflict_before_merging);
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     repo.flow_start(FlowKind::Hotfix, "1.0.1", None)
@@ -418,6 +426,7 @@ fn release_finish_refuses_a_back_merge_conflict_before_merging() {
 
 #[test]
 fn flow_finish_refuses_a_dirty_tree() {
+    isolate_git!(flow_finish_refuses_a_dirty_tree);
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     repo.flow_start(FlowKind::Feature, "x", None)
@@ -440,6 +449,7 @@ fn flow_finish_refuses_a_dirty_tree() {
 
 #[test]
 fn flow_push_pushes_only_the_finished_refs() {
+    isolate_git!(flow_push_pushes_only_the_finished_refs);
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     let remote = tempfile::tempdir().expect("tempdir");
@@ -472,6 +482,7 @@ fn flow_push_pushes_only_the_finished_refs() {
 
 #[test]
 fn merged_branches_name_the_check_that_matched() {
+    isolate_git!(merged_branches_name_the_check_that_matched);
     let (dir, repo) = fixture();
     let p = dir.path();
     let remote = tempfile::tempdir().expect("tempdir");
@@ -540,6 +551,7 @@ fn merged_branches_name_the_check_that_matched() {
 
 #[test]
 fn merged_branches_keep_the_cause_of_a_base_that_is_no_commit() {
+    isolate_git!(merged_branches_keep_the_cause_of_a_base_that_is_no_commit);
     let (_dir, repo) = fixture();
     // A tree is found but is no commit: libgit2's own reason follows the base's name.
     let error = repo
@@ -558,6 +570,7 @@ fn merged_branches_keep_the_cause_of_a_base_that_is_no_commit() {
 
 #[test]
 fn a_finish_with_rebase_matches_the_git_commands() {
+    isolate_git!(a_finish_with_rebase_matches_the_git_commands);
     let (dir, repo, cli) = flow_twins();
     let (p, c) = (dir.path(), cli.path());
     let branch = repo
@@ -593,6 +606,7 @@ fn a_finish_with_rebase_matches_the_git_commands() {
 
 #[test]
 fn a_rebase_that_conflicts_refuses_and_changes_nothing() {
+    isolate_git!(a_rebase_that_conflicts_refuses_and_changes_nothing);
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     let branch = repo
@@ -629,6 +643,7 @@ fn a_rebase_that_conflicts_refuses_and_changes_nothing() {
 
 #[test]
 fn a_rebase_is_refused_for_a_release() {
+    isolate_git!(a_rebase_is_refused_for_a_release);
     let (_dir, repo, _cli) = flow_twins();
     repo.flow_start(FlowKind::Release, "1.0", None)
         .expect("start");
@@ -645,6 +660,7 @@ fn a_rebase_is_refused_for_a_release() {
 
 #[test]
 fn a_hotfix_finishes_into_the_open_release_instead_of_develop() {
+    isolate_git!(a_hotfix_finishes_into_the_open_release_instead_of_develop);
     let (dir, repo, cli) = flow_twins();
     let (p, c) = (dir.path(), cli.path());
     repo.flow_start(FlowKind::Release, "1.1", None)
@@ -701,6 +717,7 @@ fn a_hotfix_finishes_into_the_open_release_instead_of_develop() {
 
 #[test]
 fn a_back_merge_conflict_with_the_open_release_refuses_before_merging() {
+    isolate_git!(a_back_merge_conflict_with_the_open_release_refuses_before_merging);
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     repo.flow_start(FlowKind::Release, "1.1", None)
@@ -724,6 +741,7 @@ fn a_back_merge_conflict_with_the_open_release_refuses_before_merging() {
 
 #[test]
 fn finishing_needs_git_2_38() {
+    isolate_git!(finishing_needs_git_2_38);
     assert!(flow_finish_requirement(Some((2, 37))).is_some_and(|r| r.contains("Git 2.38")));
     assert!(flow_finish_requirement(None).is_some());
     assert_eq!(flow_finish_requirement(Some((2, 38))), None);
@@ -770,6 +788,7 @@ fn cleanup_fixture() -> (tempfile::TempDir, Repo, tempfile::TempDir) {
 
 #[test]
 fn the_base_is_the_remote_default_branch_and_long_lived_branches_are_protected() {
+    isolate_git!(the_base_is_the_remote_default_branch_and_long_lived_branches_are_protected);
     let (_dir, repo, _remote) = cleanup_fixture();
     let base = repo.branch_base().expect("base").expect("some");
     assert_eq!(base.references, ["main", "origin/main"]);
@@ -779,6 +798,7 @@ fn the_base_is_the_remote_default_branch_and_long_lived_branches_are_protected()
 
 #[test]
 fn the_base_is_develop_in_a_git_flow_repository() {
+    isolate_git!(the_base_is_develop_in_a_git_flow_repository);
     let (_dir, repo, _cli) = flow_twins();
     let base = repo.branch_base().expect("base").expect("some");
     assert_eq!(base.references, ["develop"]);
@@ -788,6 +808,7 @@ fn the_base_is_develop_in_a_git_flow_repository() {
 
 #[test]
 fn a_repository_without_a_default_branch_has_no_base() {
+    isolate_git!(a_repository_without_a_default_branch_has_no_base);
     let dir = tempfile::tempdir().expect("tempdir");
     git(dir.path(), &["init", "-q", "-b", "trunk"]);
     let repo = Repo::open(dir.path()).expect("open");
@@ -796,6 +817,7 @@ fn a_repository_without_a_default_branch_has_no_base() {
 
 #[test]
 fn removal_deletes_proven_branches_with_d_and_heuristic_ones_only_when_allowed() {
+    isolate_git!(removal_deletes_proven_branches_with_d_and_heuristic_ones_only_when_allowed);
     let (dir, repo, _remote) = cleanup_fixture();
     let p = dir.path();
     let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
@@ -856,6 +878,7 @@ fn removal_deletes_proven_branches_with_d_and_heuristic_ones_only_when_allowed()
 
 #[test]
 fn a_merge_made_on_the_server_counts_though_the_local_base_is_behind() {
+    isolate_git!(a_merge_made_on_the_server_counts_though_the_local_base_is_behind);
     let (dir, repo, _remote) = cleanup_fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "-c", "on-server", "main"]);
@@ -876,6 +899,7 @@ fn a_merge_made_on_the_server_counts_though_the_local_base_is_behind() {
 
 #[test]
 fn git_refusing_one_branch_is_reported_and_the_others_still_go() {
+    isolate_git!(git_refusing_one_branch_is_reported_and_the_others_still_go);
     let (dir, repo, _remote) = cleanup_fixture();
     let p = dir.path();
     // `branch -d` compares with HEAD when a branch has no upstream: from a branch that lacks the
@@ -907,6 +931,7 @@ fn git_refusing_one_branch_is_reported_and_the_others_still_go() {
 
 #[test]
 fn a_branch_updates_from_the_base_its_kind_or_remote_names() {
+    isolate_git!(a_branch_updates_from_the_base_its_kind_or_remote_names);
     let (_dir, repo, _remote) = cleanup_fixture();
     assert_eq!(
         repo.update_base("feature/open").expect("base"),
@@ -930,6 +955,7 @@ fn a_branch_updates_from_the_base_its_kind_or_remote_names() {
 
 #[test]
 fn updating_from_the_base_merges_or_rebases_what_the_base_gained() {
+    isolate_git!(updating_from_the_base_merges_or_rebases_what_the_base_gained);
     for strategy in [PullStrategy::Merge, PullStrategy::Rebase] {
         let (dir, repo, _remote) = cleanup_fixture();
         let p = dir.path();
@@ -973,6 +999,7 @@ fn updating_from_the_base_merges_or_rebases_what_the_base_gained() {
 
 #[test]
 fn updating_from_the_base_fast_forwards_a_branch_that_only_fell_behind() {
+    isolate_git!(updating_from_the_base_fast_forwards_a_branch_that_only_fell_behind);
     let (dir, repo, _remote) = cleanup_fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "-c", "behind", "main~1"]);
@@ -997,6 +1024,7 @@ fn updating_from_the_base_fast_forwards_a_branch_that_only_fell_behind() {
 
 #[test]
 fn a_fast_forward_only_update_refuses_diverged_branches() {
+    isolate_git!(a_fast_forward_only_update_refuses_diverged_branches);
     let (dir, repo, _remote) = cleanup_fixture();
     let p = dir.path();
     git(p, &["switch", "-q", "main"]);
@@ -1017,6 +1045,7 @@ fn a_fast_forward_only_update_refuses_diverged_branches() {
 
 #[test]
 fn comparing_with_an_unknown_base_names_it() {
+    isolate_git!(comparing_with_an_unknown_base_names_it);
     let (_dir, repo, _remote) = cleanup_fixture();
     let error = repo.compare_base("origin/nope").unwrap_err().to_string();
     assert!(
@@ -1028,6 +1057,7 @@ fn comparing_with_an_unknown_base_names_it() {
 
 #[test]
 fn a_snapshot_carries_the_feature_branch_facts() {
+    isolate_git!(a_snapshot_carries_the_feature_branch_facts);
     let (_dir, flow, _cli) = flow_twins();
     flow.flow_start(FlowKind::Feature, "x", None)
         .expect("start");
@@ -1075,6 +1105,7 @@ fn lfs_fixture() -> (tempfile::TempDir, Repo) {
 
 #[test]
 fn status_marks_lfs_entries() {
+    isolate_git!(status_marks_lfs_entries);
     let (dir, repo) = lfs_fixture();
     let p = dir.path();
     fs::write(p.join("big.bin"), pointer_text(99)).expect("write");
@@ -1124,6 +1155,7 @@ fn assert_inside(actual: &Path, folder: &Path, rest: &Path) {
 
 #[test]
 fn lfs_files_report_whether_objects_are_downloaded() {
+    isolate_git!(lfs_files_report_whether_objects_are_downloaded);
     let (dir, repo) = lfs_fixture();
     let p = dir.path();
     let files = repo.lfs_files().expect("lfs files");
@@ -1201,6 +1233,7 @@ fn submodule_fixture() -> (tempfile::TempDir, Repo, std::path::PathBuf) {
 
 #[test]
 fn submodule_status_reads_ids_and_states() {
+    isolate_git!(submodule_status_reads_ids_and_states);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let list = repo.submodules(true).expect("submodules");
@@ -1244,6 +1277,7 @@ fn submodule_status_reads_ids_and_states() {
 
 #[test]
 fn submodule_update_reactivates_and_checks_out_the_recorded_commit() {
+    isolate_git!(submodule_update_reactivates_and_checks_out_the_recorded_commit);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
@@ -1265,6 +1299,7 @@ fn submodule_update_reactivates_and_checks_out_the_recorded_commit() {
 
 #[test]
 fn submodule_sync_copies_the_url_into_the_configuration() {
+    isolate_git!(submodule_sync_copies_the_url_into_the_configuration);
     let (dir, repo, _sub) = submodule_fixture();
     let sup = dir.path().join("super");
     git(
@@ -1286,6 +1321,7 @@ fn submodule_sync_copies_the_url_into_the_configuration() {
 
 #[test]
 fn submodule_add_adopts_a_repository_already_in_place() {
+    isolate_git!(submodule_add_adopts_a_repository_already_in_place);
     let (dir, repo, _sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let lib = dir.path().join("lib");
@@ -1318,6 +1354,7 @@ fn submodule_add_adopts_a_repository_already_in_place() {
 
 #[test]
 fn following_submodules_checks_out_the_recorded_commit_unless_told_not_to() {
+    isolate_git!(following_submodules_checks_out_the_recorded_commit_unless_told_not_to);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let recorded = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
@@ -1353,6 +1390,7 @@ fn following_submodules_checks_out_the_recorded_commit_unless_told_not_to() {
 
 #[test]
 fn following_submodules_leaves_a_deinitialised_one_alone() {
+    isolate_git!(following_submodules_leaves_a_deinitialised_one_alone);
     let (dir, repo, _sub) = submodule_fixture();
     let sup = dir.path().join("super");
     git(&sup, &["submodule", "deinit", "-q", "-f", "deps/lib"]);
@@ -1374,6 +1412,7 @@ fn following_submodules_leaves_a_deinitialised_one_alone() {
 
 #[test]
 fn a_checkout_moves_submodules_only_as_canopy_or_a_followed_configuration_says() {
+    isolate_git!(a_checkout_moves_submodules_only_as_canopy_or_a_followed_configuration_says);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let first = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
@@ -1409,6 +1448,7 @@ fn a_checkout_moves_submodules_only_as_canopy_or_a_followed_configuration_says()
 /// `git submodule update` keeps it, so Canopy moves submodules only that way.
 #[test]
 fn a_checkout_keeps_uncommitted_edits_inside_a_submodule_when_git_recurses() {
+    isolate_git!(a_checkout_keeps_uncommitted_edits_inside_a_submodule_when_git_recurses);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let first = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
@@ -1433,6 +1473,7 @@ fn a_checkout_keeps_uncommitted_edits_inside_a_submodule_when_git_recurses() {
 
 #[test]
 fn a_snapshot_lists_the_submodules() {
+    isolate_git!(a_snapshot_lists_the_submodules);
     let (_dir, repo, _sub) = submodule_fixture();
     let snap = repo.snapshot(10).expect("snapshot");
     let paths: Vec<_> = snap.submodules.iter().map(|s| s.path.as_str()).collect();
@@ -1442,6 +1483,7 @@ fn a_snapshot_lists_the_submodules() {
 
 #[test]
 fn a_submodule_needs_a_plain_relative_folder_and_a_url_without_credentials() {
+    isolate_git!(a_submodule_needs_a_plain_relative_folder_and_a_url_without_credentials);
     let ok = "https://example.com/lib.git";
     assert_eq!(submodule_add_problem(ok, "deps/lib"), None);
     assert_eq!(
@@ -1477,6 +1519,7 @@ fn a_submodule_needs_a_plain_relative_folder_and_a_url_without_credentials() {
 
 #[test]
 fn submodule_add_refuses_an_unsafe_folder_before_running_git() {
+    isolate_git!(submodule_add_refuses_an_unsafe_folder_before_running_git);
     let (dir, repo, _sub) = submodule_fixture();
     let url = dir.path().join("lib").to_string_lossy().into_owned();
     let sup = dir.path().join("super");
@@ -1488,6 +1531,7 @@ fn submodule_add_refuses_an_unsafe_folder_before_running_git() {
 
 #[test]
 fn submodule_remove_deinits_removes_and_cleans_the_module_directory() {
+    isolate_git!(submodule_remove_deinits_removes_and_cleans_the_module_directory);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let modules = sup.join(".git").join("modules").join("deps").join("lib");
@@ -1511,6 +1555,7 @@ fn submodule_remove_deinits_removes_and_cleans_the_module_directory() {
 
 #[test]
 fn submodule_diff_gives_both_commits_and_whether_they_exist_locally() {
+    isolate_git!(submodule_diff_gives_both_commits_and_whether_they_exist_locally);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let old = git(&sup, &["rev-parse", "HEAD:deps/lib"]);
@@ -1606,6 +1651,7 @@ fn submodule_diff_gives_both_commits_and_whether_they_exist_locally() {
 
 #[test]
 fn submodule_conflict_is_reported() {
+    isolate_git!(submodule_conflict_is_reported);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     // Two commits that do not contain each other, so git cannot fast-forward the pointer.
@@ -1635,6 +1681,7 @@ fn submodule_conflict_is_reported() {
 
 #[test]
 fn submodule_remove_refuses_a_name_that_holds_another_submodules_repository() {
+    isolate_git!(submodule_remove_refuses_a_name_that_holds_another_submodules_repository);
     let (dir, repo) = fixture();
     let p = dir.path();
     // Git refuses to create nested module directories itself; a hand-written `.gitmodules` can
@@ -1668,6 +1715,7 @@ fn submodule_remove_refuses_a_name_that_holds_another_submodules_repository() {
 
 #[test]
 fn submodule_remove_cleans_the_directory_of_its_name_not_its_path() {
+    isolate_git!(submodule_remove_cleans_the_directory_of_its_name_not_its_path);
     let (dir, repo, _sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let url = dir.path().join("lib").to_string_lossy().into_owned();
@@ -1706,6 +1754,7 @@ fn submodule_remove_cleans_the_directory_of_its_name_not_its_path() {
 
 #[test]
 fn flow_refuses_a_name_that_makes_an_invalid_tag_before_changing_anything() {
+    isolate_git!(flow_refuses_a_name_that_makes_an_invalid_tag_before_changing_anything);
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     git(p, &["config", "gitflow.prefix.versiontag", ""]);
@@ -1724,6 +1773,7 @@ fn flow_refuses_a_name_that_makes_an_invalid_tag_before_changing_anything() {
 
 #[test]
 fn submodule_remove_refuses_unstaged_gitmodules_changes() {
+    isolate_git!(submodule_remove_refuses_unstaged_gitmodules_changes);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let mut text = fs::read_to_string(sup.join(".gitmodules")).expect("read");
@@ -1743,6 +1793,7 @@ fn submodule_remove_refuses_unstaged_gitmodules_changes() {
 #[cfg(unix)]
 #[test]
 fn submodule_remove_refuses_a_module_directory_behind_a_symlink() {
+    isolate_git!(submodule_remove_refuses_a_module_directory_behind_a_symlink);
     let (dir, repo, _sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let modules = sup.join(".git").join("modules");
@@ -1772,6 +1823,9 @@ fn submodule_row(repo: &Repo) -> Vec<canopy_core::FileEntry> {
 /// `git checkout -- <submodule>` alone did nothing, whatever the row showed.
 #[test]
 fn discarding_a_submodule_restores_what_the_superproject_records_and_keeps_untracked_files() {
+    isolate_git!(
+        discarding_a_submodule_restores_what_the_superproject_records_and_keeps_untracked_files
+    );
     for recurse in [false, true] {
         let (dir, repo, sub) = submodule_fixture();
         let sup = dir.path().join("super");
@@ -1812,6 +1866,7 @@ fn discarding_a_submodule_restores_what_the_superproject_records_and_keeps_untra
 /// commit: Discard refuses and changes nothing.
 #[test]
 fn discarding_a_submodule_refuses_to_strand_a_commit_on_no_branch() {
+    isolate_git!(discarding_a_submodule_refuses_to_strand_a_commit_on_no_branch);
     for recurse in [false, true] {
         let (dir, repo, sub) = submodule_fixture();
         git(
@@ -1843,6 +1898,7 @@ fn discarding_a_submodule_refuses_to_strand_a_commit_on_no_branch() {
 /// recorded commit instead of failing on the missing folder.
 #[test]
 fn discarding_a_submodule_whose_folder_was_deleted_checks_it_out_again() {
+    isolate_git!(discarding_a_submodule_whose_folder_was_deleted_checks_it_out_again);
     for recurse in [false, true] {
         let (dir, repo, sub) = submodule_fixture();
         let sup = dir.path().join("super");
@@ -1869,6 +1925,7 @@ fn discarding_a_submodule_whose_folder_was_deleted_checks_it_out_again() {
 /// ignored files stay.
 #[test]
 fn discarding_a_submodule_deletes_its_untracked_files_when_chosen() {
+    isolate_git!(discarding_a_submodule_deletes_its_untracked_files_when_chosen);
     for recurse in [false, true] {
         let (dir, repo, sub) = submodule_fixture();
         git(
@@ -1906,6 +1963,7 @@ fn discarding_a_submodule_deletes_its_untracked_files_when_chosen() {
 /// Keep-untracked Discard must refuse before changing anything, whatever recursive setting Git has.
 #[test]
 fn discarding_a_submodule_refuses_to_delete_an_obstructing_untracked_path() {
+    isolate_git!(discarding_a_submodule_refuses_to_delete_an_obstructing_untracked_path);
     for recurse in [false, true] {
         let (dir, repo, sub) = submodule_fixture();
         git(
@@ -1935,6 +1993,7 @@ fn discarding_a_submodule_refuses_to_delete_an_obstructing_untracked_path() {
 /// obstructing a tracked path is refused too.
 #[test]
 fn discarding_a_submodule_refuses_to_delete_an_obstructing_ignored_path() {
+    isolate_git!(discarding_a_submodule_refuses_to_delete_an_obstructing_ignored_path);
     let (dir, repo, sub) = submodule_fixture();
     let _ = dir;
     fs::write(sub.join(".gitignore"), "a.txt\n").expect("ignore");
@@ -1959,6 +2018,7 @@ fn discarding_a_submodule_refuses_to_delete_an_obstructing_ignored_path() {
 /// on a case-insensitive or normalizing one the canonical-path preflight sees the collision.
 #[test]
 fn discarding_a_submodule_allows_an_unrelated_case_variant_path() {
+    isolate_git!(discarding_a_submodule_allows_an_unrelated_case_variant_path);
     let (dir, repo, sub) = submodule_fixture();
     let _ = dir;
     fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
@@ -1992,6 +2052,7 @@ fn discarding_a_submodule_allows_an_unrelated_case_variant_path() {
 /// directory at that path.
 #[test]
 fn discarding_a_submodule_refuses_an_obstruction_after_a_staged_deletion() {
+    isolate_git!(discarding_a_submodule_refuses_an_obstruction_after_a_staged_deletion);
     let (dir, repo, sub) = submodule_fixture();
     let _ = dir;
     git(&sub, &["rm", "--cached", "-q", "a.txt"]);
@@ -2014,6 +2075,7 @@ fn discarding_a_submodule_refuses_an_obstruction_after_a_staged_deletion() {
 #[test]
 fn discarding_a_submodule_replaces_a_dangling_symlink() {
     use std::os::unix::fs::symlink;
+    isolate_git!(discarding_a_submodule_replaces_a_dangling_symlink);
     let (dir, repo, sub) = submodule_fixture();
     let _ = dir;
     fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
@@ -2032,6 +2094,7 @@ fn discarding_a_submodule_replaces_a_dangling_symlink() {
 /// deleted: reset restores the latter and leaves the former alone.
 #[test]
 fn discarding_a_submodule_allows_an_unrelated_untracked_file_beside_a_deletion() {
+    isolate_git!(discarding_a_submodule_allows_an_unrelated_untracked_file_beside_a_deletion);
     let (dir, repo, sub) = submodule_fixture();
     let _ = dir;
     fs::remove_file(sub.join("a.txt")).expect("remove tracked file");
@@ -2053,6 +2116,7 @@ fn discarding_a_submodule_allows_an_unrelated_untracked_file_beside_a_deletion()
 /// turn a reported refusal into a partial Discard.
 #[test]
 fn discarding_multiple_submodules_checks_all_before_resetting_any() {
+    isolate_git!(discarding_multiple_submodules_checks_all_before_resetting_any);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     let url = dir.path().join("lib").to_string_lossy().into_owned();
@@ -2105,6 +2169,7 @@ fn discarding_multiple_submodules_checks_all_before_resetting_any() {
 /// A submodule path is a literal path, never a pathspec that can select another submodule.
 #[test]
 fn discarding_a_submodule_with_glob_characters_touches_only_its_literal_path() {
+    isolate_git!(discarding_a_submodule_with_glob_characters_touches_only_its_literal_path);
     for recurse in [false, true] {
         let (dir, repo, _sub) = submodule_fixture();
         let sup = dir.path().join("super");
@@ -2175,6 +2240,7 @@ fn discarding_a_submodule_with_glob_characters_touches_only_its_literal_path() {
 #[test]
 fn discarding_a_submodule_uses_its_non_utf8_path() {
     use std::os::unix::ffi::OsStrExt;
+    isolate_git!(discarding_a_submodule_uses_its_non_utf8_path);
     let dir = tempfile::tempdir().expect("tempdir");
     let lib = dir.path().join("lib");
     let sup = dir.path().join("super");
@@ -2230,6 +2296,7 @@ fn discarding_a_submodule_uses_its_non_utf8_path() {
 /// Canopy's explicit update afterwards preserves it.
 #[test]
 fn rebasing_keeps_edits_inside_submodules() {
+    isolate_git!(rebasing_keeps_edits_inside_submodules);
     let (dir, repo, sub) = submodule_fixture();
     let sup = dir.path().join("super");
     git(&sup, &["switch", "-q", "-c", "topic"]);

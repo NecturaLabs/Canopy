@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use git2::{BranchType, Oid, Repository, Sort};
+use git2::{BranchType, Oid, Repository, Revwalk, Sort};
 
 use crate::diff::{self, DiffSource, FileDiff, Whitespace};
 use crate::graph;
@@ -504,9 +504,11 @@ impl Repo {
         let mut walk = self.git.revwalk()?;
         walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
         let _ = walk.push_head();
-        walk.push_glob("refs/heads")?;
-        walk.push_glob("refs/remotes")?;
-        walk.push_glob("refs/tags")?;
+        push_refs(
+            &self.git,
+            &mut walk,
+            &["refs/heads/*", "refs/remotes/*", "refs/tags/*"],
+        )?;
         let mut out = Vec::with_capacity(max_commits.min(MAX_PREALLOCATED_COMMITS));
         let mut truncated = false;
         for oid in walk {
@@ -525,6 +527,49 @@ impl Repo {
             });
         }
         Ok((out, truncated))
+    }
+
+    /// Whether `git branch -d` refuses the local branch `name` as not fully merged: it exists, is
+    /// checked out in no working folder (git refuses that first), and its commit is not in its
+    /// upstream, or in `HEAD` when the upstream does not resolve (git's own rule). Read from the
+    /// repository, so it holds whatever language git answers in.
+    pub fn branch_unmerged(&self, name: &str) -> Result<bool> {
+        let branch = match self.git.find_branch(name, BranchType::Local) {
+            Ok(branch) => branch,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        if self
+            .worktrees()
+            .iter()
+            .any(|w| w.branch.as_deref() == Some(name))
+        {
+            return Ok(false);
+        }
+        let tip = branch.get().peel_to_commit()?.id();
+        let upstream = branch
+            .upstream()
+            .ok()
+            .and_then(|u| u.get().peel_to_commit().ok())
+            .map(|c| c.id());
+        let head = || {
+            self.git
+                .head()
+                .ok()
+                .and_then(|h| h.peel_to_commit().ok())
+                .map(|c| c.id())
+        };
+        Ok(match upstream.or_else(head) {
+            Some(reference) => reference != tip && !self.git.graph_descendant_of(reference, tip)?,
+            // No upstream and no commit checked out: git keeps the branch.
+            None => true,
+        })
+    }
+
+    /// The first line of `oid`'s message (what the history list shows for it).
+    pub fn subject(&self, oid: Oid) -> Result<String> {
+        let commit = self.git.find_commit(oid)?;
+        Ok(String::from_utf8_lossy(commit.summary_bytes().unwrap_or_default()).into_owned())
     }
 
     /// Gathers everything the main window shows, in one consistent read. Offline: in a partial
@@ -1018,4 +1063,21 @@ impl Repo {
     pub fn config_string(&self, key: &str) -> Option<String> {
         self.git.config().ok()?.get_string(key).ok()
     }
+}
+
+/// Pushes onto `walk` the commit each ref matching one of `globs` leads to. Unlike
+/// [`Revwalk::push_glob`], it reads the commit from the ref itself, not by looking the name up
+/// again, which fails for a name over libgit2's length limit (#270). Each glob lists only its
+/// own folder, as `push_glob` does, so a ref folder deeper than libgit2 lists (100 levels)
+/// elsewhere hides nothing. As with `push_glob`, a ref that leads to no commit (a tag of a tree,
+/// a missing object) is passed over.
+pub(crate) fn push_refs(git: &Repository, walk: &mut Revwalk<'_>, globs: &[&str]) -> Result<()> {
+    for glob in globs {
+        for reference in git.references_glob(glob)? {
+            if let Ok(commit) = reference?.peel_to_commit() {
+                walk.push(commit.id())?;
+            }
+        }
+    }
+    Ok(())
 }

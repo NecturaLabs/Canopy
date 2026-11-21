@@ -1,6 +1,6 @@
 ---
 name: agent-orchestration
-description: Decide whether to delegate Canopy work to subagents (including the canopy-git, canopy-review, canopy-visual-qa and canopy-ux-research agents) or a scripted workflow, and run the delegation well — topology from real data dependencies, fan-out width, minimal context packets, disjoint write ownership, model and effort per node, monitoring, failure handling and handoff validation. Use when a task is about to be split across subagents, parallel workers or a workflow graph, or when a running delegation needs steering. Not for work done directly in one session, and not for reviewing a finished change (independent-review).
+description: Decide whether to delegate Canopy work to subagents (including the canopy-git, canopy-review, canopy-visual-qa, canopy-ux-research and canopy-slop-check agents) or a scripted workflow, and run the delegation well — topology from real data dependencies, fan-out width, minimal context packets, disjoint write ownership, model and effort per node, monitoring, failure handling and handoff validation. Use when a task is about to be split across subagents, parallel workers or a workflow graph, or when a running delegation needs steering. Not for work done directly in one session, and not for reviewing a finished change (independent-review).
 license: MIT (NecturaLabs); see LICENSE.txt
 ---
 
@@ -67,6 +67,7 @@ repository sets no model or effort; they come from your harness's own settings.
 |---|---|---|---|
 | Git semantics and the `canopy-core` function plus its tests | `canopy-git` | `crates/canopy-core/` | Upstream of the worker, UI and docs steps of `add-git-operation` |
 | How other clients solve a UX question | `canopy-ux-research` | Nothing | Before design; read-only, may fan out wider |
+| Wording of PR text, comments, UI copy, docs | `canopy-slop-check` | Nothing | Before a PR is opened and before it is merged; read-only |
 | Rendering and visual defects | `canopy-visual-qa` | Images and fixtures in a scratch directory only | After a visible change lands in the tree |
 | Independent review of a finished diff | `canopy-review` | Nothing | Last, briefed per `independent-review` |
 

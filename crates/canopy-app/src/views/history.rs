@@ -16,6 +16,7 @@ use crate::tab::RepoTab;
 use crate::ui::kit::a11y;
 use crate::ui::kit::anim::Flip;
 use crate::ui::kit::avatar::{self, Person};
+use crate::ui::kit::chip::Badge;
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::SearchField;
 use crate::ui::kit::git::RefPill;
@@ -41,6 +42,14 @@ const CELL_PAD: f32 = 10.0;
 const GRAPH_LABEL_X: f32 = 12.0;
 /// Gap between ref pills, and between the last pill and the summary.
 const PILL_GAP: f32 = 6.0;
+/// The widest one ref pill gets; a longer name is cut with an ellipsis.
+const PILL_MAX: f32 = 220.0;
+/// The share of the description column a row's pills take at most, and the narrowest the
+/// summary after them gets while the column has room for it.
+const PILLS_SHARE: f32 = 0.55;
+const SUMMARY_MIN: f32 = 160.0;
+/// The narrowest a pill is cut to before it goes into the "+N" badge instead.
+const PILL_MIN: f32 = 64.0;
 /// Gap between an author's avatar and name.
 const AVATAR_GAP: f32 = 8.0;
 /// The shortest the details pane gets below the table; a window without room for it and the
@@ -354,6 +363,75 @@ fn longest_dates(relative: bool, iso: bool) -> &'static [&'static str] {
     }
 }
 
+/// A row's ref pills as laid out in its description column.
+struct PlacedPills {
+    /// Each pill shown, its left edge, and its full name when the pill is cut.
+    shown: Vec<(RefPill, f32, Option<String>)>,
+    /// The "+N" badge for the refs that did not fit, its left edge, and their names.
+    overflow: Option<(Badge, f32, String)>,
+    /// Where the summary starts.
+    summary_x: f32,
+}
+
+/// Lays out a row's `labels` as pills from `left`, in their order (the checked-out branch first),
+/// so the summary keeps the rest of the column up to `right`: each pill is at most `PILL_MAX`
+/// wide, the pills take at most `PILLS_SHARE` of the column and leave the summary `SUMMARY_MIN`
+/// while the column has it, and the ones that do not fit go into one "+N" badge.
+fn place_pills(
+    ui: &Ui,
+    labels: &[canopy_core::RefLabel],
+    lane: u16,
+    left: f32,
+    right: f32,
+) -> PlacedPills {
+    let column = (right - left).max(0.0);
+    let budget = (column * PILLS_SHARE).min((column - SUMMARY_MIN).max(0.0));
+    let end = left + budget;
+    let badge = |n: usize| Badge::new(format!("+{n}"));
+    let mut shown = Vec::new();
+    let mut overflow = None;
+    let mut x = left;
+    for (i, label) in labels.iter().enumerate() {
+        let rest = labels.len() - i - 1;
+        let reserve = if rest > 0 {
+            badge(rest).measure(ui).x + PILL_GAP
+        } else {
+            0.0
+        };
+        let room = end - x - reserve;
+        let whole = RefPill::from_label(label, lane);
+        let full_width = whole.width(ui);
+        let pill = whole.max_width(PILL_MAX.min(room));
+        let width = pill.width(ui);
+        if width > room || (width < full_width && room < PILL_MIN) {
+            let hidden = &labels[i..];
+            let names: Vec<&str> = hidden.iter().map(ref_name).collect();
+            if x + badge(hidden.len()).measure(ui).x <= right {
+                overflow = Some((badge(hidden.len()), x, names.join("\n")));
+                x += badge(hidden.len()).measure(ui).x + PILL_GAP;
+            }
+            break;
+        }
+        let full = (width < full_width).then(|| ref_name(label).to_owned());
+        shown.push((pill, x, full));
+        x += width + PILL_GAP;
+    }
+    PlacedPills {
+        shown,
+        overflow,
+        summary_x: x,
+    }
+}
+
+/// The name a ref pill stands for.
+fn ref_name(label: &canopy_core::RefLabel) -> &str {
+    if label.kind == canopy_core::RefKind::Head {
+        "HEAD"
+    } else {
+        &label.name
+    }
+}
+
 /// The Date column's width: `base`, or more when `measure` says its longest text needs it.
 fn date_column_width(base: f32, relative: bool, iso: bool, measure: impl Fn(&str) -> f32) -> f32 {
     longest_dates(relative, iso)
@@ -575,18 +653,14 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
 
             // Ref pills, then the summary after them.
             let desc_right = author_x - CELL_PAD;
-            let mut pills = Vec::new();
-            let mut x = desc_x + CELL_PAD;
-            for l in snap.refs.get(&c.oid).into_iter().flatten() {
-                if x > desc_right - 40.0 {
-                    break;
-                }
-                let pill = RefPill::from_label(l, lane);
-                let left = x;
-                x += pill.width(ui) + PILL_GAP;
-                pills.push((pill, left));
-            }
-            let summary_x = x;
+            let pills = place_pills(
+                ui,
+                snap.refs.get(&c.oid).map_or(&[], Vec::as_slice),
+                lane,
+                desc_x + CELL_PAD,
+                desc_right,
+            );
+            let summary_x = pills.summary_x;
             let date = date_text(c.author.time);
             if selected {
                 roving.follow(ui.ctx(), ri);
@@ -663,15 +737,30 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                             );
                         }
                     });
-                if !pills.is_empty() {
+                // Over a cut pill or the "+N" badge, the tooltip names what they hide.
+                let mut pill_tip = None;
+                if !pills.shown.is_empty() || pills.overflow.is_some() {
                     let clip = Rect::from_min_max(
                         pos2(desc_x, response.rect.top()),
                         pos2(desc_right, response.rect.bottom()),
                     )
                     .intersect(ui.clip_rect());
                     let painter = ui.painter().with_clip_rect(clip);
-                    for (pill, left) in &pills {
-                        pill.paint(ui, &painter, *left, response.rect.center().y);
+                    let cy = response.rect.center().y;
+                    let pointer = ui.ctx().pointer_hover_pos().filter(|_| response.hovered());
+                    for (pill, left, full) in &pills.shown {
+                        let rect = pill.paint(ui, &painter, *left, cy);
+                        if full.is_some() && pointer.is_some_and(|at| rect.contains(at)) {
+                            pill_tip.clone_from(full);
+                        }
+                    }
+                    if let Some((badge, left, hidden)) = &pills.overflow {
+                        let size = badge.measure(ui);
+                        let rect = Rect::from_min_size(pos2(*left, cy - size.y / 2.0), size);
+                        badge.paint(ui, rect);
+                        if pointer.is_some_and(|at| rect.contains(at)) {
+                            pill_tip = Some(hidden.clone());
+                        }
                     }
                 }
                 // The row paints its own columns; screen readers get the commit in one sentence,
@@ -683,16 +772,19 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 );
                 ui.ctx()
                     .accesskit_node_builder(response.id, |n| n.set_label(info));
-                let response = response
-                    .kit_tooltip(c.summary.as_str())
-                    .detail(format!(
-                        "{} <{}>\n{}",
-                        c.author.name,
-                        c.author.email,
-                        widgets::full_date(c.author.time, c.author.offset_minutes)
-                    ))
-                    .at_pointer()
-                    .show();
+                let response = match pill_tip {
+                    Some(tip) => response.kit_tooltip(tip).at_pointer().show(),
+                    None => response
+                        .kit_tooltip(c.summary.as_str())
+                        .detail(format!(
+                            "{} <{}>\n{}",
+                            c.author.name,
+                            c.author.email,
+                            widgets::full_date(c.author.time, c.author.offset_minutes)
+                        ))
+                        .at_pointer()
+                        .show(),
+                };
                 // A right-click selects the commit its menu acts on.
                 if response.clicked() || response.secondary_clicked() {
                     clicked = Some(c.oid);
@@ -911,6 +1003,11 @@ mod tests {
     use egui::Pos2;
 
     use super::*;
+
+    /// The fixture commits' time, 2024-01-02T12:00:00Z: noon UTC, so no zone from UTC-12 to UTC+14
+    /// moves it across a month or year boundary. The details test takes its expected date from
+    /// `widgets::absolute_date`, which formats in the local zone.
+    const FIXTURE_TIME: i64 = 1_704_196_800;
 
     /// The Date column grows to hold its longest text instead of cutting "10 minutes ago".
     #[test]
@@ -1219,7 +1316,7 @@ mod tests {
         let author = canopy_core::Signature {
             name: "Author".into(),
             email: "author@example.com".into(),
-            time: 0,
+            time: FIXTURE_TIME,
             offset_minutes: 0,
         };
         let oid = Oid::from_bytes(&[1; 20]).expect("fixture oid");
@@ -1461,7 +1558,9 @@ mod tests {
                 diff.hunks[0].lines.truncate(7);
                 tab.diff = Some(std::sync::Arc::new(diff));
                 let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
-                for text in ["Author", "0101010", "Jan 1, 1970", "file.rs", "other.rs"] {
+                let date = widgets::absolute_date(FIXTURE_TIME);
+                assert!(!date.is_empty(), "the fixture time formats as a date");
+                for text in ["Author", "0101010", date.as_str(), "file.rs", "other.rs"] {
                     assert!(
                         visible.iter().any(|t| t == text),
                         "{style:?} {density:?}: {text} must show whole: {visible:?}"
@@ -2286,6 +2385,55 @@ mod tests {
     /// The history's ref pills keep their labels readable on every surface a row can have, in
     /// every theme, style and lane colour: white where white reads, otherwise its commit's lane
     /// colour.
+    /// A long branch name leaves the summary its room, and pills that do not fit a narrow column
+    /// go into one "+N" badge whose tooltip lists them (audit F2).
+    #[test]
+    fn ref_pills_leave_the_summary_room_and_collapse_into_a_count() {
+        use canopy_core::{RefKind, RefLabel};
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let label = |name: &str, kind| RefLabel {
+            name: name.into(),
+            kind,
+        };
+        let long = format!("feature/{}-end", "very-long-branch-name-".repeat(6));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let one = [label(&long, RefKind::CurrentBranch)];
+            let placed = place_pills(ui, &one, 0, 0.0, 1000.0);
+            assert_eq!(placed.shown.len(), 1);
+            let (pill, _, full) = &placed.shown[0];
+            assert!(pill.width(ui) <= PILL_MAX, "{}", pill.width(ui));
+            assert_eq!(
+                full.as_deref(),
+                Some(long.as_str()),
+                "a cut pill names itself"
+            );
+            assert!(1000.0 - placed.summary_x >= SUMMARY_MIN);
+
+            let five: Vec<_> = ["main", "origin/main", "v1.2.0", "release/1.2", "hotfix/a"]
+                .into_iter()
+                .map(|n| label(n, RefKind::LocalBranch))
+                .collect();
+            let placed = place_pills(ui, &five, 0, 0.0, 300.0);
+            let (badge, _, hidden) = placed.overflow.as_ref().expect("a +N badge");
+            let count = five.len() - placed.shown.len();
+            assert!(count > 0);
+            assert_eq!(hidden.lines().count(), count, "{hidden}");
+            assert!(badge.measure(ui).x > 0.0);
+            assert!(
+                300.0 - placed.summary_x >= SUMMARY_MIN,
+                "{}",
+                placed.summary_x
+            );
+
+            let short = [label("main", RefKind::CurrentBranch)];
+            let placed = place_pills(ui, &short, 0, 0.0, 1000.0);
+            assert!(placed.overflow.is_none() && placed.shown[0].2.is_none());
+        });
+        output.textures_delta.clear();
+    }
+
     #[test]
     fn rendered_ref_pills_label_readably_in_their_lane_colour() {
         use canopy_core::{RefKind, RefLabel};
