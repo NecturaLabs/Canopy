@@ -7,10 +7,14 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::{GitOptions, GoneBranch, Repo};
 
@@ -27,13 +31,6 @@ fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        // The fixtures must not depend on the user's global configuration; a missing file reads
-        // as empty.
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            std::env::temp_dir().join("canopy-tests-no-global-gitconfig"),
-        )
         .output()
         .expect("git runs")
 }
@@ -158,6 +155,7 @@ fn fetch(repo: &Repo, prune: bool) {
 
 #[test]
 fn only_merged_branches_whose_upstream_is_gone_are_deleted() {
+    isolate_git!(only_merged_branches_whose_upstream_is_gone_are_deleted);
     let root = tempfile::tempdir().expect("tempdir");
     let work = scenario(root.path());
     let repo = open(&work);
@@ -195,6 +193,7 @@ fn only_merged_branches_whose_upstream_is_gone_are_deleted() {
 /// leaving out the checked-out one, those in other worktrees and the long-lived ones.
 #[test]
 fn the_same_branches_go_as_with_the_git_cli() {
+    isolate_git!(the_same_branches_go_as_with_the_git_cli);
     let ours = tempfile::tempdir().expect("tempdir");
     let theirs = tempfile::tempdir().expect("tempdir");
     let work = scenario(ours.path());
@@ -233,6 +232,7 @@ fn the_same_branches_go_as_with_the_git_cli() {
 
 #[test]
 fn a_checked_out_branch_whose_upstream_is_gone_stays() {
+    isolate_git!(a_checked_out_branch_whose_upstream_is_gone_stays);
     let root = tempfile::tempdir().expect("tempdir");
     let work = scenario(root.path());
     git(&work, &["switch", "-q", "merged"]);
@@ -245,6 +245,7 @@ fn a_checked_out_branch_whose_upstream_is_gone_stays() {
 
 #[test]
 fn nothing_goes_when_the_fetch_did_not_prune() {
+    isolate_git!(nothing_goes_when_the_fetch_did_not_prune);
     let root = tempfile::tempdir().expect("tempdir");
     let work = scenario(root.path());
     let repo = open(&work);
@@ -258,6 +259,7 @@ fn nothing_goes_when_the_fetch_did_not_prune() {
 
 #[test]
 fn nothing_goes_when_the_setting_is_off() {
+    isolate_git!(nothing_goes_when_the_setting_is_off);
     let root = tempfile::tempdir().expect("tempdir");
     let work = scenario(root.path());
     let repo = open(&work);
@@ -276,6 +278,7 @@ fn nothing_goes_when_the_setting_is_off() {
 /// whether a fetch pruned, as git reads them; otherwise Canopy's flags decided.
 #[test]
 fn the_git_configuration_decides_whether_the_fetch_pruned() {
+    isolate_git!(the_git_configuration_decides_whether_the_fetch_pruned);
     for (fetch_prune, remote_prune, follow, prune, expect_removed) in [
         (Some("false"), None, true, true, false),
         (Some("false"), Some("true"), true, false, true),
@@ -316,6 +319,7 @@ fn the_git_configuration_decides_whether_the_fetch_pruned() {
 
 #[test]
 fn only_the_fetched_remote_counts() {
+    isolate_git!(only_the_fetched_remote_counts);
     let root = tempfile::tempdir().expect("tempdir");
     let work = scenario(root.path());
     let mirror = root.path().join("mirror.git");
@@ -343,6 +347,7 @@ fn only_the_fetched_remote_counts() {
 
 #[test]
 fn a_branch_tracking_a_local_branch_is_left_alone() {
+    isolate_git!(a_branch_tracking_a_local_branch_is_left_alone);
     let root = tempfile::tempdir().expect("tempdir");
     let work = scenario(root.path());
     // Upstream `.`: the branch tracks the local `local-only`, which then goes.

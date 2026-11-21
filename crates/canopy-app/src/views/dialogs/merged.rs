@@ -92,6 +92,30 @@ fn counts(form: &MergedForm, rows: &[Candidate]) -> (usize, usize) {
 /// Space for visible rows before the list scrolls.
 const LIST_HEIGHT: f32 = 260.0;
 
+/// The reason every row shares, when none is blocked: then it is said once, above the list.
+fn shared_reason(rows: &[Candidate]) -> Option<MergedReason> {
+    let first = rows.first()?.reason;
+    rows.iter()
+        .all(|c| c.blocked.is_none() && c.reason == first)
+        .then_some(first)
+}
+
+/// The line that says, once, why every listed branch is offered.
+fn shared_reason_text(reason: MergedReason, base: &str) -> String {
+    match reason {
+        MergedReason::Reachable => format!("Each branch's last commit is part of {base}."),
+        MergedReason::UpstreamGone => {
+            "Each branch's upstream branch was deleted on the remote (not proven merged)."
+                .to_owned()
+        }
+        MergedReason::SquashMerged => {
+            "Each branch is squash- or rebase-merged: merging it would change nothing (not proven \
+             merged)."
+                .to_owned()
+        }
+    }
+}
+
 pub(super) fn show(
     ctx: &egui::Context,
     salt: (&'static str, std::mem::Discriminant<Dialog>),
@@ -151,8 +175,19 @@ pub(super) fn show(
                         format!("Local branches merged into {base}. The checked-out branch, {base} and the long-lived branches are never listed."),
                         p.text_dim,
                     );
+                    let shared = shared_reason(&rows);
+                    if let Some(reason) = shared {
+                        note(
+                            ui,
+                            shared_reason_text(reason, &base),
+                            if reason.is_proof() { p.text_dim } else { p.warning },
+                        );
+                    }
                     let detail_h = ui.fonts_mut(|f| f.row_height(&FontId::proportional(m.meta_size)));
-                    let row_h = m.control_sm + detail_h + theme::SM;
+                    // A row is its checkbox and, unless every row shares it, its reason.
+                    let row_h = m.control_sm
+                        + if shared.is_some() { 0.0 } else { detail_h }
+                        + theme::SM;
                     egui::ScrollArea::vertical()
                         .id_salt(("merged-candidates", form.serial))
                         .max_height(LIST_HEIGHT)
@@ -179,6 +214,9 @@ pub(super) fn show(
                                             } else {
                                                 form.selected.remove(&c.name);
                                             }
+                                        }
+                                        if shared.is_some() {
+                                            return;
                                         }
                                         let (text, color) = match (&c.blocked, c.reason.is_proof()) {
                                             (Some(why), _) => (why.clone(), p.warning),
@@ -359,6 +397,65 @@ mod tests {
         let _ = snap;
         let rows = candidates(&tab, marks);
         assert_eq!(counts(&form, &rows), (1, 1));
+    }
+
+    /// The texts one frame of the dialog paints.
+    fn painted(tab: &RepoTab) -> Vec<String> {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut form = MergedForm::new(tab.path.clone(), 1);
+        let salt = salt(&Dialog::CleanMerged(Box::new(form.clone())));
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |_| {
+                show(&ctx, salt, &mut form, Some(tab));
+            });
+            out.textures_delta.clear();
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    /// F21: when every row has the same reason it is said once, above the list; rows with
+    /// different reasons keep their own.
+    #[test]
+    fn a_reason_every_row_shares_is_said_once() {
+        let reachable = MergedReason::Reachable.label();
+        let same = painted(&tab_with(
+            &[("main", true), ("done", false), ("old", false)],
+            &[
+                ("done", Some(MergedReason::Reachable)),
+                ("old", Some(MergedReason::Reachable)),
+            ],
+        ));
+        assert!(!same.iter().any(|t| t == reachable), "{same:?}");
+        assert_eq!(
+            same.iter()
+                .filter(|t| t.starts_with("Each branch's last commit is part of"))
+                .count(),
+            1,
+            "{same:?}"
+        );
+        let mixed = painted(&tab_with(
+            &[("main", true), ("done", false), ("squashed", false)],
+            &[
+                ("done", Some(MergedReason::Reachable)),
+                ("squashed", Some(MergedReason::SquashMerged)),
+            ],
+        ));
+        assert!(mixed.iter().any(|t| t == reachable), "{mixed:?}");
+        assert!(
+            !mixed.iter().any(|t| t.starts_with("Each branch")),
+            "{mixed:?}"
+        );
     }
 
     #[test]

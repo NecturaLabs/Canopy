@@ -30,7 +30,7 @@ pub(super) struct Screenshot {
 }
 
 /// The `--overlay` names of the dialogs that open from the repository's own state.
-const REPOSITORY_DIALOGS: [&str; 9] = [
+const REPOSITORY_DIALOGS: [&str; 10] = [
     "remove-worktree",
     "remove-worktree-dirty",
     "remove-worktree-delete",
@@ -40,6 +40,7 @@ const REPOSITORY_DIALOGS: [&str; 9] = [
     "flow-init",
     "flow-start",
     "flow-finish",
+    "force-delete",
 ];
 
 impl Screenshot {
@@ -92,7 +93,9 @@ impl MenuShot {
             "menu-file" => ("src/main.rs", View::Changes, secondary),
             "menu-lfs-file" => ("art/hero.psd", View::Changes, secondary),
             "blame" => ("Blame", View::Changes, egui::PointerButton::Primary),
-            "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
+            "notifications" | "git-errors-center" => {
+                ("Notifications", View::History, egui::PointerButton::Primary)
+            }
             "amend-commit" => (
                 "Amend last commit",
                 View::Changes,
@@ -247,50 +250,58 @@ impl CanopyApp {
             if let Some(shot) = &mut self.screenshot {
                 shot.pending_dialog = None;
             }
-            // The linked folders the removal can be asked of: the first for `remove-worktree`, the
-            // last for the two that need a folder holding changes.
-            let removable: Vec<PathBuf> = self
-                .tabs
-                .get(self.active)
-                .and_then(|t| t.snap.as_ref())
-                .map(|s| {
-                    s.worktrees
-                        .iter()
-                        .filter(|w| {
-                            !w.main
-                                && !w.current
-                                && w.locked.is_none()
-                                && w.state == canopy_core::WorktreeState::Ready
-                        })
-                        .map(|w| w.path.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            let action = match name {
-                "clean-merged" => Action::CleanMerged,
-                "update-from-base" => Action::UpdateFromBase,
-                "flow-init" => Action::FlowInit,
-                "flow-start" => Action::FlowStart(None),
-                "forget-worktrees" => Action::ForgetWorktrees,
-                "remove-worktree" => removable.first().map_or(Action::ForgetWorktrees, |p| {
-                    Action::RemoveWorktree(p.clone())
-                }),
-                "remove-worktree-dirty" | "remove-worktree-delete" => {
-                    removable.last().map_or(Action::ForgetWorktrees, |p| {
-                        Action::RemoveWorktree(p.clone())
-                    })
+            if name == "force-delete" {
+                // Git refused a safe delete of a branch with unmerged commits: the app asks to
+                // force it.
+                if let Some(tab) = self.tabs.get_mut(self.active) {
+                    tab.force_delete_offer = Some("feature/dark-mode".into());
                 }
-                _ => Action::FlowFinish(None),
-            };
-            self.apply(ctx, vec![action]);
-            if name == "remove-worktree-delete"
-                && let Some(Dialog::RemoveWorktree(form)) = self.dialogs.current_mut()
-            {
-                form.ask_destructive();
-            }
-            // A name for the picture, so the preview line shows what it will create.
-            if let Some(Dialog::FlowStart(form)) = self.dialogs.current_mut() {
-                "payments".clone_into(&mut form.name);
+            } else {
+                // The linked folders the removal can be asked of: the first for `remove-worktree`, the
+                // last for the two that need a folder holding changes.
+                let removable: Vec<PathBuf> = self
+                    .tabs
+                    .get(self.active)
+                    .and_then(|t| t.snap.as_ref())
+                    .map(|s| {
+                        s.worktrees
+                            .iter()
+                            .filter(|w| {
+                                !w.main
+                                    && !w.current
+                                    && w.locked.is_none()
+                                    && w.state == canopy_core::WorktreeState::Ready
+                            })
+                            .map(|w| w.path.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let action = match name {
+                    "clean-merged" => Action::CleanMerged,
+                    "update-from-base" => Action::UpdateFromBase,
+                    "flow-init" => Action::FlowInit,
+                    "flow-start" => Action::FlowStart(None),
+                    "forget-worktrees" => Action::ForgetWorktrees,
+                    "remove-worktree" => removable.first().map_or(Action::ForgetWorktrees, |p| {
+                        Action::RemoveWorktree(p.clone())
+                    }),
+                    "remove-worktree-dirty" | "remove-worktree-delete" => {
+                        removable.last().map_or(Action::ForgetWorktrees, |p| {
+                            Action::RemoveWorktree(p.clone())
+                        })
+                    }
+                    _ => Action::FlowFinish(None),
+                };
+                self.apply(ctx, vec![action]);
+                if name == "remove-worktree-delete"
+                    && let Some(Dialog::RemoveWorktree(form)) = self.dialogs.current_mut()
+                {
+                    form.ask_destructive();
+                }
+                // A name for the picture, so the preview line shows what it will create.
+                if let Some(Dialog::FlowStart(form)) = self.dialogs.current_mut() {
+                    "payments".clone_into(&mut form.name);
+                }
             }
         }
         if self.screenshot.as_ref().is_some_and(|s| s.opens_worktrees)
@@ -489,6 +500,8 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "confirm-host",
     "convert-partial-clone",
     "confirm-merge-risky",
+    "force-push",
+    "force-push-new",
     "diverged",
     "pull-conflicts",
     "pull-moved",
@@ -714,6 +727,17 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             repo: PathBuf::new(),
             op: Op::Checkout("38b14e7".into()),
         },
+        // The real question, for an illustrative target.
+        "force-push" | "force-push-new" => background::force_push_dialog(
+            &PathBuf::new(),
+            canopy_core::PushTarget {
+                branch: "topic".into(),
+                remote: "origin".into(),
+                dest: "topic".into(),
+                dest_ref: "refs/heads/topic".into(),
+                seen: (name == "force-push").then_some(commit),
+            },
+        ),
         "diverged" => Dialog::Diverged {
             repo: PathBuf::new(),
             mode: settings::PullMode::RECOMMENDED_WHEN_DIVERGED,
@@ -1008,6 +1032,25 @@ mod tests {
             builder.problem()
         );
         assert!(OVERLAYS.contains(&"add-remote-refused"));
+    }
+
+    /// The force push overlays are the real question: with and without a tip the push is pinned to.
+    #[test]
+    fn the_force_push_overlays_build_the_real_question() {
+        let settings = Settings::default();
+        let body = |name| match dialog_overlay(name, &settings) {
+            Some(Dialog::Confirm {
+                body,
+                op: Op::ForcePush(_),
+                ..
+            }) => body,
+            other => panic!("--overlay {name} opens {other:?}"),
+        };
+        assert!(
+            body("force-push")
+                .starts_with("This replaces origin/topic, which your last fetch saw at")
+        );
+        assert!(body("force-push-new").starts_with("Your last fetch did not see origin/topic."));
     }
 
     #[test]

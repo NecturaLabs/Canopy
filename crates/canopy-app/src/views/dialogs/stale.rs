@@ -53,8 +53,9 @@ impl StaleForm {
 /// Space for visible candidate rows before the list scrolls.
 const CANDIDATE_LIST_HEIGHT: f32 = 240.0;
 
-/// Fixed-height details keep long names and paths from defeating list virtualization.
-fn detail(ui: &mut Ui, text: &str, color: egui::Color32) {
+/// The row's one line of detail, at a fixed height so long names and paths cannot defeat list
+/// virtualization. The tooltip holds everything the line leaves out.
+fn detail(ui: &mut Ui, text: &str, tip: &str, color: egui::Color32) {
     ui.add(
         egui::Label::new(
             RichText::new(text)
@@ -63,7 +64,7 @@ fn detail(ui: &mut Ui, text: &str, color: egui::Color32) {
         )
         .truncate(),
     )
-    .kit_tooltip(text)
+    .kit_tooltip(tip)
     .show();
 }
 
@@ -115,20 +116,33 @@ fn candidate_row(
             changed = true;
         }
     });
-    if let Some(path) = &candidate.path {
-        detail(ui, &path.display().to_string(), p.text_dim);
-    }
-    detail(
-        ui,
-        &format!(
-            "{} · {}",
-            crate::ui::widgets::absolute_date(candidate.last_commit_time),
-            candidate.author.name
-        ),
-        p.text_dim,
+    // One line of detail, as in Clean up merged: why the row is protected, or else when and by
+    // whom it was last committed to and, for a worktree, its folder, shortened in the middle.
+    let facts = format!(
+        "{} · {}",
+        crate::ui::widgets::absolute_date(candidate.last_commit_time),
+        candidate.author.name
     );
+    let path = candidate
+        .path
+        .as_ref()
+        .map(|path| path.display().to_string());
+    let full = path
+        .as_ref()
+        .map_or_else(|| facts.clone(), |path| format!("{facts} · {path}"));
     if let Some(reason) = &candidate.protected {
-        detail(ui, reason, p.warning);
+        detail(ui, reason, &format!("{reason}\n{full}"), p.warning);
+    } else if let Some(path) = &path {
+        let font = FontId::proportional(theme::metrics().meta_size);
+        let lead = format!("{facts} · ");
+        let room = ui.available_width() - crate::ui::widgets::text_width(ui, &lead, &font);
+        let shown = format!(
+            "{lead}{}",
+            crate::ui::widgets::elide_middle(ui, path, &font, room)
+        );
+        detail(ui, &shown, &full, p.text_dim);
+    } else {
+        detail(ui, &facts, &full, p.text_dim);
     }
     changed
 }
@@ -165,8 +179,9 @@ pub(super) fn show(
                 Some(Ok(candidates)) => {
                     let m = theme::metrics();
                     let detail_height = ui.fonts_mut(|fonts| fonts.row_height(&FontId::proportional(m.meta_size)));
-                    // Checkbox, path, author/date and protection reason, with a gap between rows.
-                    let row_height = m.control_sm + detail_height * 3.0 + theme::SM;
+                    // The checkbox line and one line of detail, with a gap between rows: the row
+                    // Clean up merged uses.
+                    let row_height = m.control_sm + detail_height + theme::SM;
                     egui::ScrollArea::vertical().id_salt(("stale-candidates", form.serial))
                         .max_height(CANDIDATE_LIST_HEIGHT).show(ui, |ui| {
                             crate::views::commit_detail::virtual_rows(ui, candidates.len(), row_height, |ui, index| {
@@ -294,6 +309,53 @@ mod tests {
                     .is_some_and(|label| label.starts_with("Remove 0 worktrees, 1 branch"))
         }));
     }
+    #[test]
+    fn stale_rows_are_as_tall_as_merged_rows() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.stale_serial = 1;
+        let rows = vec![
+            candidate(StaleKind::Worktree, None),
+            candidate(StaleKind::Worktree, Some("Uncommitted changes")),
+            candidate(StaleKind::Branch, None),
+        ];
+        tab.stale_result = Some(Ok(std::sync::Arc::from(rows)));
+        let mut form = StaleForm::new(tab.path.clone(), 90, 1);
+        let salt = salt(&Dialog::CleanStale(Box::new(form.clone())));
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = spoken(&ctx, |_| {
+                show(&ctx, salt, &mut form, Some(&tab));
+            });
+        }
+        let mut tops: Vec<f32> = nodes
+            .iter()
+            .filter(|node| node.role == egui::accesskit::Role::CheckBox)
+            .filter_map(|node| node.bounds.map(|b| b.min.y))
+            .collect();
+        tops.sort_by(f32::total_cmp);
+        assert_eq!(tops.len(), 3, "one checkbox per row");
+        let m = theme::metrics();
+        let detail = ctx.fonts_mut(|f| f.row_height(&FontId::proportional(m.meta_size)));
+        // The row Clean up merged uses: the checkbox line, one line of detail, a gap.
+        let merged_row = m.control_sm + detail + theme::SM;
+        for pair in tops.windows(2) {
+            let pitch = pair[1] - pair[0];
+            assert!(
+                (pitch - merged_row).abs() < 0.5,
+                "row pitch {pitch} should be {merged_row}"
+            );
+        }
+    }
+
     #[test]
     fn cleanup_only_lays_out_visible_rows_in_a_large_preview() {
         let ctx = egui::Context::default();

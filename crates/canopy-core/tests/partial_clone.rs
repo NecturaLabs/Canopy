@@ -9,9 +9,13 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::ops::HunkAction;
 use canopy_core::{
@@ -21,43 +25,17 @@ use canopy_core::{
 
 use MissingObjects::{Download, Fail};
 
-/// The directory inside a test's temporary root that serves as `HOME`, found from any path under
-/// that root. [`Fixture::new`] creates it, with an empty `gitconfig` in it.
-fn isolated_home(dir: &Path) -> PathBuf {
-    dir.ancestors()
-        .map(|a| a.join("home"))
-        .find(|h| h.join("gitconfig").is_file())
-        .expect("the path is inside a Fixture's temporary directory")
-}
-
-/// A `git` command for `dir` that reads none of the developer's own configuration: a fixed
-/// identity, no system configuration, and an empty global configuration file and home directory
-/// inside the test's temporary root (so `~/.gitconfig` aliases, `url.insteadOf`, signing or
-/// filters never leak in).
-///
-/// This covers the `git` commands the tests run themselves. The ones Canopy runs through
-/// `canopy_core::cli` (the downloads) inherit this process's environment, because `cli` has no
-/// per-call environment override and setting variables on the process would race with the tests
-/// running in parallel. They only need the repository's own configuration here (the clones use
-/// `file://` URLs and carry `core.autocrlf=false`); a global setting that changes how
-/// `git fetch` behaves can still reach them.
 #[expect(
     clippy::disallowed_methods,
     reason = "tests drive git directly to build and check repositories"
 )]
 fn git_command(dir: &Path) -> Command {
-    let home = isolated_home(dir);
     let mut cmd = Command::new("git");
     cmd.current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Ada Lovelace")
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
-        .env("GIT_COMMITTER_EMAIL", "ada@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
-        .env("HOME", &home)
-        .env("USERPROFILE", &home)
-        .env("XDG_CONFIG_HOME", &home);
+        .env("GIT_COMMITTER_EMAIL", "ada@example.com");
     cmd
 }
 
@@ -85,8 +63,6 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root = tempfile::tempdir().expect("tempdir");
-        fs::create_dir_all(root.path().join("home")).expect("mkdir home");
-        fs::write(root.path().join("home").join("gitconfig"), "").expect("empty global config");
         let src = root.path().join("src");
         fs::create_dir_all(src.join("d")).expect("mkdir");
         let p = src.as_path();
@@ -267,6 +243,7 @@ fn assert_not_downloaded(err: &Error, remote: Option<&str>, attempted: bool) {
 
 #[test]
 fn full_clone_is_not_partial_and_reads_offline() {
+    isolate_git!(full_clone_is_not_partial_and_reads_offline);
     let fx = Fixture::new();
     let dir = fx.clone("full", &[]);
     let repo = Repo::open(&dir).expect("open");
@@ -279,6 +256,7 @@ fn full_clone_is_not_partial_and_reads_offline() {
 #[test]
 #[expect(clippy::string_slice, reason = "object IDs are ASCII hex")]
 fn missing_object_in_full_repository_stays_a_libgit2_error() {
+    isolate_git!(missing_object_in_full_repository_stays_a_libgit2_error);
     // Corruption in a repository that is not a partial clone must not be reported as
     // "not downloaded", and must not trigger a download.
     let fx = Fixture::new();
@@ -317,6 +295,7 @@ fn missing_object_in_full_repository_stays_a_libgit2_error() {
 
 #[test]
 fn blobless_clone_fail_mode_stays_offline() {
+    isolate_git!(blobless_clone_fail_mode_stays_offline);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let before = missing(&dir);
@@ -363,6 +342,7 @@ fn blobless_clone_fail_mode_stays_offline() {
 
 #[test]
 fn blame_downloads_only_when_allowed_and_matches_the_source() {
+    isolate_git!(blame_downloads_only_when_allowed_and_matches_the_source);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let before = missing(&dir);
@@ -389,6 +369,7 @@ fn blame_downloads_only_when_allowed_and_matches_the_source() {
 
 #[test]
 fn details_list_files_offline_then_complete_with_a_download() {
+    isolate_git!(details_list_files_offline_then_complete_with_a_download);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let before = missing(&dir);
@@ -438,6 +419,7 @@ fn details_list_files_offline_then_complete_with_a_download() {
 
 #[test]
 fn exact_renames_show_in_the_offline_file_list() {
+    isolate_git!(exact_renames_show_in_the_offline_file_list);
     let mut fx = Fixture::new();
     git(&fx.src, &["mv", "b.txt", "moved.txt"]);
     git(&fx.src, &["commit", "-q", "-m", "move b"]);
@@ -463,6 +445,7 @@ fn exact_renames_show_in_the_offline_file_list() {
 
 #[test]
 fn huge_commits_skip_the_blob_download_and_leave_counts_unknown() {
+    isolate_git!(huge_commits_skip_the_blob_download_and_leave_counts_unknown);
     let mut fx = Fixture::new();
     let bulk = fx.src.join("bulk");
     fs::create_dir_all(&bulk).expect("mkdir");
@@ -515,6 +498,7 @@ fn deny_marked_repositories(common_dir: &Path, _git_dir: &Path, _workdir: Option
 
 #[test]
 fn the_download_gate_stops_the_fetch_itself() {
+    isolate_git!(the_download_gate_stops_the_fetch_itself);
     canopy_core::partial::set_download_gate(deny_marked_repositories);
     let fx = Fixture::new();
     let denied = fx.clone("denied-by-gate", &["--filter=blob:none"]);
@@ -540,6 +524,7 @@ fn the_download_gate_stops_the_fetch_itself() {
 
 #[test]
 fn blobless_clone_downloads_blobs_and_matches_cli() {
+    isolate_git!(blobless_clone_downloads_blobs_and_matches_cli);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let refs = || git(&dir, &["for-each-ref", "--format=%(refname) %(objectname)"]);
@@ -556,6 +541,7 @@ fn blobless_clone_downloads_blobs_and_matches_cli() {
 
 #[test]
 fn treeless_clone_downloads_trees_then_blobs_and_matches_cli() {
+    isolate_git!(treeless_clone_downloads_trees_then_blobs_and_matches_cli);
     let fx = Fixture::new();
     let dir = fx.clone("treeless", &["--filter=tree:0"]);
     let repo = Repo::open(&dir).expect("open");
@@ -575,6 +561,7 @@ fn treeless_clone_downloads_trees_then_blobs_and_matches_cli() {
 
 #[test]
 fn no_checkout_clone_staged_diff_downloads_head_blob() {
+    isolate_git!(no_checkout_clone_staged_diff_downloads_head_blob);
     let fx = Fixture::new();
     let dir = fx.clone("nocheckout", &["--filter=blob:none", "--no-checkout"]);
     let repo = Repo::open(&dir).expect("open");
@@ -613,6 +600,7 @@ fn no_checkout_clone_staged_diff_downloads_head_blob() {
 
 #[test]
 fn status_needing_missing_blobs_for_renames_stays_offline() {
+    isolate_git!(status_needing_missing_blobs_for_renames_stays_offline);
     let fx = Fixture::new();
     let dir = fx.clone("nocheckout", &["--filter=blob:none", "--no-checkout"]);
     // A staged addition next to staged deletions makes libgit2 look for renames, which needs
@@ -644,6 +632,7 @@ fn status_needing_missing_blobs_for_renames_stays_offline() {
 
 #[test]
 fn soft_reset_to_old_commit_keeps_snapshot_and_downloads_staged_diff() {
+    isolate_git!(soft_reset_to_old_commit_keeps_snapshot_and_downloads_staged_diff);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let one = fx.commits[0].to_string();
@@ -682,6 +671,7 @@ fn soft_reset_to_old_commit_keeps_snapshot_and_downloads_staged_diff() {
 
 #[test]
 fn unstaged_diff_against_missing_index_blob_downloads_it() {
+    isolate_git!(unstaged_diff_against_missing_index_blob_downloads_it);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let one = fx.commits[0].to_string();
@@ -725,6 +715,7 @@ fn unstaged_diff_against_missing_index_blob_downloads_it() {
 
 #[test]
 fn hunk_staging_stays_offline_and_works_once_the_diff_was_downloaded() {
+    isolate_git!(hunk_staging_stays_offline_and_works_once_the_diff_was_downloaded);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let one = fx.commits[0].to_string();
@@ -756,6 +747,7 @@ fn hunk_staging_stays_offline_and_works_once_the_diff_was_downloaded() {
 
 #[test]
 fn merge_conflicts_read_offline_in_a_blobless_clone() {
+    isolate_git!(merge_conflicts_read_offline_in_a_blobless_clone);
     // Conflict reading uses the index stages and the working copy, which `git merge` (lazily
     // fetching what it needs) has written; nothing further is downloaded.
     let fx = Fixture::new();
@@ -807,6 +799,7 @@ fn merge_conflicts_read_offline_in_a_blobless_clone() {
 
 #[test]
 fn unreachable_remote_reports_git_error_and_recovers() {
+    isolate_git!(unreachable_remote_reports_git_error_and_recovers);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let moved = fx.root.path().join("src-moved");
@@ -836,6 +829,7 @@ fn unreachable_remote_reports_git_error_and_recovers() {
 
 #[test]
 fn removed_promisor_remote_cannot_download() {
+    isolate_git!(removed_promisor_remote_cannot_download);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     git(&dir, &["remote", "remove", "origin"]);
@@ -869,6 +863,7 @@ fn removed_promisor_remote_cannot_download() {
 
 #[test]
 fn legacy_partial_clone_extension_is_reported_and_conversion_works() {
+    isolate_git!(legacy_partial_clone_extension_is_reported_and_conversion_works);
     let fx = Fixture::new();
     let dir = fx.clone("legacy", &["--filter=blob:none"]);
     // What Git before 2.24 wrote instead of remote.origin.promisor.
@@ -889,6 +884,7 @@ fn legacy_partial_clone_extension_is_reported_and_conversion_works() {
 
 #[test]
 fn a_legacy_partial_clone_is_converted_by_canopy_and_only_when_it_is_one() {
+    isolate_git!(a_legacy_partial_clone_is_converted_by_canopy_and_only_when_it_is_one);
     let fx = Fixture::new();
     let dir = fx.clone("converted", &["--filter=blob:none"]);
     let err = canopy_core::convert_legacy_partial_clone(&dir).expect_err("not a legacy clone");
@@ -917,6 +913,7 @@ fn a_legacy_partial_clone_is_converted_by_canopy_and_only_when_it_is_one() {
 
 #[test]
 fn snapshot_after_a_soft_reset_in_a_treeless_clone_recovers_its_status() {
+    isolate_git!(snapshot_after_a_soft_reset_in_a_treeless_clone_recovers_its_status);
     let fx = Fixture::new();
     let dir = fx.clone("treeless", &["--filter=tree:0"]);
     let one = fx.commits[0].to_string();
@@ -967,6 +964,7 @@ fn snapshot_after_a_soft_reset_in_a_treeless_clone_recovers_its_status() {
 
 #[test]
 fn legacy_partial_clone_extension_is_found_from_a_linked_worktree() {
+    isolate_git!(legacy_partial_clone_extension_is_found_from_a_linked_worktree);
     let fx = Fixture::new();
     let dir = fx.clone("legacy", &["--filter=blob:none"]);
     git(&dir, &["config", "--unset", "remote.origin.promisor"]);
@@ -986,6 +984,7 @@ fn legacy_partial_clone_extension_is_found_from_a_linked_worktree() {
 
 #[test]
 fn remote_named_like_an_option_is_refused_and_never_run() {
+    isolate_git!(remote_named_like_an_option_is_refused_and_never_run);
     let fx = Fixture::new();
     let dir = fx.clone("blobless", &["--filter=blob:none"]);
     let before = missing(&dir);
@@ -1080,6 +1079,7 @@ fn name_status(files: &[FileEntry]) -> Vec<String> {
 
 #[test]
 fn treeless_soft_reset_never_reports_head_as_unborn() {
+    isolate_git!(treeless_soft_reset_never_reports_head_as_unborn);
     // libgit2's status treats an unreadable HEAD tree as an unborn branch and would list every
     // file as added; the staged diff would compare against an empty tree.
     let fx = Fixture::new();

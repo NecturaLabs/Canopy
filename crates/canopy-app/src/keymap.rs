@@ -819,14 +819,10 @@ pub fn is_remappable(binding: &Binding) -> bool {
     binding.command != Command::JumpTab
 }
 
-/// Takes the keys the settings hold: `saved` maps a row ([`binding_id`]) to a chord's text.
-/// An entry that is not a row, does not read as a chord, breaks a rule of
-/// [`shape_problem`] or would share its key with another row is ignored, so a saved or
-/// imported file can never leave a key doing two things.
-pub fn apply_saved(saved: &BTreeMap<String, String>) {
-    if CUSTOM.with_borrow(|c| &c.saved == saved) {
-        return;
-    }
+/// The keys `saved` maps to that stand: `saved` maps a row ([`binding_id`]) to a chord's text.
+/// An entry that is not a row, does not read as a chord, breaks a rule of [`shape_problem`] or
+/// would share its key with another row does not.
+fn usable(saved: &BTreeMap<String, String>) -> Vec<(Command, Section, Chord)> {
     let mut chords: Vec<(Command, Section, Chord)> = BINDINGS
         .iter()
         .filter(|b| is_remappable(b))
@@ -849,10 +845,34 @@ pub fn apply_saved(saved: &BTreeMap<String, String>) {
     }) {
         chords.remove(clash);
     }
+    chords
+}
+
+/// Takes the keys the settings hold ([`usable`] says which stand). An entry that does not is
+/// ignored, so a saved or imported file can never leave a key doing two things.
+pub fn apply_saved(saved: &BTreeMap<String, String>) {
+    if CUSTOM.with_borrow(|c| &c.saved == saved) {
+        return;
+    }
     CUSTOM.set(Custom {
         saved: saved.clone(),
-        chords,
+        chords: usable(saved),
     });
+}
+
+/// Removes the entries of `saved` that [`apply_saved`] ignores, so they are not saved or
+/// exported again, and says how many went. The keys that stand are left as they are.
+pub fn drop_ignored(saved: &mut BTreeMap<String, String>) -> usize {
+    let standing = usable(saved);
+    let before = saved.len();
+    saved.retain(|id, _| {
+        binding_by_id(id).is_some_and(|b| {
+            standing
+                .iter()
+                .any(|(command, section, _)| (*command, *section) == (b.command, b.section))
+        })
+    });
+    before - saved.len()
 }
 
 /// `binding`'s chords given `chords` as the user's changes.
@@ -1034,8 +1054,26 @@ pub fn take_capture() -> Option<Captured> {
     })
 }
 
+/// Whether `key` is a modifier's own key: egui sends a press of it (left and right apart) when
+/// a modifier goes down, before the key it modifies.
+const fn is_modifier_key(key: Key) -> bool {
+    matches!(
+        key,
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::ControlLeft
+            | Key::ControlRight
+            | Key::AltLeft
+            | Key::AltRight
+            | Key::SuperLeft
+            | Key::SuperRight
+    )
+}
+
 /// Takes this frame's first key press for a waiting capture, before any binding sees it: Esc
-/// cancels, a modifier alone is skipped, and Alt chords are refused (the window manager's).
+/// cancels, a modifier's own key is skipped (the capture keeps waiting for the key it
+/// modifies, which carries the modifiers), and Alt chords and keys pressed while Super is held
+/// are refused (the window manager's).
 pub fn capture_key(ctx: &egui::Context) {
     let waiting = CAPTURE.with_borrow_mut(|c| {
         match c {
@@ -1051,6 +1089,7 @@ pub fn capture_key(ctx: &egui::Context) {
     if !waiting {
         return;
     }
+    let super_down = super_held(ctx);
     let mut result = None;
     ctx.input_mut(|i| {
         i.events.retain(|e| {
@@ -1066,8 +1105,15 @@ pub fn capture_key(ctx: &egui::Context) {
             else {
                 return !matches!(e, egui::Event::Text(_));
             };
-            if *key == Key::Escape {
+            if is_modifier_key(*key) {
+                // Pressing a chord sends the modifier's own press first; the key it
+                // modifies comes next, and a modifier alone is never a binding.
+            } else if *key == Key::Escape {
                 result = Some(Capture::Cancelled);
+            } else if !cfg!(target_os = "macos") && super_down {
+                // Outside macOS egui's modifiers do not carry Super: the key would arrive as
+                // if pressed alone. Hand over the Super key, which Settings refuses by name.
+                result = Some(Capture::Got(bare(Key::SuperLeft)));
             } else {
                 let chord = Chord::from_press(*key, *modifiers);
                 if !modifiers.alt || chord.symbol {
@@ -1528,12 +1574,68 @@ mod tests {
         apply_saved(&BTreeMap::from([fetch(bare(Key::P)), pull]));
         assert_eq!(ours(), [bare(Key::P)], "a swap holds");
         assert_eq!(key_of("Pull.Repository"), Some(vec![bare(Key::F)]));
-        // Two rows asking for the same free key: neither gets it.
+        // Two rows asking for the same free key: only one of them gets it.
         apply_saved(&BTreeMap::from([
             fetch(bare(Key::V)),
             ("Pull.Repository".to_owned(), text(bare(Key::V))),
         ]));
         assert_eq!(ours(), [bare(Key::F)]);
+        assert_eq!(key_of("Pull.Repository"), Some(vec![bare(Key::V)]));
+        apply_saved(&BTreeMap::new());
+    }
+
+    /// What `apply_saved` ignores is also dropped from the saved text, so it is not saved or
+    /// exported again; a valid key, a swap and a key equal to the table's stay as they are.
+    #[test]
+    fn dropping_ignored_keys_keeps_the_valid_ones() {
+        let text = |c: Chord| c.to_text();
+        let entry = |id: &str, c: Chord| (id.to_owned(), text(c));
+        let valid = [
+            entry("Fetch.Repository", bare(Key::P)),
+            entry("Pull.Repository", bare(Key::F)),
+            entry("NewBranch.Repository", bare(Key::W)),
+            entry("Stash.Repository", bare(Key::S)),
+        ];
+        let mut saved: BTreeMap<String, String> = valid.iter().cloned().collect();
+        assert_eq!(drop_ignored(&mut saved), 0, "nothing to drop");
+        assert_eq!(saved, valid.iter().cloned().collect(), "untouched");
+
+        let broken = [
+            entry("Push.Repository", bare(Key::SuperLeft)),
+            entry("MergeDialog.Repository", bare(Key::F9)),
+            entry("Discard.Changes", bare(Key::Tab)),
+            entry("PopStash.Repository", ctrl(Key::V)),
+            ("Nothing.Anywhere".to_owned(), text(bare(Key::V))),
+            ("Tag.History".to_owned(), "nonsense".to_owned()),
+            // The tab jumps are positions: a key for them is never taken.
+            entry("JumpTab.Anywhere", ctrl(Key::V)),
+            // Another row's key.
+            entry("Up.Navigate", bare(Key::J)),
+        ];
+        saved.extend(broken.iter().cloned());
+        // Two rows asking for one free key: one of them gets it, the other does not.
+        saved.extend([
+            entry("First.Navigate", bare(Key::V)),
+            entry("Last.Navigate", bare(Key::V)),
+        ]);
+        let dropped = drop_ignored(&mut saved);
+        assert_eq!(dropped, broken.len() + 1, "{saved:?}");
+        let (first, last) = (
+            saved.remove("First.Navigate").is_some(),
+            saved.remove("Last.Navigate").is_some(),
+        );
+        assert!(first != last, "exactly one of the two keeps the key");
+        assert_eq!(
+            saved,
+            valid.iter().cloned().collect(),
+            "only the valid remain"
+        );
+        // What stays is what applies.
+        apply_saved(&saved);
+        assert_eq!(
+            binding_by_id("Fetch.Repository").map(Binding::current_chords),
+            Some(vec![bare(Key::P)])
+        );
         apply_saved(&BTreeMap::new());
     }
 
@@ -1595,5 +1697,154 @@ mod tests {
         }
         assert!(!is_capturing(), "nobody kept it alive");
         assert_eq!(take_capture(), None);
+    }
+
+    /// Pressing a chord sends the modifier's own key press first (`ControlLeft`), then the key
+    /// with the modifiers held: the capture waits for the key, and a modifier alone never
+    /// becomes a binding.
+    #[test]
+    fn a_capture_waits_through_modifier_presses_for_the_key() {
+        let key_press = |key: Key, modifiers: Modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let run = |ctx: &egui::Context, events: Vec<egui::Event>| {
+            let mut fired = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    capture_key(ui.ctx());
+                    fired = dispatch(ui.ctx(), |_, _| true);
+                },
+            );
+            output.textures_delta.clear();
+            fired
+        };
+        let ctx = egui::Context::default();
+        let held = Modifiers::COMMAND | Modifiers::SHIFT;
+
+        // The modifiers and the key arrive together in one frame.
+        start_capture(&ctx);
+        run(
+            &ctx,
+            vec![
+                key_press(Key::ControlLeft, Modifiers::COMMAND),
+                key_press(Key::ShiftLeft, held),
+                key_press(Key::G, held),
+            ],
+        );
+        assert_eq!(
+            take_capture(),
+            Some(Captured::Key(ctrl_shift(Key::G))),
+            "Ctrl+Shift+G, not the Ctrl key"
+        );
+
+        // They arrive in frames of their own.
+        start_capture(&ctx);
+        run(&ctx, vec![key_press(Key::ControlLeft, Modifiers::COMMAND)]);
+        assert!(is_capturing(), "Ctrl alone keeps waiting");
+        assert_eq!(take_capture(), None);
+        run(&ctx, vec![key_press(Key::G, held)]);
+        assert_eq!(take_capture(), Some(Captured::Key(ctrl_shift(Key::G))));
+
+        // No modifier key alone ever becomes the binding.
+        for key in [
+            Key::ShiftLeft,
+            Key::ShiftRight,
+            Key::ControlLeft,
+            Key::ControlRight,
+            Key::AltLeft,
+            Key::AltRight,
+            Key::SuperLeft,
+            Key::SuperRight,
+        ] {
+            start_capture(&ctx);
+            run(&ctx, vec![key_press(key, Modifiers::NONE)]);
+            assert!(is_capturing(), "{key:?} alone keeps waiting");
+            assert_eq!(take_capture(), None, "{key:?} is not a binding");
+            cancel_capture();
+        }
+
+        // Release what the loop pressed: egui keeps a key down until its release arrives.
+        for key in [Key::SuperLeft, Key::SuperRight] {
+            run(
+                &ctx,
+                vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+            );
+        }
+
+        // Once the key comes, a bare modifier before it does not stop it.
+        start_capture(&ctx);
+        run(
+            &ctx,
+            vec![
+                key_press(Key::ShiftLeft, Modifiers::SHIFT),
+                key_press(Key::J, Modifiers::NONE),
+            ],
+        );
+        assert_eq!(take_capture(), Some(Captured::Key(bare(Key::J))));
+    }
+
+    /// Outside macOS egui's modifiers do not carry Super, so Super+H arrives as a Super press
+    /// and then a bare `h`. The window manager owns that chord: the capture refuses it with
+    /// the Super note instead of taking `h`.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_capture_refuses_a_key_pressed_while_super_is_held() {
+        let key_event = |key: Key, pressed: bool| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let run = |ctx: &egui::Context, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| capture_key(ui.ctx()),
+            );
+            output.textures_delta.clear();
+        };
+        let ctx = egui::Context::default();
+        let fetch = binding_by_id("Fetch.Repository").expect("a row");
+
+        start_capture(&ctx);
+        run(
+            &ctx,
+            vec![key_event(Key::SuperLeft, true), key_event(Key::H, true)],
+        );
+        let Some(Captured::Key(chord)) = take_capture() else {
+            panic!("Super+H ended the capture without a key");
+        };
+        assert_eq!(
+            rebind_problem(fetch, chord).as_deref(),
+            Some("Super belongs to the window manager.")
+        );
+
+        // The Super key still down in a later frame refuses the next key too.
+        start_capture(&ctx);
+        run(&ctx, vec![key_event(Key::J, true)]);
+        assert!(matches!(take_capture(), Some(Captured::Key(c)) if c.key == Key::SuperLeft));
+
+        // Once Super is released, keys are taken as they are.
+        run(&ctx, vec![key_event(Key::SuperLeft, false)]);
+        start_capture(&ctx);
+        run(&ctx, vec![key_event(Key::H, true)]);
+        assert_eq!(take_capture(), Some(Captured::Key(bare(Key::H))));
     }
 }

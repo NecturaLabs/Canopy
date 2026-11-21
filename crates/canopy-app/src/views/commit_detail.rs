@@ -347,60 +347,113 @@ fn commit_facts(
     note: Option<&PictureNote>,
     actions: &mut Vec<Action>,
 ) -> Rect {
+    // The author and the ids share a row when both fit; otherwise the ids take their own row
+    // under the author, wrapping between ids, so no id is ever cut. The widths are those of the
+    // last frame, settled in a discarded pass when they change.
+    let id = egui::Id::new(("commit-facts-widths", d.oid));
+    let known: (f32, f32) = ui.ctx().data(|m| m.get_temp(id)).unwrap_or_default();
+    let one_row = known.0 + theme::SM + known.1 <= ui.available_width() + 0.5;
+    let mut measured = known;
+    let rect = if one_row {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = theme::SM;
+            measured.0 = ui
+                .horizontal(|ui| person(ui, d, tab, note, actions))
+                .response
+                .rect
+                .width();
+            measured.1 = ui.horizontal(|ui| commit_ids(ui, d, tab, actions)).inner;
+        })
+        .response
+        .rect
+    } else {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = theme::XS;
+            measured.0 = ui
+                .horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = theme::SM;
+                    person(ui, d, tab, note, actions);
+                })
+                .response
+                .rect
+                .width();
+            measured.1 = ui
+                .horizontal_wrapped(|ui| commit_ids(ui, d, tab, actions))
+                .inner;
+        })
+        .response
+        .rect
+    };
+    if (measured.0 - known.0).abs() > 0.5 || (measured.1 - known.1).abs() > 0.5 {
+        ui.ctx().data_mut(|m| m.insert_temp(id, measured));
+        ui.ctx().request_discard("the commit facts changed width");
+    }
+    rect
+}
+
+/// The commit id (a button that copies it) and the parent ids (links to them); returns their
+/// width on one line, whether or not they wrapped.
+fn commit_ids(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab, actions: &mut Vec<Action>) -> f32 {
     let m = theme::metrics();
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = theme::SM;
-        person(ui, d, tab, note, actions);
-        fact_label(ui, "Commit");
-        // The button's own padding, so the id sits as close to its label as the parents' do.
-        ui.add_space(-m.button_pad_x_sm);
-        let copy = Button::new(short_id(d.oid))
-            .ghost()
-            .plain_text()
-            .size(Size::Xs)
-            .show(ui)
-            .kit_tooltip("Copy the commit id")
-            .detail(d.oid.to_string())
+    ui.spacing_mut().item_spacing.x = theme::SM;
+    let mut parts: Vec<f32> = Vec::new();
+    parts.push(fact_label(ui, "Commit").width());
+    // The button's own padding, so the id sits as close to its label as the parents' do.
+    ui.add_space(-m.button_pad_x_sm);
+    let copy = Button::new(short_id(d.oid))
+        .ghost()
+        .plain_text()
+        .size(Size::Xs)
+        .show(ui)
+        .kit_tooltip("Copy the commit id")
+        .detail(d.oid.to_string())
+        .show();
+    parts.push(copy.rect.width());
+    copy.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("Copy commit {}", d.oid),
+        )
+    });
+    if copy.clicked() {
+        actions.push(Action::Copy(d.oid.to_string()));
+    }
+    if !d.parents.is_empty() {
+        parts.push(fact_label(ui, parents_label(d)).width());
+    }
+    for (i, parent) in d.parents.iter().enumerate() {
+        // The link sits in its own scope for a stable id, and a scope does not wrap by itself:
+        // start the next row when the id would not fit whole.
+        let text = short_id(*parent);
+        let needs = widgets::text_width(ui, &text, &FontId::new(m.sha_size, theme::medium()));
+        if ui.layout().main_wrap && needs > ui.available_size_before_wrap().x {
+            ui.end_row();
+        }
+        let link = ui
+            .push_id(("parent", i, parent), |ui| {
+                LinkButton::new(text).text_size(m.sha_size).show(ui)
+            })
+            .inner
+            .kit_tooltip("Show this parent commit")
+            .detail(parent.to_string())
             .show();
-        copy.widget_info(|| {
+        parts.push(link.rect.width());
+        link.widget_info(|| {
             egui::WidgetInfo::labeled(
                 egui::WidgetType::Button,
                 true,
-                format!("Copy commit {}", d.oid),
+                format!("Show parent {} commit {parent}", i + 1),
             )
         });
-        if copy.clicked() {
-            actions.push(Action::Copy(d.oid.to_string()));
+        if link.clicked() {
+            tab.select_commit(*parent);
+            tab.scroll_to_selected = true;
         }
-        if !d.parents.is_empty() {
-            fact_label(ui, parents_label(d));
-        }
-        for (i, parent) in d.parents.iter().enumerate() {
-            let link = ui
-                .push_id(("parent", i, parent), |ui| {
-                    LinkButton::new(short_id(*parent))
-                        .text_size(m.sha_size)
-                        .show(ui)
-                })
-                .inner
-                .kit_tooltip("Show this parent commit")
-                .detail(parent.to_string())
-                .show();
-            link.widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::WidgetType::Button,
-                    true,
-                    format!("Show parent {} commit {parent}", i + 1),
-                )
-            });
-            if link.clicked() {
-                tab.select_commit(*parent);
-                tab.scroll_to_selected = true;
-            }
-        }
-    })
-    .response
-    .rect
+    }
+    // Their widths and the gaps between them, less the copy button's pulled-in padding.
+    parts.iter().sum::<f32>() + theme::SM * crate::ui::count_f32(parts.len().saturating_sub(1))
+        - m.button_pad_x_sm
 }
 
 /// The word before the parent ids: one label for all of them.
@@ -412,14 +465,15 @@ fn parents_label(d: &CommitDetails) -> &'static str {
     }
 }
 
-/// A muted word naming the value that follows it in the header's facts.
-fn fact_label(ui: &mut Ui, text: &str) {
+/// A muted word naming the value that follows it in the header's facts; returns its rect.
+fn fact_label(ui: &mut Ui, text: &str) -> Rect {
     let m = theme::metrics();
     ui.label(
         RichText::new(text)
             .font(FontId::new(m.body_size, theme::medium()))
             .color(palette(ui.ctx()).text_dim),
-    );
+    )
+    .rect
 }
 
 /// Left and right insets of the detail header's content (concept 1's `.dh`).
@@ -1478,6 +1532,55 @@ mod tests {
                     names.iter().filter(|(n, _)| n.starts_with(&prefix)).count(),
                     1,
                     "{names:?}"
+                );
+            }
+        }
+    }
+
+    /// In a pane too narrow for the author and the ids on one row, the ids move under the author
+    /// and wrap between ids: none is cut at the pane's edge (audit F4).
+    #[test]
+    fn narrow_commit_facts_wrap_the_ids_instead_of_cutting_them() {
+        let ctx = ctx(Density::Comfortable);
+        ctx.enable_accesskit();
+        let root = tempfile::tempdir().expect("tab directory");
+        let mut tab = crate::tab::RepoTab::new(
+            root.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        let d = details_with("Merge", 3, "Author");
+        let mut actions = Vec::new();
+        for width in [200.0_f32, 300.0, 420.0] {
+            let mut last = None;
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 400.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        super::commit_facts(ui, &d, &mut tab, None, &mut actions);
+                    },
+                );
+                out.textures_delta.clear();
+                last = out.platform_output.accesskit_update;
+            }
+            let nodes = &last.as_ref().expect("accessible tree").nodes;
+            let ids: Vec<_> = nodes
+                .iter()
+                .filter_map(|(_, n)| Some((n.label()?, n.bounds()?)))
+                .filter(|(l, _)| l.starts_with("Copy commit") || l.starts_with("Show parent"))
+                .collect();
+            assert_eq!(ids.len(), 4, "{width}: {ids:?}");
+            for (name, at) in ids {
+                assert!(
+                    at.x0 >= 0.0 && at.x1 <= f64::from(width),
+                    "{width}: {name} at {at:?}"
                 );
             }
         }

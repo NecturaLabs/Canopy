@@ -9,51 +9,17 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use support::isolate_git;
+
 use canopy_core::ops::MergeMode;
 use canopy_core::{GitOptions, Repo, cli, config, config::Setting};
-
-/// Runs the calling test again in a child process with a private global configuration. Returns
-/// true in the child, where the test body runs, and false in the parent once the child passed.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the test runs itself again in a child process"
-)]
-fn isolated(test: &str) -> bool {
-    if std::env::var_os("CANOPY_AUDIT_TEST_CHILD").is_some() {
-        return true;
-    }
-    let home = tempfile::tempdir().expect("private home");
-    let out = Command::new(std::env::current_exe().expect("test binary"))
-        .args([test, "--exact", "--test-threads=1"])
-        .env("CANOPY_AUDIT_TEST_CHILD", "1")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", home.path().join("global"))
-        .env("HOME", home.path())
-        .env("USERPROFILE", home.path())
-        .env("XDG_CONFIG_HOME", home.path())
-        .env_remove("GIT_CONFIG")
-        .env_remove("GIT_CONFIG_COUNT")
-        .env_remove("GIT_CONFIG_PARAMETERS")
-        .env_remove("GIT_AUTHOR_NAME")
-        .env_remove("GIT_AUTHOR_EMAIL")
-        .env_remove("GIT_COMMITTER_NAME")
-        .env_remove("GIT_COMMITTER_EMAIL")
-        .env_remove("EMAIL")
-        .output()
-        .expect("child test");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success() && stdout.contains("1 passed"),
-        "{test}:\n{stdout}{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    false
-}
 
 fn global() -> PathBuf {
     PathBuf::from(std::env::var_os("GIT_CONFIG_GLOBAL").expect("private global config"))
@@ -202,11 +168,9 @@ fn assert_both_edits_and_no_stash(clone: &Path) {
 
 #[test]
 fn use_recommended_writes_exactly_these_keys_to_the_global_file_and_git_reads_them_back() {
-    if !isolated(
-        "use_recommended_writes_exactly_these_keys_to_the_global_file_and_git_reads_them_back",
-    ) {
-        return;
-    }
+    isolate_git!(
+        use_recommended_writes_exactly_these_keys_to_the_global_file_and_git_reads_them_back
+    );
     let world = World::new();
     let clone = world.clone_to("clone");
     // A choice of the user's own that Use recommended must leave alone, and signing and line
@@ -295,6 +259,7 @@ fn use_recommended_writes_exactly_these_keys_to_the_global_file_and_git_reads_th
 
 #[test]
 fn recommendations_by_key_for_every_supported_git() {
+    isolate_git!(recommendations_by_key_for_every_supported_git);
     let table = |git| -> Vec<(&'static str, &'static str)> {
         Setting::ALL
             .iter()
@@ -342,6 +307,7 @@ const ADR: &str = include_str!("../../../docs/adr/0012-git-defaults.md");
 
 #[test]
 fn the_adr_table_names_every_recommendation_and_its_source() {
+    isolate_git!(the_adr_table_names_every_recommendation_and_its_source);
     let (_, audit) = ADR
         .split_once("## Audit of the recommendations")
         .expect("the audit section");
@@ -372,9 +338,7 @@ fn the_adr_table_names_every_recommendation_and_its_source() {
 
 #[test]
 fn pulls_fast_forward_or_stop_and_a_rebase_configuration_cannot_override_that() {
-    if !isolated("pulls_fast_forward_or_stop_and_a_rebase_configuration_cannot_override_that") {
-        return;
-    }
+    isolate_git!(pulls_fast_forward_or_stop_and_a_rebase_configuration_cannot_override_that);
     let world = World::new();
     let clone = world.clone_to("clone");
     // What a user who rebases on pull had, and what Canopy's first recommendation replaces.
@@ -435,11 +399,9 @@ fn pulls_fast_forward_or_stop_and_a_rebase_configuration_cannot_override_that() 
 
 #[test]
 fn the_three_autostash_keys_let_git_run_a_rebase_a_merge_and_a_pull_over_local_changes() {
-    if !isolated(
-        "the_three_autostash_keys_let_git_run_a_rebase_a_merge_and_a_pull_over_local_changes",
-    ) {
-        return;
-    }
+    isolate_git!(
+        the_three_autostash_keys_let_git_run_a_rebase_a_merge_and_a_pull_over_local_changes
+    );
     let no_autostash = [
         "-c",
         "rebase.autoStash=false",
@@ -531,9 +493,7 @@ fn the_three_autostash_keys_let_git_run_a_rebase_a_merge_and_a_pull_over_local_c
 
 #[test]
 fn canopys_merge_stashes_what_its_choice_and_the_configuration_say_as_git_does() {
-    if !isolated("canopys_merge_stashes_what_its_choice_and_the_configuration_say_as_git_does") {
-        return;
-    }
+    isolate_git!(canopys_merge_stashes_what_its_choice_and_the_configuration_say_as_git_does);
     // (merge.autoStash in the repository, Canopy's autostash choice) -> does the merge run?
     for (configured, canopy, runs) in [
         (None, true, true),
@@ -622,9 +582,7 @@ fn assert_edit_in_the_tree_and_nothing_hidden(clone: &Path) {
 
 #[test]
 fn a_squash_never_hides_your_changes() {
-    if !isolated("a_squash_never_hides_your_changes") {
-        return;
-    }
+    isolate_git!(a_squash_never_hides_your_changes);
     // The premise: git's own `--autostash` on a squash that does not fast-forward stashes the
     // edit and never puts it back, out of `git stash list`. (Without the premise the rest
     // would prove nothing.)
@@ -701,9 +659,7 @@ fn a_squash_never_hides_your_changes() {
 
 #[test]
 fn changes_git_holds_aside_for_a_stopped_merge_or_rebase_are_recognised() {
-    if !isolated("changes_git_holds_aside_for_a_stopped_merge_or_rebase_are_recognised") {
-        return;
-    }
+    isolate_git!(changes_git_holds_aside_for_a_stopped_merge_or_rebase_are_recognised);
     for rebase in [false, true] {
         for dirty in [false, true] {
             let world = World::new();
@@ -738,9 +694,7 @@ fn changes_git_holds_aside_for_a_stopped_merge_or_rebase_are_recognised() {
 
 #[test]
 fn changes_held_aside_in_a_linked_worktree_are_recognised_there_only() {
-    if !isolated("changes_held_aside_in_a_linked_worktree_are_recognised_there_only") {
-        return;
-    }
+    isolate_git!(changes_held_aside_in_a_linked_worktree_are_recognised_there_only);
     let world = World::new();
     let clone = squash_ready(&world, true);
     let linked = world.root.path().join("linked");
@@ -775,9 +729,7 @@ fn changes_held_aside_in_a_linked_worktree_are_recognised_there_only() {
 
 #[test]
 fn a_merge_whose_stash_conflicts_on_the_way_back_is_recognised() {
-    if !isolated("a_merge_whose_stash_conflicts_on_the_way_back_is_recognised") {
-        return;
-    }
+    isolate_git!(a_merge_whose_stash_conflicts_on_the_way_back_is_recognised);
     let world = World::new();
     let clone = world.clone_to("clone");
     upstream_edits_line_one(&world, &clone);
@@ -792,9 +744,7 @@ fn a_merge_whose_stash_conflicts_on_the_way_back_is_recognised() {
 
 #[test]
 fn fetch_prunes_stale_branches_and_never_the_tags_only_you_have() {
-    if !isolated("fetch_prunes_stale_branches_and_never_the_tags_only_you_have") {
-        return;
-    }
+    isolate_git!(fetch_prunes_stale_branches_and_never_the_tags_only_you_have);
     let world = World::new();
     let publisher = world.clone_to("publisher");
     git(
@@ -823,11 +773,9 @@ fn fetch_prunes_stale_branches_and_never_the_tags_only_you_have() {
 
 #[test]
 fn a_plain_push_sends_annotated_tags_on_the_pushed_commits_and_never_lightweight_ones() {
-    if !isolated(
-        "a_plain_push_sends_annotated_tags_on_the_pushed_commits_and_never_lightweight_ones",
-    ) {
-        return;
-    }
+    isolate_git!(
+        a_plain_push_sends_annotated_tags_on_the_pushed_commits_and_never_lightweight_ones
+    );
     let world = World::new();
     let clone = world.clone_to("clone");
     apply(&clone);
@@ -844,9 +792,7 @@ fn a_plain_push_sends_annotated_tags_on_the_pushed_commits_and_never_lightweight
 
 #[test]
 fn simple_pushes_only_to_an_upstream_of_the_same_name() {
-    if !isolated("simple_pushes_only_to_an_upstream_of_the_same_name") {
-        return;
-    }
+    isolate_git!(simple_pushes_only_to_an_upstream_of_the_same_name);
     let world = World::new();
     let clone = world.clone_to("clone");
     apply(&clone);
@@ -886,9 +832,7 @@ fn conflicted_file(extra: &[&str]) -> String {
 
 #[test]
 fn conflicts_show_the_original_and_leave_out_the_lines_both_sides_share() {
-    if !isolated("conflicts_show_the_original_and_leave_out_the_lines_both_sides_share") {
-        return;
-    }
+    isolate_git!(conflicts_show_the_original_and_leave_out_the_lines_both_sides_share);
     identity();
     let scratch = tempfile::tempdir().expect("scratch");
     apply(scratch.path());
@@ -919,9 +863,7 @@ fn conflicts_show_the_original_and_leave_out_the_lines_both_sides_share() {
 
 #[test]
 fn new_repositories_start_on_main() {
-    if !isolated("new_repositories_start_on_main") {
-        return;
-    }
+    isolate_git!(new_repositories_start_on_main);
     let scratch = tempfile::tempdir().expect("scratch");
     apply(scratch.path());
     git(scratch.path(), &["init", "-q", "fresh"]);
@@ -987,11 +929,9 @@ fn edited_messages(config: &[&str], global: &Path) -> Vec<String> {
 #[cfg(unix)]
 #[test]
 fn the_recommended_commit_cleanup_is_gits_own_and_whitespace_leaks_the_editor_template() {
-    if !isolated(
-        "the_recommended_commit_cleanup_is_gits_own_and_whitespace_leaks_the_editor_template",
-    ) {
-        return;
-    }
+    isolate_git!(
+        the_recommended_commit_cleanup_is_gits_own_and_whitespace_leaks_the_editor_template
+    );
     identity();
     let scratch = tempfile::tempdir().expect("scratch");
     apply(scratch.path());
@@ -1063,9 +1003,7 @@ fn the_recommended_commit_cleanup_is_gits_own_and_whitespace_leaks_the_editor_te
 
 #[test]
 fn git_recursing_into_submodules_drops_edits_and_makes_a_push_on_demand() {
-    if !isolated("git_recursing_into_submodules_drops_edits_and_makes_a_push_on_demand") {
-        return;
-    }
+    isolate_git!(git_recursing_into_submodules_drops_edits_and_makes_a_push_on_demand);
     let world = World::new();
     let root = world.root.path();
     let sub_url = root.join("sub.git");
@@ -1186,9 +1124,7 @@ fn superproject_with_unpushed_submodule(world: &World, how: &str) -> (PathBuf, P
 /// reaches the remote; once the submodule's commit is pushed, the push goes through.
 #[test]
 fn a_push_stops_for_a_submodule_commit_no_remote_has() {
-    if !isolated("a_push_stops_for_a_submodule_commit_no_remote_has") {
-        return;
-    }
+    isolate_git!(a_push_stops_for_a_submodule_commit_no_remote_has);
     for recurse in ["true", "false"] {
         for how in ["branch", "detached", "same name"] {
             let world = World::new();
@@ -1200,7 +1136,7 @@ fn a_push_stops_for_a_submodule_commit_no_remote_has() {
 
             let repo = Repo::open(&work).expect("open");
             let err = repo
-                .push(false, |_| {})
+                .push(|_| {})
                 .expect_err("the submodule commit is on no remote")
                 .to_string();
             assert!(
@@ -1230,8 +1166,7 @@ fn a_push_stops_for_a_submodule_commit_no_remote_has() {
                 &work.join("m"),
                 &["push", "-q", "origin", "HEAD:refs/heads/kept"],
             );
-            repo.push(false, |_| {})
-                .expect("push after the submodule's");
+            repo.push(|_| {}).expect("push after the submodule's");
             assert_eq!(
                 git(&work, &["rev-parse", "other"]),
                 git(&work, &["rev-parse", "origin/other"]),
@@ -1246,9 +1181,7 @@ fn a_push_stops_for_a_submodule_commit_no_remote_has() {
 /// does for every choice; not following it, Canopy's check applies whatever it says.
 #[test]
 fn push_recurse_submodules_in_the_configuration_decides_while_followed() {
-    if !isolated("push_recurse_submodules_in_the_configuration_decides_while_followed") {
-        return;
-    }
+    isolate_git!(push_recurse_submodules_in_the_configuration_decides_while_followed);
     for (value, follow, pushes) in [
         ("no", true, true),
         ("no", false, false),
@@ -1265,7 +1198,7 @@ fn push_recurse_submodules_in_the_configuration_decides_while_followed() {
             ..GitOptions::default()
         });
         let git_alone = run(&work, &["push", "--dry-run"], &[]).status.success();
-        let result = repo.push(false, |_| {});
+        let result = repo.push(|_| {});
         assert_eq!(
             result.is_ok(),
             pushes,
@@ -1279,9 +1212,7 @@ fn push_recurse_submodules_in_the_configuration_decides_while_followed() {
 
 #[test]
 fn changing_line_endings_is_not_neutral_for_files_already_committed_with_crlf() {
-    if !isolated("changing_line_endings_is_not_neutral_for_files_already_committed_with_crlf") {
-        return;
-    }
+    isolate_git!(changing_line_endings_is_not_neutral_for_files_already_committed_with_crlf);
     identity();
     let dir = tempfile::tempdir().expect("repository");
     let p = dir.path();

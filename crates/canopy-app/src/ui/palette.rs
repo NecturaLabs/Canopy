@@ -314,8 +314,7 @@ impl<T: Clone> CommandPalette<T> {
                     let list_margin = m.menu_pad;
                     let room = (screen.height() - top - theme::XL * 2.0 - m.palette_input_height)
                         .clamp(0.0, 400.0);
-                    let list_h =
-                        whole_rows_height(&ranked, &self.items, self.query.is_empty(), room);
+                    let list_h = list_height(&ranked, &self.items, self.query.is_empty(), room);
                     let ground = overlay::ground(ctx, Layer::Popover);
                     egui::Frame::NONE
                         .inner_margin(egui::Margin::same(crate::ui::points_i8(list_margin)))
@@ -368,14 +367,11 @@ impl<T: Clone> CommandPalette<T> {
     }
 }
 
-/// The tallest list of whole entries (and their group headings, when grouped) that fits in
-/// `room`, so the list never opens on a half-cut entry.
-fn whole_rows_height<T>(
-    ranked: &[(i32, usize)],
-    items: &[(Entry, T)],
-    grouped: bool,
-    room: f32,
-) -> f32 {
+/// The list's height in `room`: every entry (and its group heading, when grouped) when they all
+/// fit; otherwise it ends half way into an entry, so the list reads as going on and its bottom
+/// fade has a cut entry to fade. That is the next entry (its heading whole) when there is room,
+/// else the last whole one.
+fn list_height<T>(ranked: &[(i32, usize)], items: &[(Entry, T)], grouped: bool, room: f32) -> f32 {
     let row = theme::metrics().palette_row_height;
     let mut height = 0.0;
     let mut previous_group = None;
@@ -389,7 +385,14 @@ fn whole_rows_height<T>(
             }
         }
         if height + next > room {
-            break;
+            // More follow: peek into the next entry, below its heading.
+            let peek = next - row / 2.0;
+            let cut = if height + peek <= room {
+                height + peek
+            } else {
+                height - row / 2.0
+            };
+            return cut.max(row.min(room) / 2.0);
         }
         height += next;
     }
@@ -666,23 +669,32 @@ mod tests {
         assert_eq!(fuzzy_score("", "anything"), Some(0));
     }
 
+    /// F13: when more entries follow than fit, the list ends half way into one, so the fade
+    /// has something to fade and the list reads as going on; a list that fits ends on its last
+    /// entry. (This replaces "the list opens on whole entries", which hid that it scrolls.)
     #[test]
-    fn the_list_opens_on_whole_entries_and_their_headings() {
+    fn a_list_that_goes_on_ends_half_way_into_an_entry() {
         let row = theme::metrics().palette_row_height;
         let heading = menu::HEADING_HEIGHT;
         let items = items();
         let ranked: Vec<(i32, usize)> = (0..items.len()).map(|i| (0, i)).collect();
-        // Grouped: Remote heading, Push, Pull, Branch heading, New branch, ...
-        let room = heading + 2.0 * row + heading + row + row / 2.0;
+        // Grouped: Remote heading, Push, Pull, Branch heading, New branch, Check out, Help
+        // heading, Unbind. Room for three entries and a little more: it peeks into Check out.
+        let three = heading + 2.0 * row + heading + row;
         assert_eq!(
-            whole_rows_height(&ranked, &items, true, room),
-            heading + 2.0 * row + heading + row
+            list_height(&ranked, &items, true, three + row / 2.0 + 1.0),
+            three + row / 2.0
         );
-        // Ungrouped (a query): rows only.
+        // The next entry starts a group: its heading shows whole, above half of the entry.
+        let four = three + row;
         assert_eq!(
-            whole_rows_height(&ranked, &items, false, 2.5 * row),
-            2.0 * row
+            list_height(&ranked, &items, true, four + heading + row / 2.0),
+            four + heading + row / 2.0
         );
+        // Ungrouped (a query): rows only. Too little room to peek: the last entry is cut.
+        assert_eq!(list_height(&ranked, &items, false, 2.2 * row), 1.5 * row);
+        // Everything fits: it ends on the last entry.
+        assert_eq!(list_height(&ranked, &items, false, 10.0 * row), 5.0 * row);
     }
 
     #[test]

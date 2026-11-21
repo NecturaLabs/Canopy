@@ -677,7 +677,7 @@ fn list(
     // Narrower columns drop the labels; the buttons keep their tooltips.
     let compact = ui.available_width() < 280.0;
     // Several files picked with Ctrl or Shift: the header offers to stage them together. One
-    // file is staged from its row, its menu or Space.
+    // file is staged from its row, its menu, Space or the diff header's Stage file.
     let staging = tab.stage_targets();
     let picked = staging.len() > 1;
     flip.item(ui, header_key(which), None, |ui| {

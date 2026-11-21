@@ -235,12 +235,12 @@ pub enum Op {
         prune: bool,
         checked: Option<Oid>,
     },
-    /// A push of the current branch. A force push carries `expect`, what the user was asked
-    /// about: the worker refuses if the branch or its destination is no longer that.
-    Push {
-        force: bool,
-        expect: Option<canopy_core::PushTarget>,
-    },
+    /// A push of the current branch, never forced.
+    Push,
+    /// A force push of the current branch to what the user was asked about, with the remote tip
+    /// they were shown: the worker refuses if the branch or its destination is no longer that,
+    /// and git refuses if the remote moved since.
+    ForcePush(canopy_core::PushTarget),
     AddRemote {
         name: String,
         url: String,
@@ -285,7 +285,12 @@ impl Op {
             Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
             Self::Fetch { .. } => OpKind::Fetch,
             Self::Pull { .. } => OpKind::Pull,
-            Self::Push { .. } | Self::PublishBranch { .. } => OpKind::Push,
+            Self::ForcePush(target) => OpKind::ForcePush(if target.seen.is_some() {
+                Pin::Tip
+            } else {
+                Pin::Absent
+            }),
+            Self::Push | Self::PublishBranch { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             Self::Merge(..) | Self::Rebase(_) | Self::UpdateFromBase { .. } => OpKind::Merge,
             Self::StashSave { .. } => OpKind::Stash,
@@ -414,8 +419,8 @@ impl Op {
             Self::StashDrop(_) => "Dropping stash".into(),
             Self::Fetch { .. } => "Fetching".into(),
             Self::Pull { .. } => "Pulling".into(),
-            Self::Push { force: true, .. } => "Force pushing".into(),
-            Self::Push { .. } => "Pushing".into(),
+            Self::ForcePush(_) => "Force pushing".into(),
+            Self::Push => "Pushing".into(),
             Self::AddRemote { name, .. } => format!("Adding remote {name}"),
             Self::RemoveRemote(r) => format!("Removing remote {r}"),
             Self::SetRemoteUrl { name, .. } => format!("Changing the URL of {name}"),
@@ -524,6 +529,8 @@ pub enum Job {
         serial: u64,
         path: String,
         rev: Option<Oid>,
+        /// Colour the code by language too (Settings → Git → Syntax highlighting).
+        highlight: bool,
     },
     /// `HEAD`'s message (to prefill an amend).
     HeadMessage,
@@ -669,6 +676,12 @@ pub enum Event {
         serial: u64,
         result: Result<Arc<canopy_core::Blame>, String>,
     },
+    /// Syntax highlighting for the blame with this serial (sent before), from the highlighter
+    /// threads: `lines[0][i]` colours its line `i`.
+    BlameHighlight {
+        serial: u64,
+        highlights: Arc<crate::highlight::Highlights>,
+    },
     /// The diff failed only because a partial clone has not downloaded what it needs, and a
     /// retry could fetch it: the tab remembers that until the user asks again.
     DiffNotDownloaded(DiffKey),
@@ -753,9 +766,12 @@ pub enum Event {
     /// The operation `label` (a pull, rebase, merge, cherry-pick, revert or stash apply) stopped
     /// on conflicts for the user to resolve; `autostashed` when git holds the uncommitted changes
     /// aside meanwhile. `stash` when it was a stash applied or popped: nothing is in progress
-    /// then (no continue or abort), and the stash is kept.
+    /// then (no continue or abort), and the stash is kept. A cherry-pick or revert is labelled by
+    /// its verb alone, and `commit` is its commit's subject (its short id when that cannot be
+    /// read).
     Conflicted {
         label: String,
+        commit: Option<String>,
         autostashed: bool,
         stash: bool,
     },
@@ -880,6 +896,16 @@ impl Drop for ThreadEnd {
     }
 }
 
+/// What a force push is pinned to: the remote branch's tip as the last fetch saw it, or, when
+/// that fetch had no such branch, its absence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pin {
+    /// The last fetch saw the remote branch at a tip.
+    Tip,
+    /// The last fetch saw no such remote branch.
+    Absent,
+}
+
 /// What a finished operation means for the tab, independent of its label's wording.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpKind {
@@ -893,8 +919,14 @@ pub enum OpKind {
     Pull,
     /// A push: it can open, update or close a request.
     Push,
-    /// `git branch -d`: when Git refuses an unmerged branch, offer to force the delete.
+    /// A force push, pinned to what the question showed: Git's refusal as stale says what to do
+    /// about it.
+    ForcePush(Pin),
+    /// `git branch -d`.
     SafeDelete(String),
+    /// `git branch -d` refused a branch the repository shows is not merged (#267): offer to force
+    /// the delete. Read from the repository, never from git's words, which may be translated.
+    Unmerged(String),
     /// A merge, squash or rebase invoked from the toolbar.
     Merge,
     Stash,
@@ -912,7 +944,10 @@ impl OpKind {
     /// Whether finishing this operation means the forge's pull or merge requests may have
     /// changed (it talked to the remote).
     pub fn syncs_remote(&self) -> bool {
-        matches!(self, Self::Fetch | Self::Pull | Self::Push)
+        matches!(
+            self,
+            Self::Fetch | Self::Pull | Self::Push | Self::ForcePush(_)
+        )
     }
 }
 
@@ -1253,6 +1288,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     let mut limit = 2000;
     // Bumped for every diff request; a highlight request made for an older one is stale.
     let diff_generation = Arc::new(AtomicU64::new(0));
+    // The newest blame asked for; a highlight request made for an older one is stale.
+    let blame_wanted = Arc::new(AtomicU64::new(0));
     // The last diff sent. A refresh that finds the same content sends the same `Arc` again, so
     // the view keeps its layout and highlighting instead of rebuilding them on the UI thread.
     let mut last_diff: Option<(DiffKey, Arc<FileDiff>)> = None;
@@ -1421,7 +1458,13 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             .map_err(|e| e.to_string()),
                     });
                 }
-                Job::Blame { serial, path, rev } => {
+                Job::Blame {
+                    serial,
+                    path,
+                    rev,
+                    highlight,
+                } => {
+                    blame_wanted.store(serial, Ordering::Relaxed);
                     let trusted = allowed();
                     let result = read_downloading(&emit, &allowed, |missing| {
                         repo.blame(&path, rev, missing, trusted)
@@ -1429,10 +1472,30 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     if let Err(error) = &result {
                         tracing::warn!(error = %redacted(error), "blame failed");
                     }
-                    emit(Event::Blame {
-                        serial,
-                        result: result.map(Arc::new).map_err(|e| e.to_string()),
-                    });
+                    let result = result.map(Arc::new).map_err(|e| e.to_string());
+                    let code = match &result {
+                        Ok(blame) if highlight => Some(Arc::new(crate::highlight::whole_file(
+                            &path,
+                            blame.lines.iter().map(|l| l.text.as_str()),
+                        ))),
+                        _ => None,
+                    };
+                    emit(Event::Blame { serial, result });
+                    // After the blame, so it shows at once as plain text; the highlighter
+                    // threads colour it later, as they do a diff.
+                    if let Some(diff) = code {
+                        let wanted = Arc::clone(&blame_wanted);
+                        let events = events.clone();
+                        let ctx = ctx.clone();
+                        crate::highlight::request(crate::highlight::Request {
+                            diff,
+                            stale: Box::new(move || wanted.load(Ordering::Relaxed) != serial),
+                            deliver: Box::new(move |highlights| {
+                                let _ = events.send(Event::BlameHighlight { serial, highlights });
+                                ctx.request_repaint();
+                            }),
+                        });
+                    }
                 }
                 Job::Signature(oid) => {
                     let status = if allowed() {
@@ -1716,7 +1779,12 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     // A cherry-pick, a revert and a stash apply or pop can stop on conflicts as
                     // well. Files already conflicted before they ran are not their stop: git
                     // refused them, and says why.
-                    let picks = matches!(op, Op::CherryPick(_) | Op::Revert(_));
+                    let picked = match op {
+                        Op::CherryPick(o) => Some(("Cherry-picking", o)),
+                        Op::Revert(o) => Some(("Reverting", o)),
+                        _ => None,
+                    };
+                    let picks = picked.is_some();
                     let applies_stash =
                         matches!(op, Op::StashApply { .. } | Op::StashApplyCommit { .. });
                     let conflicted_before =
@@ -1846,15 +1914,38 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         })));
                     } else if stopped {
                         // Not a failure: the conflicts are the user's to resolve.
+                        let (label, commit) = match picked {
+                            Some((verb, oid)) => (
+                                verb.to_owned(),
+                                Some(repo.subject(oid).unwrap_or_else(|e| {
+                                    tracing::warn!(error = %redacted(&e), "subject not read");
+                                    canopy_core::short_id(oid)
+                                })),
+                            ),
+                            None => (label, None),
+                        };
                         emit(Event::Conflicted {
                             autostashed: !held_before && repo.autostash_held(),
                             stash: applies_stash,
                             label,
+                            commit,
                         });
                     } else {
                         // Frequent and quiet, unless it left folders out.
                         let announce =
                             announce || (stage_all && matches!(&result, Ok(m) if !m.is_empty()));
+                        let kind = match kind {
+                            OpKind::SafeDelete(name)
+                                if result.is_err()
+                                    && repo.branch_unmerged(&name).unwrap_or_else(|e| {
+                                        tracing::warn!(error = %redacted(&e), "merge state not read");
+                                        false
+                                    }) =>
+                            {
+                                OpKind::Unmerged(name)
+                            }
+                            kind => kind,
+                        };
                         emit(Event::OpFinished {
                             label,
                             kind,
@@ -2452,12 +2543,8 @@ fn perform_op(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::R
                 repo.pull(strategy, progress)
             }
         }
-        Op::Push { force, expect } => {
-            if let Some(asked) = expect.filter(|_| force) {
-                repo.ensure_force_push_target(&asked)?;
-            }
-            repo.push(force, progress)
-        }
+        Op::Push => repo.push(progress),
+        Op::ForcePush(asked) => repo.force_push(&asked, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
         Op::SetRemoteUrl { name, url } => done(repo.set_remote_url(&name, &url)),
@@ -2610,6 +2697,7 @@ fn read_ignore(repo: &Repo, query: &IgnoreQuery) -> canopy_core::Result<IgnoreDa
 #[cfg(test)]
 mod tests {
     use super::{Job, Op, OpKind, PullStrategy, read_only_message};
+    use crate::repo_config::in_isolated_git_env;
     use crate::watcher::watch;
     use std::path::Path;
     use std::process::Command;
@@ -2668,6 +2756,9 @@ mod tests {
     /// worker goes nowhere, and starting it runs the thread, which then answers once.
     #[test]
     fn a_lazy_worker_runs_nothing_until_it_starts() {
+        if !in_isolated_git_env("worker::tests::a_lazy_worker_runs_nothing_until_it_starts") {
+            return;
+        }
         let dir = tempfile::tempdir().expect("tempdir");
         git(dir.path(), &["init", "-q", "-b", "main"]);
         std::fs::write(dir.path().join("a.txt"), "a\n").expect("write");
@@ -2756,6 +2847,11 @@ mod tests {
     /// the tab being shown never waits for it.
     #[test]
     fn a_background_refresh_waits_for_the_limit_and_a_shown_tab_does_not() {
+        if !in_isolated_git_env(
+            "worker::tests::a_background_refresh_waits_for_the_limit_and_a_shown_tab_does_not",
+        ) {
+            return;
+        }
         let repo = committed_repo();
         // No permit is ever free: only the priority bypass can let a read through.
         let limiter = Arc::new(crate::read_limit::Limiter::new(0));
@@ -2794,6 +2890,10 @@ mod tests {
     /// every permit taken, on a tab that is not shown.
     #[test]
     fn an_operation_and_an_on_demand_read_are_not_limited() {
+        if !in_isolated_git_env("worker::tests::an_operation_and_an_on_demand_read_are_not_limited")
+        {
+            return;
+        }
         let repo = committed_repo();
         let limiter = Arc::new(crate::read_limit::Limiter::new(0));
         let worker = super::Worker::spawn_limited(
@@ -2824,6 +2924,9 @@ mod tests {
     /// wait would have been.
     #[test]
     fn a_dropped_worker_waiting_for_a_permit_ends() {
+        if !in_isolated_git_env("worker::tests::a_dropped_worker_waiting_for_a_permit_ends") {
+            return;
+        }
         let repo = committed_repo();
         let limiter = Arc::new(crate::read_limit::Limiter::new(0));
         let worker = super::Worker::spawn_limited(
@@ -2907,6 +3010,9 @@ mod tests {
     /// does not.
     #[test]
     fn a_worker_knows_whether_its_thread_runs() {
+        if !in_isolated_git_env("worker::tests::a_worker_knows_whether_its_thread_runs") {
+            return;
+        }
         let repo = committed_repo();
         let worker = super::Worker::spawn(repo.path().to_path_buf(), &egui::Context::default());
         assert!(worker.is_alive());
@@ -2976,6 +3082,11 @@ mod tests {
     #[test]
     fn a_linked_worktree_reports_its_shared_git_folder_to_the_trust_dialog()
     -> Result<(), Box<dyn std::error::Error>> {
+        if !in_isolated_git_env(
+            "worker::tests::a_linked_worktree_reports_its_shared_git_folder_to_the_trust_dialog",
+        ) {
+            return Ok(());
+        }
         let dir = tempfile::tempdir()?;
         let main = dir.path().join("main");
         std::fs::create_dir(&main)?;
@@ -3034,6 +3145,11 @@ mod tests {
     fn git_flow_runs_through_the_worker_from_set_up_to_the_push()
     -> Result<(), Box<dyn std::error::Error>> {
         use canopy_core::{FlowConfig, FlowFinish, FlowKind};
+        if !in_isolated_git_env(
+            "worker::tests::git_flow_runs_through_the_worker_from_set_up_to_the_push",
+        ) {
+            return Ok(());
+        }
         let dir = tempfile::tempdir()?;
         let main = dir.path().join("main");
         let remote = dir.path().join("remote.git");
@@ -3139,6 +3255,11 @@ mod tests {
     #[test]
     fn merged_branches_and_the_base_update_run_through_the_worker()
     -> Result<(), Box<dyn std::error::Error>> {
+        if !in_isolated_git_env(
+            "worker::tests::merged_branches_and_the_base_update_run_through_the_worker",
+        ) {
+            return Ok(());
+        }
         let dir = tempfile::tempdir()?;
         let main = dir.path().join("main");
         std::fs::create_dir(&main)?;
@@ -3224,6 +3345,9 @@ mod tests {
 
     #[test]
     fn a_linked_worktrees_git_folder_is_watched() -> Result<(), Box<dyn std::error::Error>> {
+        if !in_isolated_git_env("worker::tests::a_linked_worktrees_git_folder_is_watched") {
+            return Ok(());
+        }
         let dir = tempfile::tempdir()?;
         let main = dir.path().join("main");
         std::fs::create_dir(&main)?;
@@ -3413,6 +3537,7 @@ mod read_tests {
             serial,
             path: path.into(),
             rev: None,
+            highlight: false,
         };
         let kept = coalesce_reads(vec![blame(1, "a"), Job::HeadMessage, blame(2, "b")]);
         assert!(matches!(
@@ -3800,6 +3925,10 @@ mod read_tests {
         git(&up, &["commit", "-q", "-m", "base"]);
         let copy = root.join("copy");
         git(root, &["clone", "-q", "up", "copy"]);
+        // Canopy's own git commits here (a pull's merge, applied patches): its identity is the
+        // repository's, never one from the developer's global configuration.
+        git(&copy, &["config", "user.name", "Ada Lovelace"]);
+        git(&copy, &["config", "user.email", "ada@example.com"]);
         std::fs::write(up.join("up.txt"), "upstream\n").expect("write");
         git(&up, &["add", "."]);
         git(&up, &["commit", "-q", "-m", "upstream"]);
@@ -4022,6 +4151,11 @@ mod read_tests {
     /// not bring in the commits they were not shown, but ask about the new state.
     #[test]
     fn a_checked_pull_asks_again_when_the_upstream_moved_since_the_preview() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_checked_pull_asks_again_when_the_upstream_moved_since_the_preview",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         let up = root.path().join("up");
@@ -4115,6 +4249,11 @@ mod read_tests {
     /// Where the upstream is still the commit the user was shown, the checked pull just goes.
     #[test]
     fn a_checked_pull_goes_ahead_when_the_upstream_is_unchanged() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_checked_pull_goes_ahead_when_the_upstream_is_unchanged",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         let seen = Oid::from_str(&git(&copy, &["rev-parse", "origin/main"])).expect("oid");
@@ -4159,10 +4298,7 @@ mod read_tests {
         };
         assert_eq!(asked.branch, "main");
         let force = |expect: &canopy_core::PushTarget| {
-            worker.send(Job::Op(Op::Push {
-                force: true,
-                expect: Some(expect.clone()),
-            }));
+            worker.send(Job::Op(Op::ForcePush(expect.clone())));
             events_until(&worker, |e| matches!(e, Event::OpFinished { .. }))
         };
 
@@ -4197,6 +4333,61 @@ mod read_tests {
             git(&up, &["rev-parse", "main"]),
             git(&copy, &["rev-parse", "main"])
         );
+    }
+
+    /// The force push the user confirmed overwrites what the question saw and nothing newer: a
+    /// commit pushed by someone else and fetched since the question is refused, and the toast's
+    /// text is git's own.
+    #[test]
+    fn a_force_push_is_refused_when_the_remote_moved_after_the_question() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let src = root.path().join("src");
+        std::fs::create_dir(&src).expect("src");
+        git(&src, &["init", "-q", "-b", "main"]);
+        git(&src, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(root.path(), &["clone", "-q", "--bare", "src", "up.git"]);
+        git(root.path(), &["clone", "-q", "up.git", "copy"]);
+        git(root.path(), &["clone", "-q", "up.git", "other"]);
+        let copy = root.path().join("copy");
+        let other = root.path().join("other");
+        let up = root.path().join("up.git");
+        git(
+            &copy,
+            &[
+                "commit",
+                "-q",
+                "--amend",
+                "--allow-empty",
+                "-m",
+                "rewritten",
+            ],
+        );
+        let worker = worker_with_canopys_choices(trusted(copy.clone()));
+        worker.send(Job::PushTarget);
+        let events = events_until(&worker, |e| matches!(e, Event::PushTarget(_)));
+        let Some(Event::PushTarget(Ok(asked))) = events.last() else {
+            panic!("{events:?}");
+        };
+        assert!(asked.seen.is_some(), "the question saw the remote's tip");
+
+        // Someone pushes, and a fetch (the automatic one) lands before the confirmation is used.
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "theirs"]);
+        git(&other, &["push", "-q", "origin", "main"]);
+        let theirs = git(&up, &["rev-parse", "main"]);
+        git(&copy, &["fetch", "-q", "origin"]);
+
+        worker.send(Job::Op(Op::ForcePush(asked.clone())));
+        let events = events_until(&worker, |e| matches!(e, Event::OpFinished { .. }));
+        let Some(Event::OpFinished {
+            result: Err(error), ..
+        }) = events.last()
+        else {
+            panic!("an unseen commit must not be overwritten: {events:?}");
+        };
+        assert!(error.contains("stale info"), "git's message: {error}");
+        assert_eq!(git(&up, &["rev-parse", "main"]), theirs, "theirs is intact");
     }
 
     /// A rebase that stops on conflicts is not a failure: like a pull, it says so and the tab
@@ -4366,7 +4557,65 @@ mod read_tests {
                 "git is left mid-operation for the user to resolve"
             );
             assert_eq!(git(&repo, &["ls-files", "-u"]).lines().count(), 3);
+            // #253: the notice names the commit by its subject, not by its short id.
+            let Event::Conflicted { label, commit, .. } = ended else {
+                unreachable!()
+            };
+            assert_eq!(
+                label,
+                if revert {
+                    "Reverting"
+                } else {
+                    "Cherry-picking"
+                }
+            );
+            assert_eq!(commit.as_deref(), Some("theirs"));
         }
+    }
+
+    /// #267: a branch `git branch -d` refused is offered for a forced delete when the repository
+    /// says it is unmerged, whatever git's message says; any other refusal (here a locked ref of a
+    /// merged branch) stays a failure with git's message.
+    #[test]
+    fn a_refused_safe_delete_is_read_as_unmerged_from_the_repository() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_refused_safe_delete_is_read_as_unmerged_from_the_repository",
+        ) {
+            return;
+        }
+        let root = tempfile::tempdir().expect("tempdir");
+        let (repo, _, _) = conflicting_repo(root.path());
+        git(&repo, &["branch", "done", "main"]);
+        let ended = run_op(
+            &repo,
+            Op::DeleteBranch {
+                name: "other".into(),
+                force: false,
+            },
+        );
+        assert!(
+            matches!(&ended, Event::OpFinished { kind: OpKind::Unmerged(name), result: Err(_), .. } if name == "other"),
+            "{ended:?}"
+        );
+        std::fs::write(
+            repo.join(".git")
+                .join("refs")
+                .join("heads")
+                .join("done.lock"),
+            "",
+        )
+        .expect("lock");
+        let ended = run_op(
+            &repo,
+            Op::DeleteBranch {
+                name: "done".into(),
+                force: false,
+            },
+        );
+        assert!(
+            matches!(&ended, Event::OpFinished { kind: OpKind::SafeDelete(name), result: Err(e), .. } if name == "done" && e.contains("lock")),
+            "{ended:?}"
+        );
     }
 
     /// #183: a stash applied or popped onto changes it conflicts with is the user's to resolve; the
@@ -4631,6 +4880,11 @@ mod read_tests {
     #[cfg(unix)]
     #[test]
     fn an_untrusted_repository_is_read_only_and_starts_no_program() {
+        if !in_isolated_git_env(
+            "worker::read_tests::an_untrusted_repository_is_read_only_and_starts_no_program",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let (repo, hook, fsmonitor) = hostile_repository(root.path());
         let worker = Worker::spawn(repo.clone(), &egui::Context::default());
@@ -4665,6 +4919,8 @@ mod read_tests {
                     untracked: canopy_core::WorktreeLoss::default(),
                     ignored: canopy_core::WorktreeLoss::default(),
                     unreachable_commits: 0,
+                    held_by: Vec::new(),
+                    own_refs: Vec::new(),
                     blocked: None,
                     operation: None,
                     fingerprint: 0,
@@ -4722,6 +4978,11 @@ mod read_tests {
     #[cfg(unix)]
     #[test]
     fn git_lfs_programs_do_not_run_for_an_untrusted_repository() {
+        if !in_isolated_git_env(
+            "worker::read_tests::git_lfs_programs_do_not_run_for_an_untrusted_repository",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let (repo, _hook, _fsmonitor) = hostile_repository(root.path());
         let worker = Worker::spawn(repo, &egui::Context::default());
@@ -4951,6 +5212,24 @@ mod read_tests {
         );
     }
 
+    /// A force push finishes as the kind that says what it was pinned to.
+    #[test]
+    fn a_force_push_kind_says_what_it_was_pinned_to() {
+        let target = |seen| {
+            Op::ForcePush(canopy_core::PushTarget {
+                branch: "topic".into(),
+                remote: "origin".into(),
+                dest: "topic".into(),
+                dest_ref: "refs/heads/topic".into(),
+                seen,
+            })
+        };
+        let oid = Oid::from_bytes(&[7; 20]).expect("an oid");
+        assert_eq!(target(Some(oid)).kind(), OpKind::ForcePush(Pin::Tip));
+        assert_eq!(target(None).kind(), OpKind::ForcePush(Pin::Absent));
+        assert!(OpKind::ForcePush(Pin::Tip).syncs_remote());
+    }
+
     /// #43: Publish works on any local branch, not only the checked-out one, and makes the remote
     /// branch its upstream.
     #[test]
@@ -4993,6 +5272,11 @@ mod read_tests {
     /// patch that does not fit stops in the "Applying patches" state and names its file.
     #[test]
     fn exported_patches_apply_again_and_a_misfit_stops_naming_its_file() {
+        if !in_isolated_git_env(
+            "worker::read_tests::exported_patches_apply_again_and_a_misfit_stops_naming_its_file",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         // The fixture helper ignores system configuration; Canopy's git calls respect it.
@@ -5047,6 +5331,11 @@ mod read_tests {
     /// skipped with a word about it instead of writing its parent's patch.
     #[test]
     fn several_commits_export_oldest_first_and_apply_again() {
+        if !in_isolated_git_env(
+            "worker::read_tests::several_commits_export_oldest_first_and_apply_again",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
         git(&copy, &["config", "core.autocrlf", "false"]);

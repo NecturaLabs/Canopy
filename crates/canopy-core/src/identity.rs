@@ -422,6 +422,7 @@ fn parse_ident(ident: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::isolate_git;
 
     #[expect(
         clippy::disallowed_methods,
@@ -438,6 +439,7 @@ mod tests {
 
     #[test]
     fn config_origins_are_absolute_in_non_ascii_repository() {
+        isolate_git!(config_origins_are_absolute_in_non_ascii_repository);
         let root = tempfile::tempdir().expect("tempdir");
         let dir = root.path().join("répo");
         std::fs::create_dir(&dir).expect("directory");
@@ -466,6 +468,7 @@ mod tests {
 
     #[test]
     fn a_failed_email_write_puts_the_name_back() {
+        isolate_git!(a_failed_email_write_puts_the_name_back);
         let dir = tempfile::tempdir().expect("tempdir");
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "--local", "user.name", "Old One"]);
@@ -515,6 +518,7 @@ mod tests {
 
     #[test]
     fn a_failed_clear_puts_the_name_back() {
+        isolate_git!(a_failed_clear_puts_the_name_back);
         let dir = tempfile::tempdir().expect("tempdir");
         run_git(dir.path(), &["init", "-q"]);
         run_git(dir.path(), &["config", "--local", "user.name", "Old"]);
@@ -543,6 +547,7 @@ mod tests {
 
     #[test]
     fn a_repository_git_refuses_is_a_read_error() {
+        isolate_git!(a_repository_git_refuses_is_a_read_error);
         let dir = tempfile::tempdir().expect("tempdir");
         run_git(dir.path(), &["init", "-q"]);
         check_repository(command(Some(dir.path()))).expect("an ordinary repository opens");
@@ -560,6 +565,7 @@ mod tests {
 
     #[test]
     fn placeholder_rule() {
+        isolate_git!(placeholder_rule);
         let person = |name: &str, email: &str| Person {
             name: Field {
                 value: name.into(),

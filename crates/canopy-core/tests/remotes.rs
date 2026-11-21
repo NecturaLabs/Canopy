@@ -5,8 +5,12 @@
     reason = "helpers outside #[test] functions may panic too: that is a failed test"
 )]
 
+mod support;
+
 use std::path::Path;
 use std::process::Command;
+
+use support::isolate_git;
 
 use canopy_core::Repo;
 use canopy_core::ops::url_has_credentials;
@@ -19,8 +23,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
         .expect("git runs");
     assert!(
@@ -44,6 +46,7 @@ fn repository() -> (tempfile::TempDir, Repo) {
 
 #[test]
 fn a_remote_url_changes_as_git_remote_set_url_changes_it() {
+    isolate_git!(a_remote_url_changes_as_git_remote_set_url_changes_it);
     let (dir, repo) = repository();
     repo.set_remote_url("origin", "  git@github.com:o/r.git ")
         .expect("set-url");
@@ -66,6 +69,7 @@ fn a_remote_url_changes_as_git_remote_set_url_changes_it() {
 
 #[test]
 fn a_missing_remote_reports_gits_own_message() {
+    isolate_git!(a_missing_remote_reports_gits_own_message);
     let (_dir, repo) = repository();
     let err = repo
         .set_remote_url("upstream", "https://github.com/o/r.git")
@@ -75,6 +79,7 @@ fn a_missing_remote_reports_gits_own_message() {
 
 #[test]
 fn credentials_never_reach_the_configuration() {
+    isolate_git!(credentials_never_reach_the_configuration);
     let (dir, repo) = repository();
     for url in [
         "https://ghp_secret@github.com/o/r.git",
@@ -101,6 +106,7 @@ fn credentials_never_reach_the_configuration() {
 
 #[test]
 fn a_new_remote_takes_neither_credentials_nor_options() {
+    isolate_git!(a_new_remote_takes_neither_credentials_nor_options);
     let (dir, repo) = repository();
     let err = repo
         .add_remote("mine", "https://user:secret@github.com/o/r.git")
@@ -129,6 +135,7 @@ fn a_new_remote_takes_neither_credentials_nor_options() {
 
 #[test]
 fn a_clone_url_with_credentials_is_refused_before_git_runs() {
+    isolate_git!(a_clone_url_with_credentials_is_refused_before_git_runs);
     let dir = tempfile::tempdir().expect("tempdir");
     let dest = dir.path().join("r");
     let err = canopy_core::ops::clone(
@@ -145,6 +152,7 @@ fn a_clone_url_with_credentials_is_refused_before_git_runs() {
 
 #[test]
 fn credentials_are_recognised_in_urls() {
+    isolate_git!(credentials_are_recognised_in_urls);
     assert!(url_has_credentials("https://token@github.com/o/r"));
     assert!(url_has_credentials("HTTP://u:p@host/r"));
     assert!(url_has_credentials("ssh://git:pw@host/r"));
@@ -158,6 +166,7 @@ fn credentials_are_recognised_in_urls() {
 /// ahead of the first slash as the user name and password.
 #[test]
 fn credentials_are_recognised_in_every_spelling_git_accepts() {
+    isolate_git!(credentials_are_recognised_in_every_spelling_git_accepts);
     for url in [
         "https:///user:secret@github.com/o/r.git",
         "https:////token@github.com/o/r",
@@ -194,6 +203,7 @@ fn credentials_are_recognised_in_every_spelling_git_accepts() {
 
 #[test]
 fn remote_branches_are_listed_when_a_remote_has_an_unparsable_setting() {
+    isolate_git!(remote_branches_are_listed_when_a_remote_has_an_unparsable_setting);
     let (dir, _) = repository();
     git(
         dir.path(),

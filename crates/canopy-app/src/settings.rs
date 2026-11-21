@@ -730,6 +730,8 @@ impl Settings {
                 number.clone_into(v);
             }
         }
+        // Keys the keyboard rules ignore are not kept, so they are not saved or exported again.
+        crate::keymap::drop_ignored(&mut self.keybindings);
         self.zoom = self.zoom.clamp(0.8, 1.6);
         self.commit_page = self.commit_page.clamp(200, 50_000);
         self.diff.context = self.diff.context.min(25);
@@ -1572,6 +1574,27 @@ mod tests {
         .expect("parse");
         newer.migrate();
         assert!(newer.signoff_for(&repo));
+    }
+
+    /// A saved key that breaks a keyboard rule is ignored when settings load, so it is dropped
+    /// there and not written back; a valid key stays.
+    #[test]
+    fn saved_keys_that_break_a_rule_are_dropped_when_loaded() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"keybindings": {"Fetch.Repository": "V", "Push.Repository": "SuperLeft",
+                "Nothing.Anywhere": "V"}}"#,
+        )
+        .expect("parse");
+        s.migrate();
+        assert_eq!(
+            s.keybindings.keys().collect::<Vec<_>>(),
+            ["Fetch.Repository"]
+        );
+        assert!(
+            !serde_json::to_string(&s)
+                .expect("serialise")
+                .contains("SuperLeft")
+        );
     }
 
     #[cfg(unix)]

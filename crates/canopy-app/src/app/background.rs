@@ -26,18 +26,24 @@ enum IdentityStep {
 fn notice_route(ok: bool, delivery: Delivery) -> (ToastKind, Topic) {
     match (ok, delivery) {
         (true, _) => (ToastKind::Success, Topic::Finished),
-        (false, Delivery::Attention) => (ToastKind::Error, Topic::Attention),
-        (false, Delivery::Card | Delivery::Quiet) => (ToastKind::Error, Topic::Error),
+        (false, Delivery::Attention) => (ToastKind::Attention, Topic::Attention),
+        (false, Delivery::Card | Delivery::Quiet | Delivery::ForcePushStopped(_)) => {
+            (ToastKind::Error, Topic::Error)
+        }
     }
 }
 
 /// Announces a repository notice under the topic and delivery it carries.
-fn announce_notice(toasts: &mut Toasts, ctx: &egui::Context, repo: &Path, n: Notice) {
+pub(super) fn announce_notice(toasts: &mut Toasts, ctx: &egui::Context, repo: &Path, n: Notice) {
     let (kind, topic) = notice_route(n.ok, n.delivery);
-    if n.delivery == Delivery::Quiet {
-        toasts.push_quiet_for(ctx, kind, topic, n.title, n.body, repo);
-    } else {
-        toasts.push_for(ctx, kind, topic, n.title, n.body, Some(repo));
+    match n.delivery {
+        Delivery::Quiet => toasts.push_quiet_for(ctx, kind, topic, n.title, n.body, repo),
+        Delivery::ForcePushStopped(pin) => {
+            toasts.push_force_push_stopped(ctx, n.title, n.body, repo, pin);
+        }
+        Delivery::Card | Delivery::Attention => {
+            toasts.push_for(ctx, kind, topic, n.title, n.body, Some(repo));
+        }
     }
 }
 
@@ -128,29 +134,32 @@ fn settle_identity_dialog(dialogs: &mut DialogStack, saved: bool) {
     }
 }
 
-/// The question before a force push: the branch and the remote branch it overwrites.
-fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
+/// The question before a force push: the branch and the remote branch it overwrites, and the
+/// commit the remote branch was at, which the push is pinned to.
+pub(super) fn force_push_dialog(repo: &Path, target: canopy_core::PushTarget) -> Dialog {
     let canopy_core::PushTarget {
         branch,
         remote,
         dest,
-    } = target;
+        seen,
+        ..
+    } = &target;
+    let body = match seen {
+        Some(oid) => format!(
+            "This replaces {remote}/{dest}, which your last fetch saw at {}, with your local {branch}. If it has moved since, Git refuses and nothing changes.",
+            canopy_core::short_id(*oid)
+        ),
+        None => format!(
+            "Your last fetch did not see {remote}/{dest}. If the remote has it, Git refuses and nothing changes."
+        ),
+    };
     Dialog::Confirm {
         title: format!("Force push {branch} to {remote}/{dest}?"),
-        body: format!(
-            "{remote}/{dest} is overwritten with your local {branch}. --force-with-lease refuses if someone else pushed in the meantime."
-        ),
-        confirm: "Force push branch".into(),
+        body,
+        confirm: format!("Force push {branch}"),
         danger: true,
         repo: repo.to_path_buf(),
-        op: Op::Push {
-            force: true,
-            expect: Some(canopy_core::PushTarget {
-                branch,
-                remote,
-                dest,
-            }),
-        },
+        op: Op::ForcePush(target),
     }
 }
 
@@ -476,9 +485,7 @@ impl CanopyApp {
             if let Some(name) = tab.force_delete_offer.take() {
                 self.dialogs.open(Dialog::Confirm {
                     title: format!("Force delete branch {name}?"),
-                    body: format!(
-                        "{name} has commits that are not merged into its upstream or the current branch. Delete it anyway? Those commits stay reachable only through the reflog."
-                    ),
+                    body: force_delete_body(&name, tab.snap.as_deref()),
                     confirm: "Force delete".into(),
                     danger: true,
                     repo: tab.path.clone(),
@@ -808,13 +815,87 @@ fn requests_refresh_interval(minutes: u32) -> Duration {
     }
 }
 
+/// The force-delete question's body. Git refused because `name` has commits that its upstream
+/// lacks, or the checked-out commit when it has none (or its upstream is gone), as
+/// `git branch -d` compares. `git branch -D` also deletes the branch's own reflog, so the tip's
+/// ID is the way back; HEAD's reflog lists it only if HEAD was ever on it.
+fn force_delete_body(name: &str, snap: Option<&canopy_core::RepoSnapshot>) -> String {
+    let branches = snap.map_or(&[][..], |s| s.branches.as_slice());
+    let branch = branches.iter().find(|b| b.name == name);
+    let against = branch
+        .and_then(|b| b.upstream.clone())
+        .or_else(|| branches.iter().find(|b| b.is_head).map(|b| b.name.clone()))
+        .unwrap_or_else(|| "the checked-out commit".to_owned());
+    let compared = format!("{name} has commits that {against} does not have.");
+    match branch.and_then(|b| b.target) {
+        Some(tip) => format!(
+            "{compared} To get it back, create a branch at {}. HEAD's reflog lists that commit only if HEAD was ever on it.",
+            canopy_core::short_id(tip)
+        ),
+        None => compared,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// #266: the force-delete question names what git compared the branch with (its upstream,
+    /// or the current branch when it has none), and how to get it back: `git branch -D`
+    /// deletes the branch's own reflog, so its tip ID is the way back.
+    #[test]
+    fn the_force_delete_question_names_its_comparison_and_the_way_back() {
+        let tip = canopy_core::Oid::from_bytes(&[0xab; 20]).expect("an id");
+        let branch = |name: &str, upstream: Option<&str>, is_head: bool| canopy_core::BranchInfo {
+            name: name.into(),
+            target: Some(tip),
+            is_head,
+            upstream: upstream.map(Into::into),
+            ahead: 0,
+            behind: 0,
+            worktree: None,
+        };
+        let snap = |branches| canopy_core::RepoSnapshot {
+            branches,
+            ..Default::default()
+        };
+        let tracked = snap(vec![
+            branch("main", None, true),
+            branch("topic", Some("origin/topic"), false),
+        ]);
+        let body = force_delete_body("topic", Some(&tracked));
+        assert!(
+            body.starts_with("topic has commits that origin/topic does not have."),
+            "{body}"
+        );
+        assert!(body.contains(&canopy_core::short_id(tip)), "{body}");
+        assert!(body.contains("only if HEAD was ever on it"), "{body}");
+        assert!(!body.contains("only through the reflog"), "{body}");
+
+        let local = snap(vec![
+            branch("main", None, true),
+            branch("topic", None, false),
+        ]);
+        let body = force_delete_body("topic", Some(&local));
+        assert!(
+            body.starts_with("topic has commits that main does not have."),
+            "{body}"
+        );
+        assert!(!body.contains("upstream"), "{body}");
+
+        let detached = snap(vec![branch("topic", None, false)]);
+        let body = force_delete_body("topic", Some(&detached));
+        assert!(
+            body.starts_with("topic has commits that the checked-out commit does not have."),
+            "{body}"
+        );
+        let body = force_delete_body("topic", None);
+        assert!(!body.contains("upstream"), "{body}");
+    }
     use canopy_core::identity::{Field, Person};
 
     use super::*;
     use crate::settings::{DiffPrefs, NotificationPrefs};
-    use crate::worker::OpKind;
+    use crate::worker::{OpKind, Pin};
     use crossbeam_channel::Sender;
 
     fn identity(name: &str, email: &str, explicit: bool) -> Identity {
@@ -841,7 +922,8 @@ mod tests {
     }
 
     /// #234: what waits on the user is an attention notice, a failure is an error, a success is
-    /// finished work, whatever its delivery.
+    /// finished work, whatever its delivery. #253: an attention notice no longer looks like an
+    /// error either.
     #[test]
     fn notices_are_filed_under_the_topic_that_fits() {
         assert_eq!(
@@ -850,9 +932,13 @@ mod tests {
         );
         assert_eq!(
             notice_route(false, Delivery::Attention),
-            (ToastKind::Error, Topic::Attention)
+            (ToastKind::Attention, Topic::Attention)
         );
-        for delivery in [Delivery::Card, Delivery::Quiet] {
+        for delivery in [
+            Delivery::Card,
+            Delivery::Quiet,
+            Delivery::ForcePushStopped(Pin::Tip),
+        ] {
             assert_eq!(
                 notice_route(false, delivery),
                 (ToastKind::Error, Topic::Error)
@@ -1593,5 +1679,32 @@ mod tests {
             IdentityStep::Ask
         );
         assert_eq!(step(false, false, false, None, true), IdentityStep::Ask);
+    }
+
+    /// The force push question says what the push is pinned to: the tip the last fetch saw, or
+    /// that nothing was fetched.
+    #[test]
+    fn the_force_push_question_shows_the_tip_it_pins_the_push_to() {
+        let target = |seen| canopy_core::PushTarget {
+            branch: "topic".into(),
+            remote: "origin".into(),
+            dest: "topic".into(),
+            dest_ref: "refs/heads/topic".into(),
+            seen,
+        };
+        let body = |seen| match force_push_dialog(Path::new("/work/mote"), target(seen)) {
+            Dialog::Confirm { body, .. } => body,
+            other => panic!("a confirmation: {other:?}"),
+        };
+        let oid =
+            canopy_core::Oid::from_str("0123456789abcdef0123456789abcdef01234567").expect("an oid");
+        assert_eq!(
+            body(Some(oid)),
+            "This replaces origin/topic, which your last fetch saw at 0123456, with your local topic. If it has moved since, Git refuses and nothing changes."
+        );
+        assert_eq!(
+            body(None),
+            "Your last fetch did not see origin/topic. If the remote has it, Git refuses and nothing changes."
+        );
     }
 }

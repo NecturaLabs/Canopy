@@ -16,7 +16,7 @@ use crate::hosting::{
 use crate::request_view::{RequestDensity, RequestView};
 use crate::settings::{DiffPrefs, PullChoice};
 use crate::views::requests::row_standing;
-use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
+use crate::worker::{DiffKey, Event, Job, Op, OpKind, Pin, Worker};
 
 /// The main views of a repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +109,26 @@ fn merged_key(snap: &RepoSnapshot, bases: &[String]) -> u64 {
 const SIDEBAR_CLOSED_AT_START: [&str; 5] =
     ["worktrees", "remotes", "tags", "stashes", "submodules"];
 
+/// The notice for an operation (`label`) that stopped on conflicts. For a cherry-pick or revert,
+/// the subject of its `commit` leads the body, as it does in a finished commit's notice.
+pub(crate) fn conflict_notice(
+    label: &str,
+    commit: Option<&str>,
+    autostashed: bool,
+    stash: bool,
+) -> Notice {
+    let body = stopped_body(autostashed, stash);
+    Notice {
+        ok: false,
+        delivery: Delivery::Attention,
+        title: format!("{label} stopped on conflicts"),
+        body: match commit {
+            Some(subject) => format!("{subject}\n\n{body}"),
+            None => body,
+        },
+    }
+}
+
 /// What a merge, rebase, pull, cherry-pick or revert that stopped on conflicts asks of the user.
 /// When git holds their uncommitted changes aside (`--autostash`), they are not in the stash
 /// list: it says where they are and when they come back. A stash that was applied or popped
@@ -188,6 +208,9 @@ pub struct BlameRead {
     pub result: Option<Result<Arc<canopy_core::Blame>, String>>,
     /// The characters of the longest line of `result`, for the width of the view.
     pub longest: usize,
+    /// The code's syntax colours, once the highlighter threads have them (with Settings → Git →
+    /// Syntax highlighting on and a known language).
+    pub highlights: Option<Arc<Highlights>>,
 }
 
 /// A file whose diff is shown.
@@ -431,6 +454,10 @@ pub enum Delivery {
     /// Work the user did not start failed, or changed something: the center and the bell hold
     /// it, no card.
     Quiet,
+    /// A force push Git refused as stale, a safety stop and not a failure: the card says what to
+    /// do about it and offers the fetch. It is filed as an error until notifications have a
+    /// warning kind (#253).
+    ForcePushStopped(Pin),
 }
 
 /// Outcome of a finished operation, surfaced as a toast by the app.
@@ -484,6 +511,15 @@ const VERBS: &[(&str, &str, &str)] = &[
     ("Updating", "Updated", "update"),
     ("Untracking", "Stopped tracking", "stop tracking"),
 ];
+
+/// The title of a force push that Git refused because the remote branch is not where the push was
+/// pinned to.
+const FORCE_PUSH_STOPPED: &str = "Force push stopped";
+
+/// Whether Git refused a push pinned with `--force-with-lease` ("(stale info)" on its ref line).
+fn refused_as_stale(error: &str) -> bool {
+    error.to_lowercase().contains("stale info")
+}
 
 /// A finished operation's notification title from its progress label: "Creating branch x"
 /// becomes "Created branch x", or "Could not create branch x" when it failed.
@@ -635,10 +671,12 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
             body
         }
         OpKind::Push
+        | OpKind::ForcePush(_)
         | OpKind::Other
         | OpKind::Worktree
         | OpKind::Squash(_)
         | OpKind::SafeDelete(_)
+        | OpKind::Unmerged(_)
         | OpKind::Merge
         | OpKind::Stash
         | OpKind::Pop
@@ -1570,6 +1608,7 @@ impl RepoTab {
             rev,
             result: None,
             longest: 0,
+            highlights: None,
         });
     }
 
@@ -1579,7 +1618,25 @@ impl RepoTab {
             serial: self.blame_serial,
             path,
             rev,
+            highlight: self.highlight_diff,
         });
+    }
+
+    /// Follows Settings → Git → Syntax highlighting: `on` colours the diff and an open blame
+    /// (read again, keeping the plain one on screen until then), off shows both plain at once.
+    pub fn set_highlight(&mut self, on: bool) {
+        if self.highlight_diff == on {
+            return;
+        }
+        self.highlight_diff = on;
+        self.reload_diff();
+        if let Some(read) = &mut self.blame {
+            read.highlights = None;
+            if on {
+                let (path, rev) = (read.path.clone(), read.rev);
+                self.send_blame(path, rev);
+            }
+        }
     }
 
     /// Back to the file's diff; a reply still on its way is ignored.
@@ -2901,11 +2958,36 @@ impl RepoTab {
                             blame
                                 .lines
                                 .iter()
-                                .map(|l| l.text.chars().count())
+                                // Tabs show as four spaces (`diff::code_job`).
+                                .map(|l| l.text.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum::<usize>())
                                 .max()
                                 .unwrap_or(0)
                         });
+                        // Colours of the last read fit only the same lines: a refresh that
+                        // changed the file shows it plain until its own colours arrive.
+                        let same_lines = match (&read.result, &result) {
+                            (Some(Ok(old)), Ok(new)) => {
+                                old.lines.len() == new.lines.len()
+                                    && old
+                                        .lines
+                                        .iter()
+                                        .zip(&new.lines)
+                                        .all(|(a, b)| a.text == b.text)
+                            }
+                            _ => false,
+                        };
+                        if !same_lines {
+                            read.highlights = None;
+                        }
                         read.result = Some(result);
+                    }
+                }
+                Event::BlameHighlight { serial, highlights } => {
+                    if serial == self.blame_serial
+                        && self.highlight_diff
+                        && let Some(read) = &mut self.blame
+                    {
+                        read.highlights = Some(highlights);
                     }
                 }
                 Event::Insights { serial, result } => {
@@ -3079,7 +3161,7 @@ impl RepoTab {
                         }
                         Err(e) => match &kind {
                             // Git's own safety check, not a failure: ask before forcing.
-                            OpKind::SafeDelete(name) if e.contains("not fully merged") => {
+                            OpKind::Unmerged(name) => {
                                 self.force_delete_offer = Some(name.clone());
                             }
                             OpKind::Worktree => self.worktree_result = Some(Err(e)),
@@ -3098,16 +3180,26 @@ impl RepoTab {
                                     ok: false,
                                     at: Instant::now(),
                                 });
-                                notices.push(Notice {
-                                    ok: false,
+                                let (title, delivery) = match kind {
+                                    OpKind::ForcePush(pin) if refused_as_stale(&e) => (
+                                        FORCE_PUSH_STOPPED.to_owned(),
+                                        Delivery::ForcePushStopped(pin),
+                                    ),
                                     // Only a fetch nobody asked for is quiet; a failed
                                     // stage or resolve is the user's own action.
-                                    delivery: if announce || kind != OpKind::Fetch {
-                                        Delivery::Card
-                                    } else {
-                                        Delivery::Quiet
-                                    },
-                                    title: outcome_title(&label, false),
+                                    _ => (
+                                        outcome_title(&label, false),
+                                        if announce || kind != OpKind::Fetch {
+                                            Delivery::Card
+                                        } else {
+                                            Delivery::Quiet
+                                        },
+                                    ),
+                                };
+                                notices.push(Notice {
+                                    ok: false,
+                                    delivery,
+                                    title,
                                     body: e,
                                 });
                             }
@@ -3122,6 +3214,7 @@ impl RepoTab {
                 }
                 Event::Conflicted {
                     label,
+                    commit,
                     autostashed,
                     stash,
                 } => {
@@ -3130,12 +3223,12 @@ impl RepoTab {
                     self.progress = None;
                     // The resolver lives in Changes: take the user to the conflicted files.
                     self.view = View::Changes;
-                    notices.push(Notice {
-                        ok: false,
-                        delivery: Delivery::Attention,
-                        title: format!("{label} stopped on conflicts"),
-                        body: stopped_body(autostashed, stash),
-                    });
+                    notices.push(conflict_notice(
+                        &label,
+                        commit.as_deref(),
+                        autostashed,
+                        stash,
+                    ));
                 }
                 Event::AutostashConflict => {
                     // The resolver lives in Changes: take the user to the conflicted files.
@@ -5223,6 +5316,43 @@ mod tests {
         Ok(())
     }
 
+    /// A force push Git refused as stale is a stopped push, not a failure, and carries what it was
+    /// pinned to; any other failure of it stays an ordinary one.
+    #[test]
+    fn a_force_push_refused_as_stale_is_a_stop_that_knows_its_pin()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let finished = |pin, error: &str| Event::OpFinished {
+            label: "Force pushing".into(),
+            kind: OpKind::ForcePush(pin),
+            announce: true,
+            result: Err(error.to_owned()),
+        };
+        let stale = " ! [rejected]        HEAD -> topic (stale info)";
+        for pin in [Pin::Tip, Pin::Absent] {
+            events.send(finished(pin, stale))?;
+            let notices = tab.poll(&[]);
+            let [notice] = notices.as_slice() else {
+                panic!("one notice: {notices:?}");
+            };
+            assert_eq!(notice.title, "Force push stopped");
+            assert_eq!(notice.delivery, Delivery::ForcePushStopped(pin));
+            assert_eq!(notice.body, stale, "git's text is kept");
+        }
+        events.send(finished(Pin::Tip, "fatal: unable to access the remote"))?;
+        let notices = tab.poll(&[]);
+        let [notice] = notices.as_slice() else {
+            panic!("one notice: {notices:?}");
+        };
+        assert_eq!(notice.title, "Could not force push");
+        assert_eq!(notice.delivery, Delivery::Card);
+        Ok(())
+    }
+
     /// A fetch that finishes, the user's or the timer's, restarts the interval from then.
     #[test]
     fn a_finished_fetch_restarts_the_auto_fetch_interval() -> Result<(), Box<dyn std::error::Error>>
@@ -5398,6 +5528,7 @@ mod tests {
                 &mut tab,
                 Event::Conflicted {
                     label: "Pulling".into(),
+                    commit: None,
                     autostashed: false,
                     stash: false
                 }
@@ -5589,15 +5720,18 @@ mod tests {
         let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
         let (worker, events, _jobs) = Worker::detached();
         tab.worker = worker;
-        let finished = |result| Event::OpFinished {
+        let finished = |kind, result| Event::OpFinished {
             label: "Deleting topic".into(),
-            kind: OpKind::SafeDelete("topic".into()),
+            kind,
             announce: true,
             result,
         };
-        events.send(finished(Err(
-            "error: the branch 'topic' is not fully merged".into(),
-        )))?;
+        // #267: the worker read the branch as unmerged; git's words (here a translated git's)
+        // decide nothing.
+        events.send(finished(
+            OpKind::Unmerged("topic".into()),
+            Err("Fehler: Der Branch 'topic' ist nicht vollständig zusammengeführt.".into()),
+        ))?;
         let notices = tab.poll(&[]);
         assert!(
             notices.is_empty(),
@@ -5605,10 +5739,22 @@ mod tests {
         );
         assert_eq!(tab.force_delete_offer.as_deref(), Some("topic"));
         tab.force_delete_offer = None;
-        events.send(finished(Err("fatal: branch 'topic' not found".into())))?;
-        let notices = tab.poll(&[]);
-        assert!(notices.iter().any(|n| !n.ok));
-        assert!(tab.force_delete_offer.is_none());
+        // Any other refusal is an error with git's message, even one that says "not fully merged".
+        for message in [
+            "fatal: branch 'topic' not found",
+            "error: the branch 'topic' is not fully merged",
+        ] {
+            events.send(finished(
+                OpKind::SafeDelete("topic".into()),
+                Err(message.into()),
+            ))?;
+            let notices = tab.poll(&[]);
+            assert!(
+                notices.iter().any(|n| !n.ok && n.body == message),
+                "{message}"
+            );
+            assert!(tab.force_delete_offer.is_none());
+        }
         Ok(())
     }
 
@@ -5679,6 +5825,7 @@ mod tests {
         tab.view = View::History;
         events.send(Event::Conflicted {
             label: "Pulling".into(),
+            commit: None,
             autostashed: false,
             stash: false,
         })?;
@@ -5734,6 +5881,7 @@ mod tests {
             tab.worker = worker;
             events.send(Event::Conflicted {
                 label: "Merging".into(),
+                commit: None,
                 autostashed,
                 stash: false,
             })?;
@@ -5742,6 +5890,29 @@ mod tests {
             assert_eq!(notices[0].body, stopped_body(autostashed, false));
         }
         Ok(())
+    }
+
+    /// #253: a cherry-pick or revert that stopped names its commit by subject, in the first paragraph
+    /// under the title, as a finished commit's notice does; other operations name no commit.
+    #[test]
+    fn a_stopped_cherry_pick_names_its_commit_by_subject() {
+        let notice = conflict_notice(
+            "Cherry-picking",
+            Some("feat(retry): use exponential backoff defaults"),
+            false,
+            false,
+        );
+        assert_eq!(notice.title, "Cherry-picking stopped on conflicts");
+        assert_eq!(
+            notice.body,
+            format!(
+                "feat(retry): use exponential backoff defaults\n\n{}",
+                stopped_body(false, false)
+            )
+        );
+        let merge = conflict_notice("Merging feature", None, false, false);
+        assert_eq!(merge.title, "Merging feature stopped on conflicts");
+        assert_eq!(merge.body, stopped_body(false, false));
     }
 
     /// Changes put aside for a pull that conflict when they come back are said plainly, and the
@@ -5777,6 +5948,7 @@ mod tests {
             serial: current,
             path,
             rev: None,
+            highlight: true,
         } = jobs.recv()?
         else {
             panic!("blame job");
@@ -5799,6 +5971,129 @@ mod tests {
             tab.blame,
             Some(BlameRead { result: Some(Err(ref error)), .. }) if error == "no such path"
         ));
+        Ok(())
+    }
+
+    /// J7: a blame's syntax colours apply only to the newest blame, and Settings' switch turns
+    /// them off at once and asks for them again when turned back on.
+    #[test]
+    fn blame_colours_follow_the_newest_read_and_the_switch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.read_blame("Cargo.toml".into(), None);
+        let Job::Blame { serial: old, .. } = jobs.recv()? else {
+            panic!("blame job");
+        };
+        tab.read_blame("Cargo.toml".into(), None);
+        let Job::Blame { serial, .. } = jobs.recv()? else {
+            panic!("blame job");
+        };
+        let colours = Arc::new(Highlights::default());
+        let coloured = |tab: &RepoTab| tab.blame.as_ref().is_some_and(|b| b.highlights.is_some());
+        events.send(Event::BlameHighlight {
+            serial: old,
+            highlights: Arc::clone(&colours),
+        })?;
+        tab.poll(&[]);
+        assert!(!coloured(&tab), "colours for an older read were kept");
+        events.send(Event::BlameHighlight {
+            serial,
+            highlights: Arc::clone(&colours),
+        })?;
+        tab.poll(&[]);
+        assert!(coloured(&tab));
+        tab.set_highlight(false);
+        assert!(!coloured(&tab), "turned off, the blame stays coloured");
+        tab.set_highlight(true);
+        let asked = std::iter::from_fn(|| jobs.try_recv().ok()).any(|job| {
+            matches!(
+                job,
+                Job::Blame {
+                    highlight: true,
+                    ..
+                }
+            )
+        });
+        assert!(asked, "turned on, the blame is not coloured again");
+        Ok(())
+    }
+
+    /// A blame read again keeps its colours while its lines are the same, and drops them once
+    /// they differ, so old spans never colour new text (a file too long to highlight again
+    /// would keep them for good).
+    #[test]
+    fn a_refreshed_blame_keeps_its_colours_only_for_the_same_lines()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let blame = |texts: &[&str]| {
+            Ok(Arc::new(canopy_core::Blame {
+                commits: Vec::new(),
+                lines: texts
+                    .iter()
+                    .map(|t| canopy_core::BlameLine {
+                        commit: 0,
+                        text: (*t).into(),
+                    })
+                    .collect(),
+            }))
+        };
+        let read = |tab: &mut RepoTab, texts: &[&str]| -> Result<(), Box<dyn std::error::Error>> {
+            tab.read_blame("a.rs".into(), None);
+            let serial = std::iter::from_fn(|| jobs.try_recv().ok())
+                .find_map(|job| match job {
+                    Job::Blame { serial, .. } => Some(serial),
+                    _ => None,
+                })
+                .expect("a blame job");
+            events.send(Event::Blame {
+                serial,
+                result: blame(texts),
+            })?;
+            tab.poll(&[]);
+            Ok(())
+        };
+        read(&mut tab, &["fn a() {}", "fn b() {}"])?;
+        events.send(Event::BlameHighlight {
+            serial: tab.blame_serial,
+            highlights: Arc::new(Highlights::default()),
+        })?;
+        tab.poll(&[]);
+        let coloured = |tab: &RepoTab| tab.blame.as_ref().is_some_and(|b| b.highlights.is_some());
+        assert!(coloured(&tab));
+        // Read again with the same lines (a refresh): the colours stay.
+        let serial = tab.blame_serial;
+        tab.send_blame("a.rs".into(), None);
+        let again = std::iter::from_fn(|| jobs.try_recv().ok())
+            .find_map(|job| match job {
+                Job::Blame { serial, .. } => Some(serial),
+                _ => None,
+            })
+            .expect("a blame job");
+        assert_ne!(again, serial);
+        events.send(Event::Blame {
+            serial: again,
+            result: blame(&["fn a() {}", "fn b() {}"]),
+        })?;
+        tab.poll(&[]);
+        assert!(coloured(&tab), "the same lines lost their colours");
+        // A line inserted at the top: the old spans would colour the wrong lines.
+        tab.send_blame("a.rs".into(), None);
+        let changed = std::iter::from_fn(|| jobs.try_recv().ok())
+            .find_map(|job| match job {
+                Job::Blame { serial, .. } => Some(serial),
+                _ => None,
+            })
+            .expect("a blame job");
+        events.send(Event::Blame {
+            serial: changed,
+            result: blame(&["// new", "fn a() {}", "fn b() {}"]),
+        })?;
+        tab.poll(&[]);
+        assert!(!coloured(&tab), "new lines kept the old colours");
         Ok(())
     }
 

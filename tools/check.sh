@@ -3,10 +3,10 @@
 #
 # The local part of CI: formatting check, clippy with warnings denied, the unsafe-code policy
 # (only crates/nectura-ui/src/kit/glass/gl.rs may contain unsafe code), the full test suite, the
-# release tooling's self-test, the licence notices check, the documentation check, the site
-# check, the vendored-crate check, the hidden-window stall check (Linux, when its tools are
-# installed), the installer test (Linux and macOS), and ShellCheck and cargo-deny when they are
-# installed. CI also tests on macOS and Windows; nothing in CI runs install.ps1.
+# release tooling and PR commit self-tests, the licence notices check, the documentation check,
+# the site check, the vendored-crate check, the hidden-window stall check (Linux, when its tools
+# are installed), the installer test (Linux and macOS), and ShellCheck and cargo-deny when they
+# are installed. CI also tests on macOS and Windows; nothing in CI runs install.ps1.
 # Run it before every commit; it must pass before a change is considered done.
 set -euo pipefail
 
@@ -52,6 +52,9 @@ python3 tools/release.py selftest
 python3 tools/prune-releases.py selftest
 python3 tools/sign-manifest.py selftest
 python3 tools/test-release-gate.py
+
+step "PR commit check selftest"
+python3 -B tools/check-pr-commits.py --selftest
 
 step "pre-commit hook regressions"
 python3 tools/test-hooks.py

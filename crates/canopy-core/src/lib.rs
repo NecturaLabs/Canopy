@@ -43,6 +43,8 @@ pub mod signature;
 mod stale;
 pub mod status;
 pub mod submodule;
+#[cfg(test)]
+mod test_support;
 pub mod tools;
 pub mod update;
 mod worktree;

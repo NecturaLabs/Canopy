@@ -13,6 +13,7 @@ use egui::CornerRadius;
 use egui::emath::TSTransform;
 use egui::{Align2, Id, Order, vec2};
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -30,13 +31,55 @@ use super::kit::{Button, KitResponse, Size, paint};
 use super::motion;
 use super::theme;
 use crate::settings::NotificationPrefs;
+use crate::worker::Pin;
 
 /// Severity of a toast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
     Info,
     Success,
+    /// Not a failure, but it waits on the user: an operation stopped on conflicts to resolve.
+    Attention,
     Error,
+}
+
+/// The tone a card of `kind` takes: its glyph, its colour and how a screen reader announces it.
+fn card_tone(kind: ToastKind) -> Tone {
+    match kind {
+        ToastKind::Info => Tone::Accent,
+        ToastKind::Success => Tone::Success,
+        ToastKind::Attention => Tone::Warning,
+        ToastKind::Error => Tone::Danger,
+    }
+}
+
+/// The glyph and colour of a notification of `kind` in the center, as its card shows them.
+fn center_glyph(kind: ToastKind, p: &theme::Palette) -> (&'static str, egui::Color32) {
+    match kind {
+        ToastKind::Error => (icon::WARNING_CIRCLE, p.danger),
+        ToastKind::Attention => (icon::WARNING, p.warning),
+        ToastKind::Success => (icon::CHECK_CIRCLE, p.success),
+        ToastKind::Info => (icon::INFO, p.accent),
+    }
+}
+
+/// What a view keeps the cards clear of this frame ([`keep_clear`]).
+#[derive(Clone, Default)]
+struct KeepClear(Vec<egui::Rect>);
+
+fn keep_clear_id() -> Id {
+    Id::new("notifications-keep-clear")
+}
+
+/// Keeps the notification cards clear of `rect` this frame: a row of actions at the bottom of a
+/// view, which the stack would otherwise cover (#253). Called every frame the row shows, before
+/// the cards are drawn; the stack rises above it when it would cover it.
+pub fn keep_clear(ctx: &egui::Context, rect: egui::Rect) {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<KeepClear>(keep_clear_id())
+            .0
+            .push(rect);
+    });
 }
 
 /// What a notification is about, which decides whether it shows as a card
@@ -102,6 +145,9 @@ impl Topic {
 pub enum Offer {
     /// A push was refused because the remote moved on: pull the repository at this path.
     Pull(PathBuf),
+    /// A force push was stopped because the remote is not where the last fetch saw it: fetch
+    /// the repository at this path.
+    Fetch(PathBuf),
     /// The hosting API refused the CLI's sign-in: open Settings at Accounts.
     Accounts,
     /// Git's own configuration sets a choice against Canopy's recommendation: open Settings at
@@ -118,6 +164,7 @@ impl Offer {
     fn choice(&self) -> Choice<'static> {
         let (confirm, glyph, decline) = match self {
             Self::Pull(_) => ("Pull", icon::ARROW_DOWN, "Not now"),
+            Self::Fetch(_) => ("Fetch", icon::ARROWS_CLOCKWISE, "Not now"),
             Self::Accounts => ("Open Accounts", icon::USER_CIRCLE, "Not now"),
             Self::GitSettings => ("Open Git settings", icon::GIT_BRANCH, "Later"),
             Self::ReviewUpdate => ("Review update", icon::DOWNLOAD_SIMPLE, "Later"),
@@ -172,8 +219,26 @@ fn error_help(
             "SSH did not accept your key. Check the key's access to this repository.",
             None,
         ))
+    } else if lower.contains("please tell me who you are")
+        || lower.contains("unable to auto-detect email address")
+    {
+        // Git's own text explains `git config` in a terminal; Canopy sets these in Settings.
+        Some(("Git needs your name and email.", Some(Offer::GitSettings)))
     } else {
         None
+    }
+}
+
+/// What to do about a force push Git stopped as stale: the tip the question showed, or the
+/// absence of the branch, is not what the remote has now.
+fn stale_help(pin: Pin) -> &'static str {
+    match pin {
+        Pin::Tip => {
+            "The remote branch is not where your last fetch saw it: it moved or was deleted. Fetch, check what is there, then force push again."
+        }
+        Pin::Absent => {
+            "The remote already has this branch, and your last fetch did not see it. Fetch, check what is on it, then force push again."
+        }
     }
 }
 
@@ -192,64 +257,133 @@ fn recovery(
 }
 
 /// What a toast's card says under its title.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CardText<'a> {
-    body: Option<&'a str>,
-    /// Git's full output when the body says less than it (a hint, or its first line): the
-    /// center's tooltip shows it.
+    body: Option<Cow<'a, str>>,
+    /// Git's full output when the body says less than it (a hint, or part of it): the
+    /// center's tooltip gives its first 1,200 characters and Copy all of it.
     details: Option<&'a str>,
 }
 
 /// What a notification of `kind` with `body` (and, for an error, its `help`) says under its
-/// title, on its card and in the center alike.
+/// title, on its card and in the center alike: at most [`BODY_LINES`] lines and [`BODY_CHARS`]
+/// characters.
 fn card_text<'a>(kind: ToastKind, body: &'a str, help: Option<&'static str>) -> CardText<'a> {
     if kind != ToastKind::Error {
+        let text = body.trim();
+        if text.is_empty() {
+            return CardText {
+                body: None,
+                details: None,
+            };
+        }
+        let (shown, cut) = clamp(text);
         return CardText {
-            body: Some(body).filter(|b| !b.is_empty()),
-            details: None,
+            body: Some(shown),
+            details: cut.then_some(body),
         };
     }
     if help.is_some() {
         return CardText {
-            body: help,
+            body: help.map(Cow::Borrowed),
             details: Some(body),
         };
     }
     // No hint: git's own words say why, and the details hold the rest. Git opens some commands
     // with progress. A remote hook's explanation is more useful than git's generic push error.
-    let lines = || body.lines().map(str::trim);
-    let first = lines()
-        .find(|l| {
-            l.starts_with("fatal:")
-                || l.starts_with("remote: fatal:")
-                || l.starts_with("remote: error:")
-        })
-        .or_else(|| {
-            lines().find(|l| {
-                l.strip_prefix("remote:").is_some_and(|text| {
-                    let text = text.trim();
-                    !text.is_empty()
-                        && ![
-                            "Enumerating objects:",
-                            "Counting objects:",
-                            "Compressing objects:",
-                            "Total ",
-                            "Resolving deltas:",
-                            "Receiving objects:",
-                            "Writing objects:",
-                        ]
-                        .iter()
-                        .any(|prefix| text.starts_with(prefix))
-                })
-            })
-        })
-        .or_else(|| lines().find(|l| l.starts_with("error:")))
-        .or_else(|| lines().find(|l| !l.is_empty()));
-    let more = first.is_some_and(|f| body.trim() != f);
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let find = |test: &dyn Fn(&str) -> bool| lines.iter().position(|l| test(l));
+    let start = find(&|l| {
+        l.starts_with("fatal:")
+            || l.starts_with("remote: fatal:")
+            || l.starts_with("remote: error:")
+    })
+    .or_else(|| find(&|l| remote_says(l)))
+    .or_else(|| find(&|l| l.starts_with("error:")))
+    .or_else(|| find(&|l| !l.is_empty()));
+    let Some(start) = start else {
+        return CardText {
+            body: None,
+            details: None,
+        };
+    };
+    // The lines after it that go on with the same message: the files a refusal ending in a
+    // colon names, or the rest of a remote's explanation. Git's next message starts with its
+    // own prefix.
+    let remote = lines[start].starts_with("remote:");
+    let rest = lines[start + 1..].iter().take_while(|l| {
+        if remote {
+            remote_says(l)
+        } else {
+            !l.is_empty()
+                && ![
+                    "error:", "fatal:", "warning:", "hint:", "remote:", "! [", "To ",
+                ]
+                .iter()
+                .any(|prefix| l.starts_with(prefix))
+        }
+    });
+    let message = std::iter::once(&lines[start])
+        .chain(rest)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (shown, _) = clamp(&message);
+    let more = shown != body.trim();
     CardText {
-        body: first,
+        body: Some(Cow::Owned(shown.into_owned())),
         details: more.then_some(body),
     }
+}
+
+/// Whether `line` is a remote's own words rather than its progress.
+fn remote_says(line: &str) -> bool {
+    line.strip_prefix("remote:").is_some_and(|text| {
+        let text = text.trim();
+        !text.is_empty()
+            && ![
+                "Enumerating objects:",
+                "Counting objects:",
+                "Compressing objects:",
+                "Total ",
+                "Resolving deltas:",
+                "Receiving objects:",
+                "Writing objects:",
+            ]
+            .iter()
+            .any(|prefix| text.starts_with(prefix))
+    })
+}
+
+/// `text` cut to [`BODY_LINES`] lines that say something and [`BODY_CHARS`] characters, and
+/// whether it was. A cut inside a sentence ends in "…"; one after a whole sentence needs none.
+fn clamp(text: &str) -> (Cow<'_, str>, bool) {
+    let (lines, cut) = first_lines(text, BODY_LINES);
+    let (shown, cut_short) = cut_chars(&lines, BODY_CHARS);
+    if !cut && !cut_short {
+        return (Cow::Borrowed(text), false);
+    }
+    let mut shown = shown.trim_end().to_owned();
+    if cut_short || !shown.ends_with(['.', '!', '?']) {
+        shown.push('…');
+    }
+    (Cow::Owned(shown), true)
+}
+
+/// The first `limit` characters of `text`, back to the last space when that keeps most of
+/// them, and whether any were left out.
+fn cut_chars(text: &str, limit: usize) -> (&str, bool) {
+    let Some((at, _)) = text.char_indices().nth(limit) else {
+        return (text, false);
+    };
+    // Both are character boundaries: one from `char_indices`, one where a space starts.
+    let kept = text.get(..at).unwrap_or(text);
+    let word = kept
+        .rfind(char::is_whitespace)
+        .filter(|&space| space > at / 2)
+        .and_then(|space| kept.get(..space))
+        .unwrap_or(kept);
+    (word, true)
 }
 
 /// How long a card stays, in seconds of unpaused time (the center keeps every notification).
@@ -273,7 +407,8 @@ fn lifetime(kind: ToastKind, decision: bool, title: &str, body: Option<&str>) ->
     let words = title.split_whitespace().count() + body.map_or(0, |b| b.split_whitespace().count());
     let reading =
         NOTICE_SECONDS + SECONDS_PER_WORD * f64::from(u32::try_from(words).unwrap_or(u32::MAX));
-    let (least, most) = if kind == ToastKind::Error {
+    // What waits on the user is read as carefully as a failure.
+    let (least, most) = if matches!(kind, ToastKind::Error | ToastKind::Attention) {
         ERROR_SECONDS
     } else {
         INFO_SECONDS
@@ -318,8 +453,14 @@ fn center_list_height(ctx: &egui::Context, used: f32) -> f32 {
 fn room_above_status_bar(screen_height: f32) -> f32 {
     screen_height - theme::metrics().status_bar_height - 2.0 * theme::LG
 }
-/// The lines of a notification's text the center shows; the rest is in its tooltip.
-const CENTER_BODY_LINES: usize = 4;
+/// The lines of a notification's text a card and the center show; the rest is in the center's
+/// tooltip and its Copy.
+const BODY_LINES: usize = 4;
+/// The characters of a notification's text a card and the center show, so one long line of
+/// git's output cannot make a card taller than a few lines.
+const BODY_CHARS: usize = 280;
+/// The characters of git's output the center's tooltip shows; Copy gives all of it.
+const TOOLTIP_CHARS: usize = 1200;
 
 /// A notification as the notification center lists it.
 #[derive(Debug, Clone)]
@@ -422,6 +563,7 @@ fn one() -> u32 {
 enum SavedKind {
     Info,
     Success,
+    Attention,
     Error,
 }
 
@@ -430,6 +572,7 @@ enum SavedKind {
 #[derive(Debug, Serialize, Deserialize)]
 enum SavedOffer {
     Pull(PathBuf),
+    Fetch(PathBuf),
     Accounts,
     GitSettings,
 }
@@ -444,6 +587,7 @@ impl Toasts {
                 kind: match e.kind {
                     ToastKind::Info => SavedKind::Info,
                     ToastKind::Success => SavedKind::Success,
+                    ToastKind::Attention => SavedKind::Attention,
                     ToastKind::Error => SavedKind::Error,
                 },
                 title: e.title.clone(),
@@ -454,10 +598,13 @@ impl Toasts {
                 unread: e.unread
                     || (matches!(
                         e.offer,
-                        Some(Offer::Pull(_) | Offer::Accounts | Offer::GitSettings)
+                        Some(
+                            Offer::Pull(_) | Offer::Fetch(_) | Offer::Accounts | Offer::GitSettings
+                        )
                     ) && self.items.iter().any(|t| t.id == e.id)),
                 offer: match &e.offer {
                     Some(Offer::Pull(path)) => Some(SavedOffer::Pull(path.clone())),
+                    Some(Offer::Fetch(path)) => Some(SavedOffer::Fetch(path.clone())),
                     Some(Offer::Accounts) => Some(SavedOffer::Accounts),
                     Some(Offer::GitSettings) => Some(SavedOffer::GitSettings),
                     Some(Offer::ReviewUpdate | Offer::Restart(_)) | None => None,
@@ -481,6 +628,7 @@ impl Toasts {
                 kind: match s.kind {
                     SavedKind::Info => ToastKind::Info,
                     SavedKind::Success => ToastKind::Success,
+                    SavedKind::Attention => ToastKind::Attention,
                     SavedKind::Error => ToastKind::Error,
                 },
                 title: s.title,
@@ -492,6 +640,7 @@ impl Toasts {
                 help: None,
                 offer: s.offer.map(|o| match o {
                     SavedOffer::Pull(path) => Offer::Pull(path),
+                    SavedOffer::Fetch(path) => Offer::Fetch(path),
                     SavedOffer::Accounts => Offer::Accounts,
                     SavedOffer::GitSettings => Offer::GitSettings,
                 }),
@@ -564,6 +713,32 @@ impl Toasts {
             .and_then(Path::file_name)
             .map(|name| name.to_string_lossy().into_owned());
         self.notify(ctx, kind, topic, title, body, help, offer, source, true);
+    }
+
+    /// A force push that Git stopped because the remote branch is not where the last fetch saw
+    /// it. Nothing was pushed; fetching and looking is the way on, so the card offers the fetch.
+    pub fn push_force_push_stopped(
+        &mut self,
+        ctx: &egui::Context,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        repo: &Path,
+        pin: Pin,
+    ) {
+        let source = repo
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        self.notify(
+            ctx,
+            ToastKind::Error,
+            Topic::Error,
+            title.into(),
+            body.into(),
+            Some(stale_help(pin)),
+            Some(Offer::Fetch(repo.to_path_buf())),
+            source,
+            true,
+        );
     }
 
     /// Like [`Self::push_for`] for work the user did not start (an automatic fetch failing):
@@ -722,7 +897,7 @@ impl Toasts {
             kind,
             offer.is_some(),
             &title,
-            card_text(kind, &body, help).body,
+            card_text(kind, &body, help).body.as_deref(),
         );
         self.next += 1;
         let at = jiff::Timestamp::now().as_second();
@@ -792,11 +967,13 @@ impl Toasts {
         });
         if self.items.len() > 5 {
             // Evict an older card, never the one that just arrived. Prefer an older routine
-            // card to an error, and an error to an unanswered decision.
+            // card to an error or what waits on the user, and those to an unanswered decision.
             let older = &self.items[..self.items.len() - 1];
             let oldest = older
                 .iter()
-                .position(|t| t.offer.is_none() && t.kind != ToastKind::Error)
+                .position(|t| {
+                    t.offer.is_none() && !matches!(t.kind, ToastKind::Error | ToastKind::Attention)
+                })
                 .or_else(|| older.iter().position(|t| t.offer.is_none()))
                 .unwrap_or(0);
             let gone = self.items.remove(oldest);
@@ -819,6 +996,10 @@ impl Toasts {
     }
 
     fn show_cards(&mut self, ctx: &egui::Context) -> Vec<Offer> {
+        // Taken every frame, cards or not: a view asks again each frame its row shows.
+        let clear = ctx
+            .data_mut(|d| d.remove_temp::<KeepClear>(keep_clear_id()))
+            .unwrap_or_default();
         let now = ctx.input(|i| i.time);
         // The timers wait while the pointer is on the stack or the window is in the background.
         let hovered = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|at| {
@@ -856,21 +1037,36 @@ impl Toasts {
         let mut dismiss = None;
         let mut taken = None;
         let mut cards = Vec::with_capacity(self.items.len());
-        // Bottom-right, 16 from the window's right edge and above the status bar.
-        let corner = screen.right_bottom() - vec2(theme::LG, m.status_bar_height + theme::LG);
+        // Bottom-right, 16 from the window's right edge and above the status bar, and above a
+        // view's row of actions the stack would cover.
+        let width = m
+            .toast_width
+            .min((screen.width() - 2.0 * theme::XL).max(0.0));
+        let mut corner = screen.right_bottom() - vec2(theme::LG, m.status_bar_height + theme::LG);
+        // Where the stack would be, as tall as it was last frame.
+        let height = ctx
+            .memory(|mem| mem.area_rect(Id::new("notifications")))
+            .map_or(0.0, |r| r.height());
+        let columns = egui::Rangef::new(corner.x - width, corner.x);
+        let rows = egui::Rangef::new(corner.y - height, corner.y);
+        for row in clear.0 {
+            if row.x_range().intersection(columns).span() > 0.0
+                && row.y_range().intersection(rows).span() >= 0.0
+            {
+                corner.y = corner.y.min(row.min.y - theme::LG);
+            }
+        }
+        let lift = screen.right_bottom().y - m.status_bar_height - theme::LG - corner.y;
         egui::Area::new(Id::new("notifications"))
             .order(Order::Tooltip)
             .pivot(Align2::RIGHT_BOTTOM)
             .fixed_pos(corner)
             .interactable(true)
             .show(ctx, |ui| {
-                ui.set_width(
-                    m.toast_width
-                        .min((screen.width() - 2.0 * theme::XL).max(0.0)),
-                );
+                ui.set_width(width);
                 // An Area begins with its previous frame's size. Do not feed that shrunken
                 // height back into the scroll viewport: arrivals and disclosures must grow.
-                let max_height = room_above_status_bar(screen.height()).max(0.0);
+                let max_height = (room_above_status_bar(screen.height()) - lift).max(0.0);
                 ui.set_max_height(max_height);
                 ui.spacing_mut().item_spacing.y = theme::SM;
                 ui.spacing_mut().scroll = theme::solid_scroll();
@@ -892,18 +1088,14 @@ impl Toasts {
                                 .rev()
                                 .take_while(|o| t.born - o.born < f64::from(motion::TOAST_STAGGER))
                                 .count();
-                            let tone = match t.kind {
-                                ToastKind::Info => Tone::Accent,
-                                ToastKind::Success => Tone::Success,
-                                ToastKind::Error => Tone::Danger,
-                            };
+                            let tone = card_tone(t.kind);
                             let mut card =
                                 ToastCard::new(Id::new(("notification", t.id)), tone, &t.title)
                                     .born(t.born)
                                     .stagger(u8::try_from(stagger).unwrap_or(u8::MAX))
                                     .clickable(offer.is_none());
                             let text = card_text(t.kind, &t.body, t.help);
-                            if let Some(body) = text.body {
+                            if let Some(body) = text.body.as_deref() {
                                 card = card.body(body);
                             }
                             if let Some(offer) = offer {
@@ -1172,11 +1364,7 @@ impl Toasts {
                         );
                         ui.add_space(theme::SM);
                     }
-                    let (glyph, color) = match e.kind {
-                        ToastKind::Error => (icon::WARNING_CIRCLE, p.danger),
-                        ToastKind::Success => (icon::CHECK_CIRCLE, p.success),
-                        ToastKind::Info => (icon::INFO, p.accent),
-                    };
+                    let (glyph, color) = center_glyph(e.kind, p);
                     ui.push_id(e.id, |ui| {
                         ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = COLUMN_GAP;
@@ -1272,12 +1460,17 @@ impl Toasts {
                                 // What the card says (a hint before git's own words), the full
                                 // output in the tooltip.
                                 let said = card_text(e.kind, &e.body, e.help);
-                                let text = said.body.map_or("", str::trim);
-                                if !text.is_empty() {
-                                    let (shown, cut) = first_lines(text, CENTER_BODY_LINES);
-                                    let label = body_text(ui, &shown);
-                                    if cut || said.details.is_some() {
-                                        label.kit_tooltip(body).show();
+                                if let Some(text) = said.body.as_deref() {
+                                    let label = body_text(ui, text);
+                                    if said.details.is_some() {
+                                        // Copy gives all of it; the tooltip a screenful.
+                                        let (tip, cut) = cut_chars(body, TOOLTIP_CHARS);
+                                        let tip = if cut {
+                                            format!("{tip}…")
+                                        } else {
+                                            tip.to_owned()
+                                        };
+                                        label.kit_tooltip(tip).show();
                                     }
                                 }
                                 // Only what can be done about it: the decision it asks for, and a
@@ -1426,6 +1619,61 @@ mod tests {
             );
             assert_eq!(offer, Some(Offer::Accounts), "{api}");
         }
+    }
+
+    /// A force push stopped as stale says what to do, offers the fetch, keeps git's text, and
+    /// tells a branch that was never fetched from one that moved.
+    #[test]
+    fn a_stopped_force_push_offers_the_fetch_and_keeps_git_s_text() {
+        let raw = " ! [rejected]        HEAD -> main (stale info)\nerror: failed to push some refs";
+        let repo = Path::new("/work/mote");
+        let ctx = egui::Context::default();
+        let mut helps = Vec::new();
+        for pin in [Pin::Tip, Pin::Absent] {
+            let mut toasts = Toasts::default();
+            toasts.push_force_push_stopped(&ctx, "Force push stopped", raw, repo, pin);
+            let row = &toasts.history[0];
+            assert_eq!(row.title, "Force push stopped");
+            assert_eq!(row.offer, Some(Offer::Fetch(repo.to_path_buf())), "{pin:?}");
+            assert!(
+                row.body.contains("stale info"),
+                "git's own text stays: {}",
+                row.body
+            );
+            assert_eq!(toasts.items.len(), 1, "a card, not only a row");
+            helps.push(row.help.expect("a hint"));
+        }
+        assert!(helps[0].starts_with("The remote branch is not where your last fetch saw it"));
+        assert!(
+            helps[1].starts_with(
+                "The remote already has this branch, and your last fetch did not see it"
+            ),
+            "{}",
+            helps[1]
+        );
+        assert_eq!(Offer::Fetch(repo.to_path_buf()).choice().confirm, "Fetch");
+        assert_eq!(Offer::Fetch(repo.to_path_buf()).choice().decline, "Not now");
+        assert_eq!(
+            error_help("Could not force push", raw, Some(repo)),
+            None,
+            "only the stopped push, which knows what it was pinned to, explains it"
+        );
+    }
+
+    /// The fetch a stopped force push offers survives a restart like the pull offer does.
+    #[test]
+    fn the_fetch_offer_of_a_stopped_force_push_survives_a_restart() {
+        let ctx = egui::Context::default();
+        let repo = Path::new("/work/mote");
+        let mut toasts = Toasts::default();
+        toasts.push_force_push_stopped(&ctx, "Force push stopped", "(stale info)", repo, Pin::Tip);
+        let mut restored = Toasts::default();
+        restored.restore_json(&toasts.to_json());
+        assert_eq!(
+            restored.history[0].offer,
+            Some(Offer::Fetch(repo.to_path_buf()))
+        );
+        assert!(restored.history[0].unread, "the decision is still waiting");
     }
 
     #[test]
@@ -1649,10 +1897,11 @@ mod tests {
         );
     }
 
-    /// REVIEW-KIT-7: an error Canopy has no hint for still shows git's own first line on the
-    /// card, with the whole output in the center's tooltip when there is more.
+    /// REVIEW-KIT-7: an error Canopy has no hint for still shows git's own words on the card,
+    /// with the whole output in the center's tooltip when there is more. #268: the words go on
+    /// past the colon to the file the refusal is about.
     #[test]
-    fn an_error_without_a_hint_shows_gits_first_line() {
+    fn an_error_without_a_hint_shows_gits_message() {
         let ctx = egui::Context::default();
         let mut toasts = Toasts::default();
         let first =
@@ -1684,19 +1933,28 @@ mod tests {
         assert_eq!(
             text[0],
             CardText {
-                body: Some(first),
+                body: Some(
+                    format!(
+                        "{first}\nsrc/main.rs\nPlease commit your changes or stash them.\nAborting"
+                    )
+                    .into()
+                ),
                 details: Some(stderr.as_str()),
             }
         );
         assert_eq!(
             text[1],
             CardText {
-                body: Some(one),
+                body: Some(one.into()),
                 details: None,
             },
             "one line has nothing more to show"
         );
-        assert_eq!(text[2].body, toasts.items[2].help, "a hint still leads");
+        assert_eq!(
+            text[2].body.as_deref(),
+            toasts.items[2].help,
+            "a hint still leads"
+        );
         assert_eq!(text[2].details, Some(rejected));
     }
 
@@ -1980,6 +2238,133 @@ mod tests {
         });
         output.textures_delta.clear();
         output
+    }
+
+    /// One frame at `time` in which a view keeps the cards clear of `row`, when given.
+    fn frame_keeping_clear(
+        ctx: &egui::Context,
+        toasts: &mut Toasts,
+        time: f64,
+        row: Option<egui::Rect>,
+    ) -> egui::Rect {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                vec2(1024.0, 640.0),
+            )),
+            time: Some(time),
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |_| {
+            if let Some(row) = row {
+                keep_clear(ctx, row);
+            }
+            toasts.show(ctx);
+        })
+        .textures_delta
+        .clear();
+        ctx.memory(|m| m.area_rect(Id::new("notifications")))
+            .expect("the stack")
+    }
+
+    /// #253: a row of actions at the bottom of a view (the resolver's Save resolved file) stays
+    /// clickable while a card shows: the stack rises above it, only while the row is there and
+    /// only when it would cover it.
+    #[test]
+    fn cards_rise_above_the_row_of_actions_they_would_cover() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut toasts = Toasts::default();
+        toasts.push(
+            &ctx,
+            ToastKind::Attention,
+            Topic::Attention,
+            "Cherry-picking stopped on conflicts",
+            "Resolve each conflicted file in Changes.",
+        );
+        let mut time = 0.0;
+        let mut at = |toasts: &mut Toasts, row| {
+            time += 0.1;
+            frame_keeping_clear(&ctx, toasts, time, row);
+            frame_keeping_clear(&ctx, toasts, time + 0.05, row)
+        };
+        let corner = at(&mut toasts, None);
+        let row = egui::Rect::from_min_max(egui::pos2(300.0, 560.0), egui::pos2(1024.0, 616.0));
+        assert!(corner.intersects(row), "the case this is about: {corner:?}");
+        let lifted = at(&mut toasts, Some(row));
+        assert!(
+            lifted.max.y <= row.min.y - theme::SM,
+            "{lifted:?} covers {row:?}"
+        );
+        assert!((lifted.max.x - corner.max.x).abs() < 0.5, "same side");
+        // A row beside the stack or above it, not under it, leaves it in the corner.
+        let beside = egui::Rect::from_min_max(egui::pos2(0.0, 560.0), egui::pos2(300.0, 616.0));
+        let above = egui::Rect::from_min_max(egui::pos2(300.0, 40.0), egui::pos2(1024.0, 96.0));
+        for row in [beside, above] {
+            assert!(!corner.intersects(row));
+            let kept = at(&mut toasts, Some(row));
+            assert!(
+                (kept.max.y - corner.max.y).abs() < 0.5,
+                "{kept:?} moved for {row:?}"
+            );
+        }
+        // The row is asked for every frame: once its view is gone, the corner is back.
+        let back = at(&mut toasts, None);
+        assert!(
+            (back.max.y - corner.max.y).abs() < 0.5,
+            "{back:?} stayed up"
+        );
+    }
+
+    /// A row kept clear while no card shows is let go the same frame, so rows never pile up.
+    #[test]
+    fn rows_kept_clear_without_cards_do_not_pile_up() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        let row = egui::Rect::from_min_max(egui::pos2(0.0, 560.0), egui::pos2(1024.0, 616.0));
+        for frame in 0..3 {
+            ctx.run_ui(egui::RawInput::default(), |_| {
+                keep_clear(&ctx, row);
+                toasts.show(&ctx);
+            })
+            .drop_without_applying_deltas();
+            assert!(
+                ctx.data(|d| d.get_temp::<KeepClear>(keep_clear_id()))
+                    .is_none(),
+                "frame {frame}"
+            );
+        }
+    }
+
+    /// #253: what waits on the user (a conflict to resolve) does not look like a failure: its
+    /// card and its row in the center take the warning tone and glyph, and a screen reader hears
+    /// it politely rather than as an alert.
+    #[test]
+    fn attention_notices_look_unlike_errors() {
+        assert_eq!(card_tone(ToastKind::Attention), Tone::Warning);
+        assert_eq!(card_tone(ToastKind::Error), Tone::Danger);
+        let p = theme::ThemeId::Midnight.palette();
+        let attention = center_glyph(ToastKind::Attention, p);
+        let error = center_glyph(ToastKind::Error, p);
+        assert_eq!(attention, (icon::WARNING, p.warning));
+        assert_ne!(attention.0, error.0);
+        assert_ne!(attention.1, error.1);
+        // It waits like an error does, longer than a routine notice...
+        assert_eq!(
+            lifetime(ToastKind::Attention, false, "a", None),
+            ERROR_SECONDS.0
+        );
+        // ...but offers no copy of git's output, and git's hints do not apply to its words.
+        assert_eq!(
+            recovery(
+                ToastKind::Attention,
+                "Push failed",
+                "! [rejected] main -> main (fetch first)",
+                None
+            ),
+            (None, None)
+        );
     }
 
     trait IntoIterOne {
@@ -3157,13 +3542,13 @@ mod tests {
         let raw = "Enumerating objects: 27, done.\nremote: Counting objects: 100% (27/27), done.\nremote: error: Changes must be made through a pull request.\n! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs";
         let said = card_text(ToastKind::Error, raw, None);
         assert_eq!(
-            said.body,
+            said.body.as_deref(),
             Some("remote: error: Changes must be made through a pull request.")
         );
         assert_eq!(said.details, Some(raw));
         let raw = "Enumerating objects: 27, done.\nremote: Push denied by policy\nerror: failed to push some refs";
         assert_eq!(
-            card_text(ToastKind::Error, raw, None).body,
+            card_text(ToastKind::Error, raw, None).body.as_deref(),
             Some("remote: Push denied by policy")
         );
     }
@@ -3174,13 +3559,108 @@ mod tests {
                    fatal: unable to access 'https://127.0.0.1:9/o/r.git/': Failed to connect";
         let said = card_text(ToastKind::Error, raw, None);
         assert_eq!(
-            said.body,
+            said.body.as_deref(),
             Some("fatal: unable to access 'https://127.0.0.1:9/o/r.git/': Failed to connect")
         );
         assert_eq!(said.details, Some(raw), "the tooltip keeps all of it");
 
+        // #268: the lines that continue git's message are part of it.
         let plain = card_text(ToastKind::Error, "something went wrong\nand more", None);
-        assert_eq!(plain.body, Some("something went wrong"));
+        assert_eq!(
+            plain.body.as_deref(),
+            Some("something went wrong\nand more")
+        );
+    }
+
+    /// #268: a refusal that ends in a colon goes on to say what it is about (the files), and
+    /// the card shows that part too, a few lines of it.
+    #[test]
+    fn a_failure_card_keeps_the_lines_after_gits_colon() {
+        let raw = "git merge failed: error: Your local changes to the following files would be overwritten by merge:\n\tstaged.txt\nPlease commit your changes or stash them before you merge.\nAborting";
+        let said = card_text(ToastKind::Error, raw, None);
+        assert_eq!(
+            said.body.as_deref(),
+            Some(
+                "git merge failed: error: Your local changes to the following files would be overwritten by merge:\nstaged.txt\nPlease commit your changes or stash them before you merge.\nAborting"
+            )
+        );
+        let many = format!(
+            "error: Your local changes to the following files would be overwritten by merge:\n{}\nAborting",
+            (1..=9)
+                .map(|n| format!("\tfile{n}.txt"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let said = card_text(ToastKind::Error, &many, None);
+        assert_eq!(
+            said.body.as_deref(),
+            Some(
+                "error: Your local changes to the following files would be overwritten by merge:\nfile1.txt\nfile2.txt\nfile3.txt…"
+            )
+        );
+        assert_eq!(
+            said.details,
+            Some(many.as_str()),
+            "the rest is in the details"
+        );
+        let two = "error: Your local changes to the following files would be overwritten by merge:\n\ta.txt\n\tb.txt\nPlease commit your changes or stash them before you merge.\nAborting";
+        assert_eq!(
+            card_text(ToastKind::Error, two, None).body.as_deref(),
+            Some(
+                "error: Your local changes to the following files would be overwritten by merge:\na.txt\nb.txt\nPlease commit your changes or stash them before you merge."
+            ),
+            "a cut after a whole sentence gets no ellipsis"
+        );
+        // A remote's reason is followed by git's own lines about the refused ref; those are not
+        // part of it.
+        let raw = "remote: error: Changes must be made through a pull request.\nremote: error: See the branch rules.\n! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs";
+        assert_eq!(
+            card_text(ToastKind::Error, raw, None).body.as_deref(),
+            Some(
+                "remote: error: Changes must be made through a pull request.\nremote: error: See the branch rules."
+            )
+        );
+    }
+
+    /// #268: git's identity refusal is a page of instructions for a terminal, ending in its
+    /// reason; the card says what is missing and opens the settings that set it.
+    #[test]
+    fn a_failure_for_a_missing_identity_says_where_to_set_it() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        let raw = "git merge failed: Committer identity unknown\n\n*** Please tell me who you are.\n\nRun\n\n  git config --global user.email \"you@example.com\"\n  git config --global user.name \"Your Name\"\n\nto set your account's default identity.\nOmit --global to set the identity only in this repository.\n\nfatal: unable to auto-detect email address (got 'ada@pc.(none)')";
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Merge failed", raw);
+        let t = &toasts.items[0];
+        assert_eq!(t.offer, Some(Offer::GitSettings));
+        let said = card_text(t.kind, &t.body, t.help);
+        assert_eq!(said.body.as_deref(), t.help);
+        assert!(
+            said.body
+                .as_deref()
+                .is_some_and(|b| b.contains("name and email")),
+            "{said:?}"
+        );
+        assert_eq!(said.details, Some(raw));
+    }
+
+    /// #268: one very long line is cut to a few lines.
+    #[test]
+    fn a_failure_card_cuts_a_very_long_line() {
+        let raw = format!("error: {}", "word ".repeat(700));
+        let said = card_text(ToastKind::Error, &raw, None);
+        let body = said.body.expect("a body");
+        assert!(body.chars().count() <= BODY_CHARS + 1, "{}", body.len());
+        assert!(body.ends_with('…'), "{body}");
+        assert_eq!(said.details, Some(raw.as_str()));
+
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Merge failed", &raw);
+        frame_keeping_clear(&ctx, &mut toasts, 0.1, None);
+        let stack = frame_keeping_clear(&ctx, &mut toasts, 0.15, None);
+        assert!(stack.height() < 200.0, "{stack:?}");
     }
 
     /// The center says what the card says: a known git failure as its hint, git's own output in
@@ -3198,7 +3678,7 @@ mod tests {
         let hint = card_text(e.kind, &e.body, e.help)
             .body
             .expect("a hint")
-            .to_owned();
+            .into_owned();
         assert_ne!(hint, raw.lines().next().unwrap_or_default());
         let mut labels = Vec::new();
         for _ in 0..3 {

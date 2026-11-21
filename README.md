@@ -16,8 +16,7 @@
 <p align="center"><a href="#install">Install</a> · <a href="#features">Features</a> · <a href="https://canopy.necturalabs.com">Website</a> · <a href="docs/README.md">Docs</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="#licence">Licence</a></p>
 
 Canopy is a native desktop Git client for Linux, macOS and Windows, written in Rust. It reads
-repositories directly through libgit2, so the commit graph, status and diffs appear immediately
-and stay responsive on large histories. Every change it makes runs through your own `git`
+repositories directly through libgit2. Every change it makes runs through your own `git`
 executable, so credential helpers, SSH keys and config, hooks, commit signing, Git LFS and proxies
 work exactly as they do in the terminal.
 
@@ -36,6 +35,8 @@ graph and command palette of GitKraken, and the breadth of operations of Sourcet
 - **History**: commit graph with coloured lanes and curved merge edges, ref labels for `HEAD`,
   local and remote branches and tags, profile pictures with initials fallback, relative dates, and filtering by message,
   author or SHA.
+- **Files and worktrees**: blame, a file's history through renames, search for commits that added
+  or removed text, and linked worktrees (list, switch, add, remove).
 - **Commit details**: metadata, parents, changed files with added/removed line counts and a diff
   per file.
 - **Working copy**: unstaged, staged and conflicted files; stage, unstage and discard per file, for
@@ -44,7 +45,7 @@ graph and command palette of GitKraken, and the breadth of operations of Sourcet
   overrides).
 - **Conflicts**: a three-way resolver (take ours, theirs, both or the common ancestor, or edit by
   hand) and merge modes (default, no fast-forward, fast-forward only, squash).
-- **Committing**: summary and description fields with a character counter, amend and optional
+- **Committing**: subject and body fields with a character counter, amend and optional
   `--signoff`.
 - **Branches**: create (from any commit), checkout, rename, delete (`git branch -d` first; Canopy
   offers to force only when Git refuses), merge into the current branch, rebase the current branch
@@ -61,8 +62,9 @@ graph and command palette of GitKraken, and the breadth of operations of Sourcet
 - **GitHub and GitLab**: open a commit, branch or remote on its host, and list, read, create,
   check out, comment on, approve, merge and close pull and merge requests (self-hosted GitLab
   included) through the host's API (REST, and one GraphQL query for the list's checks and
-  reviews) with the sign-in of the GitHub CLI (`gh`) or GitLab CLI (`glab`); Canopy stores no token. Requests and the update check are the only network use
-  besides `git`, and each has an off switch; see the
+  reviews) with the sign-in of the GitHub CLI (`gh`) or GitLab CLI (`glab`); Canopy stores no token. Besides `git`, Canopy contacts only the repository's
+  GitHub or GitLab, its picture hosts, the update feed, and Sentry for crash reports
+  if you agree. Each has an off switch; see the
   [privacy policy](docs/legal/privacy-policy.md).
 - **Credentials**: git and ssh ask for passwords, passphrases and host-key confirmation in Canopy's
   own dialog, never in a terminal.
@@ -72,8 +74,7 @@ graph and command palette of GitKraken, and the breadth of operations of Sourcet
 - **Appearance and settings**: three themes, Midnight (the default), Daylight and Observatory, a
   Custom theme (Midnight or Daylight with your own accent and tint), a
   High contrast switch that works with each, a choice of graph marks and lines, interface zoom,
-  reduced motion, and a settings screen (Ctrl+,) for appearance, Git, integrations, accounts,
-  updates and privacy.
+  reduced motion, and a settings screen (Ctrl+,).
 - **Diagnostics and privacy**: structured per-run logs and local crash reports in Canopy's data
   folder; opt-in, scrubbed crash reports to NecturaLabs after you accept the
   [Terms](docs/legal/terms-of-service.md) and [Privacy Policy](docs/legal/privacy-policy.md) and
@@ -111,8 +112,9 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex
 ```
 
-Builds exist for Linux x86_64, Linux arm64 (experimental), macOS on Apple silicon, macOS on Intel
-(experimental) and Windows x86_64. The macOS builds are signed ad hoc, not notarised: the install
+Builds exist for Linux x86_64 (glibc 2.35 or newer, e.g. Ubuntu 22.04), Linux arm64
+(experimental), macOS 11 or newer on Apple silicon, macOS on Intel (experimental) and Windows
+x86_64. The macOS builds are signed ad hoc, not notarised: the install
 command is not affected, but an archive downloaded in a browser is blocked the first time it opens,
 until you choose Open Anyway in System Settings → Privacy & Security.
 
@@ -144,17 +146,16 @@ curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy
 
 Uninstalling removes exactly what the installer created (files of your own in its folder stay);
 your settings and logs stay unless you add `--purge`. Re-running never replaces a newer installed
-version with an older one unless you ask with `--version`. Builds exist for Linux x86_64 (glibc 2.35 or newer, e.g. Ubuntu 22.04),
-Linux arm64 (experimental), macOS 11 or newer on Apple silicon, macOS on Intel (experimental) and
-Windows x86_64. Details:
+version with an older one unless you ask with `--version`. Details:
 [packaging/README.md](packaging/README.md).
 
 ## Install from source
 
 Requirements:
 
-- A stable Rust toolchain (1.95 or newer) from [rustup](https://rustup.rs), with rustfmt and
-  clippy. Canopy builds with the latest stable release; no exact release is pinned.
+- [rustup](https://rustup.rs) 1.28.1 or newer. The first `cargo` command in the checkout installs
+  the Rust version, rustfmt and clippy pinned in [rust-toolchain.toml](rust-toolchain.toml).
+  Building with a distribution's own `rustc` (which ignores that file) needs Rust 1.95 or newer.
 - `git` 2.30 or newer on `PATH` at runtime.
 - A C compiler (libgit2 is built from source by the `git2` crate). No OpenSSL or libssh2 is needed.
 - Linux: a Wayland or X11 session with OpenGL 3.3 or OpenGL ES 3.0, plus an XDG desktop portal for
@@ -216,7 +217,7 @@ path, the welcome screen lists recent repositories.
 | `--contrast <on\|off>` | Start with High contrast on or off. |
 | `--view <history\|changes\|requests>` | Initial view. |
 | `--split` | Show diffs side by side. |
-| `--overlay <NAME>` | Open an overlay (for screenshots): `settings`, `privacy`, `cheatsheet`, `palette`, `consent`, `crash-consent`, `legal`, `licences`, `credential`, `host-key` or `merge`. |
+| `--overlay <NAME>` | Open an overlay (for screenshots): `settings`, `privacy`, `cheatsheet`, `palette`, `consent`, `crash-consent`, `legal`, `credential`, `host-key` or `merge`. |
 | `--size <WxH>` | Initial window size (default `1440x900`). |
 | `--screenshot <FILE.png>` | Capture a PNG and exit. Use `tools/screenshot.sh`; direct invocation is refused without the isolated screenshot environment. |
 | `-h`, `--help` / `-V`, `--version` | Help and version. |
@@ -253,7 +254,7 @@ Three crates:
   every mutation and all Git network traffic through the `git` CLI. It also parses GitHub and
   GitLab remote URLs (`forge.rs`, offline).
 - **`canopy-hosting`**: the GitHub and GitLab API client (pull and merge requests through REST
-  and one GraphQL query, `ureq` with rustls) and the update-manifest fetch. It contacts only the
+  and one GraphQL query, `ureq` with rustls) and the update-manifest fetch. For requests it contacts only the
   host a repository's own remote points at, with the token the `gh` or `glab` CLI holds, in memory only; author images use the
   restricted picture hosts listed in the Privacy Policy, without credentials.
 - **`canopy-app`**: the GUI, built on `eframe`/`egui` with the glow (OpenGL) renderer. Each open
@@ -314,7 +315,7 @@ The repository is set up for coding agents. [AGENTS.md](AGENTS.md) (loaded by Cl
   (a pull request's wording, before it is opened and before it is merged).
 - **Skills** (`.claude/skills/`): project recipes (`screenshot`, `fixture-repo`, `add-git-operation`,
   `hosting-api`, `add-theme`, `add-keybinding`, `release`) and working-method skills
-  (`independent-review`, `testing`, `project-docs`, `memory-hygiene`, `agent-instructions`,
+  (`plain-writing`, `independent-review`, `testing`, `project-docs`, `memory-hygiene`, `agent-instructions`,
   `agent-orchestration`).
 - **Tools** (`tools/`): the scripts above let an agent build, check, create a reproducible
   repository and look at the result as an image.

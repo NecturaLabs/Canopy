@@ -300,245 +300,504 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
         }
     };
     // Too narrow for every tool at full size: only the active view keeps its name and the Local
-    // only badge goes; past that the bar scrolls sideways (wheel or drag), with no scroll bar.
+    // only badge goes; past that the tools that still do not fit move, in order, into a More menu
+    // at the right end. The bar never scrolls.
     let full_id = Id::new(("toolbar-full-width", &tab.path));
     let full_w: f32 = ui.data(|d| d.get_temp(full_id)).unwrap_or(0.0);
     let narrow_window = ui.ctx().content_rect().width() < theme::COMPACT_WIDTH;
     let squeezed = full_w > width + 0.5;
-    let output = egui::ScrollArea::horizontal()
-        .id_salt("toolbar-actions")
-        .auto_shrink([false, false])
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .show(ui, |ui| {
-            ui.set_min_width(width);
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = m.toolbar_gap;
-                let bar_start = ui.cursor().min.x;
-                ui.add_space(left_pad);
-                let changes = snap.map_or(0, |s| s.status.len());
-                let open_requests = open_requests(ui.ctx(), tab);
-                view_tabs(
-                    ui,
-                    tab.view,
-                    changes,
-                    forge.map_or_else(
-                        || Err(snap.map(|s| s.remotes.as_slice())),
-                        |(_, f)| Ok((f.kind, open_requests)),
-                    ),
-                    narrow_window || squeezed,
-                    actions,
-                );
-                ui.add_space(theme::SM);
-                tool_divider(ui);
-                let fetch = ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch")
-                    .tooltip("Fetch all remotes")
-                    .enabled(has_remote && !busy)
-                    .disabled_reason(reason(true));
-                if running.show(ui, fetch, Tool::Fetch, Some(Command::Fetch)) {
-                    actions.push(Action::Fetch);
-                }
-                let behind = branch.map_or(0, |b| b.behind);
-                let (strategy, _) = tab.pull_default();
-                let mut pull = ToolButton::new(icon::ARROW_FAT_LINE_DOWN, "Pull")
-                    .tooltip(format!("Pull the current branch: {}", strategy.label()))
-                    .enabled(has_remote && !busy)
-                    .disabled_reason(reason(true));
-                if behind > 0 {
-                    pull = pull.badge(format!("↓{behind}"));
-                }
-                if running.show(ui, pull, Tool::Pull, Some(Command::Pull)) {
-                    actions.push(Action::Pull);
-                }
-                let ahead = branch.map_or(0, |b| b.ahead);
-                if local_only {
-                    let publish = ToolButton::new(icon::CLOUD_ARROW_UP, "Publish")
-                        .tooltip(
-                            "This repository has no remote. Add one on GitHub or GitLab and push",
-                        )
-                        .enabled(!busy && branch.is_some())
-                        .disabled_reason(if busy {
-                            busy_reason
-                        } else {
-                            "Check out a branch to publish"
-                        });
-                    if running.show(ui, publish, Tool::Publish, None) {
-                        actions.push(Action::Publish);
-                    }
-                } else {
-                    let mut push = ToolButton::new(icon::ARROW_FAT_LINE_UP, "Push")
-                        .tooltip("Push the current branch")
-                        .enabled(has_remote && !busy && branch.is_some())
-                        .disabled_reason(if branch.is_none() && has_remote && !busy {
-                            "Check out a branch to push"
-                        } else {
-                            reason(true)
-                        });
-                    if ahead > 0 {
-                        push = push.badge(format!("↑{ahead}"));
-                    }
-                    if running.show(ui, push, Tool::Push, Some(Command::Push)) {
-                        actions.push(Action::Push);
-                    }
-                }
-                // Pull/merge request for a pushed branch.
-                if let (Some((_, f)), Some(b)) = (forge, branch)
-                    && b.upstream.is_some()
-                    && !tab.is_default_branch(&b.name)
-                    && ToolButton::new(icon::GIT_PULL_REQUEST, f.kind.request_abbrev())
-                        .tooltip(format!(
-                            "Create a {} for {} on {}",
-                            f.kind.request_noun(),
-                            b.name,
-                            f.kind.name()
-                        ))
-                        .enabled(!busy)
-                        .disabled_reason(busy_reason)
-                        .show(ui)
-                        .clicked()
-                {
-                    actions.push(Action::CreateRequest {
-                        source: b.name.clone(),
-                    });
-                }
-                tool_divider(ui);
-                let new_branch = ToolButton::new(icon::GIT_BRANCH, "Branch")
-                    .tooltip("New branch: a line of work in this folder. Use it for most changes")
-                    .enabled(snap.is_some())
-                    .disabled_reason("The repository is still loading");
-                if running.show(ui, new_branch, Tool::Branch, Some(Command::NewBranch)) {
-                    actions.push(Action::OpenDialog(
-                        crate::views::dialogs::Dialog::new_branch_at(
-                            crate::views::dialogs::Start::Head,
-                        ),
-                    ));
-                }
-                if ToolButton::new(icon::FOLDERS, "Worktree")
-                    .tooltip(
-                        "New worktree: a branch in a second folder, so this one stays as it is. \
-                         Use it to work on two branches at once",
-                    )
-                    .enabled(snap.is_some() && !busy)
+    let bar = ui.max_rect();
+    ui.scope(|ui| {
+        // A tool measured for the first time may run past the edge for the one pass before the
+        // bar lays out again; nothing shows outside the bar meanwhile.
+        ui.set_clip_rect(ui.clip_rect().intersect(bar));
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = m.toolbar_gap;
+            let bar_start = ui.cursor().min.x;
+            ui.add_space(left_pad);
+            let changes = snap.map_or(0, |s| s.status.len());
+            let open_requests = open_requests(ui.ctx(), tab);
+            view_tabs(
+                ui,
+                tab.view,
+                changes,
+                forge.map_or_else(
+                    || Err(snap.map(|s| s.remotes.as_slice())),
+                    |(_, f)| Ok((f.kind, open_requests)),
+                ),
+                narrow_window || squeezed,
+                actions,
+            );
+            ui.add_space(theme::SM);
+            tool_divider(ui);
+            let fetch = ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch")
+                .tooltip("Fetch all remotes")
+                .enabled(has_remote && !busy)
+                .disabled_reason(reason(true));
+            if running.show(ui, fetch, Tool::Fetch, Some(Command::Fetch)) {
+                actions.push(Action::Fetch);
+            }
+            let behind = branch.map_or(0, |b| b.behind);
+            let (strategy, _) = tab.pull_default();
+            let mut pull = ToolButton::new(icon::ARROW_FAT_LINE_DOWN, "Pull")
+                .tooltip(format!("Pull the current branch: {}", strategy.label()))
+                .enabled(has_remote && !busy)
+                .disabled_reason(reason(true));
+            if behind > 0 {
+                pull = pull.badge(format!("↓{behind}"));
+            }
+            if running.show(ui, pull, Tool::Pull, Some(Command::Pull)) {
+                actions.push(Action::Pull);
+            }
+            let ahead = branch.map_or(0, |b| b.ahead);
+            if local_only {
+                let publish = ToolButton::new(icon::CLOUD_ARROW_UP, "Publish")
+                    .tooltip("This repository has no remote. Add one on GitHub or GitLab and push")
+                    .enabled(!busy && branch.is_some())
                     .disabled_reason(if busy {
                         busy_reason
                     } else {
-                        "The repository is still loading"
-                    })
-                    .show(ui)
-                    .clicked()
-                {
-                    actions.push(Action::OpenDialog(
-                        crate::views::dialogs::Dialog::new_worktree(),
-                    ));
-                }
-                let merge = ToolButton::new(icon::GIT_MERGE, "Merge")
-                    .tooltip("Merge or rebase")
-                    .enabled(branch.is_some() && !busy)
-                    .disabled_reason(if busy {
-                        busy_reason
-                    } else {
-                        "Check out a branch to merge into"
+                        "Check out a branch to publish"
                     });
-                if running.show(ui, merge, Tool::Merge, Some(Command::MergeDialog)) {
-                    actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Merge {
-                        target: String::new(),
-                        rebase: false,
-                        mode: canopy_core::MergeMode::Default,
-                    }));
+                if running.show(ui, publish, Tool::Publish, None) {
+                    actions.push(Action::Publish);
                 }
-                let dirty = snap.is_some_and(|s| !s.status.is_clean());
-                let stash = ToolButton::new(icon::ARCHIVE, "Stash")
-                    .tooltip("Stash changes")
-                    .enabled(dirty && !busy)
-                    .disabled_reason(if busy {
-                        busy_reason
+            } else {
+                let mut push = ToolButton::new(icon::ARROW_FAT_LINE_UP, "Push")
+                    .tooltip("Push the current branch")
+                    .enabled(has_remote && !busy && branch.is_some())
+                    .disabled_reason(if branch.is_none() && has_remote && !busy {
+                        "Check out a branch to push"
                     } else {
-                        "Nothing to stash"
+                        reason(true)
                     });
-                if running.show(ui, stash, Tool::Stash, Some(Command::Stash)) {
-                    actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Stash {
-                        message: String::new(),
-                        untracked: true,
-                    }));
+                if ahead > 0 {
+                    push = push.badge(format!("↑{ahead}"));
                 }
-                let latest = snap.and_then(|s| s.stashes.first());
-                let pop_tip = match latest {
-                    Some(st) => format!(
-                        "Apply \u{201c}{}\u{201d} and remove it from the stash list",
-                        st.message
-                    ),
-                    None => "Apply the latest stash and remove it from the stash list".to_owned(),
-                };
-                let pop = ToolButton::new(icon::TRAY_ARROW_UP, "Pop")
-                    .tooltip(pop_tip)
-                    .enabled(latest.is_some() && !busy)
-                    .disabled_reason(if busy { busy_reason } else { "No stashes" });
-                if running.show(ui, pop, Tool::Pop, Some(Command::PopStash))
-                    && let Some(st) = latest
-                {
-                    // By its commit: the stash the tooltip named, even if the list changed.
-                    actions.push(Action::Op(Op::StashApplyCommit {
-                        oid: st.oid,
-                        pop: true,
-                    }));
+                if running.show(ui, push, Tool::Push, Some(Command::Push)) {
+                    actions.push(Action::Push);
                 }
-                // The last group sits at the right end, on its width from the frame before.
-                let right_id = ui.id().with("toolbar-right-group");
-                let right_w: f32 = ui.data(|d| d.get_temp(right_id)).unwrap_or(0.0);
-                let left_w = ui.cursor().min.x - bar_start;
-                if !squeezed {
-                    // What the bar needs at full size; measured only then, so it is known
-                    // while squeezed too and the bar opens up again once the window has room.
-                    let needed = left_w + theme::SM + right_w;
-                    if (needed - full_w).abs() > 0.5 {
-                        ui.data_mut(|d| d.insert_temp(full_id, needed));
-                        ui.ctx().request_repaint();
-                    }
-                }
-                ui.add_space((width - left_w - right_w).max(theme::SM));
-                let start = ui.cursor().min.x;
-                if ToolButton::new(icon::TERMINAL_WINDOW, "Terminal")
-                    .tooltip("Open a terminal here")
-                    .show(ui)
-                    .clicked()
-                {
-                    actions.push(Action::OpenTerminal(tab.path.clone()));
-                }
-                if ToolButton::new(icon::FOLDER_OPEN, "Files")
-                    .tooltip("Show in file manager")
-                    .show(ui)
-                    .clicked()
-                {
-                    actions.push(Action::OpenPath(tab.path.clone()));
-                }
-                if let Some((_, f)) = forge
-                    && ToolButton::new(forge_icon(f.kind), f.kind.name())
-                        .tooltip(format!("Open {} on {}", f.path, f.kind.name()))
-                        .show(ui)
-                        .clicked()
-                {
-                    actions.push(Action::OpenUrl(f.web_url()));
-                }
-                if local_only && !narrow_window && !squeezed {
-                    tool_divider(ui);
-                    local_status(ui);
-                }
-                ui.add_space(right_pad);
-                let used = ui.cursor().min.x - start;
-                if (used - right_w).abs() > 0.5 {
-                    ui.data_mut(|d| d.insert_temp(right_id, used));
+            }
+            let tools = spare_tools(tab, busy, busy_reason);
+            let fixed = ui.cursor().min.x - bar_start;
+            let badge = local_only && !narrow_window && !squeezed;
+            let plan = Shelf::plan(ui.ctx(), &tools, badge, fixed, width - right_pad);
+            if !squeezed && let Some(needed) = plan.full {
+                // What the bar needs at full size; measured only then, so it is known while
+                // squeezed too and the bar opens up again once the window has room.
+                let needed = needed + right_pad;
+                if (needed - full_w).abs() > 0.5 {
+                    ui.data_mut(|d| d.insert_temp(full_id, needed));
                     ui.ctx().request_repaint();
                 }
-            });
+            }
+            let mut remeasured = false;
+            let mut group = None;
+            for t in tools.iter().take(plan.shown) {
+                if group != Some(t.group) {
+                    if t.group == SpareGroup::Places && !plan.overflow {
+                        // The places group sits at the right end, on its width from the
+                        // frame before.
+                        ui.add_space(plan.spacer);
+                    } else if t.group != SpareGroup::Remote {
+                        remeasured |= measured(ui, Shelf::divider_id(), tool_divider);
+                    }
+                    group = Some(t.group);
+                }
+                remeasured |= measured(ui, Shelf::tool_id(t), |ui| {
+                    // Its own id, whichever tools come before it: focus stays on the tool
+                    // it was given to as tools move in and out of the More menu.
+                    ui.push_id(("toolbar-tool", &t.label), |ui| {
+                        if t.show(ui, &running)
+                            && let Some(action) = &t.action
+                        {
+                            actions.push(action.clone());
+                        }
+                    });
+                });
+            }
+            if plan.badge {
+                remeasured |= measured(ui, Shelf::divider_id(), tool_divider);
+                remeasured |= measured(ui, Shelf::badge_id(), local_status);
+            }
+            if plan.overflow {
+                let more_left = bar_start + width - right_pad - plan.more;
+                ui.add_space((more_left - ui.cursor().min.x).max(0.0));
+                let mut more = None;
+                remeasured |= measured(ui, Shelf::more_id(), |ui| {
+                    let r = ui
+                        .push_id("toolbar-more", |ui| {
+                            ToolButton::new(icon::DOTS_THREE, "More")
+                                .tooltip("More actions")
+                                .show(ui)
+                        })
+                        .inner;
+                    ui.ctx()
+                        .accesskit_node_builder(r.id, |n| n.set_label("More actions"));
+                    more = Some(r);
+                });
+                if let Some(more) = more
+                    && let Some(Some(action)) =
+                        menu::menu(&more, |m| more_items(m, &tools[plan.shown..], &running))
+                {
+                    actions.push(action);
+                }
+            }
+            if remeasured {
+                ui.ctx().request_discard("a toolbar tool changed width");
+            }
         });
-    // Tools scrolled out of sight fade at the edge they hide behind, on the bar's own ground (the
-    // deck, flat in Standard, the action card's gradient in Deeper).
-    let s = theme::surfaces(ui.ctx());
-    let ground = if theme::style() == theme::Style::Deeper {
-        s.deck
-    } else {
-        theme::Fill::flat(s.deck.top)
+    });
+}
+
+/// Paints `add` and remembers how far it moved the cursor under `id`; returns whether that
+/// changed.
+fn measured(ui: &mut Ui, id: Id, add: impl FnOnce(&mut Ui)) -> bool {
+    let start = ui.cursor().min.x;
+    add(ui);
+    let advance = ui.cursor().min.x - start;
+    let before: Option<f32> = ui.data(|d| d.get_temp(id));
+    let changed = before.is_none_or(|b| (b - advance).abs() > 0.5);
+    if changed {
+        ui.data_mut(|d| d.insert_temp(id, advance));
+    }
+    changed
+}
+
+/// The tool groups after Push, which make room on a narrow bar by moving into the More menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpareGroup {
+    /// The pull or merge request tool, beside Push.
+    Remote,
+    /// Branch to Pop.
+    Work,
+    /// Terminal, Files and the forge, at the right end.
+    Places,
+}
+
+/// A tool after Push: on the bar while it fits, else a row of the More menu with the same icon,
+/// label, shortcut and disabled reason.
+struct Spare {
+    glyph: &'static str,
+    label: String,
+    tooltip: String,
+    enabled: bool,
+    reason: String,
+    shortcut: Option<Command>,
+    /// The tool whose operation can run (and spin on it).
+    tool: Option<Tool>,
+    action: Option<Action>,
+    group: SpareGroup,
+}
+
+impl Spare {
+    fn new(group: SpareGroup, glyph: &'static str, label: impl Into<String>) -> Self {
+        Self {
+            glyph,
+            label: label.into(),
+            tooltip: String::new(),
+            enabled: true,
+            reason: String::new(),
+            shortcut: None,
+            tool: None,
+            action: None,
+            group,
+        }
+    }
+    fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = text.into();
+        self
+    }
+    fn enabled(mut self, enabled: bool, reason: &str) -> Self {
+        self.enabled = enabled;
+        reason.clone_into(&mut self.reason);
+        self
+    }
+    fn shortcut(mut self, command: Command) -> Self {
+        self.shortcut = Some(command);
+        self
+    }
+    fn tool(mut self, tool: Tool) -> Self {
+        self.tool = Some(tool);
+        self
+    }
+    fn action(mut self, action: Action) -> Self {
+        self.action = Some(action);
+        self
+    }
+
+    /// Shows it on the bar; returns whether it was clicked.
+    fn show(&self, ui: &mut Ui, running: &Running) -> bool {
+        let button = ToolButton::new(self.glyph, self.label.clone())
+            .tooltip(self.tooltip.clone())
+            .enabled(self.enabled)
+            .disabled_reason(self.reason.clone());
+        match self.tool {
+            Some(tool) => running.show(ui, button, tool, self.shortcut),
+            None => match self.shortcut {
+                Some(c) => button.shortcut(c).show(ui).clicked(),
+                None => button.show(ui).clicked(),
+            },
+        }
+    }
+}
+
+/// The tools after Push, in bar order.
+fn spare_tools(tab: &RepoTab, busy: bool, busy_reason: &str) -> Vec<Spare> {
+    use crate::views::dialogs::{Dialog, Start};
+    let snap = tab.snap.as_ref();
+    let branch = snap.and_then(|s| s.current_branch());
+    let forge = tab.forge();
+    let loading = "The repository is still loading";
+    let or_busy = |reason: &'static str| if busy { busy_reason } else { reason };
+    let mut tools = Vec::new();
+    // Pull/merge request for a pushed branch.
+    if let (Some((_, f)), Some(b)) = (forge, branch)
+        && b.upstream.is_some()
+        && !tab.is_default_branch(&b.name)
+    {
+        tools.push(
+            Spare::new(
+                SpareGroup::Remote,
+                icon::GIT_PULL_REQUEST,
+                f.kind.request_abbrev(),
+            )
+            .tooltip(format!(
+                "Create a {} for {} on {}",
+                f.kind.request_noun(),
+                b.name,
+                f.kind.name()
+            ))
+            .enabled(!busy, busy_reason)
+            .action(Action::CreateRequest {
+                source: b.name.clone(),
+            }),
+        );
+    }
+    let work = SpareGroup::Work;
+    tools.push(
+        Spare::new(work, icon::GIT_BRANCH, "Branch")
+            .tooltip("New branch: a line of work in this folder. Use it for most changes")
+            .enabled(snap.is_some(), loading)
+            .shortcut(Command::NewBranch)
+            .tool(Tool::Branch)
+            .action(Action::OpenDialog(Dialog::new_branch_at(Start::Head))),
+    );
+    tools.push(
+        Spare::new(work, icon::FOLDERS, "Worktree")
+            .tooltip(
+                "New worktree: a branch in a second folder, so this one stays as it is. Use it \
+                 to work on two branches at once",
+            )
+            .enabled(snap.is_some() && !busy, or_busy(loading))
+            .action(Action::OpenDialog(Dialog::new_worktree())),
+    );
+    tools.push(
+        Spare::new(work, icon::GIT_MERGE, "Merge")
+            .tooltip("Merge or rebase")
+            .enabled(
+                branch.is_some() && !busy,
+                or_busy("Check out a branch to merge into"),
+            )
+            .shortcut(Command::MergeDialog)
+            .tool(Tool::Merge)
+            .action(Action::OpenDialog(Dialog::Merge {
+                target: String::new(),
+                rebase: false,
+                mode: canopy_core::MergeMode::Default,
+            })),
+    );
+    let dirty = snap.is_some_and(|s| !s.status.is_clean());
+    tools.push(
+        Spare::new(work, icon::ARCHIVE, "Stash")
+            .tooltip("Stash changes")
+            .enabled(dirty && !busy, or_busy("Nothing to stash"))
+            .shortcut(Command::Stash)
+            .tool(Tool::Stash)
+            .action(Action::OpenDialog(Dialog::Stash {
+                message: String::new(),
+                untracked: true,
+            })),
+    );
+    let latest = snap.and_then(|s| s.stashes.first());
+    let pop_tip = match latest {
+        Some(st) => format!(
+            "Apply \u{201c}{}\u{201d} and remove it from the stash list",
+            st.message
+        ),
+        None => "Apply the latest stash and remove it from the stash list".to_owned(),
     };
-    tool_fade(ui, &output, ground);
+    let mut pop = Spare::new(work, icon::TRAY_ARROW_UP, "Pop")
+        .tooltip(pop_tip)
+        .enabled(latest.is_some() && !busy, or_busy("No stashes"))
+        .shortcut(Command::PopStash)
+        .tool(Tool::Pop);
+    if let Some(st) = latest {
+        // By its commit: the stash the tooltip named, even if the list changed.
+        pop = pop.action(Action::Op(Op::StashApplyCommit {
+            oid: st.oid,
+            pop: true,
+        }));
+    }
+    tools.push(pop);
+    let places = SpareGroup::Places;
+    tools.push(
+        Spare::new(places, icon::TERMINAL_WINDOW, "Terminal")
+            .tooltip("Open a terminal here")
+            .action(Action::OpenTerminal(tab.path.clone())),
+    );
+    tools.push(
+        Spare::new(places, icon::FOLDER_OPEN, "Files")
+            .tooltip("Show in file manager")
+            .action(Action::OpenPath(tab.path.clone())),
+    );
+    if let Some((_, f)) = forge {
+        tools.push(
+            Spare::new(places, forge_icon(f.kind), f.kind.name())
+                .tooltip(format!("Open {} on {}", f.path, f.kind.name()))
+                .action(Action::OpenUrl(f.web_url())),
+        );
+    }
+    tools
+}
+
+/// The rows of the More menu: the `hidden` tools in bar order, a separator between groups.
+/// Returns the chosen tool's action.
+fn more_items(m: &mut menu::Menu<'_>, hidden: &[Spare], running: &Running) -> Option<Action> {
+    let mut picked = None;
+    let mut group = None;
+    for t in hidden {
+        if group.is_some_and(|g| g != t.group) {
+            m.separator();
+        }
+        group = Some(t.group);
+        let spinning = t.tool.is_some() && running.tool == t.tool;
+        let mut item = m
+            .item(t.glyph, t.label.clone())
+            .enabled(t.enabled && !spinning)
+            .disabled_reason(if spinning {
+                running.tip.clone()
+            } else {
+                t.reason.clone()
+            });
+        if let Some(c) = t.shortcut {
+            item = item.shortcut(c);
+        }
+        if item.show(m.ui).clicked() {
+            picked.clone_from(&t.action);
+        }
+    }
+    picked
+}
+
+/// Where the tools after Push go this frame, from the widths they took when last shown.
+struct Shelf {
+    /// How many of the spare tools are on the bar; the rest are in the More menu.
+    shown: usize,
+    overflow: bool,
+    /// The gap before the places group when everything fits.
+    spacer: f32,
+    /// The More button's width with its gap.
+    more: f32,
+    badge: bool,
+    /// The whole bar's width with every tool shown, once every tool has been measured.
+    full: Option<f32>,
+}
+
+/// Whether tools stand icon over caption (Comfortable), which sets their widths.
+fn stacked() -> bool {
+    theme::metrics().tool_layout == theme::ToolLayout::Stacked
+}
+
+impl Shelf {
+    fn tool_id(t: &Spare) -> Id {
+        Id::new(("toolbar-tool-width", &t.label, stacked()))
+    }
+    fn divider_id() -> Id {
+        Id::new(("toolbar-divider-width", stacked()))
+    }
+    fn badge_id() -> Id {
+        Id::new(("toolbar-badge-width", stacked()))
+    }
+    fn more_id() -> Id {
+        Id::new(("toolbar-more-width", stacked()))
+    }
+
+    /// Lays out `tools` after `fixed` points of the bar, up to `end`; `badge` asks for the Local
+    /// only badge after them. A tool not yet measured is shown, so it can be.
+    fn plan(ctx: &egui::Context, tools: &[Spare], badge: bool, fixed: f32, end: f32) -> Self {
+        let width = |id: Id| ctx.data(|d| d.get_temp::<f32>(id));
+        let divider = width(Self::divider_id());
+        let widths: Vec<Option<f32>> = tools.iter().map(|t| width(Self::tool_id(t))).collect();
+        let badge_w = if badge {
+            width(Self::badge_id()).zip(divider).map(|(b, d)| b + d)
+        } else {
+            Some(0.0)
+        };
+        let has_work = tools.iter().any(|t| t.group == SpareGroup::Work);
+        let all: Option<f32> = widths
+            .iter()
+            .try_fold(0.0, |sum, w| w.map(|w| sum + w))
+            .zip(if has_work { divider } else { Some(0.0) })
+            .zip(badge_w)
+            .map(|((tools, divider), badge)| tools + divider + badge + theme::SM);
+        let Some(all) = all else {
+            // Something has not been measured yet: show it all once (the pass is discarded).
+            return Self {
+                shown: tools.len(),
+                overflow: false,
+                spacer: theme::SM,
+                more: 0.0,
+                badge,
+                full: None,
+            };
+        };
+        let full = Some(fixed + all);
+        if fixed + all <= end + 0.5 {
+            let places: f32 = tools
+                .iter()
+                .zip(&widths)
+                .filter(|(t, _)| t.group == SpareGroup::Places)
+                .filter_map(|(_, w)| *w)
+                .sum();
+            let before = fixed + all - theme::SM - places - badge_w.unwrap_or(0.0);
+            return Self {
+                shown: tools.len(),
+                overflow: false,
+                spacer: (end - before - places - badge_w.unwrap_or(0.0)).max(theme::SM),
+                more: 0.0,
+                badge,
+                full,
+            };
+        }
+        let more = width(Self::more_id()).unwrap_or(0.0);
+        let limit = end - more;
+        let mut x = fixed;
+        let mut group = None;
+        let mut shown = 0;
+        for (t, w) in tools.iter().zip(&widths) {
+            let lead = if group != Some(t.group) && t.group != SpareGroup::Remote {
+                divider.unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let w = w.unwrap_or(0.0);
+            if x + lead + w > limit + 0.5 {
+                break;
+            }
+            x += lead + w;
+            group = Some(t.group);
+            shown += 1;
+        }
+        Self {
+            shown,
+            overflow: true,
+            spacer: 0.0,
+            more,
+            badge: false,
+            full,
+        }
+    }
 }
 
 /// Repository status shares the tools' density and alignment, without a button or badge ground.
@@ -589,28 +848,6 @@ fn local_status(ui: &mut Ui) {
     response
         .kit_tooltip("This repository has no remotes. Use Publish or Add remote to connect one.")
         .show();
-}
-
-/// How far tools hidden past an edge of the bar fade into it: about one tool's width, so a tool
-/// the edge cuts through dissolves instead of reading as a clipped word (the kit's 16-point side
-/// fade suits the narrower tab strip).
-const TOOL_FADE: f32 = theme::XXL + theme::LG;
-
-/// Fades the bar into `ground` at each side where tools lie beyond it, opaque at the edge.
-fn tool_fade<R>(ui: &Ui, bar: &egui::scroll_area::ScrollAreaOutput<R>, ground: theme::Fill) {
-    let rect = bar.inner_rect;
-    let left = bar.state.offset.x;
-    let right = bar.content_size.x - rect.width() - bar.state.offset.x;
-    let painter = ui.painter_at(rect);
-    for (hidden, edge) in [
-        (left, paint::FadeEdge::Left),
-        (right, paint::FadeEdge::Right),
-    ] {
-        if hidden > 0.5 {
-            let band = TOOL_FADE.min(hidden).min(rect.width() / 4.0);
-            painter.add(paint::edge_fade(rect, edge, band, ground, 1.0));
-        }
-    }
 }
 
 /// The History / Changes / Requests switcher (design spec 4.8 ViewTabs): the kit's view tabs with
@@ -759,7 +996,7 @@ fn tool_of(kind: &OpKind) -> Option<Tool> {
     Some(match kind {
         OpKind::Fetch => Tool::Fetch,
         OpKind::Pull => Tool::Pull,
-        OpKind::Push => Tool::Push,
+        OpKind::Push | OpKind::ForcePush(_) => Tool::Push,
         OpKind::Stash => Tool::Stash,
         OpKind::Pop => Tool::Pop,
         OpKind::Merge | OpKind::Squash(_) => Tool::Merge,
@@ -1194,18 +1431,15 @@ mod tests {
                 },
                 Some(Tool::Pull),
             ),
+            (Op::Push, Some(Tool::Push)),
             (
-                Op::Push {
-                    force: false,
-                    expect: None,
-                },
-                Some(Tool::Push),
-            ),
-            (
-                Op::Push {
-                    force: true,
-                    expect: None,
-                },
+                Op::ForcePush(canopy_core::PushTarget {
+                    branch: "main".into(),
+                    remote: "origin".into(),
+                    dest: "main".into(),
+                    dest_ref: "refs/heads/main".into(),
+                    seen: None,
+                }),
                 Some(Tool::Push),
             ),
             (
@@ -1503,48 +1737,137 @@ mod tests {
         assert!(Running::of(&ctx, &quiet).outcome.is_none());
     }
 
-    /// QVIS-4: tools the bar hides past its right edge fade out over about a tool's width, opaque
-    /// at the edge, so a tool cut mid-word never reads as a whole label (16 points at 85% left
-    /// "Mer" of Merge legible at 960x600).
+    /// F15: in a narrow window every action is either shown whole on the bar or listed in the
+    /// More menu at its right end, never cut by the edge; the view switcher and the remote tools
+    /// stay on the bar, and a wide bar needs no menu.
     #[test]
-    fn a_tool_cut_at_the_bar_edge_fades_out() {
+    fn every_action_is_on_the_bar_or_in_the_more_menu() {
+        const MOVABLE: [&str; 7] = [
+            "Branch", "Worktree", "Merge", "Stash", "Pop", "Terminal", "Files",
+        ];
+        const STAYING: [&str; 4] = ["History", "Fetch", "Pull", "Publish"];
+        let screen = Rect::from_min_max(egui::Pos2::ZERO, pos2(1500.0, 700.0));
+        for density in [theme::Density::Comfortable, theme::Density::Dense] {
+            for width in [1440.0, 900.0, 760.0, 640.0] {
+                let ctx = context();
+                theme::apply(
+                    &ctx,
+                    ThemeId::Midnight,
+                    theme::Appearance {
+                        density,
+                        ..theme::Appearance::STILL
+                    },
+                );
+                let mut tab = repo_tab("alpha");
+                tab.snap = Some(Arc::new(canopy_core::RepoSnapshot::default()));
+                let mut show = |ui: &mut Ui| {
+                    let slot = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 60.0));
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                        actions_bar(ui, &tab, &mut Vec::new());
+                    });
+                };
+                let mut out = (Vec::new(), Vec::new());
+                for _ in 0..3 {
+                    out = frame_in(&ctx, screen, Vec::new(), &mut show);
+                }
+                let (shapes, nodes) = out;
+                // A disabled tool is announced as "Pop, unavailable".
+                let named = |n: &Node, label: &str| {
+                    n.label()
+                        .is_some_and(|l| l == label || l.starts_with(&format!("{label},")))
+                };
+                let on_bar = |label: &str| {
+                    nodes.iter().any(|n| {
+                        named(n, label)
+                            && n.bounds().is_some()
+                            && node_rect(n).right() <= width + 0.5
+                            && node_rect(n).bottom() <= 60.5
+                    })
+                };
+                for label in STAYING {
+                    assert!(
+                        on_bar(label),
+                        "{label} left the bar at {width} ({density:?})"
+                    );
+                }
+                let more = nodes
+                    .iter()
+                    .find(|n| n.label() == Some("More actions"))
+                    .map(node_rect);
+                let listed: Vec<Node> = more.map_or_else(Vec::new, |more| {
+                    assert!(
+                        more.right() <= width + 0.5,
+                        "More is cut at {width} ({density:?})"
+                    );
+                    frame_in(&ctx, screen, click(more.center()), &mut show);
+                    let (_, open) = frame_in(&ctx, screen, Vec::new(), &mut show);
+                    open.into_iter()
+                        .filter(|n| n.role() == Role::MenuItem)
+                        .collect()
+                });
+                for label in MOVABLE {
+                    let shown = on_bar(label)
+                        && text_rect(&shapes, label).is_some_and(|r| r.right() <= width + 0.5);
+                    let in_menu = listed.iter().any(|n| named(n, label));
+                    assert!(
+                        shown != in_menu,
+                        "{label} at {width} ({density:?}): on the bar {shown}, in the menu \
+                         {in_menu}"
+                    );
+                }
+                if width >= 1440.0 {
+                    assert!(more.is_none(), "a wide bar has a More menu ({density:?})");
+                }
+                if width <= 640.0 {
+                    assert!(more.is_some(), "no More menu at {width} ({density:?})");
+                }
+            }
+        }
+    }
+
+    /// A tool keeps its own id whatever the width, and More never takes a tool's: focus on More
+    /// must not pass to Pop when the window widens and Pop comes back (Enter would pop a stash).
+    #[test]
+    fn every_tool_keeps_its_own_id_at_every_width() {
+        let screen = Rect::from_min_max(egui::Pos2::ZERO, pos2(1500.0, 700.0));
+        let mut owners: std::collections::HashMap<egui::accesskit::NodeId, String> =
+            std::collections::HashMap::new();
         let ctx = context();
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let mut tab = repo_tab("alpha");
         tab.snap = Some(Arc::new(canopy_core::RepoSnapshot::default()));
-        let width = 400.0;
-        let mut shapes = Vec::new();
-        for _ in 0..3 {
-            shapes = frame(&ctx, Vec::new(), |ui| {
-                let slot = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 60.0));
-                ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
-                    actions_bar(ui, &tab, &mut Vec::new());
-                });
-            })
-            .0;
+        for width in [1440.0, 900.0, 760.0, 640.0, 560.0, 900.0, 1440.0] {
+            let mut out = None;
+            for _ in 0..3 {
+                if let Some(mut old) = out.take() {
+                    let old: &mut egui::FullOutput = &mut old;
+                    old.textures_delta.clear();
+                }
+                out = Some(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let slot = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 60.0));
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                            actions_bar(ui, &tab, &mut Vec::new());
+                        });
+                    },
+                ));
+            }
+            let mut out = out.expect("a frame");
+            out.textures_delta.clear();
+            for (id, n) in out.platform_output.accesskit_update.expect("nodes").nodes {
+                if n.role() != Role::Button {
+                    continue;
+                }
+                let Some(label) = n.label() else { continue };
+                let name = label.split(',').next().unwrap_or(label).to_owned();
+                let owner = owners.entry(id).or_insert_with(|| name.clone());
+                assert_eq!(*owner, name, "{name} took {owner}'s id at {width}");
+            }
         }
-        let fade = shapes
-            .iter()
-            .filter_map(|c| match &c.shape {
-                egui::Shape::Mesh(mesh) => Some(mesh),
-                _ => None,
-            })
-            .find(|mesh| {
-                let r = mesh.calc_bounds();
-                (r.right() - width).abs() < 0.5
-                    && r.height() > 20.0
-                    && mesh.vertices.iter().any(|v| v.color.a() == 0)
-            })
-            .expect("a fade at the bar's right edge");
-        let band = fade.calc_bounds().width();
-        assert!(band >= 40.0, "the fade is only {band} points wide");
-        let edge = fade
-            .vertices
-            .iter()
-            .filter(|v| (v.pos.x - width).abs() < 0.5)
-            .map(|v| v.color.a())
-            .min();
-        assert_eq!(edge, Some(255), "the fade is not opaque at the edge");
     }
 
     /// Override O2: an action bar too narrow for every tool names only the active view and drops

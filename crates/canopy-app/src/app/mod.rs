@@ -74,6 +74,9 @@ pub const OVERLAYS: &[&str] = &[
     "settings-notifications",
     "settings-keyboard",
     "settings-backup",
+    "settings-import-ignored",
+    "settings-keyboard-capture",
+    "settings-keyboard-refused",
     "settings-repository",
     "settings-repository-pull",
     "settings-repository-diffs",
@@ -99,6 +102,7 @@ pub const OVERLAYS: &[&str] = &[
     "flow-init",
     "flow-start",
     "flow-finish",
+    "force-delete",
     "author-card",
     "request-filters",
     "request-sort",
@@ -106,6 +110,10 @@ pub const OVERLAYS: &[&str] = &[
     "commit-compact",
     "amend-commit",
     "toasts",
+    "force-push-stopped",
+    "conflict-notice",
+    "git-errors",
+    "git-errors-center",
     "notifications",
     "branch-selected",
     "long-message",
@@ -142,6 +150,8 @@ pub const OVERLAYS: &[&str] = &[
     "confirm-host",
     "convert-partial-clone",
     "confirm-merge-risky",
+    "force-push",
+    "force-push-new",
     "diverged",
     "pull-conflicts",
     "pull-moved",
@@ -639,11 +649,81 @@ impl CanopyApp {
                     Offer::ReviewUpdate,
                 );
             }
+            Some("git-errors" | "git-errors-center") => {
+                // Git's refusals that say more than one line (#268): files after a colon, the
+                // identity it cannot find, and one very long line. The center variant opens the
+                // notification center over them.
+                let ctx = &cc.egui_ctx;
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Merge failed",
+                    "git merge failed: error: Your local changes to the following files would be overwritten by merge:\n\tsrc/auth.rs\n\tsrc/main.rs\nPlease commit your changes or stash them before you merge.\nAborting",
+                );
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Commit failed",
+                    "Author identity unknown\n\n*** Please tell me who you are.\n\nRun\n\n  git config --global user.email \"you@example.com\"\n  git config --global user.name \"Your Name\"\n\nto set your account's default identity.\nOmit --global to set the identity only in this repository.\n\nfatal: unable to auto-detect email address (got 'ada@workstation.(none)')",
+                );
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Push failed",
+                    format!(
+                        "remote: error: GH013: Repository rule violations found for refs/heads/main. {}",
+                        "Commits must have verified signatures; found unsigned commit 3f9a2c1e8b. "
+                            .repeat(40)
+                    ),
+                );
+            }
+            Some("conflict-notice") => {
+                // A cherry-pick of the conflict fixture's feature/backoff commit that stopped on
+                // conflicts (the fixture puts it in that state), over the resolver it opens.
+                if let Some(repo) = launch.paths.first() {
+                    background::announce_notice(
+                        &mut app.toasts,
+                        &cc.egui_ctx,
+                        repo,
+                        crate::tab::conflict_notice(
+                            "Cherry-picking",
+                            Some("feat(retry): use exponential backoff defaults"),
+                            false,
+                            false,
+                        ),
+                    );
+                }
+            }
+            Some("force-push-stopped") => {
+                // Git's own answer to a force push pinned to a tip that moved, with the Fetch offer.
+                app.toasts.push_force_push_stopped(
+                    &cc.egui_ctx,
+                    "Force push stopped",
+                    " ! [rejected]        topic -> topic (stale info)\nerror: failed to push some refs to 'origin'",
+                    launch
+                        .paths
+                        .first()
+                        .map_or(std::path::Path::new("."), PathBuf::as_path),
+                    crate::worker::Pin::Tip,
+                );
+            }
             Some("settings-keyboard") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard));
             }
             Some("settings-backup") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Data));
+            }
+            Some("settings-import-ignored") => {
+                app.settings_screen = Some(SettingsScreen::after_import_ignored());
+            }
+            Some("settings-keyboard-refused") => {
+                app.settings_screen = Some(SettingsScreen::refused_a_key());
+            }
+            Some("settings-keyboard-capture") => {
+                app.settings_screen = Some(SettingsScreen::capturing_a_key(&cc.egui_ctx));
             }
             Some("settings-repository") => {
                 app.settings_screen = Some(SettingsScreen::awaiting_repository());
@@ -807,13 +887,24 @@ impl CanopyApp {
 
     /// What accepting a notification's Pull offer does: show the repository's tab, then pull it.
     fn pull_offered(&self, path: &std::path::Path, actions: &mut Vec<Action>) {
+        self.offered(path, Action::Pull, actions);
+    }
+
+    /// What accepting a notification's Fetch offer does: show the repository's tab, then fetch it.
+    fn fetch_offered(&self, path: &std::path::Path, actions: &mut Vec<Action>) {
+        self.offered(path, Action::Fetch, actions);
+    }
+
+    /// Shows the tab of the repository at `path`, then runs `action` there, unless that tab is
+    /// busy with another operation.
+    fn offered(&self, path: &std::path::Path, action: Action, actions: &mut Vec<Action>) {
         if let Some(index) = self
             .tabs
             .iter()
             .position(|tab| tab.path == path && tab.running.is_none())
         {
             actions.push(Action::SwitchTab(index));
-            actions.push(Action::Pull);
+            actions.push(action);
         }
     }
 
@@ -968,10 +1059,7 @@ impl CanopyApp {
         if s.split_diff != before.split_diff || s.syntax_highlight != before.syntax_highlight {
             for t in &mut self.tabs {
                 t.split_diff = s.split_diff;
-                if t.highlight_diff != s.syntax_highlight {
-                    t.highlight_diff = s.syntax_highlight;
-                    t.reload_diff();
-                }
+                t.set_highlight(s.syntax_highlight);
             }
         }
         if s.hosting_api != before.hosting_api {
@@ -1404,6 +1492,7 @@ impl eframe::App for CanopyApp {
         for offer in self.toasts.show(&ctx) {
             match offer {
                 Offer::Pull(path) => self.pull_offered(&path, &mut actions),
+                Offer::Fetch(path) => self.fetch_offered(&path, &mut actions),
                 Offer::Accounts => {
                     self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }
@@ -1437,7 +1526,11 @@ impl eframe::App for CanopyApp {
         reason = "tools/glass-check.py reads the glass soak report from standard output"
     )]
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
-        crate::ui::kit::glass::destroy(gl);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "eframe's App::on_exit is the one place glass is torn down"
+        )]
+        crate::ui::kit::glass::destroy(crate::ui::kit::glass::ExitContext::from_on_exit(gl));
         if let Some(writer) = &mut self.settings_writer {
             writer.finish();
         }

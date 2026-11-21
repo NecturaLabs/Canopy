@@ -27,6 +27,8 @@ pub(crate) mod status {
     pub const NOT_FOUND: u16 = 404;
     pub const CONFLICT: u16 = 409;
     pub const TOO_MANY_REQUESTS: u16 = 429;
+    /// The first 5xx code: the server's own failure, which may pass.
+    pub const SERVER_ERROR: u16 = 500;
     /// The 2xx codes: from 200 up to, not including, 300.
     pub const SUCCESS: std::ops::Range<u16> = 200..300;
 }
@@ -40,6 +42,29 @@ const MAX_MESSAGE: usize = 300;
 /// Largest API response body read (ureq's own default for a whole-body read, stated here so
 /// every request, the GraphQL query included, visibly shares it).
 const MAX_BODY: u64 = 10 * 1024 * 1024;
+
+/// The REST API version `api.github.com` is asked for, the latest GitHub publishes. None of its
+/// breaking changes touches an endpoint or a field Canopy uses.
+const GITHUB_API_VERSION: &str = "2026-03-10";
+
+/// The REST API version sent to every GitHub host but `api.github.com`: GitHub Enterprise Server,
+/// `*.ghe.com` hosts and local test servers. Enterprise Server 3.20 and older know only this one
+/// and answer another with an error; GitHub supports it until 2028-03-10. Move a host to
+/// [`GITHUB_API_VERSION`] only once its releases accept it.
+const GITHUB_LEGACY_API_VERSION: &str = "2022-11-28";
+
+/// The API root of github.com itself; any other GitHub root is Enterprise Server (`/api/v3`) or a
+/// local test server.
+pub(crate) const GITHUB_API_ROOT: &str = "https://api.github.com";
+
+/// The `X-GitHub-Api-Version` for requests to the API at `base` (no trailing slash).
+pub(crate) fn github_api_version(base: &str) -> &'static str {
+    if base.eq_ignore_ascii_case(GITHUB_API_ROOT) {
+        GITHUB_API_VERSION
+    } else {
+        GITHUB_LEGACY_API_VERSION
+    }
+}
 
 /// The running build, announced in the `User-Agent` of every request.
 static BUILD: OnceLock<String> = OnceLock::new();
@@ -461,7 +486,7 @@ impl Http {
         req = match self.kind {
             ForgeKind::GitHub => req
                 .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28"),
+                .header("X-GitHub-Api-Version", github_api_version(&self.base)),
             ForgeKind::GitLab => req.header("Accept", "application/json"),
         };
         if let Some(token) = &self.token {
@@ -689,14 +714,15 @@ const MIN_TOKEN_LEN: usize = 8;
 ///
 /// Control characters become spaces, characters that reorder or hide text are dropped
 /// (bidirectional controls and every other default-ignorable code point, such as zero-width
-/// spaces, variation selectors and tags), GitHub and GitLab tokens ([`TOKEN_PREFIXES`]) and the
-/// user name and password in URLs are replaced, whitespace collapses to single spaces, and the
-/// result is at most `max` characters, ending in an ellipsis when it was cut.
+/// spaces, variation selectors and tags), the Braille blank becomes a space like a control
+/// character, GitHub and GitLab tokens ([`TOKEN_PREFIXES`]) and the user name and password in
+/// URLs are replaced, whitespace collapses to single spaces, and the result is at most `max`
+/// characters, ending in an ellipsis when it was cut.
 pub fn plain_text(text: &str, max: usize) -> String {
     let visible: String = text
         .chars()
         .filter(|&c| !hides_text(c))
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(blank_as_space)
         .collect();
     let visible = canopy_core::cli::redact_url(&hide_tokens(&visible));
     let words = visible.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -729,8 +755,41 @@ fn hide_tokens(text: &str) -> String {
     }
 }
 
+/// A name or title a host sent, made fit to show.
+///
+/// [`plain_text`]'s characters that hide or reorder text are dropped, controls, line and
+/// paragraph separators and the Braille blank become spaces, and the ends are trimmed. The inside
+/// keeps its spacing; unlike [`plain_text`] it neither collapses whitespace nor cuts the length.
+/// Empty when nothing visible is left.
+pub fn visible_name(text: &str) -> String {
+    let shown: String = text
+        .chars()
+        .filter(|&c| !hides_text(c))
+        .map(blank_as_space)
+        .collect();
+    shown.trim().to_owned()
+}
+
+/// The Braille blank: it draws a blank as wide as a letter but is neither whitespace nor
+/// ignorable, so it would otherwise stay in the text.
+pub(crate) const BRAILLE_BLANK: char = '\u{2800}';
+/// The line and paragraph separators: not control characters, but they break a line.
+const LINE_SEPARATOR: char = '\u{2028}';
+const PARAGRAPH_SEPARATOR: char = '\u{2029}';
+
+/// `c`, or a space when it is a control character, a line or paragraph separator or the Braille
+/// blank.
+fn blank_as_space(c: char) -> char {
+    if c.is_control() || matches!(c, BRAILLE_BLANK | LINE_SEPARATOR | PARAGRAPH_SEPARATOR) {
+        ' '
+    } else {
+        c
+    }
+}
+
 /// Unicode 16's `Default_Ignorable_Code_Point` characters (which include every bidirectional
-/// control) and the interlinear annotation controls: none of them shows, and some reorder text.
+/// control, the zero-width joiner and the variation selectors) and the interlinear annotation
+/// controls: none of them shows, and some reorder text.
 fn hides_text(c: char) -> bool {
     matches!(
         c,
@@ -772,6 +831,41 @@ pub(crate) fn encode(s: &str) -> String {
 mod tests {
     use super::*;
     use ureq::http::HeaderValue;
+
+    /// The `X-GitHub-Api-Version` a GitHub request to `base` carries.
+    fn sent_github_version(base: &str) -> String {
+        let http = Http::new(ForgeKind::GitHub, base, None);
+        let req = http.headers(http.agent.get(format!("{base}/rate_limit")));
+        let value = req
+            .headers_ref()
+            .and_then(|h| h.get("x-github-api-version"));
+        value.and_then(|v| v.to_str().ok()).unwrap_or("").to_owned()
+    }
+
+    #[test]
+    fn github_dot_com_gets_the_latest_api_version_and_enterprise_servers_the_old_one() {
+        assert_eq!(sent_github_version(GITHUB_API_ROOT), GITHUB_API_VERSION);
+        assert_eq!(
+            sent_github_version("https://api.github.com/"),
+            GITHUB_API_VERSION,
+            "a trailing slash is trimmed"
+        );
+        assert_eq!(GITHUB_API_VERSION, "2026-03-10");
+        for ghes in [
+            "https://ghe.example.com/api/v3",
+            "https://ghe.example.com:8443/api/v3",
+            "https://api.acme.ghe.com",
+            "https://api.github.com.evil.example",
+            "http://127.0.0.1:8080",
+        ] {
+            assert_eq!(
+                sent_github_version(ghes),
+                GITHUB_LEGACY_API_VERSION,
+                "{ghes}"
+            );
+        }
+        assert_eq!(GITHUB_LEGACY_API_VERSION, "2022-11-28");
+    }
 
     #[test]
     fn transport_error_tokens_are_cleaned_before_redaction() {
@@ -910,6 +1004,29 @@ mod tests {
             "see https://<redacted>@host/x"
         );
         assert_eq!(plain_text("xghp_word", 100), "xghp_word", "not a token");
+    }
+
+    #[test]
+    fn a_visible_name_drops_what_hides_text_and_keeps_its_spacing() {
+        // The joiner and the emoji selector draw nothing in egui, so they go like the rest.
+        assert_eq!(visible_name("👩\u{200D}💻 ❤\u{FE0F}"), "👩💻 ❤");
+        assert_eq!(
+            visible_name("a\u{202E}b\u{2066}c\u{200B}d\u{E0041}e"),
+            "abcde"
+        );
+        assert_eq!(visible_name("a  b\t\tc"), "a  b  c");
+        assert_eq!(visible_name("\u{2028}a\u{2029}\n"), "a");
+        assert_eq!(visible_name("Fix\u{2800}bug"), "Fix bug");
+        for only_hidden in ["", "\u{2800}", "\u{200D}\u{200D}", "\u{202E} \u{2800}\n"] {
+            assert_eq!(visible_name(only_hidden), "", "{only_hidden:?}");
+        }
+    }
+
+    #[test]
+    fn plain_text_reads_the_braille_blank_as_a_space() {
+        assert_eq!(plain_text("a\u{2800}b", 10), "a b");
+        assert_eq!(plain_text("Fix\u{2800}bug", 20), "Fix bug");
+        assert_eq!(plain_text("\u{2800}", 10), "");
     }
 
     #[test]

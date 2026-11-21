@@ -286,15 +286,18 @@ const LFS_PROBE: [&str; 4] = ["-c", "alias.lfs=", "lfs", "version"];
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::isolate_git;
 
     #[test]
     fn the_lfs_probe_never_reaches_a_repositorys_alias() {
+        isolate_git!(the_lfs_probe_never_reaches_a_repositorys_alias);
         assert_eq!(&LFS_PROBE[..2], ["-c", "alias.lfs="]);
         assert_eq!(&LFS_PROBE[2..], ["lfs", "version"]);
     }
 
     #[test]
     fn ssh_remotes_are_told_from_local_paths() {
+        isolate_git!(ssh_remotes_are_told_from_local_paths);
         for url in [
             "ssh://git@host/r.git",
             "git+ssh://host/r",
@@ -319,6 +322,7 @@ mod tests {
 
     #[test]
     fn a_program_is_found_by_path_or_in_the_directories() {
+        isolate_git!(a_program_is_found_by_path_or_in_the_directories);
         let dir = tempfile::tempdir().expect("tempdir");
         let tool = dir.path().join("fake-tool");
         std::fs::write(&tool, "#!/bin/sh\n").expect("write");
@@ -345,6 +349,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn attribute_hints_do_not_follow_symlinks() {
+        isolate_git!(attribute_hints_do_not_follow_symlinks);
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = repo_in(dir.path());
         let target = dir.path().join("elsewhere");
@@ -362,6 +367,7 @@ mod tests {
         reason = "the test sets configuration with libgit2"
     )]
     fn a_repository_names_the_programs_it_needs_and_the_system_lacks() {
+        isolate_git!(a_repository_names_the_programs_it_needs_and_the_system_lacks);
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = repo_in(dir.path());
         let nothing = |_: &str| false;
@@ -418,6 +424,7 @@ mod tests {
 
     #[test]
     fn install_steps_name_the_package_of_the_program() {
+        isolate_git!(install_steps_name_the_package_of_the_program);
         assert_eq!(Package::of("git-lfs"), Package::GitLfs);
         assert_eq!(Package::of("/usr/bin/ssh-keygen"), Package::OpenSsh);
         assert_eq!(Package::of("gpg"), Package::GnuPg);

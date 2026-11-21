@@ -122,9 +122,11 @@ impl Repo {
             .collect();
         let mut walk = self.git().revwalk()?;
         // Stashes, notes and Canopy's own request refs are not activity.
-        for glob in ["refs/heads/*", "refs/tags/*", "refs/remotes/*"] {
-            walk.push_glob(glob)?;
-        }
+        crate::repo::push_refs(
+            self.git(),
+            &mut walk,
+            &["refs/heads/*", "refs/tags/*", "refs/remotes/*"],
+        )?;
         walk.set_sorting(git2::Sort::TIME)?;
         if let Ok(head) = self.git().head() {
             walk.push(head.peel_to_commit()?.id())?;
@@ -447,6 +449,7 @@ fn parse_author(line: &str) -> Result<AuthorActivity> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::isolate_git;
     use std::path::Path;
     use std::process::Command;
 
@@ -487,6 +490,7 @@ mod tests {
 
     #[test]
     fn repository_metrics_calendar_mailmap_storage_and_empty() {
+        isolate_git!(repository_metrics_calendar_mailmap_storage_and_empty);
         let dir = tempfile::tempdir().expect("tempdir");
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"], MONDAY);
@@ -568,6 +572,7 @@ mod tests {
 
     #[test]
     fn branch_metrics_detect_a_squash_merge_without_marking_the_default() {
+        isolate_git!(branch_metrics_detect_a_squash_merge_without_marking_the_default);
         let dir = tempfile::tempdir().expect("tempdir");
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"], MONDAY);
@@ -605,6 +610,9 @@ mod tests {
 
     #[test]
     fn branch_metrics_squash_hint_allows_unrelated_changes_and_leaves_state_untouched() {
+        isolate_git!(
+            branch_metrics_squash_hint_allows_unrelated_changes_and_leaves_state_untouched
+        );
         let dir = branch_fixture();
         let p = dir.path();
         std::fs::create_dir(p.join("folder")).expect("folder");
@@ -659,6 +667,7 @@ mod tests {
 
     #[test]
     fn branch_metrics_squash_hint_requires_all_content_and_modes() {
+        isolate_git!(branch_metrics_squash_hint_requires_all_content_and_modes);
         let dir = branch_fixture();
         let p = dir.path();
         std::fs::write(p.join("tracked.txt"), "base\n").expect("base");
@@ -715,6 +724,7 @@ mod tests {
 
     #[test]
     fn branch_metrics_squash_hint_skips_missing_trees_and_shallow_history() {
+        isolate_git!(branch_metrics_squash_hint_skips_missing_trees_and_shallow_history);
         for missing_tree in [true, false] {
             let dir = branch_fixture();
             let p = dir.path();
@@ -775,6 +785,7 @@ mod tests {
 
     #[test]
     fn branch_metrics_squash_hint_requires_a_tree_change() {
+        isolate_git!(branch_metrics_squash_hint_requires_a_tree_change);
         let dir = branch_fixture();
         let p = dir.path();
         git(p, &["commit", "--allow-empty", "-qm", "root"], MONDAY);
@@ -806,6 +817,7 @@ mod tests {
 
     #[test]
     fn branch_metrics_divergence_unique_age_and_merge() {
+        isolate_git!(branch_metrics_divergence_unique_age_and_merge);
         let dir = tempfile::tempdir().expect("tempdir");
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"], MONDAY);
@@ -953,6 +965,7 @@ mod tests {
     }
     #[test]
     fn repository_metrics_accepts_alternate_object_stores() {
+        isolate_git!(repository_metrics_accepts_alternate_object_stores);
         let source = tempfile::tempdir().expect("source");
         let dest = tempfile::tempdir().expect("destination");
         git(source.path(), &["init", "-q", "-b", "main"], MONDAY);
@@ -986,6 +999,7 @@ mod tests {
     }
     #[test]
     fn branch_metrics_falls_back_when_cached_remote_head_is_dangling() {
+        isolate_git!(branch_metrics_falls_back_when_cached_remote_head_is_dangling);
         let dir = tempfile::tempdir().expect("tempdir");
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"], MONDAY);
@@ -1023,6 +1037,7 @@ mod tests {
     }
     #[test]
     fn branch_metrics_does_not_execute_custom_merge_drivers() {
+        isolate_git!(branch_metrics_does_not_execute_custom_merge_drivers);
         if let Some(path) = std::env::var_os("CANOPY_METRICS_DRIVER_FIXTURE") {
             let path = Path::new(&path);
             Repo::open(path)
@@ -1097,6 +1112,7 @@ mod tests {
     }
     #[test]
     fn branch_metrics_does_not_execute_renormalization_filters() {
+        isolate_git!(branch_metrics_does_not_execute_renormalization_filters);
         let dir = tempfile::tempdir().expect("tempdir");
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"], MONDAY);

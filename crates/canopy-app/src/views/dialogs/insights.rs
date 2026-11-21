@@ -9,6 +9,7 @@ use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::Disclosure;
 use crate::ui::theme::{self, palette};
+use crate::ui::widgets;
 use crate::worker::Insights;
 
 pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) -> Outcome {
@@ -28,7 +29,7 @@ pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) 
             Some(Err(error)) => {
                 ui.colored_label(palette(ctx).danger, error);
             }
-            Some(Ok(data)) => body(ui, data),
+            Some(Ok(data)) => body(ui, data, tab.is_some_and(|t| t.iso_dates)),
         })
         .footer(|f| {
             f.cancel_label("Close").confirm("Refresh");
@@ -39,14 +40,17 @@ pub(super) fn show(ctx: &egui::Context, dialog: &Dialog, tab: Option<&RepoTab>) 
     })
 }
 
-fn date(seconds: i64) -> String {
-    jiff::Timestamp::from_second(seconds).map_or_else(
-        |_| "Unknown date".into(),
-        |date| date.strftime("%Y-%m-%d").to_string(),
-    )
+/// A commit's date in the app's format ("Aug 18, 2026", or ISO when Settings asks for it).
+fn date(seconds: i64, iso: bool) -> String {
+    widgets::absolute_date_format(seconds, iso)
 }
 
-fn body(ui: &mut Ui, data: &Insights) {
+/// The first day of a week in the app's format. The weeks are UTC weeks, so it is a UTC date.
+fn week_date(seconds: i64, iso: bool) -> String {
+    widgets::utc_date_format(seconds, iso)
+}
+
+fn body(ui: &mut Ui, data: &Insights, iso: bool) {
     let m = theme::metrics();
     let p = palette(ui.ctx());
     let repo = &data.repository;
@@ -58,7 +62,7 @@ fn body(ui: &mut Ui, data: &Insights) {
     if let Some(commit) = &repo.last_commit {
         ui.label(format!(
             "Last commit · {} · {}",
-            date(commit.committed_at),
+            date(commit.committed_at, iso),
             commit.author.name
         ))
         .kit_tooltip(&commit.summary)
@@ -69,11 +73,11 @@ fn body(ui: &mut Ui, data: &Insights) {
     ui.add_space(m.section_gap);
     ui.label(RichText::new("Weekly commits").strong());
     ui.label(
-        RichText::new("52 UTC weeks · current week included · all local refs and HEAD")
+        RichText::new("The last 52 weeks (UTC), counted on every branch, remote branch and tag.")
             .color(p.text_dim),
     );
-    chart(ui, &repo.weeks);
-    weekly_counts(ui, &repo.weeks);
+    chart(ui, &repo.weeks, iso);
+    weekly_counts(ui, &repo.weeks, iso);
     ui.add_space(m.section_gap);
     ui.label(RichText::new("Top authors").strong());
     if repo.authors.is_empty() {
@@ -108,7 +112,7 @@ fn body(ui: &mut Ui, data: &Insights) {
     if data.branches.is_empty() {
         ui.label("No local branches yet");
     }
-    branch_table(ui, &data.branches);
+    branch_table(ui, &data.branches, iso);
     ui.add_space(m.dialog_gap);
     ui.label(RichText::new("Local history only; shallow clones omit older commits. Squash merged? means every changed branch path already matches the default branch. This hint can miss merges after further edits and does not prove a merge occurred.").color(p.text_dim));
 }
@@ -120,7 +124,7 @@ fn divergence(value: Option<canopy_core::Divergence>) -> String {
     )
 }
 
-fn chart(ui: &mut Ui, weeks: &[canopy_core::WeekActivity]) {
+fn chart(ui: &mut Ui, weeks: &[canopy_core::WeekActivity], iso: bool) {
     let m = theme::metrics();
     let p = palette(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(
@@ -154,14 +158,14 @@ fn chart(ui: &mut Ui, weeks: &[canopy_core::WeekActivity]) {
         ui.interact(hit, ui.id().with(("week", i)), Sense::hover())
             .kit_tooltip(format!(
                 "Week of {} · {} commits",
-                date(week.start),
+                week_date(week.start, iso),
                 week.commits
             ))
             .show();
     }
     ui.horizontal(|ui| {
         if let Some(first) = weeks.first() {
-            ui.label(date(first.start));
+            ui.label(week_date(first.start, iso));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(format!("Peak: {max} commits/week"));
@@ -182,7 +186,7 @@ fn text_width(ui: &Ui, text: &str) -> f32 {
 /// One row per branch in columns that always fit the dialog: the branch name takes what the
 /// other columns leave and is cut short when it must be (its tooltip has the full name), and the
 /// last commit's author, date and age are in that tooltip rather than a column of their own.
-fn branch_table(ui: &mut Ui, branches: &[canopy_core::BranchMetrics]) {
+fn branch_table(ui: &mut Ui, branches: &[canopy_core::BranchMetrics], iso: bool) {
     let m = theme::metrics();
     let spacing = m.item_spacing.x;
     let columns = ["Default ↑/↓", "Upstream ↑/↓", "Unique"];
@@ -222,7 +226,7 @@ fn branch_table(ui: &mut Ui, branches: &[canopy_core::BranchMetrics]) {
                                     ui.label(RichText::new(header).strong());
                                 }
                             } else {
-                                branch_row(ui, &branches[row - 1], name_width);
+                                branch_row(ui, &branches[row - 1], name_width, iso);
                             }
                             ui.end_row();
                         }
@@ -231,7 +235,7 @@ fn branch_table(ui: &mut Ui, branches: &[canopy_core::BranchMetrics]) {
     });
 }
 
-fn branch_row(ui: &mut Ui, branch: &canopy_core::BranchMetrics, name_width: f32) {
+fn branch_row(ui: &mut Ui, branch: &canopy_core::BranchMetrics, name_width: f32, iso: bool) {
     let last = &branch.last_commit;
     ui.scope(|ui| {
         ui.set_max_width(name_width);
@@ -241,7 +245,7 @@ fn branch_row(ui: &mut Ui, branch: &canopy_core::BranchMetrics, name_width: f32)
                 branch.name,
                 last.author.name,
                 last.author.email,
-                date(last.committed_at),
+                date(last.committed_at, iso),
                 branch.age_days,
                 last.summary
             ))
@@ -262,7 +266,7 @@ fn branch_row(ui: &mut Ui, branch: &canopy_core::BranchMetrics, name_width: f32)
         .show();
 }
 
-fn weekly_counts(ui: &mut Ui, weeks: &[canopy_core::WeekActivity]) {
+fn weekly_counts(ui: &mut Ui, weeks: &[canopy_core::WeekActivity], iso: bool) {
     let id = ui.id().with("insights-weekly-counts");
     let mut open = ui.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
     Disclosure::new("weekly-counts", "Weekly counts", &mut open).show(ui, |ui| {
@@ -270,7 +274,7 @@ fn weekly_counts(ui: &mut Ui, weeks: &[canopy_core::WeekActivity]) {
             let response = ui.add(
                 egui::Label::new(format!(
                     "Week of {} (UTC) · {} commits",
-                    date(week.start),
+                    week_date(week.start, iso),
                     week.commits
                 ))
                 .sense(Sense::focusable_noninteractive()),
@@ -295,5 +299,24 @@ fn state_label(branch: &canopy_core::BranchMetrics) -> String {
         format!("{state} · stale")
     } else {
         state.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// F19: the dates read like every other date in the app, and a week's first day is its UTC
+    /// date whatever the local zone.
+    #[test]
+    fn insight_dates_use_the_apps_format() {
+        // Monday 2026-08-17 00:00 UTC.
+        let monday = 1_786_924_800;
+        assert_eq!(week_date(monday, false), "Aug 17, 2026");
+        assert_eq!(week_date(monday, true), "2026-08-17");
+        assert_eq!(
+            date(monday, true),
+            widgets::absolute_date_format(monday, true)
+        );
     }
 }
