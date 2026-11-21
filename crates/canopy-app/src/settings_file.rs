@@ -419,6 +419,8 @@ mod tests {
     fn customised() -> Settings {
         Settings {
             theme: ThemeId::Daylight,
+            match_system: true,
+            dark_theme: ThemeId::Observatory,
             pull_mode: PullMode::Rebase,
             clone_protocol: CloneProtocol::Ssh,
             editor: "zed --wait %f".to_owned(),
@@ -452,6 +454,8 @@ mod tests {
         let fresh = Settings::default();
         let back = import(&fresh, &text).unwrap().settings;
         assert_eq!(back.theme, ThemeId::Daylight);
+        assert!(back.match_system, "Match system travels with its themes");
+        assert_eq!(back.dark_theme, ThemeId::Observatory);
         assert_eq!(back.pull_mode, PullMode::Rebase);
         assert!(!back.check_message, "the message checks setting travels");
         assert!(

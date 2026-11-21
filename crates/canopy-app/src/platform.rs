@@ -13,7 +13,8 @@
 //! Started programs are reaped on a background thread, so none is left as a zombie.
 //!
 //! It also asks the operating system for settings Canopy follows: reduced motion
-//! ([`prefers_reduced_motion`]) and reduced transparency ([`prefers_reduced_transparency`]).
+//! ([`prefers_reduced_motion`]), reduced transparency ([`prefers_reduced_transparency`]) and,
+//! on Linux, dark mode ([`prefers_dark`]).
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -431,6 +432,88 @@ pub fn prefers_reduced_transparency() -> Option<bool> {
     }
 }
 
+/// Asks the desktop whether it is in dark mode, on Linux, where the window toolkit does not say
+/// (elsewhere egui reports it). Blocks while a helper program answers, so call it off the UI
+/// thread. `None` when the desktop does not say.
+#[cfg_attr(
+    target_os = "linux",
+    expect(
+        clippy::disallowed_methods,
+        reason = "asks the platform's settings tools, never git"
+    )
+)]
+pub fn prefers_dark() -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        // The desktop portal works across GNOME, KDE and others; older GNOME only has gsettings.
+        let mut portal = Command::new("gdbus");
+        portal.args([
+            "call",
+            "--session",
+            "--timeout",
+            "2",
+            "--dest",
+            "org.freedesktop.portal.Desktop",
+            "--object-path",
+            "/org/freedesktop/portal/desktop",
+            "--method",
+            "org.freedesktop.portal.Settings.ReadOne",
+            "org.freedesktop.appearance",
+            "color-scheme",
+        ]);
+        output_within(portal, QUERY_TIMEOUT)
+            .and_then(|out| parse_portal_scheme(&out))
+            .or_else(|| {
+                let mut gsettings = Command::new("gsettings");
+                gsettings.args(["get", "org.gnome.desktop.interface", "color-scheme"]);
+                output_within(gsettings, QUERY_TIMEOUT).and_then(|out| parse_gsettings_scheme(&out))
+            })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// `(<uint32 1>,)` from the portal's `color-scheme`: 1 prefers dark, 2 prefers light, and 0, no
+/// preference, is what GNOME reports for its Light style.
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(
+        dead_code,
+        reason = "only the Linux query and the tests read this answer"
+    )
+)]
+fn parse_portal_scheme(out: &str) -> Option<bool> {
+    let value = out
+        .trim()
+        .trim_start_matches("(<")
+        .trim_end_matches(">,)")
+        .trim_start_matches("uint32")
+        .trim();
+    match value {
+        "1" => Some(true),
+        "0" | "2" => Some(false),
+        _ => None,
+    }
+}
+
+/// `'prefer-dark'`, `'prefer-light'` or `'default'` (GNOME's Light style) for `color-scheme`.
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(
+        dead_code,
+        reason = "only the Linux query and the tests read this answer"
+    )
+)]
+fn parse_gsettings_scheme(out: &str) -> Option<bool> {
+    match out.trim().trim_matches('\'') {
+        "prefer-dark" => Some(true),
+        "prefer-light" | "default" => Some(false),
+        _ => None,
+    }
+}
+
 /// Runs `cmd` and returns its standard output when it exits successfully within `timeout`.
 /// Output is read on its own thread, so a chatty program cannot fill the pipe and stall, and a
 /// program that outlives the timeout is killed and reaped.
@@ -620,6 +703,19 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn the_desktop_colour_scheme_answers_are_read() {
+        assert_eq!(parse_portal_scheme("(<uint32 1>,)\n"), Some(true));
+        assert_eq!(parse_portal_scheme("(<uint32 2>,)"), Some(false));
+        // GNOME's Light style reports no preference.
+        assert_eq!(parse_portal_scheme("(<uint32 0>,)"), Some(false));
+        assert_eq!(parse_portal_scheme("Error: no such key"), None);
+        assert_eq!(parse_gsettings_scheme("'prefer-dark'\n"), Some(true));
+        assert_eq!(parse_gsettings_scheme("'prefer-light'"), Some(false));
+        assert_eq!(parse_gsettings_scheme("'default'"), Some(false));
+        assert_eq!(parse_gsettings_scheme("No such key"), None);
     }
 
     #[cfg(unix)]

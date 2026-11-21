@@ -4,7 +4,7 @@
 #                            [--style standard|deeper] [--density comfortable|dense] [--request-density comfortable|dense]
 #                            [--translucent on|off]
 #                            [--contrast on|off] [--custom-theme SPEC]
-#                            [--motion system|reduced|full] [--gallery-page N]
+#                            [--motion system|reduced|full] [--system dark|light] [--gallery-page N]
 #                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
 #                            [--also <repo>]...
 #
@@ -76,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     --contrast) extra+=(--contrast "${2:?--contrast needs on or off}"); shift 2 ;;
     --custom-theme) extra+=(--custom-theme "${2:?--custom-theme needs a list, see --help}"); shift 2 ;;
     --motion) extra+=(--motion "${2:?--motion needs system, reduced or full}"); shift 2 ;;
+    --system) extra+=(--system "${2:?--system needs dark or light}"); shift 2 ;;
     --gallery-page) extra+=(--gallery-page "${2:?--gallery-page needs a number}"); shift 2 ;;
     --demo-requests) extra+=(--demo-requests "${2:?--demo-requests needs a scenario, see --help}"); shift 2 ;;
     --also) also+=("${2:?--also needs a repository folder}"); shift 2 ;;

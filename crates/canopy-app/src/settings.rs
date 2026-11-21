@@ -435,6 +435,16 @@ impl NotificationPrefs {
     }
 }
 
+/// A light theme, or Daylight when the saved one no longer exists ([`known`] would give
+/// Midnight, the default theme).
+fn known_light<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ThemeId, D::Error> {
+    Ok(Known::deserialize(d)?.0.unwrap_or(SYSTEM_LIGHT))
+}
+
+/// What Match system shows in a dark and in a light system until the user chooses.
+pub const SYSTEM_DARK: ThemeId = ThemeId::Midnight;
+pub const SYSTEM_LIGHT: ThemeId = ThemeId::Daylight;
+
 /// User preferences and session state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -442,6 +452,15 @@ pub struct Settings {
     // Appearance.
     #[serde(deserialize_with = "known")]
     pub theme: ThemeId,
+    /// Follow the system's light or dark mode: `theme` is then whichever of `dark_theme` and
+    /// `light_theme` the system asks for ([`Settings::follow_system`]).
+    pub match_system: bool,
+    /// The theme shown while the system is dark, with Match system on.
+    #[serde(deserialize_with = "known")]
+    pub dark_theme: ThemeId,
+    /// The theme shown while the system is light, with Match system on.
+    #[serde(deserialize_with = "known_light")]
+    pub light_theme: ThemeId,
     /// Interface zoom (0.8–1.6).
     pub zoom: f32,
     /// "3 hours ago" rather than "Sep 21, 2026" in the history.
@@ -633,6 +652,9 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeId::Midnight,
+            match_system: false,
+            dark_theme: SYSTEM_DARK,
+            light_theme: SYSTEM_LIGHT,
             zoom: 1.0,
             relative_dates: true,
             iso_dates: false,
@@ -704,6 +726,47 @@ impl Default for Settings {
             seen_intro: false,
             last_crash_seen: String::new(),
             dark: None,
+        }
+    }
+}
+
+impl Settings {
+    /// Whether `theme` is a dark one: a built-in theme's own ground, the custom theme's base.
+    pub fn is_dark(&self, theme: ThemeId) -> bool {
+        match theme {
+            ThemeId::Custom => !self.custom_theme.light,
+            built_in => built_in.palette().dark,
+        }
+    }
+
+    /// The themes Match system offers for a dark or a light system, in menu order.
+    pub fn themes_for(&self, dark: bool) -> Vec<ThemeId> {
+        ThemeId::ALL
+            .into_iter()
+            .filter(|t| self.is_dark(*t) == dark)
+            .collect()
+    }
+
+    /// The theme Match system shows in a dark or a light system: the chosen one, or the default
+    /// once it no longer suits (the custom theme was rebuilt on the other base).
+    pub fn system_theme(&self, dark: bool) -> ThemeId {
+        let (chosen, default) = if dark {
+            (self.dark_theme, SYSTEM_DARK)
+        } else {
+            (self.light_theme, SYSTEM_LIGHT)
+        };
+        if self.is_dark(chosen) == dark {
+            chosen
+        } else {
+            default
+        }
+    }
+
+    /// With Match system on, makes `theme` the one the system asks for. `system_dark` is `None`
+    /// while the system has not said, and the theme then stays as it is.
+    pub fn follow_system(&mut self, system_dark: Option<bool>) {
+        if let (true, Some(dark)) = (self.match_system, system_dark) {
+            self.theme = self.system_theme(dark);
         }
     }
 }
@@ -1089,6 +1152,62 @@ mod tests {
         let mut old_dark: Settings = serde_json::from_str(r#"{"dark": true}"#).expect("parse");
         old_dark.migrate();
         assert_eq!(old_dark.theme, ThemeId::Midnight);
+    }
+
+    /// Match system is off until the user turns it on, so settings saved before it existed keep
+    /// their theme; on, the theme follows the system and stays put while the system is silent.
+    #[test]
+    fn match_system_shows_the_theme_the_system_asks_for() {
+        let mut s: Settings = serde_json::from_str(r#"{"theme": "Observatory"}"#).expect("parse");
+        assert!(!s.match_system);
+        assert_eq!((s.dark_theme, s.light_theme), (SYSTEM_DARK, SYSTEM_LIGHT));
+        s.follow_system(Some(false));
+        assert_eq!(s.theme, ThemeId::Observatory, "off: the system is ignored");
+
+        s.match_system = true;
+        s.follow_system(None);
+        assert_eq!(s.theme, ThemeId::Observatory, "unknown: the theme stays");
+        s.follow_system(Some(false));
+        assert_eq!(s.theme, ThemeId::Daylight);
+        s.follow_system(Some(true));
+        assert_eq!(s.theme, ThemeId::Midnight);
+        s.dark_theme = ThemeId::Observatory;
+        s.follow_system(Some(true));
+        assert_eq!(s.theme, ThemeId::Observatory);
+    }
+
+    /// The custom theme belongs to the mode its base has; a choice that no longer suits its mode
+    /// reads as that mode's default, so a dark system never shows a light theme.
+    #[test]
+    fn match_system_offers_each_mode_its_own_themes() {
+        let mut s = Settings::default();
+        assert_eq!(
+            s.themes_for(true),
+            [ThemeId::Midnight, ThemeId::Observatory, ThemeId::Custom]
+        );
+        assert_eq!(s.themes_for(false), [ThemeId::Daylight]);
+        s.dark_theme = ThemeId::Custom;
+        assert_eq!(s.system_theme(true), ThemeId::Custom);
+
+        s.custom_theme.light = true;
+        assert_eq!(s.themes_for(false), [ThemeId::Daylight, ThemeId::Custom]);
+        assert_eq!(s.system_theme(true), SYSTEM_DARK);
+        s.light_theme = ThemeId::Custom;
+        assert_eq!(s.system_theme(false), ThemeId::Custom);
+        for dark in [true, false] {
+            for t in s.themes_for(dark) {
+                assert_eq!(s.is_dark(t), dark, "{t:?}");
+            }
+        }
+    }
+
+    /// A light theme this build no longer has reads as Daylight, not as the default theme.
+    #[test]
+    fn a_removed_light_theme_reads_as_daylight() {
+        let s: Settings =
+            serde_json::from_str(r#"{"light_theme": "Aurora", "dark_theme": "Aurora"}"#)
+                .expect("parse");
+        assert_eq!((s.dark_theme, s.light_theme), (SYSTEM_DARK, SYSTEM_LIGHT));
     }
 
     /// Settings as eframe keeps them: RON under [`KEY`].

@@ -18,8 +18,9 @@ only the current build keeps a release, and the notes of every build stay in
 - GitHub and GitLab (self-hosted included) pull and merge requests through your `gh` or `glab`
   sign-in, with checks and reviews; Canopy stores no token.
 - Keyboard first: a command palette, a shortcut cheatsheet, vim motions and single-key actions.
-- Themes with high-contrast variants, interface zoom, reduced motion, and settings that show your
-  git configuration beside Canopy's recommendations.
+- Themes with high-contrast variants and an option to match the system's light or dark mode,
+  interface zoom, reduced motion, and settings that show your git configuration beside Canopy's
+  recommendations.
 - In-app updates, opt-in crash reports, and no telemetry.
 
 [Unreleased]: https://github.com/NecturaLabs/Canopy/commits/main

@@ -23,6 +23,7 @@ pub enum AppearanceChoice {
     Density(Density),
     Translucent(bool),
     HighContrast(bool),
+    MatchSystem(bool),
     Motion(MotionPref),
 }
 

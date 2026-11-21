@@ -34,6 +34,7 @@ pub fn tabs(
     tabs: &[RepoTab],
     active: usize,
     current_theme: ThemeId,
+    match_system: bool,
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
@@ -101,8 +102,9 @@ pub fn tabs(
                 actions.push(Action::Palette);
             }
             let theme_button = IconButton::new(icon::PALETTE, "Theme").show(ui);
-            if let Some(Some(action)) = menu::menu(&theme_button, |m| theme_items(m, current_theme))
-            {
+            if let Some(Some(action)) = menu::menu(&theme_button, |m| {
+                theme_items(m, current_theme, match_system)
+            }) {
                 actions.push(action);
             }
             if IconButton::new(icon::GEAR_SIX, "Settings")
@@ -177,8 +179,8 @@ fn doc_tabs(tabs: &[RepoTab]) -> Vec<DocTab<'_>> {
 }
 
 /// The theme menu: every theme with its swatch (ground and accent), the active one checked, then
-/// the High contrast switch.
-fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId) -> Option<Action> {
+/// the Match system and High contrast switches.
+fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId, match_system: bool) -> Option<Action> {
     let metrics = theme::metrics();
     let s = theme::surfaces(m.ui.ctx());
     let mut picked = None;
@@ -203,6 +205,15 @@ fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId) -> Option<Action> {
         }
     }
     m.separator();
+    if m.item(icon::MONITOR, "Match system")
+        .checked(match_system)
+        .show(m.ui)
+        .clicked()
+    {
+        picked = Some(Action::SetAppearance(AppearanceChoice::MatchSystem(
+            !match_system,
+        )));
+    }
     let on = theme::high_contrast();
     if m.item(icon::CIRCLE_HALF, "High contrast")
         .checked(on)
@@ -1566,7 +1577,7 @@ mod tests {
         let tabs = [alpha, repo_tab("beta")];
         let mut actions = Vec::new();
         let (shapes, nodes) = frame(&ctx, Vec::new(), |ui| {
-            super::tabs(ui, &tabs, 1, ThemeId::Midnight, &mut actions);
+            super::tabs(ui, &tabs, 1, ThemeId::Midnight, false, &mut actions);
         });
         assert!(
             nodes
@@ -1593,7 +1604,8 @@ mod tests {
     fn the_title_bar_tools_take_tab_from_left_to_right() {
         let ctx = context();
         let tabs = [repo_tab("alpha")];
-        let mut show = |ui: &mut Ui| super::tabs(ui, &tabs, 0, ThemeId::Midnight, &mut Vec::new());
+        let mut show =
+            |ui: &mut Ui| super::tabs(ui, &tabs, 0, ThemeId::Midnight, false, &mut Vec::new());
         for _ in 0..3 {
             frame(&ctx, Vec::new(), &mut show);
         }
@@ -1634,7 +1646,7 @@ mod tests {
         let tabs = [alpha];
         let mut actions = Vec::new();
         let (shapes, _) = frame(&ctx, Vec::new(), |ui| {
-            super::tabs(ui, &tabs, 0, ThemeId::Midnight, &mut actions);
+            super::tabs(ui, &tabs, 0, ThemeId::Midnight, false, &mut actions);
         });
         assert!(
             text_rect(&shapes, egui_phosphor::regular::CODE).is_some(),

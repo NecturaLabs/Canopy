@@ -100,6 +100,15 @@ diff rows, status tints). Status colours, graph lanes, syntax, danger and diff c
 base's hues, and the structure (`Design`) is the base's. It is not in `ThemeId::BUILT_IN`; its
 high-contrast version is derived when it is built, like the others.
 
+Match system is a switch too, not a theme (Settings, Appearance; the toolbar's theme menu; the
+command palette's "Match system: On" and "Off"). On, the theme shown is the Dark theme while the
+system is dark and the Light theme while it is light (`Settings::dark_theme` and `light_theme`,
+Midnight and Daylight until chosen); each offers the themes of its kind, the custom theme with the
+one its base belongs to. Picking a theme by name turns the switch off. macOS and Windows report
+the system's mode through egui; on Linux `system_theme.rs` asks the desktop portal (`gsettings` on
+older GNOME) at start-up and whenever the window gets the focus back, so a change shows when the
+user returns to Canopy. While the system has not answered, the theme stays as it was.
+
 High contrast is a switch over any theme, Custom included (Settings, Appearance; the toolbar's
 theme menu; the command palette's "High contrast: On" and "Off"), not a theme. `nectura-ui/src/contrast.rs`
 derives each theme's high-contrast colours once: the theme's grounds and hues stay, and every
